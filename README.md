@@ -51,3 +51,22 @@ Pour le mode développement avec rechargement automatique:
 ```bash
 npm run dev
 ```
+
+## Déploiement sur Render
+
+L'application est configurée pour être déployée facilement sur Render:
+
+1. **Préparation au déploiement**
+   ```bash
+   node prepare-render-deploy.js
+   ```
+
+2. **Connecter GitHub à Render**
+   - Créez un compte sur [Render](https://render.com)
+   - Connectez votre dépôt GitHub
+   - Render détectera automatiquement le fichier `render.yaml`
+
+3. **Configuration des variables d'environnement**
+   - Configurez les variables Supabase dans Render
+
+Pour des instructions détaillées, consultez le guide complet dans `documentation/render_deployment_guide.md`
