@@ -1,0 +1,1998 @@
+{% extends 'organization/crud_base.html' %}
+{% load hydria_asset_icons %}
+
+{% block page_icon %}⚙️{% endblock %}
+{% block page_title %}Gestion des Équipements{% endblock %}
+{% block create_button_text %}Nouvel équipement{% endblock %}
+
+{% block extra_head %}
+{{ block.super }}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+    /* Étiquettes permanentes des entités sur la mini-carte */
+    .hydria-map-label {
+        background: rgba(255, 255, 255, 0.9);
+        border: none;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+        padding: 1px 5px;
+        font-size: 11px;
+        font-weight: 600;
+        border-radius: 4px;
+        white-space: nowrap;
+    }
+    .hydria-map-label::before {
+        display: none;
+    }
+    .hydria-map-label-point_eau { color: #0e7490; }
+    .hydria-map-label-equipement { color: #1d4ed8; }
+    .hydria-map-label-village { color: #b45309; }
+</style>
+{% endblock %}
+
+{% block page_content %}
+<!-- Statistiques -->
+<div class="hydria-v1-kpi-grid grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
+    <div class="hydria-v1-stat hydria-v1-tone-primary stat bg-base-100 shadow rounded-lg">
+        <div class="stat-figure text-primary">
+            <i class="fas fa-cogs text-2xl"></i>
+        </div>
+        <div class="stat-title">Total équipements</div>
+        <div class="stat-value text-primary">{{ equipements.count }}</div>
+    </div>
+    <div class="hydria-v1-stat hydria-v1-tone-info stat bg-base-100 shadow rounded-lg">
+        <div class="stat-figure text-info">
+            <i class="fas fa-map-marker-alt text-2xl"></i>
+        </div>
+        <div class="stat-title">Géolocalisés</div>
+        <div class="stat-value text-info">
+            {{ equipements_geolocalisés|default:0 }}
+        </div>
+    </div>
+    <div class="hydria-v1-stat hydria-v1-tone-success stat bg-base-100 shadow rounded-lg">
+        <div class="stat-figure text-success">
+            <i class="fas fa-tools text-2xl"></i>
+        </div>
+        <div class="stat-title">Types principaux</div>
+        <div class="stat-value text-success text-xs">
+            {% if stats_par_type %}
+                {% for type_nom, count in stats_par_type.items|slice:":2" %}
+                    <div class="text-sm">{{ type_nom }}: {{ count }}</div>
+                {% endfor %}
+            {% else %}
+                Aucun type
+            {% endif %}
+        </div>
+    </div>
+    <div class="hydria-v1-stat hydria-v1-tone-warning stat bg-base-100 shadow rounded-lg">
+        <div class="stat-figure text-warning">
+            <i class="fas fa-check-circle text-2xl"></i>
+        </div>
+        <div class="stat-title">Opérationnels</div>
+        <div class="stat-value text-warning">
+            {{ stats_par_statut.operationnel|default:0 }}
+        </div>
+    </div>
+    <div class="hydria-v1-stat hydria-v1-tone-error stat bg-base-100 shadow rounded-lg">
+        <div class="stat-figure text-error">
+            <i class="fas fa-exclamation-triangle text-2xl"></i>
+        </div>
+        <div class="stat-title">En panne</div>
+        <div class="stat-value text-error">
+            {{ stats_par_statut.en_panne|default:0 }}
+        </div>
+    </div>
+</div>
+
+<div class="hydria-v1-panel card mb-8 border border-base-300 bg-base-100 shadow">
+    <div class="card-body gap-3 p-4 sm:p-5">
+        <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+                <h2 class="card-title text-base"><i class="fas fa-map-location-dot text-info"></i>Localisation</h2>
+                <p class="text-xs opacity-70">Équipements, points d'eau, villages et liaisons dont les deux extrémités sont géolocalisées.</p>
+            </div>
+            <div class="flex flex-wrap gap-2 text-xs">
+                <span class="badge border-blue-500 text-blue-600">{{ ouvrage_map_data.counts.equipements }} équipement{{ ouvrage_map_data.counts.equipements|pluralize }}</span>
+                <span class="badge border-cyan-500 text-cyan-600">{{ ouvrage_map_data.counts.points_eau }} point{{ ouvrage_map_data.counts.points_eau|pluralize }} d'eau</span>
+                <span class="badge border-amber-500 text-amber-600">{{ ouvrage_map_data.counts.villages }} village{{ ouvrage_map_data.counts.villages|pluralize }}</span>
+                <span class="badge border-emerald-600 text-emerald-700" title="Liaisons dont les deux extrémités ont des coordonnées GPS">{{ ouvrage_map_data.counts.liaisons }} liaison{{ ouvrage_map_data.counts.liaisons|pluralize }}</span>
+                <button id="equipements-map-assign-mode" type="button" class="btn btn-outline btn-error btn-xs" {% if not equipements %}disabled{% endif %}>
+                    <i class="fas fa-map-pin mr-1"></i>Affecter une position
+                </button>
+            </div>
+        </div>
+        {% if selected_ouvrage %}
+        <div id="equipements-mini-map" class="h-72 w-full overflow-hidden rounded-xl border border-base-300"></div>
+        {% else %}
+        <div class="flex h-28 items-center justify-center rounded-xl border border-dashed border-base-300 bg-base-200/50 text-center text-sm opacity-70">
+            Aucune coordonnée disponible pour les équipements, les points d'eau ou les villages desservis.
+        </div>
+        {% endif %}
+    </div>
+</div>
+{{ ouvrage_map_data|json_script:"equipements-map-data" }}
+{% if selected_ouvrage %}
+{% url 'organization:api_ouvrage_map_coordinate_assign' selected_ouvrage.pk as map_assignment_url %}
+{% include 'organization/_map_coordinate_assignment.html' with map_prefix='equipements-map' entity_type='equipement' entities=equipements assignment_url=map_assignment_url %}
+{% endif %}
+
+<!-- Table des équipements -->
+<div class="hydria-v1-table-card card bg-base-100 shadow-xl">
+    <div class="card-body p-4 sm:p-6">
+        <div class="mb-6 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <h2 class="card-title text-base sm:text-lg">📋 Liste des équipements</h2>
+            <div class="hydria-v1-compact-filters flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:w-auto xl:justify-end">
+                {% if selected_ouvrage %}
+                <a href="{% url 'organization:points_eau_list_ouvrage' selected_ouvrage.pk %}" class="btn btn-outline btn-sm w-full sm:w-auto" title="Basculer vers les points d'eau de cet ouvrage">
+                    <i class="fas fa-faucet mr-2"></i>Points d'eau
+                </a>
+                {% endif %}
+                <!-- Group buttons for View Toggle -->
+                <div class="join grid w-full grid-cols-2 sm:w-auto">
+                    <button class="join-item btn btn-sm w-full" id="btn-view-list" onclick="toggleView('list')" title="Vue liste" aria-label="Afficher la vue liste">
+                        <i class="fas fa-list"></i>
+                    </button>
+                    <button class="join-item btn btn-sm w-full" id="btn-view-grid" onclick="toggleView('grid')" title="Vue cartes" aria-label="Afficher la vue cartes">
+                        <i class="fas fa-th-large"></i>
+                    </button>
+                </div>
+                
+                <input type="text" id="search-input" placeholder="Rechercher..." class="input input-bordered input-sm w-full sm:min-w-56 sm:flex-1 xl:w-64" onkeyup="filterEquipements()">
+                <button onclick="window.location.reload()" class="btn btn-ghost btn-sm w-full sm:w-auto" title="Actualiser" aria-label="Actualiser la liste des équipements">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+            </div>
+        </div>
+
+        {% if equipements %}
+        
+        <!-- Vue Cartes (Grid) -->
+        <div id="view-cards" class="hidden grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-6">
+            {% for equipement in equipements %}
+            <div class="card bg-base-100 border border-base-200 shadow-sm hover:shadow-md transition-shadow cursor-pointer group"
+                 onclick="selectEquipementCard('{{ equipement.pk }}')">
+                <div id="equipement-card-photos-data-{{ equipement.pk }}" class="hidden" data-photo-title="Photo de l'équipement {{ equipement.nom }}">
+                    {% for photo_url in equipement.photo_urls %}<span data-photo-url="{{ photo_url }}"></span>{% endfor %}
+                </div>
+                <figure class="h-48 bg-base-200 relative overflow-hidden">
+                    {% if equipement.photo_urls %}
+                        <!-- Affichage de la première photo (supposée être en base64 dans le JSON) -->
+                        <img id="equipement-card-photo-{{ equipement.pk }}" src="{{ equipement.photo_urls.0 }}" alt="{{ equipement.nom }}" class="h-full w-full cursor-zoom-in object-cover transition-transform duration-500 group-hover:scale-105"
+                             onclick="event.stopPropagation(); openEquipementCardPhoto('{{ equipement.pk }}')" />
+                        <button type="button" class="btn btn-circle btn-sm absolute left-2 top-1/2 -translate-y-1/2 bg-base-100/85 shadow {% if equipement.photo_urls|length <= 1 %}hidden{% endif %}"
+                                onclick="event.stopPropagation(); stepEquipementCardPhoto('{{ equipement.pk }}', -1)" aria-label="Photo précédente">
+                            <i class="fas fa-chevron-left"></i>
+                        </button>
+                        <button type="button" class="btn btn-circle btn-sm absolute right-2 top-1/2 -translate-y-1/2 bg-base-100/85 shadow {% if equipement.photo_urls|length <= 1 %}hidden{% endif %}"
+                                onclick="event.stopPropagation(); stepEquipementCardPhoto('{{ equipement.pk }}', 1)" aria-label="Photo suivante">
+                            <i class="fas fa-chevron-right"></i>
+                        </button>
+                        <button type="button" class="absolute left-2 top-2 rounded-lg bg-black/55 px-2 py-1 text-xs text-white"
+                                onclick="event.stopPropagation(); openEquipementCardPhoto('{{ equipement.pk }}')">
+                            <i class="fas fa-expand mr-1"></i>Agrandir
+                        </button>
+                        <div class="absolute bottom-0 right-0 bg-black/50 text-white text-xs px-2 py-1 rounded-tl-lg">
+                            <i class="fas fa-camera mr-1"></i><span id="equipement-card-photo-counter-{{ equipement.pk }}">1 / {{ equipement.photo_urls|length }}</span>
+                        </div>
+                    {% else %}
+                        <!-- Placeholder si pas de photo -->
+                        <div class="flex flex-col items-center justify-center w-full h-full text-base-content/20">
+                            <i class="fas fa-tools text-5xl mb-2"></i>
+                            <span class="text-sm">Pas de photo</span>
+                        </div>
+                    {% endif %}
+                    
+                    <div class="absolute top-2 right-2">
+                         <input id="equipement-card-selector-{{ equipement.pk }}" type="radio" name="selected-equipement-card" value="{{ equipement.pk }}"
+                                class="peer sr-only"
+                                onclick="event.stopPropagation(); syncSelectionFromCard(this);">
+                         <label for="equipement-card-selector-{{ equipement.pk }}" onclick="event.stopPropagation()" class="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg border border-base-300 bg-base-100/95 shadow transition peer-checked:border-primary peer-checked:ring-2 peer-checked:ring-primary/30" title="{{ equipement.type_equipement.nom_type|default:'Équipement' }}">
+                             <i class="fas {{ equipement.type_equipement.nom_type|equipment_icon }} {{ equipement.type_equipement.nom_type|equipment_icon_tone }} text-xl" aria-hidden="true"></i>
+                         </label>
+                    </div>
+                </figure>
+                <div class="card-body p-4">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 class="font-bold text-lg leading-tight mb-1">{{ equipement.nom }}</h3>
+                            {% if equipement.code_equipement %}
+                            <code class="text-xs bg-base-200 px-1 py-0.5 rounded">{{ equipement.code_equipement }}</code>
+                            {% endif %}
+                        </div>
+                        <div class="flex flex-col items-end gap-1">
+                            {% if equipement.statut == 'operationnel' %}
+                            <span class="badge badge-success badge-sm">Opérationnel</span>
+                            {% elif equipement.statut == 'maintenance' %}
+                            <span class="badge badge-warning badge-sm">Maintenance</span>
+                            {% elif equipement.statut == 'panne' %}
+                            <span class="badge badge-error badge-sm">En panne</span>
+                            {% else %}
+                            <span class="badge badge-ghost badge-sm border-base-content/20">{{ equipement.statut|default:"Indéfini" }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <div class="flex flex-wrap gap-1 mt-2 mb-3">
+                         {% if equipement.type_equipement %}
+                        <span class="inline-flex items-center gap-2" title="{{ equipement.type_equipement.nom_type }}">
+                            <i class="fas {{ equipement.type_equipement.nom_type|equipment_icon }} {{ equipement.type_equipement.nom_type|equipment_icon_tone }} text-lg" aria-hidden="true"></i>
+                            <span class="badge badge-outline badge-xs">{{ equipement.type_equipement.nom_type }}</span>
+                        </span>
+                        {% endif %}
+                        {% if equipement.volume_m3 is not None %}
+                        <span class="badge badge-info badge-xs">{{ equipement.volume_m3|floatformat:1 }} m³</span>
+                        {% endif %}
+                         {% if equipement.latitude and equipement.longitude %}
+                        <span class="badge badge-ghost badge-xs gap-1" title="Géolocalisé">
+                            <i class="fas fa-map-marker-alt text-error text-[10px]"></i> GPS
+                        </span>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="card-actions justify-end mt-auto border-t border-base-200 pt-3">
+                        <button onclick="event.stopPropagation(); editEquipement('{{ equipement.pk }}', true)" class="btn btn-ghost btn-xs text-primary" title="Prendre une photo">
+                            <i class="fas fa-camera"></i> Photo
+                        </button>
+                        <button onclick="event.stopPropagation(); editEquipement('{{ equipement.pk }}')" class="btn btn-ghost btn-xs">
+                            <i class="fas fa-edit"></i> Modifier
+                        </button>
+                        <button onclick="event.stopPropagation(); deleteEquipement('{{ equipement.pk }}', '{{ equipement.nom|escapejs }}')" class="btn btn-ghost btn-xs text-error">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div id="view-list" class="overflow-x-auto">
+            <table class="table table-zebra w-full">
+                <thead>
+                    <tr>
+                        <th>Sélection</th>
+                        <th>Nom</th>
+                        <th>Type d'équipement</th>
+                        <th>Code équipement</th>
+                        <th>Statut</th>
+                        <th>Géolocalisé</th>
+                        <th>Date installation</th>
+                        <th>Dernière maintenance</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="equipements-tbody">
+                    {% for equipement in equipements %}
+                    <tr class="hover cursor-pointer" data-equipement-id="{{ equipement.pk }}"
+                        onclick="selectEquipementRow('{{ equipement.pk }}', '{{ equipement.nom|escapejs }}')">
+                        <td class="text-center" onclick="event.stopPropagation()">
+                            <input type="radio" name="selected-equipement" value="{{ equipement.pk }}" class="peer sr-only"
+                                   onchange="handleEquipementSelection('{{ equipement.pk }}', '{{ equipement.nom|escapejs }}')"
+                                   id="equipement-{{ equipement.pk }}">
+                            <label for="equipement-{{ equipement.pk }}" class="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-base-300 bg-base-100 transition peer-checked:border-primary peer-checked:ring-2 peer-checked:ring-primary/30" title="Sélectionner · {{ equipement.type_equipement.nom_type|default:'Équipement' }}">
+                                <i class="fas {{ equipement.type_equipement.nom_type|equipment_icon }} {{ equipement.type_equipement.nom_type|equipment_icon_tone }} text-lg" aria-hidden="true"></i>
+                            </label>
+                        </td>
+                        <td class="font-semibold">{{ equipement.nom }}</td>
+                        <td>
+                            {% if equipement.type_equipement %}
+                            <span class="inline-flex items-center gap-2" title="{{ equipement.type_equipement.nom_type }}">
+                                <i class="fas {{ equipement.type_equipement.nom_type|equipment_icon }} {{ equipement.type_equipement.nom_type|equipment_icon_tone }} text-lg" aria-hidden="true"></i>
+                                <span class="badge badge-outline">{{ equipement.type_equipement.nom_type }}</span>
+                            </span>
+                            {% else %}
+                            <span class="badge badge-ghost text-gray-400">Non défini</span>
+                            {% endif %}
+                            {% if equipement.volume_m3 is not None %}
+                            <div class="mt-1 text-xs font-semibold text-info">{{ equipement.volume_m3|floatformat:1 }} m³</div>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if equipement.code_equipement %}
+                            <code class="text-sm">{{ equipement.code_equipement }}</code>
+                            {% else %}
+                            <span class="text-gray-400">Non défini</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if equipement.statut == 'operationnel' %}
+                            <span class="badge badge-success">Opérationnel</span>
+                            {% elif equipement.statut == 'maintenance' %}
+                            <span class="badge badge-warning">Maintenance</span>
+                            {% elif equipement.statut == 'panne' %}
+                            <span class="badge badge-error">En panne</span>
+                            {% else %}
+                            <span class="badge badge-outline">{{ equipement.statut|default:"Indéfini" }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if equipement.latitude and equipement.longitude %}
+                            <span class="badge badge-success gap-1" title="Lat: {{ equipement.latitude }}, Lon: {{ equipement.longitude }}">
+                                <i class="fas fa-map-marker-alt"></i> Oui
+                            </span>
+                            {% else %}
+                            <span class="badge badge-ghost gap-1">
+                                <i class="fas fa-map-marker-alt"></i> Non
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if equipement.date_installation %}
+                            {{ equipement.date_installation|date:"d/m/Y" }}
+                            {% else %}
+                            <span class="text-gray-400">Non renseignée</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if equipement.derniere_maintenance %}
+                            {{ equipement.derniere_maintenance|date:"d/m/Y" }}
+                            {% else %}
+                            <span class="text-gray-400">Jamais</span>
+                            {% endif %}
+                        </td>
+                        <td onclick="event.stopPropagation()">
+                            <div class="flex gap-1">
+                                <button onclick="editEquipement('{{ equipement.pk }}')" class="btn btn-ghost btn-xs" title="Modifier">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button onclick="deleteEquipement('{{ equipement.pk }}', '{{ equipement.nom|escapejs }}')" class="btn btn-ghost btn-xs text-error" title="Supprimer">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-12">
+            <div class="text-gray-400 text-6xl mb-4">
+                <i class="fas fa-cogs"></i>
+            </div>
+            <h3 class="text-2xl font-bold mb-4">Aucun équipement trouvé</h3>
+            {% if selected_ouvrage %}
+            <p class="text-gray-500 mb-6">Il n'y a actuellement aucun équipement pour l'ouvrage <strong>{{ selected_ouvrage.nom_ouvrage }}</strong>.</p>
+            {% else %}
+            <p class="text-gray-500 mb-6">Sélectionnez un ouvrage pour voir ses équipements.</p>
+            {% endif %}
+            <button onclick="openCreateEquipementModal()" class="btn btn-primary">
+                <i class="fas fa-plus mr-2"></i>Créer le premier équipement
+            </button>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Section Points de contrôle en cascade -->
+<div class="hydria-v1-table-card card bg-base-100 shadow-xl mt-8" id="points-controle-section" style="display: none;">
+    <div class="card-body">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="card-title">🔍 Points de contrôle pour <span id="selected-equipement-name"></span></h2>
+            <button onclick="hideEquipementControles()" class="btn btn-ghost btn-sm">
+                <i class="fas fa-times"></i> Fermer
+            </button>
+        </div>
+
+        <!-- Table des points de contrôle assignés -->
+        <div class="overflow-x-auto">
+            <table class="table table-zebra w-full">
+                <thead>
+                    <tr>
+                        <th>Point de Contrôle</th>
+                        <th>Type de Résultat</th>
+                        <th>Valeurs de Référence</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="equipement-controle-tbody">
+                    <!-- Sera rempli dynamiquement -->
+                </tbody>
+            </table>
+        </div>
+
+        <div class="mt-6">
+            <button onclick="addEquipementControle()" class="btn btn-primary btn-sm">
+                <i class="fas fa-plus mr-2"></i>Ajouter un point de contrôle
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block modals %}
+<!-- Modale de création/édition d'équipement -->
+<input type="checkbox" id="createModal" class="modal-toggle" />
+<div class="modal">
+    <div class="modal-box relative max-w-4xl">
+        <label for="createModal" class="btn btn-sm btn-circle absolute right-2 top-2">✕</label>
+        <h3 class="text-lg font-bold mb-4" id="modal-title">⚙️ Nouvel équipement</h3>
+
+        <!-- UUID de l'équipement (en lecture seule) -->
+        <div id="equipement-uuid-container" class="mb-4 hidden">
+            <div class="alert alert-info py-2">
+                <div class="flex items-center justify-between w-full">
+                    <div class="flex items-center gap-2">
+                        <i class="fas fa-fingerprint"></i>
+                        <span class="text-sm font-semibold">UUID:</span>
+                        <code id="equipement-uuid" class="text-xs bg-base-200 px-2 py-1 rounded">-</code>
+                    </div>
+                    <button type="button" onclick="copyUUID()" class="btn btn-xs btn-ghost" title="Copier l'UUID">
+                        <i class="fas fa-copy"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <form id="equipementForm" method="post">
+            {% csrf_token %}
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Nom de l'équipement *</span>
+                    </label>
+                    <input type="text" name="nom" class="input input-bordered" required>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Type d'équipement</span>
+                    </label>
+                    <select id="equipement-type-select" name="type_equipement" class="select select-bordered" onchange="toggleEquipementVolumeField()">
+                        <option value="">Choisir un type...</option>
+                        {% for type in types_equipements %}
+                        <option value="{{ type.pk }}" data-type-name="{{ type.nom_type|lower }}">{{ type.nom_type }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div id="equipement-volume-field" class="form-control hidden">
+                    <label class="label">
+                        <span class="label-text">Volume de la citerne (m³)</span>
+                    </label>
+                    <input type="number" name="volume_m3" min="0" step="0.5" inputmode="decimal"
+                           class="input input-bordered" placeholder="Ex. 25,5">
+                    <label class="label pt-1">
+                        <span class="label-text-alt">Capacité totale, par pas de 0,5 m³.</span>
+                    </label>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Code équipement</span>
+                    </label>
+                    <input type="text" name="code_equipement" class="input input-bordered">
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Statut</span>
+                    </label>
+                    <select name="statut" class="select select-bordered">
+                        <option value="operationnel">Opérationnel</option>
+                        <option value="en_maintenance">En maintenance</option>
+                        <option value="en_panne">En panne</option>
+                        <option value="hors_service">Hors service</option>
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Element amont actuel</span>
+                    </label>
+                    <input type="text" id="equipement_amont_display" class="input input-bordered" value="Aucun element amont" readonly>
+                    <label class="label">
+                        <span class="label-text-alt">Pour changer l'amont, modifier l'element parent et ajouter cet equipement dans ses avals.</span>
+                    </label>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Liaisons hydrauliques</span>
+                    </label>
+                    <div class="rounded-box border border-base-300 bg-base-200/60 px-4 py-3 text-sm">
+                        Les liaisons amont/aval se gerent maintenant depuis la page detail ouvrage pour eviter les conflits de saisie.
+                        {% if selected_ouvrage %}
+                        <a href="{% url 'organization:ouvrage_detail' selected_ouvrage.pk %}" class="link link-primary ml-1">Ouvrir l'organigramme</a>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Date d'installation</span>
+                    </label>
+                    <input type="date" name="date_installation" class="input input-bordered">
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Dernière maintenance</span>
+                    </label>
+                    <input type="date" name="derniere_maintenance" class="input input-bordered">
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Nombre de nettoyages annuels</span>
+                    </label>
+                    <input type="number" name="nombre_nettoyages_annuels" class="input input-bordered" min="0">
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Temps d'accès (heures)</span>
+                    </label>
+                    <input type="number" step="0.1" name="temps_acces_heures" class="input input-bordered" min="0">
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Point de départ</span>
+                    </label>
+                    <input type="text" name="point_depart" class="input input-bordered">
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Longueur périmètre (m)</span>
+                    </label>
+                    <input type="number" name="longueur_perimetre" class="input input-bordered" min="0">
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Durée nettoyage (heures)</span>
+                    </label>
+                    <input type="number" step="0.1" name="duree_nettoyage" class="input input-bordered" min="0">
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Distance matériaux locaux</span>
+                    </label>
+                    <select name="distance_materiaux_locaux" class="select select-bordered">
+                        <option value="">Choisir...</option>
+                        <option value="proche">Proche</option>
+                        <option value="moyen">Moyen</option>
+                        <option value="eloigne">Éloigné</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Section coordonnées GPS -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                <div class="form-control md:col-span-2">
+                    <label class="label">
+                        <span class="label-text">Coordonnées GPS</span>
+                        <button type="button" onclick="getGPSLocation()" class="btn btn-xs btn-primary" title="Récupérer ma position actuelle">
+                            <i class="fas fa-location-arrow mr-1"></i>Ma position
+                        </button>
+                    </label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <input type="number" step="0.00000001" name="latitude" class="input input-bordered" placeholder="Latitude" id="latitude-input">
+                        <input type="number" step="0.00000001" name="longitude" class="input input-bordered" placeholder="Longitude" id="longitude-input">
+                    </div>
+                    <label class="label">
+                        <span class="label-text-alt text-info" id="gps-status"></span>
+                    </label>
+                </div>
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">&nbsp;</span>
+                    </label>
+                    <div class="text-sm text-gray-500 p-2 bg-base-200 rounded">
+                        <i class="fas fa-info-circle mr-1"></i>
+                        <span id="gps-coordinates-display">Aucune position</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
+                <div class="form-control">
+                    <label class="label cursor-pointer justify-start gap-2">
+                        <input type="checkbox" name="haie_vive_cultivable" class="checkbox checkbox-primary">
+                        <span class="label-text">Haie vive cultivable</span>
+                    </label>
+                </div>
+
+                <div class="form-control">
+                    <label class="label cursor-pointer justify-start gap-2">
+                        <input type="checkbox" name="boite_a_vanne" class="checkbox checkbox-primary">
+                        <span class="label-text">Boîte à vanne</span>
+                    </label>
+                </div>
+
+                <div class="form-control">
+                    <label class="label cursor-pointer justify-start gap-2">
+                        <input type="checkbox" name="boite_a_vanne_utile" class="checkbox checkbox-primary">
+                        <span class="label-text">Boîte à vanne utile</span>
+                    </label>
+                </div>
+
+                <div class="form-control">
+                    <label class="label cursor-pointer justify-start gap-2">
+                        <input type="checkbox" name="vanne_flotteur" class="checkbox checkbox-primary">
+                        <span class="label-text">Vanne flotteur</span>
+                    </label>
+                </div>
+
+                <div class="form-control">
+                    <label class="label cursor-pointer justify-start gap-2">
+                        <input type="checkbox" name="est_dans_village" class="checkbox checkbox-primary">
+                        <span class="label-text">Est dans le village</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-control mt-4">
+                <label class="label">
+                    <span class="label-text">Description</span>
+                </label>
+                <textarea name="description" class="textarea textarea-bordered h-24"></textarea>
+            </div>
+
+            <!-- Section Photos -->
+            <div class="divider mt-6">📷 Photos</div>
+            <div class="mt-4">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="font-semibold text-sm">Photos de l'équipement</h3>
+                    <div class="flex gap-2">
+                        <button type="button" onclick="captureEquipementPhoto()" class="btn btn-sm btn-info gap-2">
+                            <i class="fas fa-camera"></i>
+                            Prendre photo
+                        </button>
+                        <button type="button" onclick="selectEquipementPhoto()" class="btn btn-sm btn-primary gap-2">
+                            <i class="fas fa-folder-open"></i>
+                            Choisir fichier
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Input fichier caché -->
+                <input type="file" id="equipement-photo-input" accept="image/*" style="display: none;" onchange="handleEquipementPhotoSelected(event)">
+
+                <!-- Galerie de photos -->
+                <div id="equipement-photos-gallery" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <!-- Les photos seront ajoutées ici dynamiquement -->
+                </div>
+
+                <!-- Champ caché pour stocker les photos en JSON -->
+                <input type="hidden" name="photos_json" id="equipement-photos-json">
+            </div>
+
+            <!-- Ouvrage caché -->
+            <input type="hidden" name="ouvrage" value="{{ selected_ouvrage.pk }}">
+
+            <div class="modal-action">
+                <button type="button" onclick="closeModal('createModal')" class="btn btn-ghost">Annuler</button>
+                <button type="submit" class="btn btn-primary">Créer l'équipement</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<dialog id="equipement-photo-lightbox" class="modal">
+    <div class="modal-box max-w-5xl bg-base-100 p-3">
+        <div class="mb-3 flex items-center justify-between gap-3">
+            <h3 id="equipement-photo-lightbox-title" class="text-sm font-semibold text-base-content/80">Photo</h3>
+            <form method="dialog">
+                <button class="btn btn-sm btn-circle btn-ghost" type="submit">✕</button>
+            </form>
+        </div>
+        <div class="mb-3 flex items-center justify-between">
+            <button id="equipement-photo-lightbox-prev" type="button" class="btn btn-sm btn-outline">Précédent</button>
+            <span id="equipement-photo-lightbox-counter" class="text-xs text-base-content/70">1 / 1</span>
+            <button id="equipement-photo-lightbox-next" type="button" class="btn btn-sm btn-outline">Suivant</button>
+        </div>
+        <div class="flex items-center justify-center">
+            <img id="equipement-photo-lightbox-image" src="" alt="" class="max-h-[75vh] w-auto max-w-full rounded-xl object-contain">
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button type="submit">close</button>
+    </form>
+</dialog>
+
+<dialog id="blocages-suppression-modal" class="modal">
+    <div class="modal-box max-w-2xl">
+        <h3 id="blocages-suppression-titre" class="text-lg font-bold text-error"></h3>
+        <p id="blocages-suppression-message" class="mt-2 text-sm"></p>
+        <ul id="blocages-suppression-liste" class="mt-4 max-h-80 space-y-2 overflow-y-auto"></ul>
+        <p class="mt-4 text-xs opacity-70">
+            Cliquez sur « Corriger » : la page s'ouvre dans un nouvel onglet. Réaffectez l'élément à un autre équipement
+            ou supprimez-le, puis revenez ici et cliquez sur « Réessayer la suppression ».
+        </p>
+        <div class="modal-action">
+            <button type="button" id="blocages-suppression-reessayer" class="btn btn-error btn-sm">
+                <i class="fas fa-redo mr-1"></i>Réessayer la suppression
+            </button>
+            <form method="dialog"><button class="btn btn-sm">Fermer</button></form>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>Fermer</button></form>
+</dialog>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const mapElement = document.getElementById('equipements-mini-map');
+    const dataElement = document.getElementById('equipements-map-data');
+    if (!mapElement || !dataElement || typeof L === 'undefined') return;
+
+    const mapData = JSON.parse(dataElement.textContent || '{}');
+    const markers = Array.isArray(mapData.markers) ? mapData.markers : [];
+    const liaisons = Array.isArray(mapData.liaisons) ? mapData.liaisons : [];
+
+    const miniMap = L.map(mapElement, { scrollWheelZoom: false, zoomSnap: 0.5 });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap'
+    }).addTo(miniMap);
+    L.control.scale({
+        position: 'bottomleft',
+        metric: true,
+        imperial: false,
+        maxWidth: 160,
+    }).addTo(miniMap);
+
+    const bounds = [];
+    liaisons.forEach(liaison => {
+        const start = [Number(liaison.from?.latitude), Number(liaison.from?.longitude)];
+        const end = [Number(liaison.to?.latitude), Number(liaison.to?.longitude)];
+        if (![...start, ...end].every(Number.isFinite)) return;
+        const line = L.polyline([start, end], {
+            color: '#059669',
+            weight: 4,
+            opacity: 0.8,
+            dashArray: '10 7',
+            lineCap: 'round',
+        }).addTo(miniMap);
+        const tooltip = document.createElement('div');
+        tooltip.textContent = (liaison.from?.label || 'Amont') + ' → ' + (liaison.to?.label || 'Aval');
+        line.bindTooltip(tooltip, { sticky: true });
+    });
+    markers.forEach(item => {
+        const latLng = [Number(item.latitude), Number(item.longitude)];
+        if (!Number.isFinite(latLng[0]) || !Number.isFinite(latLng[1])) return;
+        bounds.push(latLng);
+        const palette = item.kind === 'village'
+            ? { color: '#d97706', fill: '#f59e0b', radius: 4 }
+            : item.kind === 'point_eau'
+                ? { color: '#0891b2', fill: '#06b6d4', radius: 7 }
+                : { color: '#2563eb', fill: '#3b82f6', radius: 10 };
+        const marker = L.circleMarker(latLng, {
+            radius: palette.radius,
+            color: palette.color,
+            fillColor: palette.fill,
+            fillOpacity: 0.85,
+            weight: 2,
+        }).addTo(miniMap);
+        const popup = document.createElement('div');
+        const title = document.createElement('strong');
+        const detail = document.createElement('div');
+        title.textContent = item.label || (item.kind === 'village' ? 'Village desservi' : item.kind === 'point_eau' ? "Point d'eau" : 'Équipement');
+        detail.textContent = item.detail || '';
+        popup.append(title, detail);
+        marker.bindPopup(popup);
+
+        // Étiquette permanente à côté du marqueur : IDXLS (point d'eau),
+        // type d'équipement (équipement), nom du village (village)
+        let labelText = '';
+        if (item.kind === 'point_eau') {
+            labelText = item.idxls || '';
+        } else if (item.kind === 'equipement') {
+            labelText = item.type_equipement || item.detail || '';
+        } else if (item.kind === 'village') {
+            labelText = item.label || '';
+        }
+        if (labelText) {
+            marker.bindTooltip(labelText, {
+                permanent: true,
+                direction: 'right',
+                offset: [palette.radius + 2, 0],
+                className: 'hydria-map-label hydria-map-label-' + item.kind,
+            });
+        }
+    });
+
+    if (bounds.length === 0) {
+        miniMap.setView([-18.8792, 47.5079], 6);
+    } else if (bounds.length === 1) {
+        miniMap.setView(bounds[0], 15);
+    } else {
+        miniMap.fitBounds(bounds, { padding: [28, 28], maxZoom: 16 });
+    }
+    window.setTimeout(() => miniMap.invalidateSize(), 100);
+    if (window.setupHydriaMapCoordinateAssignment) {
+        window.setupHydriaMapCoordinateAssignment(miniMap, 'equipements-map');
+    }
+});
+let currentEquipementId = null;
+let equipementPhotoLightboxImages = [];
+let equipementPhotoLightboxIndex = 0;
+let equipementPhotoLightboxTitle = '';
+const equipementCardPhotoIndexes = {};
+
+function getEquipementCardPhotoUrls(equipementId) {
+    return Array.from(document.querySelectorAll(`#equipement-card-photos-data-${equipementId} [data-photo-url]`))
+        .map(node => node.dataset.photoUrl)
+        .filter(Boolean);
+}
+
+function renderEquipementCardPhoto(equipementId) {
+    const urls = getEquipementCardPhotoUrls(equipementId);
+    const image = document.getElementById(`equipement-card-photo-${equipementId}`);
+    const counter = document.getElementById(`equipement-card-photo-counter-${equipementId}`);
+    if (!urls.length || !image) return;
+    const index = ((equipementCardPhotoIndexes[equipementId] || 0) + urls.length) % urls.length;
+    equipementCardPhotoIndexes[equipementId] = index;
+    image.src = urls[index];
+    if (counter) counter.textContent = `${index + 1} / ${urls.length}`;
+}
+
+function stepEquipementCardPhoto(equipementId, step) {
+    equipementCardPhotoIndexes[equipementId] = (equipementCardPhotoIndexes[equipementId] || 0) + step;
+    renderEquipementCardPhoto(equipementId);
+}
+
+function openEquipementCardPhoto(equipementId) {
+    const urls = getEquipementCardPhotoUrls(equipementId);
+    const dataNode = document.getElementById(`equipement-card-photos-data-${equipementId}`);
+    const title = dataNode?.dataset.photoTitle || "Photo de l'équipement";
+    openEquipementPhotoLightbox(urls, title, equipementCardPhotoIndexes[equipementId] || 0);
+}
+
+function renderEquipementPhotoLightbox(title) {
+    const modal = document.getElementById('equipement-photo-lightbox');
+    const image = document.getElementById('equipement-photo-lightbox-image');
+    const titleNode = document.getElementById('equipement-photo-lightbox-title');
+    const counterNode = document.getElementById('equipement-photo-lightbox-counter');
+    const prevBtn = document.getElementById('equipement-photo-lightbox-prev');
+    const nextBtn = document.getElementById('equipement-photo-lightbox-next');
+    if (!modal || !image || !equipementPhotoLightboxImages.length) {
+        return;
+    }
+    image.src = equipementPhotoLightboxImages[equipementPhotoLightboxIndex];
+    image.alt = title || equipementPhotoLightboxTitle || "Photo de l'équipement";
+    if (titleNode) {
+        titleNode.textContent = title || equipementPhotoLightboxTitle || "Photo de l'équipement";
+    }
+    if (counterNode) {
+        counterNode.textContent = `${equipementPhotoLightboxIndex + 1} / ${equipementPhotoLightboxImages.length}`;
+    }
+    if (prevBtn) {
+        prevBtn.classList.toggle('invisible', equipementPhotoLightboxIndex <= 0);
+    }
+    if (nextBtn) {
+        nextBtn.classList.toggle('invisible', equipementPhotoLightboxIndex >= equipementPhotoLightboxImages.length - 1);
+    }
+}
+
+function openEquipementPhotoLightbox(imageUrls, title, startIndex) {
+    const modal = document.getElementById('equipement-photo-lightbox');
+    equipementPhotoLightboxImages = (imageUrls || []).filter(Boolean);
+    equipementPhotoLightboxIndex = Math.max(0, Math.min(startIndex || 0, equipementPhotoLightboxImages.length - 1));
+    equipementPhotoLightboxTitle = title || "Photo de l'équipement";
+    if (!modal || !equipementPhotoLightboxImages.length) {
+        return;
+    }
+    renderEquipementPhotoLightbox(title);
+    modal.showModal();
+}
+
+function stepEquipementPhotoLightbox(step) {
+    const nextIndex = equipementPhotoLightboxIndex + step;
+    if (nextIndex < 0 || nextIndex >= equipementPhotoLightboxImages.length) return;
+    equipementPhotoLightboxIndex = nextIndex;
+    renderEquipementPhotoLightbox();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const prevBtn = document.getElementById('equipement-photo-lightbox-prev');
+    const nextBtn = document.getElementById('equipement-photo-lightbox-next');
+    if (prevBtn) {
+        prevBtn.addEventListener('click', function() { stepEquipementPhotoLightbox(-1); });
+    }
+    if (nextBtn) {
+        nextBtn.addEventListener('click', function() { stepEquipementPhotoLightbox(1); });
+    }
+});
+
+// Nouvelle fonction pour gérer la sélection en cascade avec clic sur ligne
+function selectEquipementRow(equipementId, nomEquipement) {
+    console.log('Équipement sélectionné (clic ligne):', equipementId, nomEquipement);
+    currentEquipementId = equipementId;
+
+    // Cocher le bouton radio correspondant dans la liste
+    const radioButton = document.getElementById(`equipement-${equipementId}`);
+    if (radioButton) {
+        radioButton.checked = true;
+    }
+    
+    // Cocher le bouton radio correspondant dans les cartes (pour sync)
+    const cardRadio = document.querySelector(`input[name="selected-equipement-card"][value="${equipementId}"]`);
+    if (cardRadio) {
+        cardRadio.checked = true;
+    }
+
+    // Afficher la section des points de contrôle en cascade
+    document.getElementById('points-controle-section').style.display = 'block';
+    document.getElementById('selected-equipement-name').textContent = nomEquipement;
+
+    // Charger les points de contrôle pour cet équipement
+    loadEquipementControles(equipementId);
+
+    // Mettre en évidence la ligne sélectionnée
+    highlightSelectedRow(equipementId);
+    
+    // Mettre en évidence la carte sélectionnée
+    highlightSelectedCard(equipementId);
+}
+
+// Nouvelle fonction pour gérer la sélection depuis une carte
+function selectEquipementCard(equipementId) {
+    // Trouver le nom (depuis le bouton delete ou autre élément de la carte)
+    // Astuce: on peut récupérer le nom depuis le bouton delete qui a les arguments deleteEquipement('id', 'nom')
+    // Ou mieux, on va chercher l'élément titre de la carte
+    const cardRadio = document.querySelector(`input[name="selected-equipement-card"][value="${equipementId}"]`);
+    let nomEquipement = "Équipement";
+    
+    if (cardRadio) {
+        const cardTitle = cardRadio.closest('.card').querySelector('h3');
+        if (cardTitle) nomEquipement = cardTitle.textContent.trim();
+    }
+    
+    console.log('Équipement sélectionné (clic carte):', equipementId, nomEquipement);
+    selectEquipementRow(equipementId, nomEquipement);
+}
+
+function syncSelectionFromCard(radio) {
+    selectEquipementCard(radio.value);
+}
+
+// Fonction pour gérer la sélection via bouton radio (garde la compatibilité)
+function handleEquipementSelection(equipementId, nomEquipement) {
+    console.log('Équipement sélectionné (radio):', equipementId, nomEquipement);
+    selectEquipementRow(equipementId, nomEquipement);
+}
+
+function highlightSelectedRow(equipementId) {
+    // Enlever la mise en évidence des autres lignes
+    document.querySelectorAll('#equipements-tbody tr').forEach(row => {
+        row.classList.remove('bg-base-200', 'ring-2', 'ring-primary');
+    });
+
+    // Mettre en évidence la ligne sélectionnée
+    const selectedRow = document.querySelector(`tr[data-equipement-id="${equipementId}"]`);
+    if (selectedRow) {
+        selectedRow.classList.add('bg-base-200', 'ring-2', 'ring-primary');
+    }
+}
+
+function highlightSelectedCard(equipementId) {
+    // Enlever la mise en évidence des autres cartes
+    document.querySelectorAll('#view-cards .card').forEach(card => {
+        card.classList.remove('ring-2', 'ring-primary');
+    });
+
+    // Mettre en évidence la carte sélectionnée
+    const cardRadio = document.querySelector(`input[name="selected-equipement-card"][value="${equipementId}"]`);
+    if (cardRadio) {
+        const card = cardRadio.closest('.card');
+        if (card) {
+            card.classList.add('ring-2', 'ring-primary');
+            // Scroll vers la section points de contrôle si nécessaire
+            const pcSection = document.getElementById('points-controle-section');
+            if (pcSection && pcSection.style.display !== 'none') {
+                pcSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        }
+    }
+}
+
+// Gestion de la vue Liste/Carte
+function toggleView(mode) {
+    const listBtn = document.getElementById('btn-view-list');
+    const gridBtn = document.getElementById('btn-view-grid');
+    const listView = document.getElementById('view-list');
+    const cardsView = document.getElementById('view-cards');
+
+    if (!listView || !cardsView) return;
+
+    if (mode === 'list') {
+        listView.classList.remove('hidden');
+        cardsView.classList.add('hidden');
+        if (listBtn) listBtn.classList.add('btn-active', 'btn-primary');
+        if (gridBtn) gridBtn.classList.remove('btn-active', 'btn-primary');
+        localStorage.setItem('equipements_view_mode', 'list');
+    } else {
+        listView.classList.add('hidden');
+        cardsView.classList.remove('hidden');
+        if (listBtn) listBtn.classList.remove('btn-active', 'btn-primary');
+        if (gridBtn) gridBtn.classList.add('btn-active', 'btn-primary');
+        localStorage.setItem('equipements_view_mode', 'grid');
+    }
+}
+
+// Initialisation de la vue au chargement
+document.addEventListener('DOMContentLoaded', function() {
+    const savedMode = localStorage.getItem('equipements_view_mode');
+    // Mobile : Grid par défaut, Desktop : List par défaut
+    const defaultMode = window.innerWidth < 768 ? 'grid' : 'list';
+    toggleView(savedMode || defaultMode);
+});
+
+function hideEquipementControles() {
+    console.log('Fermeture de la section points de contrôle équipement');
+    document.getElementById('points-controle-section').style.display = 'none';
+    currentEquipementId = null;
+
+    // Enlever la sélection du bouton radio
+    const selectedRadio = document.querySelector('input[name="selected-equipement"]:checked');
+    if (selectedRadio) {
+        selectedRadio.checked = false;
+    }
+
+    // Enlever la mise en évidence des lignes
+    document.querySelectorAll('#equipements-tbody tr').forEach(row => {
+        row.classList.remove('bg-base-200', 'ring-2', 'ring-primary');
+    });
+}
+
+// Fonctions spécifiques aux équipements
+function filterEquipements() {
+    console.log('Filtrage des équipements...');
+    const searchValue = document.getElementById('search-input').value.toLowerCase();
+    const rows = document.querySelectorAll('#equipements-tbody tr');
+
+    rows.forEach(row => {
+        const text = row.textContent.toLowerCase();
+        row.style.display = text.includes(searchValue) ? '' : 'none';
+    });
+
+    // Si un équipement est sélectionné et caché par le filtre, fermer la section points de contrôle
+    if (currentEquipementId) {
+        const selectedRow = document.querySelector(`tr[data-equipement-id="${currentEquipementId}"]`);
+        if (selectedRow && selectedRow.style.display === 'none') {
+            console.log('Équipement sélectionné caché par le filtre, fermeture de la section');
+            hideEquipementControles();
+        }
+    }
+}
+
+function editEquipement(equipementId, autoCapture = false) {
+    // Charger les données de l'équipement et ouvrir la modale en mode édition
+    fetch(`/organisations/equipements/edit/${equipementId}/`, {
+        method: 'GET',
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Remplir le formulaire avec les données existantes
+            const form = document.getElementById('equipementForm');
+            form.action = `/organisations/equipements/edit/${equipementId}/`;
+
+            document.querySelector('input[name="nom"]').value = data.data.nom;
+            document.querySelector('select[name="type_equipement"]').value = data.data.type_equipement;
+            document.querySelector('input[name="volume_m3"]').value = data.data.volume_m3 || '';
+            toggleEquipementVolumeField();
+            document.querySelector('input[name="code_equipement"]').value = data.data.code_equipement;
+            document.querySelector('select[name="statut"]').value = data.data.statut;
+            const amontDisplay = document.getElementById('equipement_amont_display');
+            if (amontDisplay) {
+                amontDisplay.value = data.data.amont_label || 'Aucun element amont';
+            }
+            document.querySelector('input[name="date_installation"]').value = data.data.date_installation;
+            document.querySelector('input[name="derniere_maintenance"]').value = data.data.derniere_maintenance || '';
+            document.querySelector('input[name="nombre_nettoyages_annuels"]').value = data.data.nombre_nettoyages_annuels || '';
+            document.querySelector('input[name="temps_acces_heures"]').value = data.data.temps_acces_heures || '';
+            document.querySelector('input[name="point_depart"]').value = data.data.point_depart || '';
+            document.querySelector('input[name="longueur_perimetre"]').value = data.data.longueur_perimetre || '';
+            document.querySelector('input[name="duree_nettoyage"]').value = data.data.duree_nettoyage || '';
+            document.querySelector('select[name="distance_materiaux_locaux"]').value = data.data.distance_materiaux_locaux || '';
+            document.querySelector('input[name="haie_vive_cultivable"]').checked = data.data.haie_vive_cultivable || false;
+            document.querySelector('input[name="boite_a_vanne"]').checked = data.data.boite_a_vanne || false;
+            document.querySelector('input[name="boite_a_vanne_utile"]').checked = data.data.boite_a_vanne_utile || false;
+            document.querySelector('input[name="vanne_flotteur"]').checked = data.data.vanne_flotteur || false;
+            document.querySelector('input[name="est_dans_village"]').checked = data.data.est_dans_village || false;
+            document.querySelector('textarea[name="description"]').value = data.data.description;
+
+            // Coordonnées GPS
+            document.getElementById('latitude-input').value = data.data.latitude ?? '';
+            document.getElementById('longitude-input').value = data.data.longitude ?? '';
+            updateGPSDisplay();
+
+            // Charger les photos existantes
+            if (data.data.photos) {
+                loadExistingEquipementPhotos(data.data.photos);
+            } else {
+                equipementPhotosData = [];
+                renderEquipementPhotosGallery();
+            }
+
+            // Changer le titre et le bouton de la modale
+            document.getElementById('modal-title').textContent = '✏️ Modifier l\'équipement';
+            document.querySelector('#equipementForm button[type="submit"]').textContent = 'Modifier l\'équipement';
+
+            // Afficher l'UUID de l'équipement
+            document.getElementById('equipement-uuid').textContent = equipementId;
+            document.getElementById('equipement-uuid-container').classList.remove('hidden');
+
+            // Ouvrir la modale
+            openModal('createModal');
+            
+            // Si autoCapture est vrai, déclencher la prise de photo après un court délai
+            if (autoCapture) {
+                setTimeout(() => {
+                    // Scroll vers la section photos
+                    const photoSection = document.querySelector('.divider.mt-6');
+                    if (photoSection) {
+                        photoSection.scrollIntoView({ behavior: 'smooth' });
+                    }
+                    // Déclencher la capture
+                    captureEquipementPhoto();
+                }, 500);
+            }
+        } else {
+            alert('Erreur lors du chargement des données : ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        alert('Erreur lors du chargement des données');
+    });
+}
+
+// Suppression refusée : liste de ce qui bloque, liens de correction (nouvel onglet) et nouvel essai sur cette page
+function afficherBlocagesSuppression(equipementId, nom, data) {
+    const esc = (t) => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    document.getElementById('blocages-suppression-titre').textContent = `Impossible de supprimer « ${nom} »`;
+    document.getElementById('blocages-suppression-message').textContent = data.message;
+    const reste = data.total - data.blocages.length;
+    document.getElementById('blocages-suppression-liste').innerHTML = data.blocages.map(b => `
+        <li class="flex flex-col gap-2 rounded-lg border border-base-300 p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div class="min-w-0">
+                <div class="text-xs uppercase opacity-60">${esc(b.modele)}</div>
+                <div class="break-words font-medium">${esc(b.libelle)}</div>
+            </div>
+            ${b.lien ? `<a href="${esc(b.lien)}" target="_blank" rel="noopener" class="btn btn-warning btn-xs shrink-0">
+                <i class="fas fa-external-link-alt mr-1"></i>${esc(b.lien_libelle || 'Ouvrir')}</a>` : ''}
+        </li>`).join('') + (reste > 0 ? `<li class="text-sm opacity-70">… et ${reste} autre(s) élément(s).</li>` : '');
+    const bouton = document.getElementById('blocages-suppression-reessayer');
+    bouton.onclick = () => { document.getElementById('blocages-suppression-modal').close(); deleteEquipement(equipementId, nom, true); };
+    document.getElementById('blocages-suppression-modal').showModal();
+}
+
+function deleteEquipement(equipementId, nom, sansConfirmation = false) {
+    if (sansConfirmation || confirm(`Êtes-vous sûr de vouloir supprimer l'équipement "${nom}" ?`)) {
+        fetch(`/organisations/equipements/delete/${equipementId}/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(data.message);
+                window.location.href = data.redirect;
+            } else if (data.protege) {
+                afficherBlocagesSuppression(equipementId, nom, data);
+            } else {
+                alert('Erreur lors de la suppression : ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            alert('Erreur lors de la suppression');
+        });
+    }
+}
+
+function loadEquipementControles(equipementId) {
+    const tbody = document.getElementById('equipement-controle-tbody');
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="4" class="text-center text-gray-500">
+                <i class="fas fa-spinner fa-spin mr-2"></i>Chargement des points de contrôle...
+            </td>
+        </tr>
+    `;
+
+    fetch(`/organisations/api/equipements/${equipementId}/controles/`, {
+        method: 'GET',
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            document.getElementById('selected-equipement-name').textContent = data.equipement_nom;
+
+            if (data.data.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="4" class="text-center text-gray-500 py-8">
+                            <i class="fas fa-clipboard-list text-4xl mb-2"></i><br>
+                            Aucun point de contrôle configuré pour cet équipement.
+                        </td>
+                    </tr>
+                `;
+            } else {
+                let html = '';
+                data.data.forEach(controle => {
+                    const refValues = controle.valeur_min || controle.valeur_max ?
+                        `${controle.valeur_min || 'Min'} - ${controle.valeur_max || 'Max'} ${controle.unite}` :
+                        'Non applicable';
+
+                    const statusBadge = controle.est_en_retard === true ?
+                        '<span class="badge badge-error">En retard</span>' :
+                        controle.est_en_retard === false ?
+                        '<span class="badge badge-success">À jour</span>' :
+                        '<span class="badge badge-info">Non défini</span>';
+
+                    html += `
+                        <tr>
+                            <td>
+                                <div class="font-semibold">${controle.nom}</div>
+                                <div class="text-xs text-gray-500">${controle.description || ''}</div>
+                                ${controle.est_obligatoire ? '<span class="badge badge-warning badge-xs mt-1">Obligatoire</span>' : ''}
+                            </td>
+                            <td>
+                                <span class="badge badge-outline">${controle.type_resultat}</span>
+                            </td>
+                            <td>
+                                <div>${refValues}</div>
+                                ${controle.frequence_jours ? `<div class="text-xs text-gray-500">Fréquence: ${controle.frequence_jours} jours</div>` : ''}
+                                <div class="text-xs">Dernière: ${controle.derniere_verification}</div>
+                                ${statusBadge}
+                            </td>
+                            <td>
+                                <div class="flex gap-1">
+                                    <button onclick="editEquipementControle('${controle.id}')" class="btn btn-ghost btn-xs" title="Modifier">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <button onclick="deleteEquipementControle('${controle.id}', '${controle.nom}')" class="btn btn-ghost btn-xs text-error" title="Supprimer">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                });
+                tbody.innerHTML = html;
+            }
+        } else {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="4" class="text-center text-error">
+                        Erreur lors du chargement: ${data.error}
+                    </td>
+                </tr>
+            `;
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="4" class="text-center text-error">
+                    Erreur lors du chargement des points de contrôle
+                </td>
+            </tr>
+        `;
+    });
+}
+
+function addEquipementControle() {
+    if (!currentEquipementId) {
+        alert('Aucun équipement sélectionné');
+        return;
+    }
+
+    // Charger les points de contrôle disponibles
+    fetch(`/organisations/api/equipements/${currentEquipementId}/controles/create/`, {
+        method: 'GET',
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showAddEquipementControleModal(data.data, data.equipement_nom);
+        } else {
+            alert('Erreur lors du chargement des points de contrôle disponibles: ' + data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        alert('Erreur lors du chargement des points de contrôle disponibles');
+    });
+}
+
+function showAddEquipementControleModal(pointsControle, equipementNom) {
+    const modalHtml = `
+        <input type="checkbox" id="addEquipementControleModal" class="modal-toggle" checked />
+        <div class="modal">
+            <div class="modal-box relative max-w-3xl">
+                <label for="addEquipementControleModal" class="btn btn-sm btn-circle absolute right-2 top-2">✕</label>
+                <h3 class="text-lg font-bold mb-4">🔍 Ajouter un point de contrôle à ${equipementNom}</h3>
+
+                <form id="addEquipementControleForm">
+                    <div class="form-control mb-4">
+                        <label class="label">
+                            <span class="label-text">Point de contrôle *</span>
+                        </label>
+                        <select name="point_de_controle" class="select select-bordered" required>
+                            <option value="">Sélectionner un point de contrôle</option>
+                            ${pointsControle.map(pc => `
+                                <option value="${pc.id}">${pc.nom} (${pc.type_resultat})</option>
+                            `).join('')}
+                        </select>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Ordre</span>
+                            </label>
+                            <input type="number" name="ordre" class="input input-bordered" value="0" min="0">
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Fréquence (jours)</span>
+                            </label>
+                            <input type="number" name="frequence_jours" class="input input-bordered" min="1">
+                        </div>
+                    </div>
+
+                    <div class="form-control mt-4">
+                        <label class="label cursor-pointer">
+                            <span class="label-text">Obligatoire</span>
+                            <input type="checkbox" name="est_obligatoire" class="checkbox checkbox-primary" checked>
+                        </label>
+                    </div>
+
+                    <div class="form-control mt-4">
+                        <label class="label">
+                            <span class="label-text">Notes</span>
+                        </label>
+                        <textarea name="notes" class="textarea textarea-bordered h-20"></textarea>
+                    </div>
+
+                    <div class="modal-action">
+                        <button type="button" onclick="closeEquipementControleModal()" class="btn btn-ghost">Annuler</button>
+                        <button type="submit" class="btn btn-primary">Ajouter</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    `;
+
+    // Supprimer toute modale existante du même type
+    const existingModal = document.getElementById('addEquipementControleModal');
+    if (existingModal) {
+        existingModal.closest('.modal').remove();
+    }
+
+    // Ajouter la nouvelle modale
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+    // Attacher l'événement de soumission
+    document.getElementById('addEquipementControleForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        submitEquipementControleForm(this, 'create');
+    });
+}
+
+function editEquipementControle(controleId) {
+    fetch(`/organisations/api/equipement-controles/${controleId}/edit/`, {
+        method: 'GET',
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showEditEquipementControleModal(data.data, data.points_controle);
+        } else {
+            alert('Erreur lors du chargement: ' + data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        alert('Erreur lors du chargement du point de contrôle');
+    });
+}
+
+function showEditEquipementControleModal(controleData, pointsControle) {
+    const modalHtml = `
+        <input type="checkbox" id="editEquipementControleModal" class="modal-toggle" checked />
+        <div class="modal">
+            <div class="modal-box relative max-w-3xl">
+                <label for="editEquipementControleModal" class="btn btn-sm btn-circle absolute right-2 top-2">✕</label>
+                <h3 class="text-lg font-bold mb-4">✏️ Modifier le point de contrôle</h3>
+
+                <form id="editEquipementControleForm" data-controle-id="${controleData.id}">
+                    <div class="form-control mb-4">
+                        <label class="label">
+                            <span class="label-text">Point de contrôle *</span>
+                        </label>
+                        <select name="point_de_controle" class="select select-bordered" required>
+                            ${pointsControle.map(pc => `
+                                <option value="${pc.id}" ${pc.id === controleData.point_de_controle_id ? 'selected' : ''}>
+                                    ${pc.nom} (${pc.type_resultat})
+                                </option>
+                            `).join('')}
+                        </select>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Ordre</span>
+                            </label>
+                            <input type="number" name="ordre" class="input input-bordered" value="${controleData.ordre}" min="0">
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Fréquence (jours)</span>
+                            </label>
+                            <input type="number" name="frequence_jours" class="input input-bordered" value="${controleData.frequence_jours || ''}" min="1">
+                        </div>
+                    </div>
+
+                    <div class="form-control mt-4">
+                        <label class="label cursor-pointer">
+                            <span class="label-text">Obligatoire</span>
+                            <input type="checkbox" name="est_obligatoire" class="checkbox checkbox-primary" ${controleData.est_obligatoire ? 'checked' : ''}>
+                        </label>
+                    </div>
+
+                    <div class="form-control mt-4">
+                        <label class="label">
+                            <span class="label-text">Notes</span>
+                        </label>
+                        <textarea name="notes" class="textarea textarea-bordered h-20">${controleData.notes || ''}</textarea>
+                    </div>
+
+                    <div class="modal-action">
+                        <button type="button" onclick="closeEquipementControleModal()" class="btn btn-ghost">Annuler</button>
+                        <button type="submit" class="btn btn-primary">Modifier</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    `;
+
+    // Supprimer toute modale existante du même type
+    const existingModal = document.getElementById('editEquipementControleModal');
+    if (existingModal) {
+        existingModal.closest('.modal').remove();
+    }
+
+    // Ajouter la nouvelle modale
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+    // Attacher l'événement de soumission
+    document.getElementById('editEquipementControleForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        submitEquipementControleForm(this, 'edit');
+    });
+}
+
+function deleteEquipementControle(controleId, nom) {
+    if (confirm(`Êtes-vous sûr de vouloir supprimer le point de contrôle "${nom}" ?`)) {
+        fetch(`/organisations/api/equipement-controles/${controleId}/delete/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(data.message);
+                // Recharger les points de contrôle de l'équipement
+                loadEquipementControles(currentEquipementId);
+            } else {
+                alert('Erreur lors de la suppression : ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            alert('Erreur lors de la suppression');
+        });
+    }
+}
+
+function submitEquipementControleForm(form, action) {
+    const formData = new FormData(form);
+
+    // Gérer le checkbox obligatoire
+    if (!formData.has('est_obligatoire')) {
+        formData.append('est_obligatoire', 'false');
+    } else {
+        formData.set('est_obligatoire', 'true');
+    }
+
+    let url;
+    if (action === 'create') {
+        url = `/organisations/api/equipements/${currentEquipementId}/controles/create/`;
+    } else {
+        const controleId = form.getAttribute('data-controle-id');
+        url = `/organisations/api/equipement-controles/${controleId}/edit/`;
+    }
+
+    fetch(url, {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            closeEquipementControleModal();
+            // Recharger les points de contrôle de l'équipement
+            loadEquipementControles(currentEquipementId);
+        } else {
+            alert('Erreur : ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        alert('Erreur lors de l\'envoi du formulaire');
+    });
+}
+
+function closeEquipementControleModal() {
+    // Fermer toutes les modales de points de contrôle équipement
+    const modals = ['addEquipementControleModal', 'editEquipementControleModal'];
+    modals.forEach(modalId => {
+        const modal = document.getElementById(modalId);
+        if (modal) {
+            modal.checked = false;
+            setTimeout(() => {
+                modal.closest('.modal').remove();
+            }, 300);
+        }
+    });
+}
+
+// Gestion du formulaire de création/édition
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('equipementForm');
+
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const formData = new FormData(form);
+            // Utiliser l'URL de création si form.action n'est pas explicitement défini
+            const url = form.getAttribute('action') || `/organisations/equipements/create/{{ selected_ouvrage.pk }}/`;
+
+            fetch(url, {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                }
+            })
+            .then(response => {
+                // Vérifier si la réponse est OK
+                if (!response.ok) {
+                    return response.text().then(text => {
+                        throw new Error(`Erreur HTTP ${response.status}: ${text.substring(0, 200)}`);
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    alert(data.message);
+                    closeModal('createModal');
+                    if (isEmbeddedManager()) {
+                        window.parent.postMessage({
+                            type: 'hydria-inline-manager-saved',
+                            entity: 'equipement'
+                        }, window.location.origin);
+                    } else {
+                        window.location.href = data.redirect;
+                    }
+                } else {
+                    alert('Erreur : ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Erreur complète:', error);
+                alert('Erreur lors de l\'envoi du formulaire: ' + error.message);
+            });
+        });
+    }
+});
+
+// ===============================
+// Fonctions modales globales
+// ===============================
+function openModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) {
+        modal.checked = true;
+    }
+}
+
+function closeModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) {
+        modal.checked = false;
+    }
+}
+
+function toggleEquipementVolumeField() {
+    const typeSelect = document.getElementById('equipement-type-select');
+    const field = document.getElementById('equipement-volume-field');
+    const input = field?.querySelector('input[name="volume_m3"]');
+    if (!typeSelect || !field || !input) return;
+
+    const selectedOption = typeSelect.options[typeSelect.selectedIndex];
+    const isCiterne = (selectedOption?.dataset.typeName || selectedOption?.textContent || '')
+        .trim().toLocaleLowerCase('fr') === 'citerne';
+    field.classList.toggle('hidden', !isCiterne);
+    if (!isCiterne) input.value = '';
+}
+
+function resetEquipementModal() {
+    const form = document.getElementById('equipementForm');
+    if (form) {
+        form.reset();
+        toggleEquipementVolumeField();
+        form.removeAttribute('action');
+        document.getElementById('modal-title').textContent = '⚙️ Nouvel équipement';
+        const submitBtn = document.querySelector('#equipementForm button[type="submit"]');
+        if (submitBtn) {
+            submitBtn.textContent = 'Créer l\'équipement';
+        }
+
+        // Masquer l'UUID (uniquement visible en mode édition)
+        const amontDisplay = document.getElementById('equipement_amont_display');
+        if (amontDisplay) {
+            amontDisplay.value = 'Aucun element amont';
+        }
+        document.getElementById('equipement-uuid-container').classList.add('hidden');
+
+        // Réinitialiser les photos
+        if (typeof equipementPhotosData !== 'undefined') {
+            equipementPhotosData = [];
+            renderEquipementPhotosGallery();
+            updateEquipementPhotosJSON();
+        }
+    }
+}
+
+function openCreateEquipementModal() {
+    resetEquipementModal();
+    openModal('createModal');
+}
+
+// Fonction de récupération de la position GPS
+function getGPSLocation() {
+    const statusEl = document.getElementById('gps-status');
+    const latInput = document.getElementById('latitude-input');
+    const lonInput = document.getElementById('longitude-input');
+
+    if (!navigator.geolocation) {
+        statusEl.textContent = '❌ Géolocalisation non supportée par ce navigateur';
+        statusEl.classList.add('text-error');
+        return;
+    }
+
+    statusEl.textContent = '🔍 Récupération de votre position...';
+    statusEl.classList.remove('text-error', 'text-success');
+    statusEl.classList.add('text-warning');
+
+    navigator.geolocation.getCurrentPosition(
+        function(position) {
+            // Succès
+            const lat = position.coords.latitude;
+            const lon = position.coords.longitude;
+            const accuracy = Math.round(position.coords.accuracy);
+
+            latInput.value = lat.toFixed(8);
+            lonInput.value = lon.toFixed(8);
+
+            statusEl.textContent = `✅ Position acquise (précision: ${accuracy}m)`;
+            statusEl.classList.remove('text-warning');
+            statusEl.classList.add('text-success');
+
+            updateGPSDisplay();
+
+            // Effacer le message après 5 secondes
+            setTimeout(() => {
+                statusEl.textContent = '';
+            }, 5000);
+        },
+        function(error) {
+            // Erreur
+            let errorMsg = '';
+            switch(error.code) {
+                case error.PERMISSION_DENIED:
+                    errorMsg = '❌ Permission refusée. Autorisez l\'accès à votre position.';
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    errorMsg = '❌ Position indisponible.';
+                    break;
+                case error.TIMEOUT:
+                    errorMsg = '❌ Délai d\'attente dépassé.';
+                    break;
+                default:
+                    errorMsg = '❌ Erreur inconnue.';
+            }
+            statusEl.textContent = errorMsg;
+            statusEl.classList.remove('text-warning', 'text-success');
+            statusEl.classList.add('text-error');
+        },
+        {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 0
+        }
+    );
+}
+
+// Fonction pour mettre à jour l'affichage des coordonnées GPS
+function updateGPSDisplay() {
+    const latInput = document.getElementById('latitude-input');
+    const lonInput = document.getElementById('longitude-input');
+    const displayEl = document.getElementById('gps-coordinates-display');
+
+    if (latInput && lonInput && displayEl) {
+        const lat = latInput.value;
+        const lon = lonInput.value;
+
+        if (lat && lon) {
+            displayEl.innerHTML = `<strong>Lat:</strong> ${parseFloat(lat).toFixed(6)}<br><strong>Lon:</strong> ${parseFloat(lon).toFixed(6)}`;
+        } else {
+            displayEl.textContent = 'Aucune position';
+        }
+    }
+}
+
+// Mettre à jour l'affichage quand les champs changent
+document.addEventListener('DOMContentLoaded', function() {
+    const latInput = document.getElementById('latitude-input');
+    const lonInput = document.getElementById('longitude-input');
+
+    if (latInput && lonInput) {
+        latInput.addEventListener('input', updateGPSDisplay);
+        lonInput.addEventListener('input', updateGPSDisplay);
+    }
+});
+
+// Gestion des photos d'équipements
+let equipementPhotosData = [];
+
+function selectEquipementPhoto() {
+    document.getElementById('equipement-photo-input').click();
+}
+
+function captureEquipementPhoto() {
+    const input = document.getElementById('equipement-photo-input');
+    input.setAttribute('capture', 'environment');
+    input.click();
+}
+
+/**
+ * Compresse une image d'équipement avant de l'enregistrer
+ * @param {File} file - Fichier image à compresser
+ * @param {Function} callback - Fonction appelée avec (dataUrl, originalSize, compressedSize)
+ */
+function compressEquipementImage(file, callback) {
+    const reader = new FileReader();
+
+    reader.onload = function(e) {
+        const img = new Image();
+
+        img.onload = function() {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // Taille maximale pour les images d'équipements
+            const MAX_WIDTH = 1200;
+            const MAX_HEIGHT = 1200;
+
+            let width = img.width;
+            let height = img.height;
+
+            // Calculer les nouvelles dimensions en conservant le ratio
+            if (width > height) {
+                if (width > MAX_WIDTH) {
+                    height = Math.round((height * MAX_WIDTH) / width);
+                    width = MAX_WIDTH;
+                }
+            } else {
+                if (height > MAX_HEIGHT) {
+                    width = Math.round((width * MAX_HEIGHT) / height);
+                    height = MAX_HEIGHT;
+                }
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+            ctx.drawImage(img, 0, 0, width, height);
+
+            // Convertir en JPEG avec qualité 0.8 (80%)
+            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+            const originalSize = file.size;
+            const compressedSize = Math.round((compressedDataUrl.length - 'data:image/jpeg;base64,'.length) * 3/4);
+
+            callback(compressedDataUrl, originalSize, compressedSize);
+        };
+
+        img.src = e.target.result;
+    };
+
+    reader.readAsDataURL(file);
+}
+
+function handleEquipementPhotoSelected(event) {
+    const files = event.target.files;
+    if (files.length === 0) return;
+
+    Array.from(files).forEach(file => {
+        if (!file.type.startsWith('image/')) {
+            alert('Seules les images sont acceptées');
+            return;
+        }
+
+        // Compresser l'image avant de l'enregistrer
+        compressEquipementImage(file, function(compressedDataUrl, originalSize, compressedSize) {
+            const photoData = {
+                id: Date.now() + Math.random(),
+                name: file.name,
+                data: compressedDataUrl,
+                size: compressedSize,
+                originalSize: originalSize,
+                type: file.type,
+                date: new Date().toISOString()
+            };
+
+            equipementPhotosData.push(photoData);
+            renderEquipementPhotosGallery();
+            updateEquipementPhotosJSON();
+
+            console.log(`📸 Image compressée: ${(originalSize/1024).toFixed(1)}KB → ${(compressedSize/1024).toFixed(1)}KB (${((1-compressedSize/originalSize)*100).toFixed(0)}% de réduction)`);
+        });
+    });
+
+    event.target.value = '';
+    event.target.removeAttribute('capture');
+}
+
+function renderEquipementPhotosGallery() {
+    const gallery = document.getElementById('equipement-photos-gallery');
+
+    if (equipementPhotosData.length === 0) {
+        gallery.innerHTML = '<div class="col-span-full text-center text-gray-400 py-4"><i class="fas fa-images text-4xl mb-2"></i><br>Aucune photo ajoutée</div>';
+        return;
+    }
+
+    gallery.innerHTML = equipementPhotosData.map((photo, index) => {
+        const photoId = photo.id || `existing-${index}`;
+        if (!photo.id) {
+            photo.id = photoId;
+        }
+        return `
+        <div class="relative group">
+            <img src="${photo.data}" alt="${photo.name}" class="w-full h-32 object-cover rounded-lg border-2 border-base-300">
+            <button type="button" onclick="removeEquipementPhoto('${photoId}')"
+                    class="absolute top-1 right-1 btn btn-xs btn-error btn-circle opacity-0 group-hover:opacity-100 transition-opacity">
+                <i class="fas fa-times"></i>
+            </button>
+            <div class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white text-xs p-1 rounded-b-lg opacity-0 group-hover:opacity-100 transition-opacity">
+                ${(photo.size / 1024).toFixed(0)} KB
+            </div>
+        </div>
+    `;
+    }).join('');
+}
+
+function removeEquipementPhoto(photoId) {
+    equipementPhotosData = equipementPhotosData.filter(p => p.id != photoId);
+    renderEquipementPhotosGallery();
+    updateEquipementPhotosJSON();
+}
+
+function updateEquipementPhotosJSON() {
+    document.getElementById('equipement-photos-json').value = JSON.stringify(equipementPhotosData);
+}
+
+function loadExistingEquipementPhotos(photos) {
+    if (photos && Array.isArray(photos)) {
+        equipementPhotosData = photos.map((photo, index) => {
+            if (!photo.id) {
+                return { ...photo, id: `existing-${index}` };
+            }
+            return photo;
+        });
+        renderEquipementPhotosGallery();
+        updateEquipementPhotosJSON();
+    }
+}
+
+// Fonction pour copier l'UUID dans le presse-papiers
+function isEmbeddedManager() {
+    return new URLSearchParams(window.location.search).get('embedded') === '1' && window.parent !== window;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('embedded') !== '1') return;
+
+    const action = params.get('action') || 'create';
+    const entityId = params.get('entity_id') || '';
+    window.setTimeout(function() {
+        if (action === 'edit' && entityId) {
+            editEquipement(entityId);
+        } else {
+            openCreateEquipementModal();
+        }
+    }, 0);
+});
+
+function copyUUID() {
+    const uuidText = document.getElementById('equipement-uuid').textContent;
+
+    // Utiliser l'API Clipboard si disponible
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(uuidText)
+            .then(() => {
+                // Feedback visuel
+                const btn = event.target.closest('button');
+                const icon = btn.querySelector('i');
+                icon.className = 'fas fa-check';
+                btn.classList.add('btn-success');
+
+                setTimeout(() => {
+                    icon.className = 'fas fa-copy';
+                    btn.classList.remove('btn-success');
+                }, 2000);
+            })
+            .catch(err => {
+                console.error('Erreur lors de la copie:', err);
+                alert('Impossible de copier l\'UUID');
+            });
+    } else {
+        // Fallback pour les navigateurs plus anciens
+        const textArea = document.createElement('textarea');
+        textArea.value = uuidText;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.select();
+
+        try {
+            document.execCommand('copy');
+            alert('UUID copié: ' + uuidText);
+        } catch (err) {
+            console.error('Erreur lors de la copie:', err);
+            alert('Impossible de copier l\'UUID');
+        }
+
+        document.body.removeChild(textArea);
+    }
+}
+</script>
+{% endblock %}

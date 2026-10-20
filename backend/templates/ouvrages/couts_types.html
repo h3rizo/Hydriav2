@@ -1,0 +1,496 @@
+{% extends ouvrages_shell_base_template %}
+
+{% block title %}{{ title|default:'Coûts types par activité' }}{% endblock %}
+
+{% block content %}
+{{ fiches|json_script:"ref-fiches" }}
+{{ types_equipement|json_script:"ref-types-equipement" }}
+{{ types_point_eau|json_script:"ref-types-point-eau" }}
+{{ composants_equipement|json_script:"ref-composants-equipement" }}
+{{ composants_point_eau|json_script:"ref-composants-point-eau" }}
+{{ designations|json_script:"ref-designations" }}
+
+<div class="container mx-auto px-4 py-6 space-y-4"
+     id="app"
+     data-liste="{% url 'ouvrages:api_couts_types_liste' %}"
+     data-save="{% url 'ouvrages:api_cout_type_sauvegarder' %}"
+     data-historique="{% url 'ouvrages:api_cout_type_historique' %}"
+     data-supprimer="{% url 'ouvrages:api_cout_type_supprimer' '00000000-0000-0000-0000-000000000000' %}"
+     data-peut-modifier="{{ peut_modifier|yesno:'1,0' }}">
+
+    <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+            <h1 class="text-3xl font-bold"><i class="fas fa-calculator text-primary mr-2"></i>Coûts types par activité</h1>
+            <p class="text-base-content/70 mt-1">
+                Barème de désignations par activité, type d'équipement / de point d'eau et composant.
+                Il pré-remplit les détails d'un planning, à ajuster selon la réalité.
+            </p>
+        </div>
+        {% if peut_modifier %}
+        <button class="btn btn-primary" onclick="ouvrirModal()"><i class="fas fa-plus mr-1"></i>Nouveau coût type</button>
+        {% endif %}
+    </div>
+
+    <div class="card bg-base-100 shadow">
+        <div class="card-body py-3 flex-row flex-wrap items-end gap-3">
+            <label class="form-control">
+                <span class="label-text text-xs mb-1">Famille</span>
+                <select id="f-famille" class="select select-bordered select-sm w-44">
+                    <option value="">Toutes</option>
+                    {% for code, nom in familles.items %}<option value="{{ code }}">{{ nom }}</option>{% endfor %}
+                </select>
+            </label>
+            <label class="form-control">
+                <span class="label-text text-xs mb-1">Cible</span>
+                <select id="f-cible" class="select select-bordered select-sm w-44">
+                    <option value="">Équipements et points d'eau</option>
+                    <option value="equipement">Équipements</option>
+                    <option value="point_eau">Points d'eau</option>
+                </select>
+            </label>
+            <label class="form-control">
+                <span class="label-text text-xs mb-1">Statut</span>
+                <select id="f-statut" class="select select-bordered select-sm w-44">
+                    <option value="a_faire">À faire (à remplir + vides)</option>
+                    <option value="">Tous</option>
+                    <option value="a_remplir">À remplir</option>
+                    <option value="vide">Barème vide</option>
+                    <option value="rempli">Remplis</option>
+                </select>
+            </label>
+            <label class="form-control grow max-w-xs">
+                <span class="label-text text-xs mb-1">Recherche (activité, type, composant, désignation)</span>
+                <input id="f-recherche" class="input input-bordered input-sm" />
+            </label>
+            <label class="label cursor-pointer gap-2" title="Ajoute toutes les combinaisons que permettent les règles des activités, même jamais rencontrées (plusieurs milliers)">
+                <input type="checkbox" id="f-theoriques" class="checkbox checkbox-sm" />
+                <span class="label-text text-xs">Inclure les combinaisons théoriques (jamais rencontrées)</span>
+            </label>
+            <div class="ml-auto text-sm text-right min-w-56">
+                <div id="progression"></div>
+                <progress id="barre" class="progress progress-success w-full" value="0" max="100"></progress>
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow overflow-x-auto">
+        <table class="table table-sm">
+            <thead>
+                <tr>
+                    <th>Activité / cible / composant</th>
+                    <th>Statut</th>
+                    <th class="text-right" title="Interventions chiffrées / total dans les plannings passés">Historique</th>
+                    <th class="text-right">Désignations</th>
+                    <th class="text-right">Coût type (Ar)</th>
+                    <th class="text-right">Réel moyen (Ar)</th>
+                    <th class="text-right">Écart</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody id="corps"><tr><td colspan="8" class="text-center py-6 opacity-60">Chargement…</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<dialog id="modal" class="modal">
+    <div class="modal-box max-w-4xl">
+        <h3 class="font-bold text-lg mb-3" id="modal-titre">Coût type</h3>
+        <input type="hidden" id="m-id" />
+        <div class="grid md:grid-cols-2 gap-3">
+            <label class="form-control md:col-span-2">
+                <span class="label-text text-xs mb-1">Activité *</span>
+                <select id="m-fiche" class="select select-bordered select-sm"></select>
+            </label>
+            <label class="form-control">
+                <span class="label-text text-xs mb-1">Cible *</span>
+                <select id="m-genre" class="select select-bordered select-sm">
+                    <option value="equipement">Type d'équipement</option>
+                    <option value="point_eau">Type de point d'eau</option>
+                </select>
+            </label>
+            <label class="form-control">
+                <span class="label-text text-xs mb-1">Type *</span>
+                <select id="m-type" class="select select-bordered select-sm"></select>
+            </label>
+            <label class="form-control">
+                <span class="label-text text-xs mb-1">Composant (vide = toute la cible)</span>
+                <select id="m-composant" class="select select-bordered select-sm"></select>
+            </label>
+            <label class="form-control">
+                <span class="label-text text-xs mb-1">Notes</span>
+                <input id="m-notes" class="input input-bordered input-sm" />
+            </label>
+        </div>
+
+        <div class="divider my-3 text-sm">Historique des interventions (aide à la saisie)</div>
+        <div class="flex flex-wrap items-center gap-2 mb-2 text-sm">
+            <label for="m-hist-niveau" class="opacity-70">Précision :</label>
+            <select id="m-hist-niveau" class="select select-bordered select-xs">
+                <option value="auto">Automatique (élargit si peu de résultats)</option>
+                <option value="composant">Composant exact</option>
+                <option value="souple">Composant exact ou non renseigné</option>
+                <option value="type">Tout le type de cible</option>
+                <option value="activite">Toute l'activité (tous types de cible)</option>
+            </select>
+        </div>
+        <div id="m-hist" class="text-sm"></div>
+
+        <div class="divider my-3 text-sm">Désignations</div>
+        <div class="flex gap-2 mb-2">
+            <input id="m-des-recherche" list="liste-designations" placeholder="Rechercher une désignation…" class="input input-bordered input-sm grow" />
+            <button class="btn btn-sm btn-outline" onclick="ajouterLigne()"><i class="fas fa-plus mr-1"></i>Ajouter</button>
+        </div>
+        <datalist id="liste-designations"></datalist>
+        <table class="table table-xs">
+            <thead><tr><th>Désignation</th><th class="w-24">Quantité</th><th class="w-32">PU (Ar)</th><th class="text-right w-28">Montant</th><th></th></tr></thead>
+            <tbody id="m-lignes"></tbody>
+            <tfoot><tr><th colspan="3" class="text-right">Total</th><th class="text-right" id="m-total">0</th><th></th></tr></tfoot>
+        </table>
+        <p class="text-xs opacity-60">Un PU vide reprend le prix unitaire par défaut de la désignation.</p>
+        <p id="m-erreur" class="text-error text-sm mt-2 hidden"></p>
+
+        <div class="modal-action">
+            <button class="btn btn-ghost" onclick="document.getElementById('modal').close()">Annuler</button>
+            <button class="btn btn-primary" onclick="sauvegarder()">Enregistrer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>fermer</button></form>
+</dialog>
+
+<script>
+const lire = id => JSON.parse(document.getElementById(id).textContent);
+const REF = {
+    fiches: lire('ref-fiches'),
+    types: {equipement: lire('ref-types-equipement'), point_eau: lire('ref-types-point-eau')},
+    composants: {equipement: lire('ref-composants-equipement'), point_eau: lire('ref-composants-point-eau')},
+    designations: lire('ref-designations'),
+};
+const FAMILLES = {reparation: 'Réparation', rehabilitation: 'Réhabilitation', installation: 'Installation', remplacement: 'Remplacement'};
+const app = document.getElementById('app');
+const peutModifier = app.dataset.peutModifier === '1';
+const fmt = n => Math.round(n).toLocaleString('fr-FR');
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const csrf = () => (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || '';
+let donnees = [];
+let lignesModal = [];
+const ouverts = new Set();
+
+let comptes = {};
+
+async function charger() {
+    const theoriques = document.getElementById('f-theoriques').checked ? '?theoriques=1' : '';
+    document.getElementById('corps').innerHTML = '<tr><td colspan="8" class="text-center py-6 opacity-60">Chargement…</td></tr>';
+    const r = await fetch(app.dataset.liste + theoriques);
+    const data = await r.json();
+    donnees = data.couts_types || [];
+    comptes = data.comptes || {};
+    afficher();
+}
+
+function filtrer() {
+    const fam = document.getElementById('f-famille').value;
+    const cible = document.getElementById('f-cible').value;
+    const statut = document.getElementById('f-statut').value;
+    const q = document.getElementById('f-recherche').value.trim().toLowerCase();
+    const statutOk = d => !statut || (statut === 'a_faire' ? d.statut !== 'rempli' : d.statut === statut);
+    return donnees.filter(d =>
+        (!fam || d.famille === fam) && (!cible || d.cible_genre === cible) && statutOk(d) &&
+        (!q || [d.activite, d.type_cible, d.composant, ...d.lignes.map(l => l.designation)].join(' ').toLowerCase().includes(q)));
+}
+
+const STATUTS = {
+    rempli: '<span class="badge badge-success badge-sm">Rempli</span>',
+    vide: '<span class="badge badge-warning badge-sm">Barème vide</span>',
+    a_remplir: '<span class="badge badge-error badge-outline badge-sm">À remplir</span>',
+};
+
+function afficherProgression() {
+    const rempli = comptes.rempli || 0, vide = comptes.vide || 0, aRemplir = comptes.a_remplir || 0;
+    const total = rempli + vide + aRemplir;
+    document.getElementById('progression').innerHTML =
+        `<b>${rempli}</b> / ${total} remplis — <span class="text-error">${aRemplir} à remplir</span>` +
+        (vide ? `, <span class="text-warning">${vide} vide(s)</span>` : '');
+    const barre = document.getElementById('barre');
+    barre.max = total || 1; barre.value = rempli;
+}
+
+function afficher() {
+    afficherProgression();
+    const liste = filtrer();
+    const corps = document.getElementById('corps');
+    if (!liste.length) {
+        corps.innerHTML = '<tr><td colspan="8" class="text-center py-6 opacity-60">Aucune ligne pour ces filtres.</td></tr>';
+        return;
+    }
+    let html = '', famille = null, activite = null;
+    for (const d of liste) {
+        if (d.famille !== famille) {
+            famille = d.famille; activite = null;
+            html += `<tr class="bg-primary text-primary-content"><td colspan="8" class="font-bold">${esc(FAMILLES[d.famille] || 'Autre')}</td></tr>`;
+        }
+        if (d.activite !== activite) {
+            activite = d.activite;
+            html += `<tr class="bg-base-200"><td colspan="8" class="font-semibold pl-4">${esc(d.activite)}</td></tr>`;
+        }
+        const existe = !!d.id;
+        const cle = existe ? d.id : d.cle;
+        const icone = d.cible_genre === 'equipement' ? 'fa-cogs' : 'fa-tint';
+        const ecart = (d.reel_moyen === null || !existe) ? '' : d.reel_moyen - d.total_estime;
+        const ecartHtml = ecart === '' ? '<span class="opacity-40">—</span>'
+            : `<span class="${ecart > 0 ? 'text-error' : 'text-success'}">${ecart > 0 ? '+' : ''}${fmt(ecart)}</span>`;
+        const ouvert = existe && ouverts.has(d.id);
+        const historique = d.nb_historique
+            ? `<span title="${d.nb_chiffrees} intervention(s) chiffrée(s) sur ${d.nb_historique}">${d.nb_chiffrees}/${d.nb_historique}</span>`
+            : '<span class="opacity-40">—</span>';
+        const actions = !peutModifier ? ''
+            : existe
+                ? `<button class="btn btn-ghost btn-xs" onclick="event.stopPropagation();ouvrirModal('${d.id}')"><i class="fas fa-edit"></i></button>
+                   <button class="btn btn-ghost btn-xs text-error" onclick="event.stopPropagation();supprimer('${d.id}')"><i class="fas fa-trash"></i></button>`
+                : `<button class="btn btn-xs btn-primary btn-outline" onclick="event.stopPropagation();renseigner('${esc(d.cle)}')"><i class="fas fa-pen mr-1"></i>Renseigner</button>`;
+        html += `<tr class="hover ${existe ? 'cursor-pointer' : ''}" ${existe ? `onclick="basculer('${d.id}')"` : ''}>
+            <td class="pl-8">${existe ? `<i class="fas ${ouvert ? 'fa-chevron-down' : 'fa-chevron-right'} text-xs mr-2"></i>` : '<i class="fas fa-circle text-[6px] mr-2 opacity-30"></i>'}
+                <i class="fas ${icone} text-info mr-1"></i>${esc(d.type_cible)}${d.composant ? ' / <b>' + esc(d.composant) + '</b>' : ''}
+                ${d.actif ? '' : '<span class="badge badge-ghost badge-sm ml-1">inactif</span>'}
+                ${d.theorique ? '<span class="badge badge-ghost badge-sm ml-1" title="Jamais rencontrée dans les plannings">théorique</span>' : ''}</td>
+            <td>${STATUTS[d.statut] || ''}</td>
+            <td class="text-right font-mono">${historique}</td>
+            <td class="text-right">${existe ? d.lignes.length : '<span class="opacity-40">—</span>'}</td>
+            <td class="text-right font-mono font-bold">${existe ? fmt(d.total_estime) : '<span class="opacity-40">—</span>'}</td>
+            <td class="text-right font-mono">${d.reel_moyen === null ? '<span class="opacity-40">—</span>' : fmt(d.reel_moyen) + ` <span class="text-xs opacity-60">(${d.nb_reel})</span>`}</td>
+            <td class="text-right font-mono">${ecartHtml}</td>
+            <td class="text-right whitespace-nowrap">${actions}</td></tr>`;
+        if (ouvert) {
+            html += `<tr><td colspan="8" class="bg-base-100 pl-16"><table class="table table-xs">
+                <thead><tr><th>Désignation</th><th>Type</th><th class="text-right">Qté</th><th class="text-right">PU</th><th class="text-right">Montant</th></tr></thead><tbody>` +
+                d.lignes.map(l => `<tr><td>${esc(l.designation)}</td><td class="opacity-70">${esc(l.type_designation)}</td>
+                    <td class="text-right">${l.quantite.toLocaleString('fr-FR')} ${esc(l.unite)}</td>
+                    <td class="text-right">${fmt(l.pu)}${l.pu_surcharge ? ' *' : ''}</td>
+                    <td class="text-right font-mono">${fmt(l.montant)}</td></tr>`).join('') +
+                `</tbody></table>${d.notes ? `<p class="text-xs opacity-70 mt-1">${esc(d.notes)}</p>` : ''}</td></tr>`;
+        }
+    }
+    corps.innerHTML = html;
+}
+
+/** Ouvre la fenêtre de saisie préremplie avec la combinaison (activité, cible, composant) de la ligne. */
+function renseigner(cle) {
+    const d = donnees.find(x => x.cle === cle);
+    if (d) ouvrirModal(null, d);
+}
+
+function basculer(id) { ouverts.has(id) ? ouverts.delete(id) : ouverts.add(id); afficher(); }
+
+/* ---------- Modal ---------- */
+function remplirTypes(typeId, composantId) {
+    const genre = document.getElementById('m-genre').value;
+    const sel = document.getElementById('m-type');
+    sel.innerHTML = '<option value="">—</option>' + REF.types[genre].map(t => `<option value="${t.id}">${esc(t.nom_type)}</option>`).join('');
+    sel.value = typeId || '';
+    remplirComposants(composantId);
+}
+function remplirComposants(composantId) {
+    const genre = document.getElementById('m-genre').value;
+    const typeId = document.getElementById('m-type').value;
+    const sel = document.getElementById('m-composant');
+    sel.innerHTML = '<option value="">Toute la cible (sans composant)</option>' +
+        REF.composants[genre].filter(c => c.type_id === typeId).map(c => `<option value="${c.id}">${esc(c.nom)}</option>`).join('');
+    sel.value = composantId || '';
+}
+document.getElementById('m-genre').addEventListener('change', () => remplirTypes('', ''));
+document.getElementById('m-type').addEventListener('change', () => remplirComposants(''));
+['m-fiche', 'm-genre', 'm-type', 'm-composant', 'm-hist-niveau'].forEach(id =>
+    document.getElementById(id).addEventListener('change', chargerHistorique));
+
+function ouvrirModal(id, preset) {
+    const d = id ? donnees.find(x => x.id === id) : (preset || null);   // preset : ligne de check-list sans barème
+    document.getElementById('modal-titre').textContent = (d && d.id) ? 'Modifier le coût type' : 'Nouveau coût type';
+    document.getElementById('m-id').value = (d && d.id) ? d.id : '';
+    document.getElementById('m-fiche').innerHTML = '<option value="">—</option>' + REF.fiches.map(f =>
+        `<option value="${f.id}">${esc(f.nom)} (${esc(FAMILLES[f.famille] || '')})</option>`).join('');
+    document.getElementById('m-fiche').value = d ? d.fiche_id : '';
+    document.getElementById('m-genre').value = d ? d.cible_genre : 'equipement';
+    remplirTypes(d ? d.type_cible_id : '', d ? d.composant_id : '');
+    document.getElementById('m-notes').value = d ? d.notes : '';
+    lignesModal = d ? d.lignes.map(l => ({designation_id: l.designation_id, quantite: l.quantite, pu: l.pu_surcharge ? l.pu : ''})) : [];
+    document.getElementById('liste-designations').innerHTML = REF.designations.map(x => `<option value="${esc(x.nom)} — ${esc(x.type)}"></option>`).join('');
+    document.getElementById('m-des-recherche').value = '';
+    document.getElementById('m-erreur').classList.add('hidden');
+    document.getElementById('m-hist-niveau').value = 'auto';
+    afficherLignes();
+    chargerHistorique();
+    document.getElementById('modal').showModal();
+}
+
+/* ---------- Historique des interventions ---------- */
+/* Les composants sont rarement renseignés dans les anciens plannings : l'historique est « souple ». */
+const NIVEAUX_LIBELLES = {
+    composant: "composant exact",
+    souple: "composant exact ou non renseigné",
+    type: "tout le type de cible (tous composants)",
+    activite: "toute l'activité (tous types de cible)",
+};
+let histCourant = null;
+let histToken = 0;
+
+async function chargerHistorique() {
+    const cadre = document.getElementById('m-hist');
+    const fiche = document.getElementById('m-fiche').value;
+    const genre = document.getElementById('m-genre').value;
+    const type = document.getElementById('m-type').value;
+    const niveau = document.getElementById('m-hist-niveau').value;
+    histCourant = null;
+    // Le niveau « toute l'activité » ne demande pas de type de cible.
+    if (!fiche || (!type && niveau !== 'activite')) {
+        cadre.innerHTML = "<p class='opacity-60'>Choisissez l'activité et le type de cible pour voir les interventions passées.</p>";
+        return;
+    }
+    const jeton = ++histToken;
+    cadre.innerHTML = '<span class="loading loading-spinner loading-sm"></span>';
+    const params = new URLSearchParams({fiche_id: fiche, cible_genre: genre, niveau: niveau});
+    if (type) params.set('type_cible_id', type);
+    const composant = document.getElementById('m-composant').value;
+    if (composant) params.set('composant_id', composant);
+    try {
+        const r = await fetch(`${app.dataset.historique}?${params.toString()}`);
+        const data = await r.json();
+        if (jeton !== histToken) return;            // réponse périmée
+        if (!data.success) throw new Error();
+        histCourant = data;
+        afficherHistorique();
+    } catch (e) {
+        if (jeton === histToken) cadre.innerHTML = '<p class="text-error">Historique indisponible.</p>';
+    }
+}
+
+function afficherHistorique() {
+    const cadre = document.getElementById('m-hist');
+    const h = histCourant;
+    if (!h) return;
+    const composantChoisi = !!document.getElementById('m-composant').value;
+    // Information sur l'élargissement : on dit sur quoi portent les statistiques.
+    let portee = '';
+    if (composantChoisi && h.niveau_utilise !== 'composant') {
+        portee = `<div class="alert alert-info py-2 mb-2 text-xs"><i class="fas fa-circle-info"></i>
+            <span>Peu d'interventions passées indiquent ce composant : l'historique porte sur
+            <b>${NIVEAUX_LIBELLES[h.niveau_utilise] || ''}</b>.
+            ${h.niveau_demande === 'auto' ? 'Changez la précision ci-dessus pour restreindre ou élargir.' : ''}</span></div>`;
+    } else if (!composantChoisi && h.niveau_utilise === 'activite') {
+        portee = `<div class="alert alert-info py-2 mb-2 text-xs"><i class="fas fa-circle-info"></i>
+            <span>Peu d'interventions sur ce type de cible : l'historique porte sur <b>${NIVEAUX_LIBELLES.activite}</b>.</span></div>`;
+    }
+    if (!h.nb_interventions) {
+        cadre.innerHTML = portee + `<p class="opacity-60">Aucune intervention passée avec des coûts saisis pour cette sélection${h.nb_sans_detail ? ` (${h.nb_sans_detail} sans détail)` : ''}.</p>`;
+        return;
+    }
+    const deja = new Set(lignesModal.map(l => l.designation_id));
+    const lignes = h.designations.map(d => `<tr>
+        <td>${esc(d.designation)} <span class="opacity-50">${esc(d.unite)}</span></td>
+        <td class="text-right">${d.nb}/${h.nb_interventions} <span class="opacity-60">(${d.frequence} %)</span></td>
+        <td class="text-right">${d.quantite_mediane.toLocaleString('fr-FR')}</td>
+        <td class="text-right">${fmt(d.pu_moyen)}</td>
+        <td class="text-right font-mono">${fmt(d.montant_moyen)}</td>
+        <td class="text-right">${deja.has(d.designation_id)
+            ? '<i class="fas fa-check text-success" title="Déjà dans le barème"></i>'
+            : `<button type="button" class="btn btn-ghost btn-xs" title="Ajouter au barème (quantité médiane)" onclick="reprendreHistorique('${d.designation_id}')"><i class="fas fa-plus"></i></button>`}</td></tr>`).join('');
+    const interventions = h.interventions.map(i => `<div class="border-b border-base-300 py-1">
+        <div class="flex flex-wrap gap-x-3"><b>${esc(i.date)}</b><span>${esc(i.ouvrage)}</span><span class="opacity-70">${esc(i.cible)}</span>
+            ${i.composants.length
+                ? `<span class="badge badge-ghost badge-sm">${esc(i.composants.join(', '))}</span>`
+                : '<span class="badge badge-outline badge-sm opacity-60">composant non renseigné</span>'}
+            <span class="ml-auto font-mono font-bold">${fmt(i.total)} Ar</span></div>
+        <div class="opacity-70 text-xs">${i.lignes.map(l => `${esc(l.designation)} × ${l.quantite.toLocaleString('fr-FR')}`).join(' · ')}</div></div>`).join('');
+    cadre.innerHTML = portee + `
+        <div class="flex flex-wrap items-center gap-2 mb-2">
+            <span><b>${h.nb_interventions}</b> intervention(s) avec coûts saisis${h.nb_sans_detail ? ` <span class="opacity-60">(+ ${h.nb_sans_detail} sans détail)</span>` : ''}
+                — coût moyen <b>${fmt(h.total_moyen)}</b> Ar, médian <b>${fmt(h.total_median)}</b> Ar</span>
+            <button type="button" class="btn btn-xs btn-outline btn-info ml-auto" onclick="reprendreHistorique(null, 50)">
+                <i class="fas fa-wand-magic-sparkles mr-1"></i>Reprendre les lignes fréquentes (≥ 50 %)</button>
+        </div>
+        <div class="overflow-x-auto max-h-56 overflow-y-auto">
+            <table class="table table-xs">
+                <thead><tr><th>Désignation</th><th class="text-right">Utilisée</th><th class="text-right">Qté médiane</th><th class="text-right">PU moyen</th><th class="text-right">Montant moyen</th><th></th></tr></thead>
+                <tbody>${lignes}</tbody>
+            </table>
+        </div>
+        <details class="mt-2"><summary class="cursor-pointer text-xs opacity-70">Dernières interventions (${h.interventions.length})</summary>
+            <div class="max-h-48 overflow-y-auto text-xs mt-1">${interventions}</div></details>`;
+}
+
+/** Ajoute au barème une désignation de l'historique (ou, avec seuil, toutes les plus fréquentes). */
+function reprendreHistorique(designationId, seuilPct) {
+    if (!histCourant) return;
+    const candidats = designationId
+        ? histCourant.designations.filter(d => d.designation_id === designationId)
+        : histCourant.designations.filter(d => d.frequence >= seuilPct);
+    candidats.forEach(d => {
+        if (lignesModal.some(l => l.designation_id === d.designation_id)) return;
+        if (!trouverDesignation(d.designation_id)) {   // désignation désormais inactive
+            REF.designations.push({id: d.designation_id, nom: d.designation, type: d.type, unite: d.unite, pu: d.pu_designation});
+        }
+        lignesModal.push({designation_id: d.designation_id, quantite: d.quantite_mediane, pu: ''});
+    });
+    afficherLignes();
+}
+
+function trouverDesignation(id) { return REF.designations.find(x => x.id === id); }
+
+function ajouterLigne() {
+    const saisie = document.getElementById('m-des-recherche').value.trim().toLowerCase();
+    const d = REF.designations.find(x => `${x.nom} — ${x.type}`.toLowerCase() === saisie) ||
+              REF.designations.find(x => x.nom.toLowerCase() === saisie);
+    if (!d) return;
+    if (lignesModal.some(l => l.designation_id === d.id)) return;
+    lignesModal.push({designation_id: d.id, quantite: 1, pu: ''});
+    document.getElementById('m-des-recherche').value = '';
+    afficherLignes();
+}
+
+function afficherLignes() {
+    let total = 0;
+    document.getElementById('m-lignes').innerHTML = lignesModal.map((l, i) => {
+        const d = trouverDesignation(l.designation_id) || {nom: '?', pu: 0, unite: ''};
+        const pu = l.pu === '' ? d.pu : Number(l.pu);
+        const montant = (Number(l.quantite) || 0) * pu;
+        total += montant;
+        return `<tr><td>${esc(d.nom)} <span class="opacity-50">${esc(d.unite)}</span></td>
+            <td><input type="number" min="0" step="0.01" value="${l.quantite}" class="input input-bordered input-xs w-20" onchange="majLigne(${i},'quantite',this.value)"></td>
+            <td><input type="number" min="0" step="1" value="${l.pu}" placeholder="${fmt(d.pu)}" class="input input-bordered input-xs w-28" onchange="majLigne(${i},'pu',this.value)"></td>
+            <td class="text-right font-mono">${fmt(montant)}</td>
+            <td><button class="btn btn-ghost btn-xs text-error" onclick="lignesModal.splice(${i},1);afficherLignes()"><i class="fas fa-times"></i></button></td></tr>`;
+    }).join('') || '<tr><td colspan="5" class="text-center opacity-60">Aucune désignation.</td></tr>';
+    document.getElementById('m-total').textContent = fmt(total);
+    if (histCourant) afficherHistorique();
+}
+function majLigne(i, champ, valeur) { lignesModal[i][champ] = valeur; afficherLignes(); }
+
+async function sauvegarder() {
+    const erreur = document.getElementById('m-erreur');
+    const corps = {
+        id: document.getElementById('m-id').value,
+        fiche_id: document.getElementById('m-fiche').value,
+        cible_genre: document.getElementById('m-genre').value,
+        type_cible_id: document.getElementById('m-type').value,
+        composant_id: document.getElementById('m-composant').value,
+        notes: document.getElementById('m-notes').value,
+        lignes: lignesModal,
+    };
+    const r = await fetch(app.dataset.save, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrf()}, body: JSON.stringify(corps)});
+    const res = await r.json();
+    if (!res.success) { erreur.textContent = res.error || 'Erreur'; erreur.classList.remove('hidden'); return; }
+    document.getElementById('modal').close();
+    ouverts.add(res.id);
+    charger();
+}
+
+async function supprimer(id) {
+    if (!confirm('Supprimer ce coût type ?')) return;
+    const r = await fetch(app.dataset.supprimer.replace('00000000-0000-0000-0000-000000000000', id), {method: 'POST', headers: {'X-CSRFToken': csrf()}});
+    if ((await r.json()).success) charger();
+}
+
+['f-famille', 'f-cible', 'f-statut'].forEach(id => document.getElementById(id).addEventListener('change', afficher));
+document.getElementById('f-theoriques').addEventListener('change', charger);
+document.getElementById('f-recherche').addEventListener('input', afficher);
+charger();
+</script>
+{% endblock %}

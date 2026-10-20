@@ -1,0 +1,955 @@
+{% extends admin_shell_base_template %}
+{% load static %}
+
+{% block title %}Gestion Points de Contrôle - Hydria{% endblock %}
+
+{% block breadcrumb %}
+<div class="breadcrumbs text-sm container mx-auto px-4 pt-4">
+    <ul>
+        <li><a href="{% url 'core:home' %}">🏠 Accueil</a></li>
+        <li><a href="{% url 'inspections:dashboard' %}">🔧 Inspections</a></li>
+        <li>🎯 Points de Contrôle</li>
+    </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+{% csrf_token %}
+<div class="max-w-full mx-auto">
+    <!-- En-tête -->
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content flex items-center gap-2">
+                🎯 Gestion des Points de Contrôle et Activités Correctives
+            </h1>
+            <p class="text-base-content/70 mt-1">
+                Configuration des points de contrôle et leurs activités correctives associées
+            </p>
+        </div>
+        <div class="flex gap-2">
+            <button class="btn btn-outline" onclick="window.history.back()">
+                <i class="fas fa-arrow-left mr-2"></i>
+                Retour
+            </button>
+        </div>
+    </div>
+
+    <!-- Tableau principal des points de contrôle -->
+    <div class="card bg-base-100 shadow-sm border border-base-300 mb-6">
+        <div class="card-header p-6 border-b border-base-300">
+            <div class="flex justify-between items-center">
+                <h2 class="text-xl font-semibold flex items-center gap-2">
+                    <i class="fas fa-bullseye text-primary"></i>
+                    Points de Contrôle
+                    <span id="points-count" class="badge badge-primary">0</span>
+                </h2>
+                <button class="btn btn-primary btn-sm" onclick="openAddPointModal()">
+                    <i class="fas fa-plus mr-2"></i>
+                    Nouveau Point
+                </button>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <div id="points-loader" class="flex justify-center py-8">
+                <span class="loading loading-spinner loading-md"></span>
+            </div>
+            <div id="points-table-container" class="hidden">
+                <table class="table table-zebra w-full">
+                    <thead>
+                        <tr>
+                            <th class="w-8"></th>
+                            <th>Nom du Point de Contrôle</th>
+                            <th>Type de Résultat</th>
+                            <th>Valeurs de Référence</th>
+                            <th>Activités Correctives</th>
+                            <th class="w-32">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="points-tbody">
+                        <!-- Chargé dynamiquement -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Section cascade pour les activités correctives -->
+    <div id="activites-section" class="hidden">
+        <div class="card bg-base-100 shadow-sm border border-base-300">
+            <div class="card-header p-6 border-b border-base-300">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <h3 class="text-lg font-semibold flex items-center gap-2">
+                            <i class="fas fa-tools text-warning"></i>
+                            Activités Correctives pour : <span id="selected-point-name" class="text-primary"></span>
+                        </h3>
+                        <p class="text-sm text-base-content/70 mt-1">
+                            Gérez les activités correctives disponibles pour ce point de contrôle
+                        </p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="btn btn-success btn-sm" onclick="openAddActiviteModal()">
+                            <i class="fas fa-plus mr-2"></i>
+                            Ajouter Activité
+                        </button>
+                        <button class="btn btn-outline btn-sm" onclick="closeActivitesSection()">
+                            <i class="fas fa-times mr-2"></i>
+                            Fermer
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-zebra w-full">
+                    <thead>
+                        <tr>
+                            <th class="w-8"></th>
+                            <th>Activité Corrective</th>
+                            <th>Type d'Activité</th>
+                            <th>Priorité</th>
+                            <th>Description</th>
+                            <th class="w-32">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="activites-tbody">
+                        <!-- Chargé dynamiquement -->
+                    </tbody>
+                </table>
+                <div id="activites-empty" class="hidden text-center py-8 text-base-content/50">
+                    <i class="fas fa-exclamation-circle text-4xl mb-4"></i>
+                    <p>Aucune activité corrective configurée pour ce point</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Ajouter/Modifier Point de Contrôle -->
+<dialog id="point-modal" class="modal">
+    <div class="modal-box w-11/12 max-w-2xl">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+        </form>
+        <h3 class="font-bold text-lg mb-4" id="point-modal-title">Nouveau Point de Contrôle</h3>
+
+        <form id="point-form" class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Nom *</span>
+                    </label>
+                    <input type="text" id="point-nom" class="input input-bordered" required>
+                </div>
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Type de Résultat *</span>
+                    </label>
+                    <select id="point-type" class="select select-bordered" required>
+                        <option value="">Choisir...</option>
+                        <option value="BOOL">Booléen (Oui/Non)</option>
+                        <option value="NUM">Numérique</option>
+                        <option value="TEXT">Texte libre</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text font-semibold">Description</span>
+                </label>
+                <textarea id="point-description" class="textarea textarea-bordered" rows="3"></textarea>
+            </div>
+
+            <div id="numeric-fields" class="hidden">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text font-semibold">Valeur Min</span>
+                        </label>
+                        <input type="number" id="point-min" class="input input-bordered" step="0.01">
+                    </div>
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text font-semibold">Valeur Max</span>
+                        </label>
+                        <input type="number" id="point-max" class="input input-bordered" step="0.01">
+                    </div>
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text font-semibold">Unité</span>
+                        </label>
+                        <input type="text" id="point-unite" class="input input-bordered" placeholder="ex: bar, °C, %">
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn btn-outline" onclick="document.getElementById('point-modal').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary">
+                    <span id="point-submit-text">Créer</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</dialog>
+
+<!-- Modal Ajouter Activité Corrective -->
+<dialog id="activite-modal" class="modal">
+    <div class="modal-box w-11/12 max-w-lg">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+        </form>
+        <h3 class="font-bold text-lg mb-4">Ajouter une Activité Corrective</h3>
+
+        <form id="activite-form" class="space-y-4">
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text font-semibold">Activité *</span>
+                </label>
+                <select id="activite-select" class="select select-bordered" required>
+                    <option value="">Choisir une activité...</option>
+                    <!-- Options chargées dynamiquement -->
+                </select>
+            </div>
+
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text font-semibold">Priorité</span>
+                </label>
+                <input type="number" id="activite-priorite" class="input input-bordered" min="1" value="1">
+                <div class="label">
+                    <span class="label-text-alt">1 = Plus prioritaire</span>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn btn-outline" onclick="document.getElementById('activite-modal').close()">Annuler</button>
+                <button type="submit" class="btn btn-success">
+                    <i class="fas fa-plus mr-2"></i>
+                    Ajouter
+                </button>
+            </div>
+        </form>
+    </div>
+</dialog>
+
+<script>
+// Variables globales
+let allPoints = [];
+let allActivites = [];
+let selectedPointId = null;
+let currentActivitesCorrectibles = [];
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadPoints();
+    loadActivites();
+
+    // Gérer l'affichage des champs numériques
+    document.getElementById('point-type').addEventListener('change', function() {
+        const numericFields = document.getElementById('numeric-fields');
+        if (this.value === 'NUM') {
+            numericFields.classList.remove('hidden');
+        } else {
+            numericFields.classList.add('hidden');
+        }
+    });
+
+    // Gérer la soumission du formulaire point
+    document.getElementById('point-form').addEventListener('submit', handlePointSubmit);
+
+    // Gérer la soumission du formulaire activité
+    document.getElementById('activite-form').addEventListener('submit', handleActiviteSubmit);
+});
+
+// Charger tous les points de contrôle
+function loadPoints() {
+    const loader = document.getElementById('points-loader');
+    const container = document.getElementById('points-table-container');
+
+    loader.classList.remove('hidden');
+    container.classList.add('hidden');
+
+    fetch('/inspections/api/points-controle-list/')
+        .then(response => response.json())
+        .then(data => {
+            allPoints = data;
+            displayPoints(data);
+            document.getElementById('points-count').textContent = data.length;
+            loader.classList.add('hidden');
+            container.classList.remove('hidden');
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            showToast('Erreur lors du chargement des points de contrôle', 'error');
+            loader.classList.add('hidden');
+        });
+}
+
+// Afficher les points de contrôle
+function displayPoints(points) {
+    const tbody = document.getElementById('points-tbody');
+    tbody.innerHTML = '';
+
+    if (points.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" class="text-center py-8 text-base-content/50">
+                    <i class="fas fa-info-circle text-2xl mb-2"></i><br>
+                    Aucun point de contrôle trouvé
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    points.forEach((point, index) => {
+        let valeurs = '';
+        if (point.type_resultat === 'NUM') {
+            const min = point.valeur_min || '-';
+            const max = point.valeur_max || '-';
+            const unite = point.unite || '';
+            valeurs = `${min} - ${max} ${unite}`.trim();
+        } else {
+            valeurs = point.type_resultat === 'BOOL' ? 'Oui/Non' : 'Texte libre';
+        }
+
+        const typeBadge = point.type_resultat === 'BOOL' ? 'badge-success' :
+                         point.type_resultat === 'NUM' ? 'badge-warning' : 'badge-info';
+
+        const row = document.createElement('tr');
+        row.className = 'hover cursor-pointer';
+        row.onclick = () => selectPoint(point.id);
+
+        row.innerHTML = `
+            <td>
+                <input type="radio" name="selectedPoint" value="${point.id}" class="radio radio-primary radio-sm"
+                       onclick="event.stopPropagation();" onchange="selectPointRadio('${point.id}')">
+            </td>
+            <td>
+                <div class="font-semibold">${point.nom}</div>
+                ${point.description ? `<div class="text-sm text-base-content/70">${point.description}</div>` : ''}
+            </td>
+            <td>
+                <span class="badge ${typeBadge} badge-sm">${point.type_resultat}</span>
+            </td>
+            <td class="text-sm">${valeurs}</td>
+            <td>
+                <span class="loading loading-spinner loading-xs" id="activites-count-${point.id}"></span>
+            </td>
+            <td>
+                <div class="flex gap-1">
+                    <button class="btn btn-ghost btn-xs action-btn" onclick="event.stopPropagation(); editPoint('${point.id}')" title="Modifier">
+                        <i class="fas fa-edit text-info"></i>
+                    </button>
+                    <button class="btn btn-ghost btn-xs action-btn text-error" onclick="event.stopPropagation(); deletePoint('${point.id}')" title="Supprimer">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </td>
+        `;
+
+        tbody.appendChild(row);
+
+        // Charger le nombre d'activités correctives pour ce point
+        loadActivitesCountForPoint(point.id);
+    });
+}
+
+// Charger le nombre d'activités correctives pour un point
+function loadActivitesCountForPoint(pointId) {
+    fetch(`/inspections/api/points-controle/${pointId}/activites_correctives/`)
+        .then(response => response.json())
+        .then(data => {
+            const countElement = document.getElementById(`activites-count-${pointId}`);
+            if (countElement) {
+                const count = data.length;
+                countElement.outerHTML = count > 0 ?
+                    `<span class="badge badge-warning badge-sm">${count} activité${count > 1 ? 's' : ''}</span>` :
+                    `<span class="text-base-content/50 text-xs">Aucune</span>`;
+            }
+        })
+        .catch(error => {
+            const countElement = document.getElementById(`activites-count-${pointId}`);
+            if (countElement) {
+                countElement.outerHTML = `<span class="text-error text-xs">Erreur</span>`;
+            }
+        });
+}
+
+// Sélectionner un point de contrôle
+function selectPoint(pointId) {
+    const radio = document.querySelector(`input[name="selectedPoint"][value="${pointId}"]`);
+    if (radio) {
+        radio.checked = true;
+    }
+    selectPointRadio(pointId);
+}
+
+function selectPointRadio(pointId) {
+    // Retirer la classe selected de toutes les lignes
+    document.querySelectorAll('.table tr').forEach(tr => tr.classList.remove('selected'));
+
+    selectedPointId = pointId;
+    const point = allPoints.find(p => p.id === pointId);
+    if (!point) return;
+
+    // Ajouter la classe selected à la ligne correspondante
+    const radio = document.querySelector(`input[name="selectedPoint"][value="${pointId}"]`);
+    if (radio) {
+        radio.closest('tr').classList.add('selected');
+    }
+
+    document.getElementById('selected-point-name').textContent = point.nom;
+    document.getElementById('activites-section').classList.remove('hidden');
+
+    // Faire défiler jusqu'à la section activités
+    document.getElementById('activites-section').scrollIntoView({ behavior: 'smooth' });
+
+    loadActivitesForPoint(pointId);
+}
+
+// Charger les activités correctives pour un point
+function loadActivitesForPoint(pointId) {
+    const tbody = document.getElementById('activites-tbody');
+    const emptyDiv = document.getElementById('activites-empty');
+
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="6" class="text-center py-4">
+                <span class="loading loading-spinner loading-sm"></span>
+            </td>
+        </tr>
+    `;
+    emptyDiv.classList.add('hidden');
+
+    fetch(`/inspections/api/points-controle/${pointId}/activites_correctives/`)
+        .then(response => response.json())
+        .then(data => {
+            currentActivitesCorrectibles = data;
+            displayActivitesCorrectibles(data);
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="6" class="text-center py-4 text-error">
+                        Erreur lors du chargement des activités correctives
+                    </td>
+                </tr>
+            `;
+        });
+}
+
+// Afficher les activités correctives
+function displayActivitesCorrectibles(activites) {
+    const tbody = document.getElementById('activites-tbody');
+    const emptyDiv = document.getElementById('activites-empty');
+
+    tbody.innerHTML = '';
+
+    if (activites.length === 0) {
+        tbody.innerHTML = '';
+        emptyDiv.classList.remove('hidden');
+        return;
+    }
+
+    emptyDiv.classList.add('hidden');
+
+    activites.forEach((activite, index) => {
+        const row = document.createElement('tr');
+        row.className = 'hover';
+
+        row.innerHTML = `
+            <td>${index + 1}</td>
+            <td>
+                <div class="font-semibold">${activite.nom}</div>
+            </td>
+            <td>
+                <span class="badge badge-outline badge-sm">${activite.type_activite?.nomtype || 'Sans type'}</span>
+            </td>
+            <td>
+                <span class="badge badge-primary badge-sm">P${activite.priorite || 1}</span>
+            </td>
+            <td class="text-sm text-base-content/70">
+                ${activite.description || '-'}
+            </td>
+            <td>
+                <div class="flex gap-1">
+                    <button class="btn btn-ghost btn-xs" onclick="editActiviteCorrectible('${activite.id}')" title="Modifier priorité">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button class="btn btn-ghost btn-xs text-error" onclick="removeActiviteCorrectible('${activite.id}')" title="Supprimer">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </td>
+        `;
+
+        tbody.appendChild(row);
+    });
+}
+
+// Charger toutes les activités disponibles
+function loadActivites() {
+    fetch('/inspections/api/activites-list/')
+        .then(response => response.json())
+        .then(data => {
+            allActivites = data;
+            populateActiviteSelect();
+        })
+        .catch(error => console.error('Erreur:', error));
+}
+
+// Peupler le sélecteur d'activités
+function populateActiviteSelect() {
+    const select = document.getElementById('activite-select');
+    select.innerHTML = '<option value="">Choisir une activité...</option>';
+
+    allActivites.forEach(activite => {
+        const option = document.createElement('option');
+        option.value = activite.id;
+        option.textContent = `${activite.nom} (${activite.type_activite?.nomtype || 'Sans type'})`;
+        select.appendChild(option);
+    });
+}
+
+// Fermer la section activités
+function closeActivitesSection() {
+    document.getElementById('activites-section').classList.add('hidden');
+    selectedPointId = null;
+    // Décocher les radios
+    document.querySelectorAll('input[name="selectedPoint"]').forEach(radio => {
+        radio.checked = false;
+    });
+}
+
+// Ouvrir le modal d'ajout de point
+function openAddPointModal() {
+    document.getElementById('point-modal-title').textContent = 'Nouveau Point de Contrôle';
+    document.getElementById('point-submit-text').textContent = 'Créer';
+
+    const form = document.getElementById('point-form');
+    form.reset();
+    delete form.dataset.editId; // S'assurer qu'on n'est pas en mode édition
+
+    document.getElementById('numeric-fields').classList.add('hidden');
+    document.getElementById('point-modal').showModal();
+}
+
+// Ouvrir le modal d'ajout d'activité
+function openAddActiviteModal() {
+    if (!selectedPointId) {
+        showToast('Veuillez d\'abord sélectionner un point de contrôle', 'warning');
+        return;
+    }
+
+    // Filtrer les activités déjà associées
+    const select = document.getElementById('activite-select');
+    select.innerHTML = '<option value="">Choisir une activité...</option>';
+
+    const activitesAssociees = currentActivitesCorrectibles.map(ac => ac.id);
+    const activitesDisponibles = allActivites.filter(activite =>
+        !activitesAssociees.includes(activite.id)
+    );
+
+    if (activitesDisponibles.length === 0) {
+        showToast('Toutes les activités sont déjà associées à ce point', 'info');
+        return;
+    }
+
+    activitesDisponibles.forEach(activite => {
+        const option = document.createElement('option');
+        option.value = activite.id;
+        option.textContent = `${activite.nom} (${activite.type_activite?.nomtype || 'Sans type'})`;
+        select.appendChild(option);
+    });
+
+    document.getElementById('activite-priorite').value = currentActivitesCorrectibles.length + 1;
+    document.getElementById('activite-modal').showModal();
+}
+
+// Gérer la soumission du formulaire point
+function handlePointSubmit(e) {
+    e.preventDefault();
+
+    const form = e.target;
+    const editId = form.dataset.editId;
+    const isEdit = !!editId;
+
+    // Récupérer les données du formulaire
+    const nom = document.getElementById('point-nom').value.trim();
+    const description = document.getElementById('point-description').value.trim();
+    const typeResultat = document.getElementById('point-type').value;
+
+    if (!nom || !typeResultat) {
+        showToast('Veuillez remplir tous les champs obligatoires', 'warning');
+        return;
+    }
+
+    const data = {
+        nom: nom,
+        description: description,
+        type_resultat: typeResultat
+    };
+
+    // Ajouter les champs numériques si nécessaire
+    if (typeResultat === 'NUM') {
+        const valeurMin = document.getElementById('point-min').value;
+        const valeurMax = document.getElementById('point-max').value;
+        const unite = document.getElementById('point-unite').value.trim();
+
+        if (valeurMin) data.valeur_min = parseFloat(valeurMin);
+        if (valeurMax) data.valeur_max = parseFloat(valeurMax);
+        if (unite) data.unite = unite;
+    }
+
+    // Utiliser l'API REST Django pour créer/modifier les points de contrôle
+    const url = isEdit ? `/inspections/api/points-controle/${editId}/` : '/inspections/api/points-controle/';
+    const method = isEdit ? 'PUT' : 'POST';
+
+    fetch(url, {
+        method: method,
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => {
+        if (response.ok) {
+            return response.json();
+        } else {
+            throw new Error(`HTTP ${response.status}`);
+        }
+    })
+    .then(data => {
+        const message = isEdit ? 'Point de contrôle modifié avec succès' : 'Point de contrôle créé avec succès';
+        showToast(message, 'success');
+        document.getElementById('point-modal').close();
+        form.reset();
+        delete form.dataset.editId;
+        loadPoints(); // Recharger la liste
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        showToast('Erreur lors de l\'opération: ' + error.message, 'error');
+    });
+}
+
+// Gérer la soumission du formulaire activité
+function handleActiviteSubmit(e) {
+    e.preventDefault();
+
+    const activiteId = document.getElementById('activite-select').value;
+    const priorite = document.getElementById('activite-priorite').value;
+
+    if (!activiteId) {
+        showToast('Veuillez sélectionner une activité', 'warning');
+        return;
+    }
+
+    addActiviteToPoint(activiteId, priorite);
+}
+
+// Ajouter une activité à un point
+function addActiviteToPoint(activiteId, priorite) {
+    fetch('/inspections/api/activites-correctives-manage/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        },
+        body: JSON.stringify({
+            point_de_controle_id: selectedPointId,
+            activite_id: activiteId,
+            priorite: parseInt(priorite)
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.message) {
+            showToast('Activité ajoutée avec succès', 'success');
+            document.getElementById('activite-modal').close();
+            document.getElementById('activite-form').reset();
+            loadActivitesForPoint(selectedPointId);
+            loadActivitesCountForPoint(selectedPointId); // Mettre à jour le compteur
+        } else {
+            showToast('Erreur: ' + (data.error || 'Erreur inconnue'), 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        showToast('Erreur lors de l\'ajout', 'error');
+    });
+}
+
+// Supprimer une activité corrective
+function removeActiviteCorrectible(activiteId) {
+    if (!confirm('Êtes-vous sûr de vouloir supprimer cette activité corrective ?')) {
+        return;
+    }
+
+    fetch('/inspections/api/activites-correctives-manage/', {
+        method: 'DELETE',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        },
+        body: JSON.stringify({
+            point_de_controle_id: selectedPointId,
+            activite_id: activiteId
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.message) {
+            showToast('Activité supprimée avec succès', 'success');
+            loadActivitesForPoint(selectedPointId);
+            loadActivitesCountForPoint(selectedPointId); // Mettre à jour le compteur
+        } else {
+            showToast('Erreur: ' + (data.error || 'Erreur inconnue'), 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        showToast('Erreur lors de la suppression', 'error');
+    });
+}
+
+// Modifier un point de contrôle
+function editPoint(pointId) {
+    const point = allPoints.find(p => p.id === pointId);
+    if (!point) {
+        showToast('Point de contrôle non trouvé', 'error');
+        return;
+    }
+
+    // Remplir le formulaire avec les données existantes
+    document.getElementById('point-modal-title').textContent = 'Modifier le Point de Contrôle';
+    document.getElementById('point-submit-text').textContent = 'Modifier';
+
+    document.getElementById('point-nom').value = point.nom;
+    document.getElementById('point-description').value = point.description || '';
+    document.getElementById('point-type').value = point.type_resultat;
+
+    // Afficher les champs numériques si nécessaire
+    const numericFields = document.getElementById('numeric-fields');
+    if (point.type_resultat === 'NUM') {
+        numericFields.classList.remove('hidden');
+        document.getElementById('point-min').value = point.valeur_min || '';
+        document.getElementById('point-max').value = point.valeur_max || '';
+        document.getElementById('point-unite').value = point.unite || '';
+    } else {
+        numericFields.classList.add('hidden');
+    }
+
+    // Marquer le formulaire comme étant en mode modification
+    document.getElementById('point-form').dataset.editId = pointId;
+
+    document.getElementById('point-modal').showModal();
+}
+
+function deletePoint(pointId) {
+    const point = allPoints.find(p => p.id === pointId);
+    if (!point) {
+        showToast('Point de contrôle non trouvé', 'error');
+        return;
+    }
+
+    // Demander confirmation avec détails
+    const confirmMessage = `Êtes-vous sûr de vouloir supprimer le point de contrôle "${point.nom}" ?\n\nCette action supprimera également toutes les activités correctives associées et est irréversible.`;
+
+    if (!confirm(confirmMessage)) {
+        return;
+    }
+
+    // Utiliser l'API REST Django pour supprimer le point de contrôle
+    fetch(`/inspections/api/points-controle/${pointId}/`, {
+        method: 'DELETE',
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        }
+    })
+    .then(response => {
+        if (response.ok || response.status === 204) {
+            showToast('Point de contrôle supprimé avec succès', 'success');
+            loadPoints(); // Recharger la liste
+            if (selectedPointId === pointId) {
+                closeActivitesSection(); // Fermer la section si ce point était sélectionné
+            }
+        } else {
+            throw new Error(`HTTP ${response.status}`);
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        showToast('Erreur lors de la suppression: ' + error.message, 'error');
+    });
+}
+
+function editActiviteCorrectible(activiteId) {
+    const activite = currentActivitesCorrectibles.find(a => a.id === activiteId);
+    if (!activite) {
+        showToast('Activité corrective non trouvée', 'error');
+        return;
+    }
+
+    // Créer un modal de modification de priorité à la volée
+    const modalHtml = `
+        <dialog id="edit-priorite-modal" class="modal">
+            <div class="modal-box w-11/12 max-w-md">
+                <form method="dialog">
+                    <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+                </form>
+                <h3 class="font-bold text-lg mb-4">Modifier la Priorité</h3>
+
+                <div class="space-y-4">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i>
+                        <span>Activité : <strong>${activite.nom}</strong></span>
+                    </div>
+
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text font-semibold">Nouvelle Priorité</span>
+                        </label>
+                        <input type="number" id="edit-priorite-input" class="input input-bordered"
+                               min="1" value="${activite.priorite || 1}" required>
+                        <div class="label">
+                            <span class="label-text-alt">1 = Plus prioritaire</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-action">
+                    <button type="button" class="btn btn-outline" onclick="closeEditPrioriteModal()">Annuler</button>
+                    <button type="button" class="btn btn-primary" onclick="savePrioriteChange('${activiteId}')">
+                        <i class="fas fa-save mr-2"></i>
+                        Sauvegarder
+                    </button>
+                </div>
+            </div>
+        </dialog>
+    `;
+
+    // Supprimer l'ancien modal s'il existe
+    const existingModal = document.getElementById('edit-priorite-modal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+
+    // Ajouter le nouveau modal
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    document.getElementById('edit-priorite-modal').showModal();
+}
+
+// Fermer le modal d'édition de priorité
+function closeEditPrioriteModal() {
+    const modal = document.getElementById('edit-priorite-modal');
+    if (modal) {
+        modal.close();
+        modal.remove();
+    }
+}
+
+// Sauvegarder le changement de priorité
+function savePrioriteChange(activiteId) {
+    const priorite = document.getElementById('edit-priorite-input').value;
+
+    if (!priorite || priorite < 1) {
+        showToast('Veuillez entrer une priorité valide (≥ 1)', 'warning');
+        return;
+    }
+
+    // Utiliser l'API existante pour modifier la priorité
+    fetch('/inspections/api/activites-correctives-manage/', {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        },
+        body: JSON.stringify({
+            point_de_controle_id: selectedPointId,
+            activite_id: activiteId,
+            priorite: parseInt(priorite)
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.message) {
+            showToast('Priorité mise à jour avec succès', 'success');
+            closeEditPrioriteModal();
+            loadActivitesForPoint(selectedPointId); // Recharger la liste
+        } else {
+            showToast('Erreur: ' + (data.error || 'Erreur inconnue'), 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        showToast('Erreur lors de la mise à jour', 'error');
+    });
+}
+
+// Afficher un toast
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = `toast toast-top toast-center z-50`;
+
+    const alertClass = type === 'success' ? 'alert-success' :
+                      type === 'error' ? 'alert-error' :
+                      type === 'warning' ? 'alert-warning' : 'alert-info';
+
+    toast.innerHTML = `
+        <div class="alert ${alertClass}">
+            <span>${message}</span>
+        </div>
+    `;
+
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+        if (document.body.contains(toast)) {
+            document.body.removeChild(toast);
+        }
+    }, 3000);
+}
+</script>
+
+<style>
+.table td, .table th {
+    vertical-align: middle;
+}
+
+/* Survol plus doux et moins agressif */
+.table tr.hover:hover {
+    background-color: hsl(var(--nc) / 0.08); /* Couleur neutre très subtile */
+    transition: background-color 0.2s ease;
+}
+
+/* Survol spécial pour la ligne sélectionnée */
+.table tr.selected {
+    background-color: hsl(var(--p) / 0.1); /* Fond primaire très léger */
+    border-left: 3px solid hsl(var(--p)); /* Bordure gauche pour indiquer la sélection */
+}
+
+.table tr.selected:hover {
+    background-color: hsl(var(--p) / 0.15); /* Un peu plus foncé au survol */
+}
+
+/* Style pour les boutons d'action */
+.action-btn {
+    opacity: 0.7;
+    transition: opacity 0.2s ease, transform 0.1s ease;
+}
+
+.action-btn:hover {
+    opacity: 1;
+    transform: scale(1.1);
+}
+
+/* Animation pour les compteurs de chargement */
+.loading-count {
+    opacity: 0.6;
+}
+</style>
+{% endblock %}

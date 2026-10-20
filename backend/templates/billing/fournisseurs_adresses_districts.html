@@ -1,0 +1,731 @@
+{% extends 'accounting/base.html' %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">Adresses fournisseurs et districts</h1>
+            <p class="text-base-content/70 mt-2">Une adresse unique, un district unique, réutilisé pour tous les fournisseurs concernés.</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <button type="button" class="btn btn-outline" onclick="openCreateAdresseModal()">
+                Ajouter une adresse
+            </button>
+            <a href="{% url 'billing:fournisseurs_list' %}" class="btn btn-ghost">Fournisseurs</a>
+        </div>
+    </div>
+
+    <div class="stats shadow w-full mb-6">
+        <div class="stat">
+            <div class="stat-title">Adresses</div>
+            <div class="stat-value">{{ stats.total }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-title">Mappées</div>
+            <div class="stat-value text-success">{{ stats.mapped }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-title">Non mappées</div>
+            <div class="stat-value text-warning">{{ stats.unmapped }}</div>
+        </div>
+    </div>
+
+    <form method="get" class="card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                <label class="form-control">
+                    <span class="label-text font-semibold">Recherche adresse</span>
+                    <input type="text" name="search" value="{{ search_query }}" class="input input-bordered" placeholder="Adresse fournisseur">
+                </label>
+                <label class="form-control">
+                    <span class="label-text font-semibold">Statut</span>
+                    <select name="statut" class="select select-bordered">
+                        <option value="all" {% if statut == 'all' %}selected{% endif %}>Toutes</option>
+                        <option value="unmapped" {% if statut == 'unmapped' %}selected{% endif %}>Non mappées</option>
+                        <option value="mapped" {% if statut == 'mapped' %}selected{% endif %}>Mappées</option>
+                    </select>
+                </label>
+                <label class="form-control">
+                    <span class="label-text font-semibold">Lignes par page</span>
+                    <select name="per_page" class="select select-bordered">
+                        <option value="25" {% if per_page == 25 %}selected{% endif %}>25</option>
+                        <option value="50" {% if per_page == 50 %}selected{% endif %}>50</option>
+                        <option value="100" {% if per_page == 100 %}selected{% endif %}>100</option>
+                        <option value="200" {% if per_page == 200 %}selected{% endif %}>200</option>
+                    </select>
+                </label>
+                <label class="form-control">
+                    <span class="label-text font-semibold">Tri</span>
+                    <select name="sort" class="select select-bordered">
+                        <option value="adresse" {% if sort_by == 'adresse' %}selected{% endif %}>Adresse</option>
+                        <option value="fournisseurs" {% if sort_by == 'fournisseurs' %}selected{% endif %}>Nombre de fournisseurs</option>
+                    </select>
+                </label>
+                <div class="form-control justify-end">
+                    <span class="label">&nbsp;</span>
+                    <button class="btn btn-primary">Filtrer</button>
+                </div>
+            </div>
+        </div>
+    </form>
+
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <div class="flex items-center justify-between gap-3 mb-4 text-sm text-base-content/70">
+                <div>
+                    Affichage
+                    {% if page_obj.paginator.count %}
+                        {{ page_obj.start_index }}-{{ page_obj.end_index }}
+                    {% else %}
+                        0
+                    {% endif %}
+                    sur {{ page_obj.paginator.count }} adresses
+                </div>
+                <div class="flex items-center gap-3">
+                    <span>Tri: {% if sort_by == 'fournisseurs' %}nombre de fournisseurs{% else %}alphabetique{% endif %}</span>
+                    <button type="button" id="save-all-mappings-btn" class="btn btn-primary btn-sm" onclick="saveAllMappings()" disabled>
+                        Enregistrer les modifications
+                    </button>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Adresse</th>
+                            <th>Fournisseurs</th>
+                            <th>District actuel</th>
+                            <th>Ex-province</th>
+                            <th>Nouveau district</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in rows %}
+                        <tr data-adresse="{{ row.adresse|escape }}" data-original-district-id="{{ row.district_id }}">
+                            <td class="max-w-xl whitespace-normal">{{ row.adresse }}</td>
+                            <td>{{ row.usage_count }}</td>
+                            <td>
+                                {% if row.district_nom %}
+                                    {{ row.district_nom }}{% if row.region_nom %} - {{ row.region_nom }}{% endif %}
+                                {% else %}
+                                    <span class="text-warning">Non mappé</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ row.ex_province_nom|default:"-" }}</td>
+                            <td>
+                                <select class="select select-bordered select-sm mapping-district">
+                                    <option value="">Sélectionner...</option>
+                                    {% for district in districts %}
+                                        <option value="{{ district.id }}" {% if row.district_id == district.id|stringformat:"s" %}selected{% endif %}>
+                                            {{ district.nom_district }} - {{ district.region.nom_region }}{% if district.region.ex_province %} - {{ district.region.ex_province.nom_ex_province }}{% endif %}
+                                        </option>
+                                    {% endfor %}
+                                </select>
+                            </td>
+                            <td>
+                                <div class="flex flex-wrap gap-1">
+                                    <button type="button" class="btn btn-outline btn-sm btn-square" title="Voir les fournisseurs lies" onclick="openAdresseDetails(this)">
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-ghost btn-sm btn-square" title="Modifier l'adresse" onclick="openAdresseEdit(this)">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-warning btn-sm btn-square" title="Fusionner cette adresse" onclick="openAdresseMerge(this)">
+                                        <i class="fas fa-code-branch"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="6" class="text-center text-base-content/60 py-8">Aucune adresse trouvée.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if page_obj.paginator.num_pages > 1 %}
+                <div class="mt-4 flex justify-end">
+                    <div class="join">
+                        {% if page_obj.has_previous %}
+                            <a class="btn btn-sm btn-outline join-item" href="?search={{ search_query|urlencode }}&statut={{ statut|urlencode }}&sort={{ sort_by|urlencode }}&per_page={{ per_page }}&page=1"><<</a>
+                            <a class="btn btn-sm btn-outline join-item" href="?search={{ search_query|urlencode }}&statut={{ statut|urlencode }}&sort={{ sort_by|urlencode }}&per_page={{ per_page }}&page={{ page_obj.previous_page_number }}"><</a>
+                        {% else %}
+                            <button class="btn btn-sm btn-outline btn-disabled join-item" disabled><<</button>
+                            <button class="btn btn-sm btn-outline btn-disabled join-item" disabled><</button>
+                        {% endif %}
+                        <button class="btn btn-sm btn-primary join-item" type="button">Page {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</button>
+                        {% if page_obj.has_next %}
+                            <a class="btn btn-sm btn-outline join-item" href="?search={{ search_query|urlencode }}&statut={{ statut|urlencode }}&sort={{ sort_by|urlencode }}&per_page={{ per_page }}&page={{ page_obj.next_page_number }}">></a>
+                            <a class="btn btn-sm btn-outline join-item" href="?search={{ search_query|urlencode }}&statut={{ statut|urlencode }}&sort={{ sort_by|urlencode }}&per_page={{ per_page }}&page={{ page_obj.paginator.num_pages }}">>></a>
+                        {% else %}
+                            <button class="btn btn-sm btn-outline btn-disabled join-item" disabled>></button>
+                            <button class="btn btn-sm btn-outline btn-disabled join-item" disabled>>></button>
+                        {% endif %}
+                    </div>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<dialog id="adresse-create-modal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">Ajouter une adresse</h3>
+        <label class="form-control">
+            <span class="label-text font-semibold">Adresse</span>
+            <textarea id="adresse-create-value" class="textarea textarea-bordered" rows="4"></textarea>
+        </label>
+        <div class="modal-action">
+            <button type="button" class="btn btn-ghost" onclick="document.getElementById('adresse-create-modal').close()">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="saveCreatedAdresse()">Enregistrer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>Fermer</button></form>
+</dialog>
+
+<dialog id="adresse-edit-modal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">Modifier l'adresse</h3>
+        <input type="hidden" id="adresse-edit-old-value">
+        <label class="form-control">
+            <span class="label-text font-semibold">Adresse</span>
+            <textarea id="adresse-edit-new-value" class="textarea textarea-bordered" rows="4"></textarea>
+        </label>
+        <div class="modal-action">
+            <button type="button" class="btn btn-ghost" onclick="document.getElementById('adresse-edit-modal').close()">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="saveAdresseEdit()">Enregistrer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>Fermer</button></form>
+</dialog>
+
+<dialog id="adresse-detail-modal" class="modal">
+    <div class="modal-box max-w-4xl">
+        <h3 class="font-bold text-lg mb-1">Fournisseurs lies a l'adresse</h3>
+        <p id="adresse-detail-title" class="text-sm text-base-content/70 mb-4"></p>
+        <div class="overflow-x-auto">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Nom</th>
+                        <th>Type</th>
+                        <th>Telephone</th>
+                        <th>Email</th>
+                        <th>Statut</th>
+                        <th>Compta</th>
+                    </tr>
+                </thead>
+                <tbody id="adresse-detail-tbody">
+                    <tr><td colspan="6" class="text-center text-base-content/60 py-6">Chargement...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="modal-action">
+            <button type="button" class="btn btn-ghost" onclick="document.getElementById('adresse-detail-modal').close()">Fermer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>Fermer</button></form>
+</dialog>
+
+<dialog id="adresse-compta-detail-modal" class="modal">
+    <div class="modal-box w-11/12 max-w-7xl">
+        <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
+            <div>
+                <h3 class="font-bold text-lg">
+                    <i class="fas fa-file-invoice-dollar text-info mr-2"></i>
+                    <span id="adresse-compta-modal-title">Details comptables fournisseur</span>
+                </h3>
+                <p class="text-sm text-base-content/70 mt-1">Periode: toutes</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <label class="text-sm text-base-content/70" for="adresse-compta-sort-date">Tri date</label>
+                <select id="adresse-compta-sort-date" class="select select-bordered select-sm" onchange="onAdresseComptaDateSortChange(this.value)">
+                    <option value="desc" selected>Recente -> ancienne</option>
+                    <option value="asc">Ancienne -> recente</option>
+                </select>
+                <button type="button" class="btn btn-sm btn-ghost" onclick="document.getElementById('adresse-compta-detail-modal').close()">Fermer</button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+            <div class="stat bg-base-200 rounded-lg">
+                <div class="stat-title">Lignes</div>
+                <div id="adresse-compta-total-lignes" class="stat-value text-primary text-2xl">0</div>
+            </div>
+            <div class="stat bg-base-200 rounded-lg">
+                <div class="stat-title">Total In</div>
+                <div id="adresse-compta-total-in" class="stat-value text-success text-2xl">0.00</div>
+            </div>
+            <div class="stat bg-base-200 rounded-lg">
+                <div class="stat-title">Total Out</div>
+                <div id="adresse-compta-total-out" class="stat-value text-error text-2xl">0.00</div>
+            </div>
+            <div class="stat bg-base-200 rounded-lg">
+                <div class="stat-title">Total Mouvement</div>
+                <div id="adresse-compta-total-mouvement" class="stat-value text-info text-2xl">0.00</div>
+            </div>
+        </div>
+
+        <div id="adresse-compta-loading" class="text-center py-6 hidden">
+            <span class="loading loading-spinner loading-md"></span>
+            <p class="text-sm text-base-content/70 mt-2">Chargement des lignes comptables...</p>
+        </div>
+
+        <div id="adresse-compta-empty" class="alert hidden mb-3">
+            <i class="fas fa-info-circle"></i>
+            <span>Aucune ligne comptable trouvee pour ce fournisseur.</span>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="table table-zebra table-sm">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Journal</th>
+                        <th>Compte</th>
+                        <th>Description</th>
+                        <th class="text-right">In</th>
+                        <th class="text-right">Out</th>
+                        <th class="text-right">Mouvement</th>
+                        <th>Fichier</th>
+                    </tr>
+                </thead>
+                <tbody id="adresse-compta-tbody">
+                    <tr><td colspan="8" class="text-center text-base-content/50">Aucune donnee</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div id="adresse-compta-pagination" class="mt-4 flex justify-end"></div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>Fermer</button></form>
+</dialog>
+
+<dialog id="adresse-merge-modal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">Fusionner une adresse</h3>
+        <input type="hidden" id="adresse-merge-source-value">
+        <label class="form-control mb-4">
+            <span class="label-text font-semibold">Adresse source</span>
+            <textarea id="adresse-merge-source-display" class="textarea textarea-bordered" rows="3" disabled></textarea>
+        </label>
+        <label class="form-control">
+            <span class="label-text font-semibold">Adresse cible</span>
+            <input type="text" id="adresse-merge-target-value" list="adresse-merge-target-options" class="input input-bordered" placeholder="Selectionner l'adresse cible">
+            <datalist id="adresse-merge-target-options">
+                {% for adresse_option in all_addresses %}
+                    <option value="{{ adresse_option }}"></option>
+                {% endfor %}
+            </datalist>
+            <span class="label-text-alt text-base-content/60">La fusion deplace les fournisseurs et le mapping district vers l'adresse cible.</span>
+        </label>
+        <div class="modal-action">
+            <button type="button" class="btn btn-ghost" onclick="document.getElementById('adresse-merge-modal').close()">Annuler</button>
+            <button type="button" class="btn btn-warning" onclick="saveAdresseMerge()">Fusionner</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>Fermer</button></form>
+</dialog>
+
+<script>
+const dirtyAdresses = new Set();
+let currentAdresseComptaFournisseurId = null;
+let currentAdresseComptaPage = 1;
+let currentAdresseComptaDateSort = 'desc';
+
+function getCookie(name) {
+    const cookieValue = document.cookie
+        .split('; ')
+        .find(row => row.startsWith(name + '='));
+    return cookieValue ? decodeURIComponent(cookieValue.split('=')[1]) : null;
+}
+
+function updateSaveAllButtonState() {
+    const button = document.getElementById('save-all-mappings-btn');
+    if (!button) return;
+    button.disabled = dirtyAdresses.size === 0;
+}
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function formatAmount(value) {
+    return Number(value || 0).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+}
+
+function formatDateDisplay(value) {
+    if (!value) return '-';
+    const parts = String(value).split('-');
+    if (parts.length !== 3) return String(value);
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+function markRowDirty(row, isDirty) {
+    const adresse = row.dataset.adresse || '';
+    if (!adresse) return;
+    if (isDirty) {
+        dirtyAdresses.add(adresse);
+        row.classList.add('bg-warning/10');
+    } else {
+        dirtyAdresses.delete(adresse);
+        row.classList.remove('bg-warning/10');
+    }
+    updateSaveAllButtonState();
+}
+
+function openCreateAdresseModal() {
+    document.getElementById('adresse-create-value').value = '';
+    document.getElementById('adresse-create-modal').showModal();
+}
+
+async function saveCreatedAdresse() {
+    const adresse = document.getElementById('adresse-create-value').value;
+    const response = await fetch('{% url "billing:fournisseur_adresse_create_api" %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({ adresse })
+    });
+    const data = await response.json();
+    if (!data.success) {
+        alert(data.error || 'Erreur lors de la creation');
+        return;
+    }
+    window.location.reload();
+}
+
+async function postMapping(adresse, districtId) {
+    const response = await fetch('{% url "billing:fournisseur_adresse_mapping_upsert_api" %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({
+            adresse: adresse,
+            district_id: districtId,
+            actif: true
+        })
+    });
+    return response.json();
+}
+
+async function saveAllMappings() {
+    const button = document.getElementById('save-all-mappings-btn');
+    const rows = Array.from(document.querySelectorAll('tr[data-adresse]'))
+        .filter((row) => dirtyAdresses.has(row.dataset.adresse || ''));
+
+    if (!rows.length) {
+        return;
+    }
+
+    button.disabled = true;
+    const originalLabel = button.textContent;
+    button.textContent = 'Enregistrement...';
+
+    try {
+        for (const row of rows) {
+            const adresse = row.dataset.adresse || '';
+            const districtId = row.querySelector('.mapping-district')?.value || '';
+            if (!districtId) {
+                throw new Error(`District manquant pour l'adresse: ${adresse}`);
+            }
+            const data = await postMapping(adresse, districtId);
+            if (!data.success) {
+                throw new Error(data.error || `Erreur inconnue pour l'adresse: ${adresse}`);
+            }
+        }
+        window.location.reload();
+    } catch (error) {
+        alert(error.message || "Erreur lors de l'enregistrement");
+        button.textContent = originalLabel;
+        updateSaveAllButtonState();
+    }
+}
+
+async function saveMapping(button) {
+    const row = button.closest('tr');
+    const districtSelect = row.querySelector('.mapping-district');
+    const adresse = row.dataset.adresse;
+    const districtId = districtSelect.value;
+
+    if (!districtId) {
+        alert('Sélectionnez un district.');
+        return;
+    }
+
+    button.disabled = true;
+
+    try {
+        const data = await postMapping(adresse, districtId);
+        if (!data.success) {
+            throw new Error(data.error || 'Erreur inconnue');
+        }
+        row.dataset.originalDistrictId = districtId;
+        markRowDirty(row, false);
+    } catch (error) {
+        alert(error.message || "Erreur lors de l'enregistrement");
+    } finally {
+        button.disabled = false;
+    }
+}
+
+function openAdresseEdit(button) {
+    const row = button.closest('tr');
+    const adresse = row.dataset.adresse || '';
+    document.getElementById('adresse-edit-old-value').value = adresse;
+    document.getElementById('adresse-edit-new-value').value = adresse;
+    document.getElementById('adresse-edit-modal').showModal();
+}
+
+function openAdresseMerge(button) {
+    const row = button.closest('tr');
+    const adresse = row.dataset.adresse || '';
+    document.getElementById('adresse-merge-source-value').value = adresse;
+    document.getElementById('adresse-merge-source-display').value = adresse;
+    document.getElementById('adresse-merge-target-value').value = '';
+    document.getElementById('adresse-merge-modal').showModal();
+}
+
+async function saveAdresseMerge() {
+    const sourceAdresse = document.getElementById('adresse-merge-source-value').value;
+    const targetAdresse = document.getElementById('adresse-merge-target-value').value;
+    const response = await fetch('{% url "billing:fournisseur_adresse_merge_api" %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({
+            source_adresse: sourceAdresse,
+            target_adresse: targetAdresse
+        })
+    });
+    const data = await response.json();
+    if (!data.success) {
+        alert(data.error || 'Erreur lors de la fusion');
+        return;
+    }
+    window.location.reload();
+}
+
+async function saveAdresseEdit() {
+    const oldAdresse = document.getElementById('adresse-edit-old-value').value;
+    const newAdresse = document.getElementById('adresse-edit-new-value').value;
+
+    const response = await fetch('{% url "billing:fournisseur_adresse_update_api" %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({
+            old_adresse: oldAdresse,
+            new_adresse: newAdresse
+        })
+    });
+    const data = await response.json();
+    if (!data.success) {
+        alert(data.error || 'Erreur lors de la mise a jour');
+        return;
+    }
+    window.location.reload();
+}
+
+async function openAdresseDetails(button) {
+    const row = button.closest('tr');
+    const adresse = row.dataset.adresse || '';
+    const modal = document.getElementById('adresse-detail-modal');
+    const title = document.getElementById('adresse-detail-title');
+    const tbody = document.getElementById('adresse-detail-tbody');
+
+    title.textContent = adresse;
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-base-content/60 py-6">Chargement...</td></tr>';
+    modal.showModal();
+
+    const params = new URLSearchParams({ adresse });
+    const response = await fetch(`{% url "billing:fournisseur_adresse_detail_api" %}?${params.toString()}`, {
+        headers: { 'Accept': 'application/json' }
+    });
+    const data = await response.json();
+    if (!data.success) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-error py-6">Erreur de chargement</td></tr>';
+        return;
+    }
+    if (!data.fournisseurs.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/60 py-6">Aucun fournisseur lie.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = data.fournisseurs.map((fournisseur) => `
+        <tr>
+            <td>${fournisseur.nom_fournisseur}</td>
+            <td>${fournisseur.type_fournisseur || '-'}</td>
+            <td>${fournisseur.telephone || '-'}</td>
+            <td>${fournisseur.email || '-'}</td>
+            <td><span class="badge ${fournisseur.actif ? 'badge-success' : 'badge-error'}">${fournisseur.actif ? 'Actif' : 'Inactif'}</span></td>
+            <td>
+                <button type="button" class="btn btn-xs btn-outline" onclick="openAdresseComptaDetails('${fournisseur.id}')">
+                    <i class="fas fa-file-invoice-dollar mr-1"></i>Compta
+                </button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function onAdresseComptaDateSortChange(value) {
+    currentAdresseComptaDateSort = value === 'asc' ? 'asc' : 'desc';
+    if (currentAdresseComptaFournisseurId) {
+        openAdresseComptaDetails(currentAdresseComptaFournisseurId, 1);
+    }
+}
+
+async function openAdresseComptaDetails(fournisseurId, page = 1) {
+    currentAdresseComptaFournisseurId = fournisseurId;
+    currentAdresseComptaPage = Number(page) > 0 ? Number(page) : 1;
+
+    const modal = document.getElementById('adresse-compta-detail-modal');
+    const loadingEl = document.getElementById('adresse-compta-loading');
+    const emptyEl = document.getElementById('adresse-compta-empty');
+    const tbody = document.getElementById('adresse-compta-tbody');
+    const paginationEl = document.getElementById('adresse-compta-pagination');
+    const sortDateEl = document.getElementById('adresse-compta-sort-date');
+    if (sortDateEl) {
+        sortDateEl.value = currentAdresseComptaDateSort;
+    }
+
+    if (modal && !modal.open) {
+        modal.showModal();
+    }
+    if (loadingEl) loadingEl.classList.remove('hidden');
+    if (emptyEl) emptyEl.classList.add('hidden');
+    if (tbody) tbody.innerHTML = '';
+    if (paginationEl) paginationEl.innerHTML = '';
+
+    try {
+        const params = new URLSearchParams();
+        params.append('sort_date', currentAdresseComptaDateSort);
+        params.append('page', String(currentAdresseComptaPage));
+        params.append('per_page', '25');
+
+        const response = await fetch(`/facturation/api/fournisseurs/${fournisseurId}/compta-details/?${params.toString()}`, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+            }
+        });
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || `HTTP ${response.status}`);
+        }
+
+        const fournisseurNom = data.fournisseur?.nom_fournisseur || 'Fournisseur';
+        const idxlsValue = data.fournisseur?.idxls;
+        const idxlsLabel = (idxlsValue === null || idxlsValue === undefined || idxlsValue === '') ? '' : ` (IDXls ${idxlsValue})`;
+        document.getElementById('adresse-compta-modal-title').textContent = `Details comptables - ${fournisseurNom}${idxlsLabel}`;
+
+        document.getElementById('adresse-compta-total-lignes').textContent = Number(data.totaux?.nb_lignes || 0).toLocaleString();
+        document.getElementById('adresse-compta-total-in').textContent = formatAmount(data.totaux?.total_in || 0);
+        document.getElementById('adresse-compta-total-out').textContent = formatAmount(data.totaux?.total_out || 0);
+        document.getElementById('adresse-compta-total-mouvement').textContent = formatAmount(data.totaux?.total_mouvement || 0);
+
+        if (!Array.isArray(data.lignes) || data.lignes.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-base-content/50">Aucune ligne comptable.</td></tr>';
+            if (emptyEl) emptyEl.classList.remove('hidden');
+        } else {
+            tbody.innerHTML = data.lignes.map((ligne) => {
+                const dateValue = ligne.date_rec || ligne.date_m || '';
+                const journalCode = escapeHtml(ligne.journal_code || '-');
+                const compteCode = escapeHtml(ligne.compte_code || '-');
+                const description = escapeHtml(ligne.description || '-');
+                const fichierSource = escapeHtml(ligne.fichier_source || '-');
+                const montantIn = Number(ligne.montant_in || 0);
+                const montantOut = Number(ligne.montant_out || 0);
+                const montantMouvement = Number(ligne.montant_mouvement || 0);
+                return `
+                    <tr>
+                        <td class="whitespace-nowrap">${formatDateDisplay(dateValue)}</td>
+                        <td class="font-mono text-xs">${journalCode}</td>
+                        <td class="font-mono text-xs">${compteCode}</td>
+                        <td class="max-w-[380px]"><div class="truncate" title="${description}">${description}</div></td>
+                        <td class="text-right font-mono">${montantIn === 0 ? '<span class="text-base-content/40">-</span>' : formatAmount(montantIn)}</td>
+                        <td class="text-right font-mono">${montantOut === 0 ? '<span class="text-base-content/40">-</span>' : formatAmount(montantOut)}</td>
+                        <td class="text-right font-mono">${montantMouvement === 0 ? '<span class="text-base-content/40">-</span>' : formatAmount(montantMouvement)}</td>
+                        <td class="text-xs">${fichierSource}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        renderAdresseComptaPagination(data.pagination || null);
+    } catch (error) {
+        console.error('Erreur details comptables adresse:', error);
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-error">Erreur lors du chargement des details.</td></tr>';
+        alert(`Erreur lors du chargement des details comptables: ${error.message || error}`);
+    } finally {
+        if (loadingEl) loadingEl.classList.add('hidden');
+    }
+}
+
+function goToAdresseComptaPage(page) {
+    if (!currentAdresseComptaFournisseurId || !Number.isInteger(page) || page < 1) {
+        return;
+    }
+    openAdresseComptaDetails(currentAdresseComptaFournisseurId, page);
+}
+
+function renderAdresseComptaPagination(paginationData) {
+    const container = document.getElementById('adresse-compta-pagination');
+    if (!container) return;
+
+    if (!paginationData || !paginationData.total_pages || paginationData.total_pages <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+
+    const startPage = Math.max(1, paginationData.page - 2);
+    const endPage = Math.min(paginationData.total_pages, paginationData.page + 2);
+    const makeButton = (label, targetPage, disabled = false, active = false) => {
+        const classes = ['btn', 'btn-sm', active ? 'btn-primary' : 'btn-outline', 'join-item', disabled ? 'btn-disabled' : ''].filter(Boolean).join(' ');
+        const disabledAttr = disabled ? 'disabled' : '';
+        return `<button type="button" class="${classes}" ${disabledAttr} onclick="goToAdresseComptaPage(${targetPage})">${label}</button>`;
+    };
+
+    let html = '<div class="join">';
+    html += makeButton('<<', 1, paginationData.page === 1);
+    html += makeButton('<', paginationData.page - 1, !paginationData.has_previous);
+    for (let p = startPage; p <= endPage; p++) {
+        html += makeButton(String(p), p, false, p === paginationData.page);
+    }
+    html += makeButton('>', paginationData.page + 1, !paginationData.has_next);
+    html += makeButton('>>', paginationData.total_pages, paginationData.page === paginationData.total_pages);
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.mapping-district').forEach((select) => {
+        select.addEventListener('change', () => {
+            const row = select.closest('tr');
+            const originalDistrictId = row.dataset.originalDistrictId || '';
+            const currentDistrictId = select.value || '';
+            markRowDirty(row, originalDistrictId !== currentDistrictId);
+        });
+    });
+    updateSaveAllButtonState();
+});
+</script>
+{% endblock %}

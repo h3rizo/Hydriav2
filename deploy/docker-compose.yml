@@ -1,0 +1,85 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    restart: always
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    networks:
+      - hydria_network
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    networks:
+      - hydria_network
+
+  backend:
+    build:
+      context: ../
+      dockerfile: deploy/backend.Dockerfile
+    restart: always
+    command: gunicorn hydria.wsgi:application --bind 0.0.0.0:8000
+    volumes:
+      - ../backend:/app/backend
+      - static_volume:/app/backend/staticfiles
+      - media_volume:/app/backend/media
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+    networks:
+      - hydria_network
+
+  frontend:
+    build:
+      context: ../
+      dockerfile: deploy/frontend.Dockerfile
+    restart: always
+    env_file:
+      - .env
+    networks:
+      - hydria_network
+
+  nginx:
+    image: nginx:alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+      - static_volume:/app/backend/staticfiles
+      - media_volume:/app/backend/media
+      - certbot_conf:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - hydria_network
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - certbot_conf:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+
+networks:
+  hydria_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  static_volume:
+  media_volume:
+  certbot_conf:
+  certbot_www:

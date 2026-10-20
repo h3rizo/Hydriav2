@@ -1,0 +1,597 @@
+{% extends planning_shell_base_template %}
+{% load humanize %}
+
+{% block title %}Comparatif Activites{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex justify-between items-center">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">Comparatif Activites</h1>
+            <p class="text-sm text-base-content/70 mt-1">
+                Activite2 = activite du planning, Activite = fiche de poste liee via poste_activite.
+            </p>
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'planning:dashboard' %}" class="btn btn-ghost btn-sm">
+                <i class="fas fa-arrow-left mr-2"></i>Retour
+            </a>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-md">
+        <div class="card-body">
+            <h3 class="font-semibold mb-3">Filtres</h3>
+            <form class="grid grid-cols-1 md:grid-cols-6 gap-4" method="get">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Activite2</span></label>
+                    <select name="activite2" class="select select-bordered w-full">
+                        <option value="">Toutes</option>
+                        {% for opt in activite2_options %}
+                            <option value="{{ opt }}" {% if filter_activite2 == opt %}selected{% endif %}>{{ opt }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Activite</span></label>
+                    <select name="activite" class="select select-bordered w-full">
+                        <option value="">Toutes</option>
+                        <option value="__EMPTY__" {% if filter_activite == '__EMPTY__' %}selected{% endif %}>(Vide)</option>
+                        {% for opt in activite_options %}
+                            <option value="{{ opt }}" {% if filter_activite == opt %}selected{% endif %}>{{ opt }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Remarque</span></label>
+                    <select name="remarque" class="select select-bordered w-full">
+                        <option value="">Toutes</option>
+                        {% for opt in remarque_options %}
+                            <option value="{{ opt }}" {% if filter_remarque == opt %}selected{% endif %}>{{ opt }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Remarque (contient)</span></label>
+                    <input name="remarque_contains" value="{{ filter_remarque_contains }}" class="input input-bordered w-full" placeholder="Texte ? chercher">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Employé (page)</span></label>
+                    <select name="employe" class="select select-bordered w-full">
+                        <option value="">Tous</option>
+                        {% for id, name in employe_options %}
+                            <option value="{{ id }}" {% if filter_employe == id %}selected{% endif %}>{{ name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Lignes / page</span></label>
+                    <select name="page_size" class="select select-bordered w-full">
+                        <option value="25" {% if page_size == 25 %}selected{% endif %}>25</option>
+                        <option value="50" {% if page_size == 50 %}selected{% endif %}>50</option>
+                        <option value="100" {% if page_size == 100 %}selected{% endif %}>100</option>
+                        <option value="200" {% if page_size == 200 %}selected{% endif %}>200</option>
+                    </select>
+                </div>
+                <div class="col-span-full flex flex-wrap gap-2">
+                    <button class="btn btn-sm btn-primary" type="submit">
+                        <i class="fas fa-filter mr-2"></i>Appliquer
+                    </button>
+                    <a class="btn btn-sm btn-ghost" href="?activite=__EMPTY__">
+                        Voir Activité vide
+                    </a>
+                    <a class="btn btn-sm btn-ghost" href="?show_all=1">
+                        Tout afficher
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-md">
+        <div class="card-body">
+            <h3 class="font-semibold mb-3">Contrôle d'unicité (date, ouvrage, Activite2)</h3>
+            <p class="text-sm text-base-content/70 mb-3">
+                Cette action analyse toute la table Planning. En mode exécution, les doublons sont fusionnés
+                (participants et détails déplacés vers la ligne la plus ancienne), puis supprimés.
+            </p>
+            <div class="flex flex-wrap gap-2">
+                <button class="btn btn-outline btn-sm" type="button" onclick="mergeDuplicates(true)">Analyser (dry-run)</button>
+                <button class="btn btn-error btn-sm" type="button" onclick="mergeDuplicates(false)">Exécuter la fusion</button>
+            </div>
+            <pre id="merge-duplicates-status" class="mt-3 text-xs bg-base-200 p-3 rounded whitespace-pre-wrap"></pre>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-md">
+        <div class="card-body">
+            <h3 class="font-semibold mb-3">Mise à jour groupée (lignes visibles)</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                <div class="form-control md:col-span-2">
+                    <label class="label"><span class="label-text">Nouvelle activité (Activite2)</span></label>
+                    <input type="hidden" id="bulk-activite-id">
+                    <input id="bulk-activite-input" class="input input-bordered w-full" list="activite-options" placeholder="Rechercher une activité...">
+                </div>
+                <div class="form-control">
+                    <button class="btn btn-primary" type="button" onclick="bulkUpdateActivite()">Mettre à jour les lignes visibles</button>
+                </div>
+            </div>
+            <p id="bulk-status" class="text-xs text-base-content/60 mt-2"></p>
+        </div>
+    </div>
+
+    {% if top_remarques %}
+    <div class="card bg-base-100 shadow-md">
+        <div class="card-body">
+            <h3 class="font-semibold mb-3">Top 20 des remarques (après filtres)</h3>
+            <div class="space-y-2">
+                {% for item in top_remarques %}
+                <div class="flex items-center gap-3 cursor-pointer hover:bg-base-200/60 rounded px-2 py-1"
+                     data-remarque="{{ item.label|escape }}"
+                     onclick="applyRemarqueFilter(this)">
+                    <div class="w-56 truncate" title="{{ item.label }}">{{ item.label }}</div>
+                    <div class="flex-1">
+                        <div class="h-3 bg-base-200 rounded">
+                            <div class="h-3 rounded bg-primary" style="width: {{ item.percent|floatformat:0 }}%;"></div>
+                        </div>
+                    </div>
+                    <div class="w-10 text-right font-semibold">{{ item.count }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            <p class="text-xs text-base-content/60 mt-2">La largeur des barres est proportionnelle au nombre de lignes.</p>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="card bg-base-100 shadow-md">
+        {% if plannings %}
+        <div class="overflow-x-auto">
+            <table class="table table-zebra w-full">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Employe</th>
+                        <th>Type Activite</th>
+                        <th>Activite2</th>
+                        <th>Activite</th>
+                        <th>Remarque</th>
+                        <th>Ouvrage</th>
+                        <th>Validation</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for planning in plannings %}
+                    <tr class="hover"
+                        data-activite2="{{ planning.activite.nom|default:""|escape }}"
+                        data-activite="{{ planning.fiche_poste_display_value|default:""|escape }}"
+                        data-activite-empty="{% if not planning.fiche_poste_display_value %}1{% else %}0{% endif %}"
+                        data-planning-id="{{ planning.id }}"
+                        data-date="{{ planning.date|date:'Y-m-d' }}"
+                        data-employe="{{ planning.employe.id|default:'' }}"
+                        data-employe-name="{{ planning.employe.nom_affichage|default:''|escape }}"
+                        data-type-activite="{{ planning.type_activite.id|default:'' }}"
+                        data-activite-id="{{ planning.activite.id|default:'' }}"
+                        data-ouvrage="{{ planning.ouvrage.id|default:'' }}"
+                        data-ouvrage-name="{{ planning.ouvrage.nom_ouvrage|default:''|escape }}"
+                        data-remarque="{{ planning.remarque|default:''|escape }}"
+                        data-validation="{{ planning.validation|yesno:'true,false' }}"
+                        data-statut="{{ planning.statut|default:'en_cours' }}">
+                        <td>{{ planning.date|date:"d/m/Y" }}</td>
+                        <td>
+                            {% if planning.employe %}
+                                {{ planning.employe.nom_affichage }}
+                            {% else %}
+                                <span class="text-base-content/70">Non assigne</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if planning.type_activite %}
+                                <span class="badge badge-outline">{{ planning.type_activite.nomtype }}</span>
+                            {% else %}
+                                <span class="text-base-content/70">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if planning.activite %}
+                                {{ planning.activite.nom }}
+                            {% else %}
+                                <span class="text-base-content/70">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if planning.fiche_poste_display_value %}
+                                {{ planning.fiche_poste_display_value }}
+                            {% else %}
+                                <span class="text-base-content/70">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if planning.remarque %}
+                                {{ planning.remarque }}
+                            {% else %}
+                                <span class="text-base-content/70">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if planning.ouvrage %}
+                                {{ planning.ouvrage.nom_ouvrage|default:"" }}
+                            {% else %}
+                                <span class="text-base-content/70">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="badge {{ planning.validation|yesno:'badge-success,badge-warning' }}">
+                                {{ planning.validation|yesno:'Valide,En attente' }}
+                            </span>
+                        </td>
+                        <td>
+                            <div class="flex gap-1">
+                                <a href="/plannings/form/{{ planning.id }}/modifier/" class="btn btn-ghost btn-xs" title="Modifier">
+                                    <i class="fas fa-edit"></i>
+                                </a>
+                                <button class="btn btn-ghost btn-xs" title="Modifier activité" onclick="openActiviteModal(this)">
+                                    <i class="fas fa-pen"></i>
+                                </button>
+                                {% if is_directeur and planning.validation %}
+                                <button class="btn btn-ghost btn-xs text-warning" title="D?valider" onclick="devalidatePlanning('{{ planning.id }}')">
+                                    <i class="fas fa-undo"></i>
+                                </button>
+                                {% endif %}
+                                <a href="/plannings/{{ planning.id }}/supprimer/" class="btn btn-ghost btn-xs text-error" title="Supprimer">
+                                    <i class="fas fa-trash"></i>
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-6 text-center text-base-content/70">
+            Aucun planning trouve.
+        </div>
+        {% endif %}
+    </div>
+
+    {% if page_obj %}
+    <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="text-sm text-base-content/70">
+            Page {{ page_obj.number }} / {{ page_obj.paginator.num_pages }} • {{ page_obj.paginator.count }} lignes
+        </div>
+        <div class="join">
+            {% if page_obj.has_previous %}
+                    <a class="btn btn-sm join-item" href="?page={{ page_obj.previous_page_number }}&activite2={{ filter_activite2 }}&activite={{ filter_activite }}&remarque={{ filter_remarque }}&remarque_contains={{ filter_remarque_contains }}&employe={{ filter_employe }}&page_size={{ page_size }}{% if show_all %}&show_all=1{% endif %}">Prev</a>
+            {% else %}
+                <button class="btn btn-sm join-item" disabled>Prev</button>
+            {% endif %}
+            <span class="btn btn-sm join-item no-animation">{{ page_obj.number }}</span>
+            {% if page_obj.has_next %}
+                <a class="btn btn-sm join-item" href="?page={{ page_obj.next_page_number }}&activite2={{ filter_activite2 }}&activite={{ filter_activite }}&remarque={{ filter_remarque }}&remarque_contains={{ filter_remarque_contains }}&employe={{ filter_employe }}&page_size={{ page_size }}{% if show_all %}&show_all=1{% endif %}">Next</a>
+            {% else %}
+                <button class="btn btn-sm join-item" disabled>Next</button>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Modal modification activite -->
+<dialog id="activiteModal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-2">Modifier l'activité</h3>
+        <input type="hidden" id="modal-planning-id">
+        <div class="form-control">
+            <label class="label"><span class="label-text">Activité</span></label>
+            <input type="hidden" id="modal-activite-id">
+            <input id="modal-activite-input" class="input input-bordered w-full" list="activite-options" placeholder="Rechercher une activité...">
+            <datalist id="activite-options"></datalist>
+            <p class="text-xs text-base-content/60 mt-1">Saisir pour filtrer la liste.</p>
+        </div>
+        <div class="form-control mt-3">
+            <label class="label"><span class="label-text">Ouvrage</span></label>
+            <input type="hidden" id="modal-ouvrage-id">
+            <input id="modal-ouvrage-input" class="input input-bordered w-full" list="ouvrage-options" placeholder="Rechercher un ouvrage...">
+            <datalist id="ouvrage-options"></datalist>
+        </div>
+        <div class="modal-action">
+            <button class="btn" onclick="closeActiviteModal()">Annuler</button>
+            <button class="btn btn-primary" onclick="saveActivite()">Enregistrer</button>
+        </div>
+    </div>
+</dialog>
+
+<script>
+let activitesCache = [];
+let activiteNameToId = {};
+let ouvragesCache = [];
+let ouvrageNameToId = {};
+
+async function loadActivites() {
+    try {
+        const response = await fetch('/plannings/api/activites/');
+        const data = await response.json();
+        activitesCache = data.activites || data || [];
+        const datalist = document.getElementById('activite-options');
+        datalist.innerHTML = '';
+        activiteNameToId = {};
+
+        const sorted = [...activitesCache].sort((a, b) => {
+            const an = (a.nom || a.name || '').toLowerCase();
+            const bn = (b.nom || b.name || '').toLowerCase();
+            return an.localeCompare(bn);
+        });
+
+        sorted.forEach(a => {
+            const name = a.nom || a.name || '';
+            const id = a.id || a.pk || '';
+            if (!name) {
+                return;
+            }
+            if (!activiteNameToId[name.toLowerCase()]) {
+                activiteNameToId[name.toLowerCase()] = id;
+            }
+            const opt = document.createElement('option');
+            opt.value = name;
+            datalist.appendChild(opt);
+        });
+    } catch (e) {
+        console.error('Erreur chargement activites', e);
+    }
+}
+
+async function loadOuvrages() {
+    try {
+        const response = await fetch('/plannings/api/ouvrages/');
+        const data = await response.json();
+        ouvragesCache = data.ouvrages || data || [];
+        const datalist = document.getElementById('ouvrage-options');
+        datalist.innerHTML = '';
+        ouvrageNameToId = {};
+
+        const sorted = [...ouvragesCache].sort((a, b) => {
+            const an = (a.nom || a.name || a.infra_name || '').toLowerCase();
+            const bn = (b.nom || b.name || b.infra_name || '').toLowerCase();
+            return an.localeCompare(bn);
+        });
+
+        sorted.forEach(o => {
+            const name = o.nom || o.name || o.infra_name || '';
+            const id = o.id || o.pk || '';
+            if (!name) {
+                return;
+            }
+            if (!ouvrageNameToId[name.toLowerCase()]) {
+                ouvrageNameToId[name.toLowerCase()] = id;
+            }
+            const opt = document.createElement('option');
+            opt.value = name;
+            datalist.appendChild(opt);
+        });
+    } catch (e) {
+        console.error('Erreur chargement ouvrages', e);
+    }
+}
+
+function openActiviteModal(btn) {
+    const row = btn.closest('tr');
+    const modal = document.getElementById('activiteModal');
+    document.getElementById('modal-planning-id').value = row.dataset.planningId || '';
+    const currentName = row.dataset.activite2 || '';
+    document.getElementById('modal-activite-input').value = currentName;
+    document.getElementById('modal-activite-id').value = row.dataset.activiteId || '';
+    const currentOuvrageName = row.dataset.ouvrageName || '';
+    document.getElementById('modal-ouvrage-input').value = currentOuvrageName;
+    document.getElementById('modal-ouvrage-id').value = row.dataset.ouvrage || '';
+    modal.showModal();
+}
+
+function closeActiviteModal() {
+    document.getElementById('activiteModal').close();
+}
+
+async function saveActivite() {
+    const modal = document.getElementById('activiteModal');
+    const planningId = document.getElementById('modal-planning-id').value;
+    const activiteInput = document.getElementById('modal-activite-input').value.trim();
+    const activiteId = document.getElementById('modal-activite-id').value
+        || activiteNameToId[activiteInput.toLowerCase()] || '';
+    const ouvrageInput = document.getElementById('modal-ouvrage-input').value.trim();
+    const ouvrageId = document.getElementById('modal-ouvrage-id').value
+        || ouvrageNameToId[ouvrageInput.toLowerCase()] || '';
+    if (!planningId) {
+        return;
+    }
+    const row = document.querySelector(`tr[data-planning-id="${planningId}"]`);
+    if (!row) {
+        return;
+    }
+    row.dataset.ouvrage = ouvrageId || row.dataset.ouvrage || '';
+    const response = await updatePlanningActivite(planningId, activiteId, row);
+
+    if (response.ok) {
+        window.location.reload();
+        return;
+    }
+    const err = await response.json().catch(() => ({}));
+    alert(err.error || 'Erreur lors de la mise à jour');
+    modal.close();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadActivites();
+    loadOuvrages();
+    const input = document.getElementById('modal-activite-input');
+    input.addEventListener('input', () => {
+        const key = input.value.trim().toLowerCase();
+        document.getElementById('modal-activite-id').value = activiteNameToId[key] || '';
+    });
+    const ouvrageInput = document.getElementById('modal-ouvrage-input');
+    ouvrageInput.addEventListener('input', () => {
+        const key = ouvrageInput.value.trim().toLowerCase();
+        document.getElementById('modal-ouvrage-id').value = ouvrageNameToId[key] || '';
+    });
+    const bulkInput = document.getElementById('bulk-activite-input');
+    bulkInput.addEventListener('input', () => {
+        const key = bulkInput.value.trim().toLowerCase();
+        document.getElementById('bulk-activite-id').value = activiteNameToId[key] || '';
+    });
+});
+
+function applyRemarqueFilter(row) {
+    const value = row.getAttribute('data-remarque') || '';
+    const select = document.querySelector('select[name="remarque"]');
+    if (!select) {
+        return;
+    }
+    select.value = value;
+    select.closest('form').submit();
+}
+
+async function devalidatePlanning(planningId) {
+    if (!planningId) return;
+    if (!confirm('D?valider ce planning ?')) return;
+
+    try {
+        const csrfToken = getCookie('csrftoken');
+        const res = await fetch(`/plannings/api/unvalidate/${planningId}/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken || ''
+            },
+            body: JSON.stringify({})
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            alert(data.error || 'Erreur lors de la d?validation.');
+            return;
+        }
+        window.location.reload();
+    } catch (e) {
+        alert('Erreur r?seau.');
+    }
+}
+
+async function updatePlanningActivite(planningId, activiteId, row) {
+    const payload = {
+        date_planning: row.dataset.date || null,
+        employe: row.dataset.employe || null,
+        type_activite: row.dataset.typeActivite || null,
+        activite: activiteId || null,
+        ouvrage: row.dataset.ouvrage || null,
+        remarques: row.dataset.remarque || '',
+        validation: row.dataset.validation === 'true',
+        statut: row.dataset.statut || 'en_cours'
+    };
+
+    const csrfToken = getCookie('csrftoken');
+    return fetch(`/plannings/api/update/${planningId}/`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken || ''
+        },
+        body: JSON.stringify(payload)
+    });
+}
+
+async function bulkUpdateActivite() {
+    const status = document.getElementById('bulk-status');
+    const activiteInput = document.getElementById('bulk-activite-input').value.trim();
+    const activiteId = document.getElementById('bulk-activite-id').value
+        || activiteNameToId[activiteInput.toLowerCase()] || '';
+
+    if (!activiteId) {
+        alert('Veuillez sélectionner une activité valide.');
+        return;
+    }
+
+    const rows = Array.from(document.querySelectorAll('tbody tr[data-planning-id]'))
+        .filter(row => !row.classList.contains('hidden'));
+    if (!rows.length) {
+        alert('Aucune ligne visible.');
+        return;
+    }
+
+    if (!confirm(`Mettre à jour ${rows.length} ligne(s) visibles avec l'activité "${activiteInput}" ?`)) {
+        return;
+    }
+
+    let ok = 0;
+    let fail = 0;
+    status.textContent = 'Mise à jour en cours...';
+
+    for (const row of rows) {
+        const planningId = row.dataset.planningId;
+        try {
+            const res = await updatePlanningActivite(planningId, activiteId, row);
+            if (res.ok) {
+                ok += 1;
+            } else {
+                fail += 1;
+            }
+        } catch (e) {
+            fail += 1;
+        }
+        status.textContent = `OK: ${ok} / Échecs: ${fail}`;
+    }
+
+    if (fail === 0) {
+        window.location.reload();
+    }
+}
+
+async function mergeDuplicates(dryRun) {
+    const status = document.getElementById('merge-duplicates-status');
+    status.textContent = dryRun ? 'Analyse en cours...' : 'Fusion en cours...';
+    if (!dryRun) {
+        if (!confirm("Cette action va supprimer des plannings en doublon. Continuer ?")) {
+            status.textContent = 'Annulé.';
+            return;
+        }
+    }
+
+    try {
+        const csrfToken = getCookie('csrftoken');
+        const response = await fetch('/plannings/api/merge-duplicates/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken || ''
+            },
+            body: JSON.stringify({ dry_run: dryRun })
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            status.textContent = data.error || 'Erreur lors de l\'opération.';
+            return;
+        }
+
+        status.textContent = [
+            `dry_run: ${data.dry_run}`,
+            `groupes en doublon: ${data.groups}`,
+            `plannings doublons: ${data.duplicates}`,
+            `participants ajoutés: ${data.participants_added}`,
+            `détails déplacés: ${data.details_moved}`,
+            `bons de livraison déplacés: ${data.bons_moved}`,
+            `paiements forfaitaires déplacés: ${data.paiements_moved}`
+        ].join('\\n');
+    } catch (e) {
+        status.textContent = 'Erreur réseau.';
+    }
+}
+
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) {
+        return parts.pop().split(';').shift();
+    }
+    return '';
+}
+</script>
+{% endblock %}

@@ -1,0 +1,447 @@
+{% extends "accounting/base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">
+                <i class="fas fa-file-invoice text-primary mr-3"></i>
+                Déclaration de Communication aux Impôts
+            </h1>
+            <p class="text-base-content/70 mt-2">
+                Génération de la déclaration annuelle des transactions avec NIF et ISI
+            </p>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-filter mr-2"></i>
+                Paramètres de génération
+            </h2>
+
+            <div class="flex flex-wrap gap-4 mt-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Année</span></label>
+                    <select id="filter-annee" class="select select-bordered">
+                        {% for annee in annees %}
+                            <option value="{{ annee }}" {% if annee == annee_actuelle %}selected{% endif %}>{{ annee }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control self-end">
+                    <button onclick="genererDeclaration()" class="btn btn-primary">
+                        <i class="fas fa-cogs mr-2"></i>
+                        Générer la déclaration
+                    </button>
+                </div>
+
+                <div class="form-control self-end">
+                    <button id="btn-export-excel" onclick="exporterExcel()" class="btn btn-success" disabled>
+                        <i class="fas fa-file-excel mr-2"></i>
+                        Export simple
+                    </button>
+                </div>
+
+                <div class="form-control self-end">
+                    <button id="btn-export-templates" onclick="exporterAvecTemplates()" class="btn btn-primary" disabled>
+                        <i class="fas fa-file-archive mr-2"></i>
+                        Export officiel (3 fichiers)
+                    </button>
+                </div>
+            </div>
+
+            <div class="alert alert-info mt-4">
+                <i class="fas fa-info-circle"></i>
+                <div>
+                    <h3 class="font-bold">Critères de sélection :</h3>
+                    <ul class="list-disc list-inside mt-2 text-sm">
+                        <li>Transactions dont la description commence par <strong>NIF</strong> ou <strong>ISI</strong></li>
+                        <li>Groupement par <strong>Fournisseur</strong> et <strong>Nature de déclaration</strong></li>
+                        <li>Type d'opération : <strong>Achats immobilisé</strong> si Nature=Outillage, <strong>Prestation</strong> si description contient "PREST", sinon <strong>Achat</strong></li>
+                        <li>Montant versé = Montant comptabilisé</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="alert alert-success mt-4">
+                <i class="fas fa-star mr-2"></i>
+                <div>
+                    <h3 class="font-bold">Export officiel (recommandé) :</h3>
+                    <p class="text-sm mt-1">
+                        Génère 3 fichiers Excel basés sur les templates de l'administration fiscale :
+                    </p>
+                    <ul class="list-disc list-inside mt-2 text-sm">
+                        <li><strong>Achats</strong> : Achats non destinés à la revente (AC)</li>
+                        <li><strong>Achats immobilisés</strong> : Équipements et outillage (AI)</li>
+                        <li><strong>Prestations</strong> : Sommes versées à des tiers (PS)</li>
+                    </ul>
+                    <p class="text-sm mt-2">
+                        📦 Téléchargement au format ZIP contenant les 3 fichiers .xls prêts à être transmis aux impôts.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistiques -->
+    <div id="stats-section" class="hidden mb-6">
+        <!-- Stats générales -->
+        <div class="stats shadow w-full mb-4">
+            <div class="stat">
+                <div class="stat-figure text-primary">
+                    <i class="fas fa-list text-3xl"></i>
+                </div>
+                <div class="stat-title">Total lignes</div>
+                <div class="stat-value text-primary" id="stat-total">0</div>
+                <div class="stat-desc">Fournisseurs × Natures</div>
+            </div>
+
+            <div class="stat">
+                <div class="stat-figure text-success">
+                    <i class="fas fa-receipt text-3xl"></i>
+                </div>
+                <div class="stat-title">Type NIF</div>
+                <div class="stat-value text-success" id="stat-nif">0</div>
+                <div class="stat-desc" id="stat-nif-montant">0 Ar</div>
+            </div>
+
+            <div class="stat">
+                <div class="stat-figure text-info">
+                    <i class="fas fa-id-card text-3xl"></i>
+                </div>
+                <div class="stat-title">Type ISI</div>
+                <div class="stat-value text-info" id="stat-isi">0</div>
+                <div class="stat-desc" id="stat-isi-montant">0 Ar</div>
+            </div>
+        </div>
+
+        <!-- Stats par type d'opération -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <!-- Achats -->
+            <div class="card bg-base-100 shadow">
+                <div class="card-body">
+                    <h3 class="card-title text-sm">
+                        <i class="fas fa-shopping-cart text-primary mr-2"></i>
+                        Achats
+                    </h3>
+                    <div class="stats stats-vertical shadow-none">
+                        <div class="stat p-2">
+                            <div class="stat-title text-xs">Lignes</div>
+                            <div class="stat-value text-primary text-2xl" id="stat-achats-lignes">0</div>
+                        </div>
+                        <div class="stat p-2">
+                            <div class="stat-title text-xs">NIF</div>
+                            <div class="stat-desc" id="stat-achats-nif">0 lignes - 0 Ar</div>
+                        </div>
+                        <div class="stat p-2">
+                            <div class="stat-title text-xs">ISI</div>
+                            <div class="stat-desc" id="stat-achats-isi">0 lignes - 0 Ar</div>
+                        </div>
+                        <div class="stat p-2 bg-base-200">
+                            <div class="stat-title text-xs font-bold">Total</div>
+                            <div class="stat-value text-primary text-lg" id="stat-achats-montant">0 Ar</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Achats immobilisés -->
+            <div class="card bg-base-100 shadow">
+                <div class="card-body">
+                    <h3 class="card-title text-sm">
+                        <i class="fas fa-tools text-warning mr-2"></i>
+                        Achats immobilisés
+                    </h3>
+                    <div class="stats stats-vertical shadow-none">
+                        <div class="stat p-2">
+                            <div class="stat-title text-xs">Lignes</div>
+                            <div class="stat-value text-warning text-2xl" id="stat-immobilises-lignes">0</div>
+                        </div>
+                        <div class="stat p-2">
+                            <div class="stat-title text-xs">NIF</div>
+                            <div class="stat-desc" id="stat-immobilises-nif">0 lignes - 0 Ar</div>
+                        </div>
+                        <div class="stat p-2">
+                            <div class="stat-title text-xs">ISI</div>
+                            <div class="stat-desc" id="stat-immobilises-isi">0 lignes - 0 Ar</div>
+                        </div>
+                        <div class="stat p-2 bg-base-200">
+                            <div class="stat-title text-xs font-bold">Total</div>
+                            <div class="stat-value text-warning text-lg" id="stat-immobilises-montant">0 Ar</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Prestations -->
+            <div class="card bg-base-100 shadow">
+                <div class="card-body">
+                    <h3 class="card-title text-sm">
+                        <i class="fas fa-handshake text-info mr-2"></i>
+                        Prestations
+                    </h3>
+                    <div class="stats stats-vertical shadow-none">
+                        <div class="stat p-2">
+                            <div class="stat-title text-xs">Lignes</div>
+                            <div class="stat-value text-info text-2xl" id="stat-prestations-lignes">0</div>
+                        </div>
+                        <div class="stat p-2">
+                            <div class="stat-title text-xs">NIF</div>
+                            <div class="stat-desc" id="stat-prestations-nif">0 lignes - 0 Ar</div>
+                        </div>
+                        <div class="stat p-2">
+                            <div class="stat-title text-xs">ISI</div>
+                            <div class="stat-desc" id="stat-prestations-isi">0 lignes - 0 Ar</div>
+                        </div>
+                        <div class="stat p-2 bg-base-200">
+                            <div class="stat-title text-xs font-bold">Total</div>
+                            <div class="stat-value text-info text-lg" id="stat-prestations-montant">0 Ar</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tableau des résultats -->
+    <div id="results-section" class="card bg-base-100 shadow hidden">
+        <div class="card-body">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="card-title">
+                    <i class="fas fa-table mr-2"></i>
+                    Résultats de la déclaration
+                </h2>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="table table-sm table-zebra">
+                    <thead>
+                        <tr class="bg-base-200">
+                            <th>Numéro NIF</th>
+                            <th>Numéro STAT</th>
+                            <th>Date CIN</th>
+                            <th>Lieu de d?livrance CIN</th>
+                            <th>Num?ro CIN</th>
+                            <th>Nom fournisseur</th>
+                            <th>Adresse</th>
+                            <th>District</th>
+                            <th>Ex-province</th>
+                            <th>Nature</th>
+                            <th>Montant comptabilisé (Ar)</th>
+                            <th>Montant versé (Ar)</th>
+                            <th>Type opération</th>
+                            <th>Type numéro</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-results">
+                        <!-- Données chargées via JS -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="no-results" class="text-center py-8 hidden">
+                <i class="fas fa-search text-4xl text-base-content/30 mb-2"></i>
+                <p class="text-base-content/70">Aucune transaction trouvée pour l'année sélectionnée</p>
+            </div>
+
+            <div id="loading-results" class="text-center py-8">
+                <span class="loading loading-spinner loading-lg"></span>
+                <p class="mt-2 text-base-content/70">Génération en cours...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let declarationData = [];
+
+// Générer la déclaration
+async function genererDeclaration() {
+    try {
+        document.getElementById('results-section').classList.remove('hidden');
+        document.getElementById('loading-results').classList.remove('hidden');
+        document.getElementById('no-results').classList.add('hidden');
+        document.getElementById('stats-section').classList.add('hidden');
+        document.getElementById('btn-export-excel').disabled = true;
+        document.getElementById('btn-export-templates').disabled = true;
+
+        const annee = document.getElementById('filter-annee').value;
+
+        const response = await fetch('{% url "accounting:api_generer_declaration" %}?annee=' + annee);
+        const data = await response.json();
+
+        if (data.success) {
+            declarationData = data.data;
+
+            if (declarationData.length === 0) {
+                document.getElementById('no-results').classList.remove('hidden');
+                document.getElementById('table-results').innerHTML = '';
+            } else {
+                afficherResultats();
+                afficherStatistiques();
+                document.getElementById('btn-export-excel').disabled = false;
+                document.getElementById('btn-export-templates').disabled = false;
+                document.getElementById('stats-section').classList.remove('hidden');
+            }
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors de la génération de la déclaration');
+    } finally {
+        document.getElementById('loading-results').classList.add('hidden');
+    }
+}
+
+// Afficher les résultats dans le tableau
+function afficherResultats() {
+    const tbody = document.getElementById('table-results');
+    tbody.innerHTML = '';
+
+    declarationData.forEach(ligne => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${ligne.nif || '-'}</td>
+            <td>${ligne.stat || '-'}</td>
+            <td>${ligne.date_cin || '-'}</td>
+            <td>${ligne.lieu_cin || '-'}</td>
+            <td>${ligne.cin || '-'}</td>
+            <td class="font-semibold">${ligne.nom}</td>
+            <td class="text-sm">${ligne.adresse || '-'}</td>
+            <td class="text-sm">${ligne.district || '-'}</td>
+            <td class="text-sm">${ligne.ex_province || '-'}</td>
+            <td><span class="badge badge-info badge-sm">${ligne.nature}</span></td>
+            <td class="text-right font-mono">${parseFloat(ligne.montant_comptabilise).toLocaleString('fr-FR', {minimumFractionDigits: 2})}</td>
+            <td class="text-right font-mono">${parseFloat(ligne.montant_verse).toLocaleString('fr-FR', {minimumFractionDigits: 2})}</td>
+            <td><span class="badge ${ligne.type_operation === 'Prestation' ? 'badge-warning' : 'badge-primary'} badge-sm">${ligne.type_operation}</span></td>
+            <td><span class="badge ${ligne.type_numero === 'NIF' ? 'badge-success' : 'badge-info'} badge-sm">${ligne.type_numero}</span></td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+// Afficher les statistiques
+function afficherStatistiques() {
+    const totalLignes = declarationData.length;
+
+    // Stats générales par type de numéro
+    const countNIF = declarationData.filter(l => l.type_numero === 'NIF').length;
+    const countISI = declarationData.filter(l => l.type_numero === 'ISI').length;
+
+    const montantNIF = declarationData
+        .filter(l => l.type_numero === 'NIF')
+        .reduce((sum, l) => sum + (l.montant_comptabilise || 0), 0);
+
+    const montantISI = declarationData
+        .filter(l => l.type_numero === 'ISI')
+        .reduce((sum, l) => sum + (l.montant_comptabilise || 0), 0);
+
+    document.getElementById('stat-total').textContent = totalLignes.toLocaleString();
+    document.getElementById('stat-nif').textContent = countNIF.toLocaleString();
+    document.getElementById('stat-isi').textContent = countISI.toLocaleString();
+    document.getElementById('stat-nif-montant').textContent = montantNIF.toLocaleString('fr-FR') + ' Ar';
+    document.getElementById('stat-isi-montant').textContent = montantISI.toLocaleString('fr-FR') + ' Ar';
+
+    // Stats par type d'opération
+    const statsParType = {
+        'Achat': { lignes: 0, nif: 0, isi: 0, montantNIF: 0, montantISI: 0, montantTotal: 0 },
+        'Achats immobilisé': { lignes: 0, nif: 0, isi: 0, montantNIF: 0, montantISI: 0, montantTotal: 0 },
+        'Prestation': { lignes: 0, nif: 0, isi: 0, montantNIF: 0, montantISI: 0, montantTotal: 0 }
+    };
+
+    declarationData.forEach(ligne => {
+        const type = ligne.type_operation;
+        const typeNum = ligne.type_numero;
+        const montant = ligne.montant_comptabilise || 0;
+
+        if (statsParType[type]) {
+            statsParType[type].lignes++;
+            statsParType[type].montantTotal += montant;
+
+            if (typeNum === 'NIF') {
+                statsParType[type].nif++;
+                statsParType[type].montantNIF += montant;
+            } else if (typeNum === 'ISI') {
+                statsParType[type].isi++;
+                statsParType[type].montantISI += montant;
+            }
+        }
+    });
+
+    // Achats
+    document.getElementById('stat-achats-lignes').textContent = statsParType['Achat'].lignes.toLocaleString();
+    document.getElementById('stat-achats-nif').textContent =
+        statsParType['Achat'].nif.toLocaleString() + ' lignes - ' +
+        statsParType['Achat'].montantNIF.toLocaleString('fr-FR') + ' Ar';
+    document.getElementById('stat-achats-isi').textContent =
+        statsParType['Achat'].isi.toLocaleString() + ' lignes - ' +
+        statsParType['Achat'].montantISI.toLocaleString('fr-FR') + ' Ar';
+    document.getElementById('stat-achats-montant').textContent =
+        statsParType['Achat'].montantTotal.toLocaleString('fr-FR') + ' Ar';
+
+    // Achats immobilisés
+    document.getElementById('stat-immobilises-lignes').textContent = statsParType['Achats immobilisé'].lignes.toLocaleString();
+    document.getElementById('stat-immobilises-nif').textContent =
+        statsParType['Achats immobilisé'].nif.toLocaleString() + ' lignes - ' +
+        statsParType['Achats immobilisé'].montantNIF.toLocaleString('fr-FR') + ' Ar';
+    document.getElementById('stat-immobilises-isi').textContent =
+        statsParType['Achats immobilisé'].isi.toLocaleString() + ' lignes - ' +
+        statsParType['Achats immobilisé'].montantISI.toLocaleString('fr-FR') + ' Ar';
+    document.getElementById('stat-immobilises-montant').textContent =
+        statsParType['Achats immobilisé'].montantTotal.toLocaleString('fr-FR') + ' Ar';
+
+    // Prestations
+    document.getElementById('stat-prestations-lignes').textContent = statsParType['Prestation'].lignes.toLocaleString();
+    document.getElementById('stat-prestations-nif').textContent =
+        statsParType['Prestation'].nif.toLocaleString() + ' lignes - ' +
+        statsParType['Prestation'].montantNIF.toLocaleString('fr-FR') + ' Ar';
+    document.getElementById('stat-prestations-isi').textContent =
+        statsParType['Prestation'].isi.toLocaleString() + ' lignes - ' +
+        statsParType['Prestation'].montantISI.toLocaleString('fr-FR') + ' Ar';
+    document.getElementById('stat-prestations-montant').textContent =
+        statsParType['Prestation'].montantTotal.toLocaleString('fr-FR') + ' Ar';
+}
+
+// Exporter en Excel
+function exporterExcel() {
+    if (declarationData.length === 0) {
+        alert('Aucune donnée à exporter');
+        return;
+    }
+
+    const annee = document.getElementById('filter-annee').value;
+    window.location.href = '{% url "accounting:api_export_declaration_excel" %}?annee=' + annee;
+}
+
+function exporterAvecTemplates() {
+    if (declarationData.length === 0) {
+        alert('Aucune donnée à exporter');
+        return;
+    }
+
+    const annee = document.getElementById('filter-annee').value;
+
+    // Afficher un message de chargement
+    const btnExport = document.getElementById('btn-export-templates');
+    const originalHTML = btnExport.innerHTML;
+    btnExport.innerHTML = '<span class="loading loading-spinner loading-sm"></span> Génération en cours...';
+    btnExport.disabled = true;
+
+    // Déclencher le téléchargement
+    window.location.href = '{% url "accounting:api_export_declaration_templates" %}?annee=' + annee;
+
+    // Restaurer le bouton après 3 secondes
+    setTimeout(() => {
+        btnExport.innerHTML = originalHTML;
+        btnExport.disabled = false;
+    }, 3000);
+}
+</script>
+{% endblock %}

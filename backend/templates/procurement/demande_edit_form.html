@@ -1,0 +1,168 @@
+{% extends logistics_shell_base_template %}
+{% load l10n %}
+
+{% block title %}Modifier {{ demande.numero_demande }}{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6 max-w-5xl">
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">Modifier la Demande d'Achat</h1>
+            <p class="text-base-content/70 mt-1 font-mono">{{ demande.numero_demande }}</p>
+        </div>
+        <a href="{% url 'procurement:demande_achat_detail' demande.id %}" class="btn btn-ghost">
+            <i class="fas fa-arrow-left mr-2"></i>Retour
+        </a>
+    </div>
+
+    {% if messages %}
+    <div class="mb-4">
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags }} mb-2">
+            <i class="fas fa-info-circle mr-2"></i>
+            <span>{{ message }}</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if demande.proformas.exists %}
+    <div class="alert alert-warning mb-4">
+        <i class="fas fa-exclamation-triangle mr-2"></i>
+        <span>Des proformas ont déjà été reçus pour cette demande. Si vous retirez ou modifiez un article, les prix déjà saisis pour cet article seront perdus et devront être ressaisis.</span>
+    </div>
+    {% endif %}
+
+    <form method="post" id="form-demande">
+        {% csrf_token %}
+        <div class="card bg-base-100 shadow-xl mb-6">
+            <div class="card-body">
+                <h2 class="card-title text-lg mb-4">Informations générales</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Base demandeuse *</span></label>
+                        <select name="base" class="select select-bordered" required>
+                            <option value="">Sélectionner...</option>
+                            {% for base in bases %}
+                            <option value="{{ base.id }}" {% if base.id == demande.base_id %}selected{% endif %}>{{ base.nom_base }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-control md:col-span-2">
+                        <label class="label"><span class="label-text">Motif de la demande *</span></label>
+                        <textarea name="motif" class="textarea textarea-bordered" rows="2" required>{{ demande.motif }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bg-base-100 shadow-xl mb-6">
+            <div class="card-body">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="card-title text-lg">Articles demandés</h2>
+                    <button type="button" onclick="ajouterLigne()" class="btn btn-sm btn-primary">
+                        <i class="fas fa-plus mr-1"></i>Ajouter un article
+                    </button>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="table" id="table-articles">
+                        <thead>
+                            <tr>
+                                <th style="min-width: 220px;">Désignation</th>
+                                <th style="width: 120px;">Quantité</th>
+                                <th>Remarques</th>
+                                <th style="width: 50px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="lignes-articles"></tbody>
+                    </table>
+                </div>
+                <p class="text-sm text-base-content/60 mt-2 hidden" id="empty-hint">
+                    <i class="fas fa-info-circle mr-1"></i>Cliquez sur "Ajouter un article" pour commencer.
+                </p>
+            </div>
+        </div>
+
+        <div class="flex justify-end gap-2">
+            <a href="{% url 'procurement:demande_achat_detail' demande.id %}" class="btn btn-ghost">Annuler</a>
+            <button type="submit" class="btn btn-primary">
+                <i class="fas fa-check mr-2"></i>Enregistrer les modifications
+            </button>
+        </div>
+    </form>
+</div>
+
+<template id="template-ligne-article">
+    <tr class="ligne-article">
+        <td>
+            <select name="designation[]" class="select select-bordered select-sm w-full" required>
+                <option value="">Sélectionner un article...</option>
+                {% for designation in designations %}
+                <option value="{{ designation.id }}">{{ designation.nom }}{% if designation.unite %} ({{ designation.unite }}){% endif %}</option>
+                {% endfor %}
+            </select>
+        </td>
+        <td>
+            <input type="number" name="quantite[]" class="input input-bordered input-sm w-full" min="0.01" step="0.01" required>
+        </td>
+        <td>
+            <input type="text" name="remarques[]" class="input input-bordered input-sm w-full" placeholder="Optionnel">
+        </td>
+        <td class="text-center">
+            <button type="button" onclick="supprimerLigne(this)" class="btn btn-sm btn-ghost text-error">
+                <i class="fas fa-trash"></i>
+            </button>
+        </td>
+    </tr>
+</template>
+
+<script>
+const itemsExistants = [
+    {% for item in demande.items.all %}
+    {
+        designationId: "{{ item.designation_id }}",
+        quantite: "{{ item.quantite|unlocalize }}",
+        remarques: "{{ item.remarques|default:''|escapejs }}",
+    },
+    {% endfor %}
+];
+
+function ajouterLigne(item) {
+    const template = document.getElementById('template-ligne-article');
+    const clone = template.content.cloneNode(true);
+
+    if (item) {
+        clone.querySelector('select[name="designation[]"]').value = item.designationId;
+        clone.querySelector('input[name="quantite[]"]').value = item.quantite;
+        clone.querySelector('input[name="remarques[]"]').value = item.remarques;
+    }
+
+    document.getElementById('lignes-articles').appendChild(clone);
+    document.getElementById('empty-hint').classList.add('hidden');
+}
+
+function supprimerLigne(btn) {
+    btn.closest('tr').remove();
+    if (document.querySelectorAll('#lignes-articles tr').length === 0) {
+        document.getElementById('empty-hint').classList.remove('hidden');
+    }
+}
+
+document.getElementById('form-demande').addEventListener('submit', function(e) {
+    const nbLignes = document.querySelectorAll('#lignes-articles tr').length;
+    if (nbLignes === 0) {
+        e.preventDefault();
+        alert("Veuillez conserver au moins un article dans la demande.");
+    }
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+    if (itemsExistants.length > 0) {
+        itemsExistants.forEach(item => ajouterLigne(item));
+    } else {
+        ajouterLigne();
+    }
+});
+</script>
+{% endblock %}

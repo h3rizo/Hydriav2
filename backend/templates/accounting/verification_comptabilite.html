@@ -1,0 +1,607 @@
+{% extends "accounting/base.html" %}
+{% load humanize %}
+{% load pagination_tags %}
+
+{% block title %}Vérification Comptabilité{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold">
+            <i class="fas fa-clipboard-check mr-3 text-warning"></i>Vérification Comptabilité
+        </h1>
+        <div class="flex gap-2">
+            <a href="{% url 'accounting:dashboard_comptabilite' %}" class="btn btn-primary btn-sm">
+                <i class="fas fa-chart-line mr-2"></i>Tableau de bord
+            </a>
+            <a href="{% url 'accounting:entries_list' %}" class="btn btn-ghost btn-sm">
+                <i class="fas fa-list mr-2"></i>Liste complète
+            </a>
+            <a href="{% url 'accounting:diagnostic_soldes' %}" class="btn btn-info btn-sm">
+                <i class="fas fa-search-dollar mr-2"></i>Diagnostic Soldes
+            </a>
+            <a href="{% url 'accounting:recoupement_planning' %}" class="btn btn-warning btn-sm">
+                <i class="fas fa-balance-scale mr-2"></i>Recoupement Planning
+            </a>
+        </div>
+    </div>
+
+    <!-- Statistiques -->
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-list-ol text-3xl"></i>
+            </div>
+            <div class="stat-title">Total entrées</div>
+            <div class="stat-value text-primary text-2xl">{{ total_entries|intcomma }}</div>
+            <div class="stat-desc">Recettes + Dépenses</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-success">
+                <i class="fas fa-check-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Liens OK</div>
+            <div class="stat-value text-success text-2xl">{{ liens_ok|intcomma }}</div>
+            <div class="stat-desc">Fichiers existants</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-error">
+                <i class="fas fa-times-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Sans scan</div>
+            <div class="stat-value text-error text-2xl">{{ sans_scan|intcomma }}</div>
+            <div class="stat-desc">Pièces manquantes</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-warning">
+                <i class="fas fa-unlink text-3xl"></i>
+            </div>
+            <div class="stat-title">Liens morts</div>
+            <div class="stat-value text-warning text-2xl">{{ liens_morts|intcomma }}</div>
+            <div class="stat-desc">Fichiers introuvables</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure {% if taux_couverture >= 90 %}text-success{% elif taux_couverture >= 50 %}text-warning{% else %}text-error{% endif %}">
+                <i class="fas fa-percent text-3xl"></i>
+            </div>
+            <div class="stat-title">Taux couverture</div>
+            <div class="stat-value {% if taux_couverture >= 90 %}text-success{% elif taux_couverture >= 50 %}text-warning{% else %}text-error{% endif %} text-2xl">{{ taux_couverture }}%</div>
+            <div class="stat-desc">Fichiers existants / Total</div>
+        </div>
+    </div>
+
+    <!-- Montants -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-success">
+                <i class="fas fa-arrow-down text-2xl"></i>
+            </div>
+            <div class="stat-title">Total Recettes</div>
+            <div class="stat-value text-success text-xl">{{ total_recettes|floatformat:0|intcomma }} Ar</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-error">
+                <i class="fas fa-arrow-up text-2xl"></i>
+            </div>
+            <div class="stat-title">Total Dépenses</div>
+            <div class="stat-value text-error text-xl">{{ total_depenses|floatformat:0|intcomma }} Ar</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure {% if total_recettes >= total_depenses %}text-success{% else %}text-error{% endif %}">
+                <i class="fas fa-balance-scale text-2xl"></i>
+            </div>
+            <div class="stat-title">Solde</div>
+            <div class="stat-value {% if total_recettes >= total_depenses %}text-success{% else %}text-error{% endif %} text-xl">
+                {{ total_recettes|floatformat:0|intcomma|add:"-"|add:total_depenses|floatformat:0|intcomma }} Ar
+            </div>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-200 shadow-md mb-6">
+        <div class="card-body">
+            <h3 class="card-title text-sm mb-4"><i class="fas fa-filter mr-2"></i>Filtres</h3>
+            <form method="GET" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Recherche</span></label>
+                    <input type="text" name="search" value="{{ request.GET.search }}" placeholder="Description, info, pers..." class="input input-bordered input-sm" />
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mois</span></label>
+                    <input type="month" name="mois" value="{{ request.GET.mois }}" class="input input-bordered input-sm" />
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Fichier source</span></label>
+                    <select name="fichier_source" class="select select-bordered select-sm">
+                        <option value="">Tous les fichiers</option>
+                        {% for source in fichiers_sources %}
+                        <option value="{{ source }}" {% if request.GET.fichier_source == source %}selected{% endif %}>{{ source }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Compte</span></label>
+                    <select name="compte" class="select select-bordered select-sm">
+                        <option value="">Tous les comptes</option>
+                        {% for code in comptes_codes %}
+                        {% if code %}
+                        <option value="{{ code }}" {% if request.GET.compte == code %}selected{% endif %}>{{ code }}</option>
+                        {% endif %}
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Prog DiameX</span></label>
+                    <select name="prog" class="select select-bordered select-sm">
+                        <option value="">Tous les progs</option>
+                        {% for prog in progs_codes %}
+                        <option value="{{ prog }}" {% if request.GET.prog == prog %}selected{% endif %}>{{ prog }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Catégorie</span></label>
+                    <select name="categorie" class="select select-bordered select-sm">
+                        <option value="">Toutes les catégories</option>
+                        {% for cat in categories_parentes %}
+                        <option value="{{ cat }}" {% if request.GET.categorie == cat %}selected{% endif %}>{{ cat }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control flex flex-row gap-2 items-end">
+                    <button type="submit" class="btn btn-primary btn-sm flex-1"><i class="fas fa-search mr-2"></i>Filtrer</button>
+                    <a href="{% url 'accounting:verification_comptabilite' %}" class="btn btn-ghost btn-sm"><i class="fas fa-times"></i></a>
+                </div>
+            </form>
+
+            <!-- Bouton de tri -->
+            <div class="mt-4">
+                <div class="flex justify-between items-center">
+                    <p class="text-sm text-base-content/70">
+                        Affichage par date :
+                        {% if ordre_date == 'asc' %}
+                            <span class="badge badge-sm badge-info">Plus ancien au plus récent</span>
+                        {% else %}
+                            <span class="badge badge-sm badge-info">Plus récent au plus ancien</span>
+                        {% endif %}
+                    </p>
+                    <a href="?{% for key, value in request.GET.items %}{% if key != 'ordre' %}{{ key }}={{ value }}&{% endif %}{% endfor %}ordre={% if ordre_date == 'desc' %}asc{% else %}desc{% endif %}"
+                       class="btn btn-sm btn-ghost gap-2">
+                        <i class="fas fa-sort"></i>
+                        Inverser l'ordre
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tableau -->
+    <div class="card bg-base-100 shadow-md">
+        <div class="card-body p-0">
+            <div class="overflow-x-auto">
+                <table class="table table-xs">
+                    <thead class="bg-base-200 sticky top-0">
+                        <tr>
+                            <th>ID</th>
+                            <th>Date</th>
+                            <th>Rec</th>
+                            <th>Description</th>
+                            <th>Compte</th>
+                            <th>Catégorie</th>
+                            <th class="text-right">Entrée</th>
+                            <th class="text-right">Sortie</th>
+                            <th>PERS</th>
+                            <th>Prog</th>
+                            <th>Base</th>
+                            <th>Status Scan</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in entries_enriched %}
+                        {% with entry=item.entry %}
+                        <tr class="hover {% if item.scan_status == 'missing' %}bg-error/10{% elif item.scan_status == 'dead' %}bg-warning/10{% elif item.scan_status == 'invalid' %}bg-info/10{% endif %}">
+                            <td class="font-mono text-xs">{{ entry.id_access }}</td>
+                            <td class="text-xs">{{ entry.date_rec|date:"d/m/Y"|default:"-" }}</td>
+                            <td class="text-xs">{{ entry.rec|default:"-" }}</td>
+                            <td class="max-w-xs text-xs">
+                                <div class="truncate" title="{{ entry.description }}">{{ entry.description|default:"-" }}</div>
+                                {% if item.suggestions %}
+                                    <details class="mt-1">
+                                        <summary class="cursor-pointer text-info text-xs hover:underline">
+                                            💡 {{ item.suggestions|length }} suggestion{% if item.suggestions|length > 1 %}s{% endif %} de format
+                                        </summary>
+                                        <div class="mt-2 p-2 bg-info/10 rounded text-xs space-y-1">
+                                            {% for suggestion in item.suggestions %}
+                                                <div class="border-l-2 border-info pl-2">
+                                                    <div class="font-semibold text-info-content">Format: {{ suggestion.format }}</div>
+                                                    <div class="text-gray-600 italic">Exemple: {{ suggestion.exemple }}</div>
+                                                </div>
+                                            {% endfor %}
+                                        </div>
+                                    </details>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if entry.compte_code %}
+                                    <span class="badge badge-xs badge-info">{{ entry.compte_code }}</span>
+                                {% else %}
+                                    <span class="text-xs text-gray-400">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge badge-xs badge-ghost">{{ entry.get_categorie_parente }}</span>
+                            </td>
+                            <td class="text-right font-semibold text-success text-xs">
+                                {% if entry.montant_in > 0 %}{{ entry.montant_in|floatformat:0|intcomma }}{% else %}-{% endif %}
+                            </td>
+                            <td class="text-right font-semibold text-error text-xs">
+                                {% if entry.montant_out > 0 %}{{ entry.montant_out|floatformat:0|intcomma }}{% else %}-{% endif %}
+                            </td>
+                            <td class="max-w-xs truncate text-xs" title="{{ entry.pers }}">{{ entry.pers|default:"-" }}</td>
+                            <td class="text-xs font-mono">{{ entry.prog|default:"-" }}</td>
+                            <td class="text-xs" title="{{ item.base_info.nom|default:'-' }}">
+                                {% if item.base_info %}
+                                    <span class="badge badge-xs badge-info">{{ item.base_info.nom|truncatechars:10 }}</span>
+                                {% else %}
+                                    <span class="text-gray-400">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.scan_status == 'exists' %}
+                                    <span class="badge badge-xs badge-success gap-1">
+                                        <i class="fas fa-check"></i>OK
+                                    </span>
+                                {% elif item.scan_status == 'missing' %}
+                                    <span class="badge badge-xs badge-error gap-1">
+                                        <i class="fas fa-times"></i>Sans scan
+                                    </span>
+                                {% elif item.scan_status == 'dead' %}
+                                    <span class="badge badge-xs badge-warning gap-1">
+                                        <i class="fas fa-unlink"></i>Lien mort
+                                    </span>
+                                {% elif item.scan_status == 'invalid' %}
+                                    <span class="badge badge-xs badge-info gap-1">
+                                        <i class="fas fa-exclamation-triangle"></i>Prog invalide
+                                    </span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="flex gap-1">
+                                    {% if item.scan_status == 'exists' %}
+                                        <button onclick="openFileViaServer('{{ item.full_scan_path|escapejs }}')" class="btn btn-xs btn-success" title="Ouvrir le fichier">
+                                            <i class="fas fa-folder-open"></i>
+                                        </button>
+                                    {% elif item.scan_status == 'dead' or item.scan_status == 'invalid' %}
+                                        <button onclick="alert('Chemin: {{ item.full_scan_path|default:entry.scan }}')" class="btn btn-xs btn-ghost" title="Voir le chemin">
+                                            <i class="fas fa-info-circle"></i>
+                                        </button>
+                                    {% else %}
+                                        <span class="text-gray-400 text-xs">-</span>
+                                    {% endif %}
+                                    <button onclick="openEditModal({{ entry.id }}, '{{ entry.description|escapejs }}', '{{ entry.info|escapejs }}', '{{ entry.pers|escapejs }}', '{{ entry.detail|escapejs }}', '{{ entry.scan|escapejs }}')" class="btn btn-xs btn-primary" title="Modifier l'entrée">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endwith %}
+                        {% empty %}
+                        <tr>
+                            <td colspan="13" class="text-center py-8 text-gray-500">
+                                <i class="fas fa-inbox text-4xl mb-2"></i>
+                                <p>Aucune entrée trouvée</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            {% if page_obj.has_other_pages %}
+            <div class="card-body border-t border-base-300">
+                <div class="flex justify-between items-center">
+                    <p class="text-sm text-base-content/70">
+                        Page {{ page_obj.number }} sur {{ page_obj.paginator.num_pages }}
+                        ({{ page_obj.paginator.count|intcomma }} entrée{{ page_obj.paginator.count|pluralize }})
+                    </p>
+                    <div class="join">
+                        {% if page_obj.has_previous %}
+                            <a href="{% query_string page=1 %}" class="join-item btn btn-sm">«</a>
+                            <a href="{% query_string page=page_obj.previous_page_number %}" class="join-item btn btn-sm">‹</a>
+                        {% else %}
+                            <button class="join-item btn btn-sm btn-disabled">«</button>
+                            <button class="join-item btn btn-sm btn-disabled">‹</button>
+                        {% endif %}
+
+                        <button class="join-item btn btn-sm btn-active">{{ page_obj.number }}</button>
+
+                        {% if page_obj.has_next %}
+                            <a href="{% query_string page=page_obj.next_page_number %}" class="join-item btn btn-sm">›</a>
+                            <a href="{% query_string page=page_obj.paginator.num_pages %}" class="join-item btn btn-sm">»</a>
+                        {% else %}
+                            <button class="join-item btn btn-sm btn-disabled">›</button>
+                            <button class="join-item btn btn-sm btn-disabled">»</button>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Légende -->
+    <div class="card bg-base-200 shadow-md mt-6">
+        <div class="card-body">
+            <h3 class="card-title text-sm mb-4"><i class="fas fa-info-circle mr-2"></i>Légende des statuts</h3>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
+                <div class="flex items-center gap-2">
+                    <span class="badge badge-xs badge-success"><i class="fas fa-check"></i></span>
+                    <span><strong>OK :</strong> Fichier scan existe et accessible</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="badge badge-xs badge-error"><i class="fas fa-times"></i></span>
+                    <span><strong>Sans scan :</strong> Aucun lien scan renseigné</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="badge badge-xs badge-warning"><i class="fas fa-unlink"></i></span>
+                    <span><strong>Lien mort :</strong> Fichier scan introuvable sur le disque</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="badge badge-xs badge-info"><i class="fas fa-exclamation-triangle"></i></span>
+                    <span><strong>Prog invalide :</strong> Prog DiameX non trouvé dans les bases ou chemin base manquant</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal d'édition -->
+<dialog id="edit_modal" class="modal">
+    <div class="modal-box w-11/12 max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-edit mr-2 text-primary"></i>Modifier l'entrée
+        </h3>
+
+        <form id="edit_form" class="space-y-4">
+            {% csrf_token %}
+            <input type="hidden" id="entry_id" name="entry_id" />
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Description</span></label>
+                <input type="text" id="edit_description" name="description" class="input input-bordered" />
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Info</span></label>
+                <input type="text" id="edit_info" name="info" class="input input-bordered" />
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">PERS</span></label>
+                <input type="text" id="edit_pers" name="pers" class="input input-bordered" />
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Détail</span></label>
+                <input type="text" id="edit_detail" name="detail" class="input input-bordered" />
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Scan (chemin relatif)</span></label>
+                <input type="text" id="edit_scan" name="scan" class="input input-bordered" />
+            </div>
+
+            <div id="edit_messages" class="hidden"></div>
+
+            <div class="modal-action">
+                <button type="button" onclick="document.getElementById('edit_modal').close()" class="btn btn-ghost">
+                    <i class="fas fa-times mr-2"></i>Annuler
+                </button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<script>
+// Ouvrir le modal d'édition
+function openEditModal(entryId, description, info, pers, detail, scan) {
+    document.getElementById('entry_id').value = entryId;
+    document.getElementById('edit_description').value = description || '';
+    document.getElementById('edit_info').value = info || '';
+    document.getElementById('edit_pers').value = pers || '';
+    document.getElementById('edit_detail').value = detail || '';
+    document.getElementById('edit_scan').value = scan || '';
+    document.getElementById('edit_messages').classList.add('hidden');
+    document.getElementById('edit_modal').showModal();
+}
+
+// Soumettre le formulaire d'édition
+async function tryLocalAccessUpdateFallback(data) {
+    if (!data || !data.success || data.access_updated || !data.access_payload) {
+        return data;
+    }
+    try {
+        const response = await fetch('http://127.0.0.1:8765/update-entry-access', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data.access_payload)
+        });
+        const result = await response.json();
+        if (response.ok && result.success) {
+            data.access_updated = true;
+            data.message = 'Modification enregistree dans Django et Access (local)';
+            data.access_error = null;
+        } else {
+            data.access_error = result.error || data.access_error || 'Echec mise a jour Access locale';
+        }
+    } catch (e) {
+        data.access_error = data.access_error || ('Erreur agent local: ' + e.message);
+    }
+    return data;
+}
+
+document.getElementById('edit_form').addEventListener('submit', function(e) {
+    e.preventDefault();
+
+    const entryId = document.getElementById('entry_id').value;
+    const formData = new FormData(this);
+    const messagesDiv = document.getElementById('edit_messages');
+
+    fetch(`{% url 'accounting:update_entry' 0 %}`.replace('0', entryId), {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        }
+    })
+    .then(response => response.json())
+    .then(async data => {
+        data = await tryLocalAccessUpdateFallback(data);
+        if (data.success) {
+            let debugHtml = '';
+            if (data.debug_info) {
+                debugHtml = `<details class="text-xs mt-2">
+                    <summary class="cursor-pointer">Détails de débogage</summary>
+                    <pre class="mt-2 p-2 bg-base-300 rounded">${JSON.stringify(data.debug_info, null, 2)}</pre>
+                    ${data.access_error ? `<p class="text-error mt-1">Erreur: ${data.access_error}</p>` : ''}
+                </details>`;
+            }
+
+            // Message d'avertissement pour mise à jour partielle
+            let warningHtml = '';
+            if (data.partial && data.warning) {
+                warningHtml = `<p class="text-xs mt-1 opacity-75"><i class="fas fa-info-circle"></i> ${data.warning}</p>`;
+            }
+
+            // Déterminer le type d'alerte
+            let alertType = 'success';
+            if (!data.access_updated) alertType = 'warning';
+            else if (data.partial) alertType = 'info';
+
+            messagesDiv.innerHTML = `
+                <div class="alert alert-${alertType}">
+                    <div class="flex-1">
+                        <i class="fas fa-${data.access_updated ? 'check' : 'exclamation-triangle'}"></i>
+                        <div>
+                            <span>${data.message}</span>
+                            ${warningHtml}
+                            ${debugHtml}
+                        </div>
+                    </div>
+                </div>
+            `;
+            messagesDiv.classList.remove('hidden');
+
+            // Recharger la page après 1.5 secondes si succès (complet ou partiel)
+            if (data.access_updated) {
+                setTimeout(() => {
+                    location.reload();
+                }, 1500);
+            }
+        } else {
+            messagesDiv.innerHTML = `
+                <div class="alert alert-error">
+                    <i class="fas fa-times"></i>
+                    <span>${data.message || 'Erreur lors de la mise à jour'}</span>
+                </div>
+            `;
+            messagesDiv.classList.remove('hidden');
+        }
+    })
+    .catch(error => {
+        messagesDiv.innerHTML = `
+            <div class="alert alert-error">
+                <i class="fas fa-times"></i>
+                <span>Erreur réseau : ${error.message}</span>
+            </div>
+        `;
+        messagesDiv.classList.remove('hidden');
+    });
+});
+
+// Ouvrir un fichier via le serveur Django (bypass navigateur)
+function openFileViaServer(filePath) {
+    const formData = new FormData();
+    formData.append('file_path', filePath);
+
+    fetch(`{% url 'accounting:open_file_windows' %}`, {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Afficher une notification discrète
+            const toast = document.createElement('div');
+            toast.className = 'toast toast-top toast-end';
+            toast.innerHTML = `
+                <div class="alert alert-success">
+                    <i class="fas fa-check"></i>
+                    <span>${data.message}</span>
+                </div>
+            `;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        } else {
+            alert(`Erreur : ${data.message}`);
+        }
+    })
+    .catch(error => {
+        alert(`Erreur réseau : ${error.message}`);
+    });
+}
+
+// Ancienne fonction (fallback)
+function openFileLocally(filePath) {
+    // Tenter d'ouvrir le fichier avec l'application par défaut Windows
+    // Cela ne fonctionnera que si le navigateur autorise file://
+
+    // Méthode 1 : Utiliser window.open avec file://
+    const fileUrl = 'file:///' + filePath.replace(/\\/g, '/');
+    const opened = window.open(fileUrl, '_blank');
+
+    if (!opened) {
+        // Si bloqué par le navigateur, afficher un message avec instructions
+        const message = `Le navigateur bloque l'ouverture directe des fichiers locaux.\n\n` +
+                       `Chemin du fichier :\n${filePath}\n\n` +
+                       `Pour ouvrir ce fichier :\n` +
+                       `1. Copiez le chemin ci-dessus\n` +
+                       `2. Ouvrez l'Explorateur Windows (Win+E)\n` +
+                       `3. Collez le chemin dans la barre d'adresse\n` +
+                       `4. Appuyez sur Entrée`;
+
+        // Créer un modal personnalisé
+        if (confirm(message + '\n\nVoulez-vous copier le chemin dans le presse-papier ?')) {
+            navigator.clipboard.writeText(filePath).then(() => {
+                alert('Chemin copié ! Collez-le dans l\'Explorateur Windows.');
+            }).catch(() => {
+                alert('Impossible de copier. Chemin : ' + filePath);
+            });
+        }
+    }
+}
+</script>
+{% endblock %}

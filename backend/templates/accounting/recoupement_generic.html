@@ -1,0 +1,1383 @@
+{% extends "accounting/base.html" %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}{{ titre }} - Comptabilité{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <!-- Header -->
+    <div class="mb-6">
+        <h1 class="text-3xl font-bold mb-2">
+            <i class="fas fa-balance-scale mr-2 text-primary"></i>
+            {{ titre }}
+        </h1>
+        <p class="text-base-content/70">
+            Vérification de la cohérence entre les données applicatives et la comptabilité DiameX
+        </p>
+    </div>
+
+    <!-- Navigation entre toutes les pages de recoupement -->
+    {% include 'accounting/includes/recoupement_nav.html' with current_page=type_recoupement %}
+
+    <!-- Filtres -->
+    <div class="card bg-base-200 shadow-md mb-6">
+        <div class="card-body">
+            <h3 class="card-title text-sm mb-4"><i class="fas fa-filter mr-2"></i>Filtres</h3>
+            <form method="GET" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Status</span></label>
+                    <select name="status" class="select select-bordered select-sm">
+                        <option value="">Tous les status</option>
+                        <option value="ok" {% if filter_status == 'ok' %}selected{% endif %}>✓ OK</option>
+                        <option value="warning" {% if filter_status == 'warning' %}selected{% endif %}>⚠ Attention</option>
+                        <option value="error" {% if filter_status == 'error' %}selected{% endif %}>✗ Erreur</option>
+                        <option value="missing" {% if filter_status == 'missing' %}selected{% endif %}>? Manquant</option>
+                    </select>
+                </div>
+
+                {% if type_recoupement == 'cartes_sociales' %}
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Carte Sociale</span></label>
+                    <input type="text" name="carte" value="{{ filter_carte }}" class="input input-bordered input-sm" placeholder="Rechercher...">
+                </div>
+                {% else %}
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Point d'Eau</span></label>
+                    <input type="text" name="point_eau" value="{{ filter_point_eau }}" class="input input-bordered input-sm" placeholder="Rechercher...">
+                </div>
+                {% endif %}
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Base DiameX</span></label>
+                    <select name="base" class="select select-bordered select-sm">
+                        <option value="">Toutes les bases</option>
+                        {% for base in bases_list %}
+                        <option value="{{ base }}" {% if filter_base == base %}selected{% endif %}>{{ base }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                {% if type_recoupement == 'demandes_bp' or type_recoupement == 'devis_bp' %}
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mois de paiement</span></label>
+                    <input type="month" name="mois_paiement" value="{{ filter_mois_paiement }}" class="input input-bordered input-sm">
+                </div>
+                {% endif %}
+
+                <div class="form-control flex flex-row gap-2 items-end">
+                    <button type="submit" class="btn btn-primary btn-sm flex-1"><i class="fas fa-search mr-2"></i>Filtrer</button>
+                    <a href="{{ request.path }}" class="btn btn-ghost btn-sm"><i class="fas fa-times"></i></a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Statistics Dashboard -->
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
+        <!-- Total -->
+        <div class="stat bg-base-200 rounded-lg p-4 shadow">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-list text-3xl"></i>
+            </div>
+            <div class="stat-title">Total</div>
+            <div class="stat-value text-primary">{{ stats.total|intcomma }}</div>
+            <div class="stat-desc">couples (Num, Base) DiameX</div>
+        </div>
+
+        <!-- OK -->
+        <div class="stat bg-success/10 rounded-lg p-4 shadow">
+            <div class="stat-figure text-success">
+                <i class="fas fa-check-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">OK</div>
+            <div class="stat-value text-success">{{ stats.ok|intcomma }}</div>
+            <div class="stat-desc">Écart &lt; 0.01 Ar</div>
+        </div>
+
+        <!-- Warning -->
+        <div class="stat bg-warning/10 rounded-lg p-4 shadow">
+            <div class="stat-figure text-warning">
+                <i class="fas fa-exclamation-triangle text-3xl"></i>
+            </div>
+            <div class="stat-title">Attention</div>
+            <div class="stat-value text-warning">{{ stats.warning|intcomma }}</div>
+            <div class="stat-desc">Écart &lt; 100 Ar</div>
+        </div>
+
+        <!-- Error -->
+        <div class="stat bg-error/10 rounded-lg p-4 shadow">
+            <div class="stat-figure text-error">
+                <i class="fas fa-times-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Erreur</div>
+            <div class="stat-value text-error">{{ stats.error|intcomma }}</div>
+            <div class="stat-desc">Écart ≥ 100 Ar</div>
+        </div>
+
+        <!-- Missing -->
+        <div class="stat bg-base-300 rounded-lg p-4 shadow">
+            <div class="stat-figure text-base-content/50">
+                <i class="fas fa-question-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Manquant</div>
+            <div class="stat-value text-base-content/50">{{ stats.missing|intcomma }}</div>
+            <div class="stat-desc">Non trouvé en compta</div>
+        </div>
+    </div>
+
+    <!-- Navigation buttons -->
+    <div class="flex gap-3 mb-6" id="verification-normale">
+        <a href="#verification-inverse" class="btn btn-secondary btn-sm">
+            <i class="fas fa-arrow-down mr-2"></i>
+            Section 2 : Inverse
+        </a>
+        {% if type_recoupement == 'cartes_sociales' %}
+        <a href="#recoupement-extraction" class="btn btn-info btn-sm">
+            <i class="fas fa-arrow-down mr-2"></i>
+            Section 3 : Extraction
+        </a>
+        {% endif %}
+        <button onclick="collapseAllBases()" class="btn btn-ghost btn-sm">
+            <i class="fas fa-compress-alt mr-2"></i>
+            Tout plier
+        </button>
+        <button onclick="expandAllBases()" class="btn btn-ghost btn-sm">
+            <i class="fas fa-expand-alt mr-2"></i>
+            Tout déplier
+        </button>
+    </div>
+
+    <!-- Results Table -->
+    {% if recoupements_par_base %}
+        <!-- Affichage regroupé par Base DiameX -->
+        {% for base_id, base_groupe in recoupements_par_base.items %}
+        <div class="card bg-base-100 shadow-xl mb-8 base-card">
+            <div class="card-body">
+                <div class="flex items-center justify-between mb-6">
+                    <h1 class="text-2xl font-bold flex items-center gap-3">
+                        <i class="fas fa-database text-info"></i>
+                        {{ base_groupe.base_nom }}
+                        <span class="badge badge-info badge-lg">{{ base_groupe.total_recoupements }} recoupement(s)</span>
+                        <span class="badge badge-success badge-sm">{{ base_groupe.ok }} OK</span>
+                        <span class="badge badge-warning badge-sm">{{ base_groupe.warning }} Warning</span>
+                        <span class="badge badge-error badge-sm">{{ base_groupe.error }} Error</span>
+                        <span class="badge badge-ghost badge-sm">{{ base_groupe.missing }} Missing</span>
+                    </h1>
+                    <button onclick="toggleBase(this)" class="btn btn-sm btn-ghost">
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                </div>
+
+                <div class="base-content" style="display: none;">
+                    <div class="overflow-x-auto">
+                        <table class="table table-zebra w-full">
+                        <thead>
+                            <tr>
+                                <th class="bg-base-200">Numéro DiameX</th>
+                                <th class="bg-base-200">Base DiameX</th>
+                                <th class="bg-base-200 text-center">Scan</th>
+                                <th class="bg-base-200 text-center">Nb PE</th>
+                                <th class="bg-base-200 text-right">
+                                    {% if type_recoupement == 'demandes_bp' %}Total Demandes (Ar)
+                                    {% else %}Total Devis (Ar){% endif %}
+                                </th>
+                                <th class="bg-base-200 text-right">Compta IN (Ar)</th>
+                                <th class="bg-base-200 text-right">Écart Total (Ar)</th>
+                                <th class="bg-base-200 text-center">Status</th>
+                                <th class="bg-base-200 text-center">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for rec in base_groupe.recoupements %}
+                        <tr>
+                            <td class="font-mono">{{ rec.numero_diamex }}</td>
+                            <td class="font-semibold">{{ rec.base_diamex }}</td>
+                            <td class="text-center">
+                                {% if rec.scan %}
+                                    <button onclick="openFileViaServer('{{ rec.scan|escapejs }}')"
+                                            class="btn btn-xs btn-success gap-1" title="Ouvrir le scan">
+                                        <i class="fas fa-file-pdf"></i>
+                                    </button>
+                                {% else %}
+                                    <span class="text-base-content/50 text-xs">—</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                <span class="badge badge-sm badge-info">
+                                    {% if type_recoupement == 'cartes_sociales' %}{{ rec.nb_cartes }}
+                                    {% else %}{{ rec.nb_points_eau }}{% endif %}
+                                </span>
+                            </td>
+                            <td class="text-right font-mono text-success">
+                                {% if type_recoupement == 'demandes_bp' %}{{ rec.total_demandes|floatformat:2|intcomma }}
+                                {% elif type_recoupement == 'devis_bp' %}{{ rec.total_devis|floatformat:2|intcomma }}
+                                {% else %}{{ rec.total_paye|floatformat:2|intcomma }}{% endif %}
+                            </td>
+                            <td class="text-right font-mono text-sm">
+                                {% if rec.comptabilite_in is not None %}
+                                    {{ rec.comptabilite_in|floatformat:2|intcomma }}
+                                {% else %}
+                                    <span class="text-base-content/50">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-right font-mono font-bold
+                                {% if rec.status == 'ok' %}text-success
+                                {% elif rec.status == 'warning' %}text-warning
+                                {% elif rec.status == 'error' %}text-error
+                                {% else %}text-base-content/50{% endif %}">
+                                {% if rec.ecart is not None %}
+                                    {{ rec.ecart|floatformat:2|intcomma }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                {% if rec.status == 'ok' %}
+                                    <span class="badge badge-success gap-2">
+                                        <i class="fas fa-check"></i> OK
+                                    </span>
+                                {% elif rec.status == 'warning' %}
+                                    <span class="badge badge-warning gap-2">
+                                        <i class="fas fa-exclamation-triangle"></i> Attention
+                                    </span>
+                                {% elif rec.status == 'error' %}
+                                    <span class="badge badge-error gap-2">
+                                        <i class="fas fa-times"></i> Erreur
+                                    </span>
+                                {% else %}
+                                    <span class="badge badge-ghost gap-2">
+                                        <i class="fas fa-question"></i> Manquant
+                                    </span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                <div class="flex gap-1 justify-center">
+                                    <button class="btn btn-sm btn-outline btn-info"
+                                            onclick="toggleDetails('details-{{ forloop.counter }}')"
+                                            title="Voir les détails">
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                    {% if type_recoupement == 'demandes_bp' or type_recoupement == 'devis_bp' %}
+                                    <button class="btn btn-sm btn-primary"
+                                            onclick="openEditModal('{{ rec.numero_diamex|escapejs }}', '{{ rec.base_diamex|escapejs }}')"
+                                            title="Modifier les points d'eau">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        <!-- Details Row (hidden by default) -->
+                        <tr id="details-{{ forloop.counter }}" class="hidden">
+                            <td colspan="9" class="bg-base-200/50">
+                                <div class="p-4">
+                                    <h4 class="font-semibold mb-3">
+                                        <i class="fas fa-list mr-2"></i>
+                                        Détails
+                                        {% if type_recoupement == 'cartes_sociales' %}
+                                            ({{ rec.cartes|length }} carte{{ rec.cartes|length|pluralize }})
+                                        {% else %}
+                                            ({{ rec.points_eau|length }} point{{ rec.points_eau|length|pluralize }} d'eau)
+                                        {% endif %}
+                                    </h4>
+
+                                    <div class="overflow-x-auto">
+                                        <table class="table table-sm w-full">
+                                            <thead>
+                                                <tr>
+                                                    {% if type_recoupement == 'cartes_sociales' %}
+                                                    <th>Numéro Carte</th>
+                                                    <th>Bénéficiaire</th>
+                                                    <th>Date Paiement</th>
+                                                    <th class="text-right">Montant Payé (Ar)</th>
+                                                    {% else %}
+                                                    <th>ID xls</th>
+                                                    <th>Point d'Eau</th>
+                                                    <th>Ouvrage</th>
+                                                    <th class="text-right">
+                                                        {% if type_recoupement == 'demandes_bp' %}Montant Demande (Ar)
+                                                        {% else %}Montant Devis (Ar){% endif %}
+                                                    </th>
+                                                    {% endif %}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {% if type_recoupement == 'cartes_sociales' %}
+                                                    {% for conso in rec.cartes %}
+                                                    <tr>
+                                                        <td class="font-mono">{{ conso.carte_sociale.numero_carte|default:"-" }}</td>
+                                                        <td>{{ conso.carte_sociale.nom_beneficiaire|default:"-" }}</td>
+                                                        <td>{{ conso.date|date:"d/m/Y"|default:"-" }}</td>
+                                                        <td class="text-right font-mono font-semibold">{{ conso.montant_paye|floatformat:2|intcomma }}</td>
+                                                    </tr>
+                                                    {% endfor %}
+                                                {% else %}
+                                                    {% for pe in rec.points_eau %}
+                                                    <tr>
+                                                        <td class="font-mono text-xs">{{ pe.idxls|default:"—" }}</td>
+                                                        <td class="font-semibold text-sm">{{ pe.nomabonne }}</td>
+                                                        <td class="text-sm">{{ pe.ouvrage.nom_ouvrage|default:"-" }}</td>
+                                                        <td class="text-right font-mono font-semibold">
+                                                            {% if type_recoupement == 'demandes_bp' %}
+                                                                {{ pe.montant_demande_bp|floatformat:2|intcomma }}
+                                                            {% else %}
+                                                                {{ pe.montantdevispaye|floatformat:2|intcomma }}
+                                                            {% endif %}
+                                                        </td>
+                                                    </tr>
+                                                    {% endfor %}
+                                                {% endif %}
+                                            </tbody>
+                                            <tfoot>
+                                                <tr class="font-bold bg-primary/10">
+                                                    <td colspan="3" class="text-right">Total</td>
+                                                    <td class="text-right text-primary">
+                                                        {% if type_recoupement == 'demandes_bp' %}{{ rec.total_demandes|floatformat:2|intcomma }}
+                                                        {% elif type_recoupement == 'devis_bp' %}{{ rec.total_devis|floatformat:2|intcomma }}
+                                                        {% else %}{{ rec.total_paye|floatformat:2|intcomma }}{% endif %}
+                                                    </td>
+                                                </tr>
+                                            </tfoot>
+                                        </table>
+                                    </div>
+
+                                    {% if rec.comptabilite_entry %}
+                                    <div class="mt-4 p-3 bg-info/10 rounded-lg">
+                                        <h5 class="font-semibold mb-2">
+                                            <i class="fas fa-calculator mr-2"></i>
+                                            Entrée comptabilité correspondante
+                                        </h5>
+                                        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                                            <div>
+                                                <span class="text-base-content/70">ID:</span>
+                                                <span class="font-mono ml-2">{{ rec.comptabilite_entry.id_access }}</span>
+                                            </div>
+                                            <div>
+                                                <span class="text-base-content/70">Prog:</span>
+                                                <span class="font-mono ml-2">{{ rec.comptabilite_entry.prog }}</span>
+                                            </div>
+                                            <div>
+                                                <span class="text-base-content/70">IN:</span>
+                                                <span class="font-mono ml-2">{{ rec.comptabilite_entry.montant_in|floatformat:2|intcomma }}</span>
+                                            </div>
+                                            <div>
+                                                <span class="text-base-content/70">OUT:</span>
+                                                <span class="font-mono ml-2">{{ rec.comptabilite_entry.montant_out|floatformat:2|intcomma }}</span>
+                                            </div>
+                                            <div class="md:col-span-4">
+                                                <span class="text-base-content/70">Description:</span>
+                                                <span class="ml-2">{{ rec.comptabilite_entry.description|default:"-" }}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% else %}
+                                    <div class="mt-4 p-3 bg-warning/10 rounded-lg">
+                                        <i class="fas fa-exclamation-triangle mr-2 text-warning"></i>
+                                        <span class="text-warning font-semibold">Aucune entrée comptabilité trouvée pour ce couple (ID={{ rec.numero_diamex }}, Prog={{ rec.base_diamex }})</span>
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        </div>
+        {% endfor %}
+
+    {% else %}
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <div class="text-center py-12">
+                <i class="fas fa-inbox text-6xl text-base-content/20 mb-4"></i>
+                <p class="text-lg text-base-content/50">
+                    Aucun enregistrement avec numéro et base DiameX trouvé.
+                </p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Legend -->
+    <div class="mt-6 p-4 bg-base-200 rounded-lg">
+        <h3 class="font-semibold mb-3">
+            <i class="fas fa-info-circle mr-2"></i>
+            Légende
+        </h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+            <div>
+                <span class="badge badge-success mr-2">OK</span>
+                <span>Écart inférieur à 0.01 Ar (négligeable)</span>
+            </div>
+            <div>
+                <span class="badge badge-warning mr-2">Attention</span>
+                <span>Écart entre 0.01 et 100 Ar</span>
+            </div>
+            <div>
+                <span class="badge badge-error mr-2">Erreur</span>
+                <span>Écart supérieur ou égal à 100 Ar</span>
+            </div>
+            <div>
+                <span class="badge badge-ghost mr-2">Manquant</span>
+                <span>Aucune entrée comptabilité correspondante</span>
+            </div>
+        </div>
+        <div class="mt-3 text-xs text-base-content/60">
+            <p>
+                <i class="fas fa-lightbulb mr-1"></i>
+                <strong>Note:</strong> Le recoupement compare les montants de l'application avec les entrées comptables DiameX.
+            </p>
+        </div>
+    </div>
+
+    <!-- ===== VÉRIFICATION INVERSE : DiameX → Application ===== -->
+    <div class="divider my-8"></div>
+
+    <div id="verification-inverse" class="mb-8">
+        <div class="flex justify-between items-center mb-6">
+            <div>
+                <h2 class="text-2xl font-bold flex items-center gap-2">
+                    <i class="fas fa-exchange-alt text-secondary"></i>
+                    Vérification Inverse : DiameX → Application
+                </h2>
+                <p class="text-sm text-base-content/70 mt-1">
+                    Recherche des entrées DiameX sans correspondance dans l'application
+                </p>
+            </div>
+            <a href="#verification-normale" class="btn btn-outline btn-sm">
+                <i class="fas fa-arrow-up mr-1"></i>
+                Retour à la vérification normale
+            </a>
+        </div>
+
+        <!-- Statistiques Globales Inverses -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div class="stat bg-base-200 rounded-lg shadow">
+                <div class="stat-figure text-info">
+                    <i class="fas fa-database text-3xl"></i>
+                </div>
+                <div class="stat-title">Entrées DiameX</div>
+                <div class="stat-value text-info text-2xl">{{ stats_inverse.total|default:0 }}</div>
+                <div class="stat-desc">Total analysées</div>
+            </div>
+
+            <div class="stat bg-base-200 rounded-lg shadow">
+                <div class="stat-figure text-success">
+                    <i class="fas fa-check-circle text-3xl"></i>
+                </div>
+                <div class="stat-title">Trouvées</div>
+                <div class="stat-value text-success text-2xl">{{ stats_inverse.trouves|default:0 }}</div>
+                <div class="stat-desc">Avec correspondance</div>
+            </div>
+
+            <div class="stat bg-base-200 rounded-lg shadow">
+                <div class="stat-figure text-error">
+                    <i class="fas fa-exclamation-triangle text-3xl"></i>
+                </div>
+                <div class="stat-title">Non trouvées</div>
+                <div class="stat-value text-error text-2xl">{{ stats_inverse.non_trouves|default:0 }}</div>
+                <div class="stat-desc">Sans correspondance</div>
+            </div>
+
+            <div class="stat bg-base-200 rounded-lg shadow">
+                <div class="stat-figure text-warning">
+                    <i class="fas fa-calculator text-3xl"></i>
+                </div>
+                <div class="stat-title">Écart Total</div>
+                <div class="stat-value text-warning text-2xl">{{ stats_inverse.ecart_total|floatformat:0|default:0 }}</div>
+                <div class="stat-desc">Ariary</div>
+            </div>
+        </div>
+
+        <!-- Filtres Inverses -->
+        <div class="card bg-base-100 shadow mb-6">
+            <div class="card-body">
+                <h3 class="card-title text-lg mb-4">
+                    <i class="fas fa-filter mr-2"></i>
+                    Filtres
+                </h3>
+                <form method="get" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <!-- Conserver les filtres normaux -->
+                    {% if request.GET.annee %}
+                    <input type="hidden" name="annee" value="{{ request.GET.annee }}">
+                    {% endif %}
+                    {% if request.GET.mois %}
+                    <input type="hidden" name="mois" value="{{ request.GET.mois }}">
+                    {% endif %}
+                    {% if request.GET.base %}
+                    <input type="hidden" name="base" value="{{ request.GET.base }}">
+                    {% endif %}
+
+                    <!-- Filtre Prog Inverse -->
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">Prog (Base DiameX)</span>
+                        </label>
+                        <input type="text" name="prog_inverse" value="{{ request.GET.prog_inverse }}"
+                               placeholder="Ex: SOAKOJA" class="input input-bordered input-sm">
+                    </div>
+
+                    <!-- Filtre Mois Inverse -->
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">Mois</span>
+                        </label>
+                        <input type="text" name="mois_inverse" value="{{ request.GET.mois_inverse }}"
+                               placeholder="Ex: 2025 01" class="input input-bordered input-sm">
+                    </div>
+
+                    <!-- Boutons -->
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">&nbsp;</span>
+                        </label>
+                        <div class="flex gap-2">
+                            <button type="submit" class="btn btn-primary btn-sm flex-1">
+                                <i class="fas fa-search mr-1"></i>
+                                Filtrer
+                            </button>
+                            <a href="?{% if request.GET.annee %}annee={{ request.GET.annee }}&{% endif %}{% if request.GET.mois %}mois={{ request.GET.mois }}&{% endif %}{% if request.GET.base %}base={{ request.GET.base }}{% endif %}"
+                               class="btn btn-ghost btn-sm">
+                                <i class="fas fa-times mr-1"></i>
+                                Réinitialiser
+                            </a>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Boutons de contrôle et navigation -->
+        <div class="flex gap-2 mb-4">
+            <a href="#verification-normale" class="btn btn-sm btn-outline btn-success">
+                <i class="fas fa-arrow-up mr-1"></i>
+                Section 1 : Normal
+            </a>
+            {% if type_recoupement == 'cartes_sociales' %}
+            <a href="#recoupement-extraction" class="btn btn-sm btn-outline btn-info">
+                <i class="fas fa-arrow-down mr-1"></i>
+                Section 3 : Extraction
+            </a>
+            {% endif %}
+            <div class="divider divider-horizontal"></div>
+            <button onclick="collapseAllProgs()" class="btn btn-sm btn-outline">
+                <i class="fas fa-minus-square mr-1"></i>
+                Tout réduire
+            </button>
+            <button onclick="expandAllProgs()" class="btn btn-sm btn-outline">
+                <i class="fas fa-plus-square mr-1"></i>
+                Tout déplier
+            </button>
+        </div>
+
+        <!-- Groupement par Prog (Base DiameX) -->
+        {% if recoupements_inverses_par_prog %}
+            {% for prog, prog_data in recoupements_inverses_par_prog.items %}
+            <div class="card bg-base-100 shadow mb-4 prog-card" id="prog-{{ forloop.counter }}">
+                <div class="card-body p-4">
+                    <!-- Header Prog avec bouton collapse -->
+                    <div class="flex justify-between items-center cursor-pointer"
+                         onclick="toggleProg(this)">
+                        <div class="flex items-center gap-3">
+                            <i class="fas fa-chevron-down transition-transform"></i>
+                            <h3 class="font-bold text-lg">
+                                <i class="fas fa-server mr-2 text-secondary"></i>
+                                {{ prog }}
+                            </h3>
+                            <div class="badge badge-lg">
+                                {{ prog_data.total }} entrée(s)
+                            </div>
+                        </div>
+                        <div class="flex gap-2">
+                            <span class="badge badge-success">
+                                <i class="fas fa-check mr-1"></i>
+                                {{ prog_data.trouves }} trouvée(s)
+                            </span>
+                            <span class="badge badge-error">
+                                <i class="fas fa-times mr-1"></i>
+                                {{ prog_data.non_trouves }} non trouvée(s)
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Contenu collapsible -->
+                    <div class="prog-content mt-4" style="display: none;">
+                        <div class="overflow-x-auto">
+                            <table class="table table-zebra table-sm">
+                                <thead class="bg-base-200">
+                                    <tr>
+                                        <th>ID DiameX</th>
+                                        <th>Date</th>
+                                        <th>Mois</th>
+                                        <th>Cat (Compte)</th>
+                                        <th>Info</th>
+                                        <th>Detail</th>
+                                        <th>Montant DiameX</th>
+                                        <th>Statut</th>
+                                        <th>Montant App</th>
+                                        <th>Écart</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for entry in prog_data.entries %}
+                                    <tr>
+                                        <td class="font-mono text-xs">{{ entry.id_access|truncatechars:10 }}</td>
+                                        <td>{{ entry.date_m|date:"d/m/Y" }}</td>
+                                        <td class="font-mono">{{ entry.mois }}</td>
+                                        <td class="font-mono">{{ entry.cat }}</td>
+                                        <td>{{ entry.info|truncatechars:30 }}</td>
+                                        <td>{{ entry.detail|truncatechars:20 }}</td>
+                                        <td class="text-right font-mono">
+                                            {% if entry.montant_in %}
+                                                <span class="text-success">{{ entry.montant_in|floatformat:0 }} Ar</span>
+                                            {% elif entry.montant_out %}
+                                                <span class="text-error">{{ entry.montant_out|floatformat:0 }} Ar</span>
+                                            {% else %}
+                                                0 Ar
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if entry.application_trouve %}
+                                                <span class="badge badge-success badge-sm">Trouvé</span>
+                                            {% else %}
+                                                <span class="badge badge-error badge-sm">Non trouvé</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-right font-mono">
+                                            {% if entry.application_trouve %}
+                                                <span class="text-info">{{ entry.total_application|floatformat:0 }} Ar</span>
+                                            {% else %}
+                                                <span class="text-base-content/50">-</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-right font-mono">
+                                            {% if entry.application_trouve %}
+                                                {% if entry.ecart > 0.01 %}
+                                                    <span class="text-warning font-bold">{{ entry.ecart|floatformat:0 }} Ar</span>
+                                                {% else %}
+                                                    <span class="text-success">0 Ar</span>
+                                                {% endif %}
+                                            {% else %}
+                                                <span class="text-base-content/50">-</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if entry.application_records %}
+                                            <button onclick="toggleDetailsInverse('inverse-details-{{ forloop.parentloop.counter }}-{{ forloop.counter }}')"
+                                                    class="btn btn-xs btn-info">
+                                                <i class="fas fa-eye mr-1"></i>
+                                                Voir détails
+                                            </button>
+                                            {% else %}
+                                            <span class="text-base-content/50 text-xs">Aucun</span>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    <!-- Ligne de détails cachée -->
+                                    {% if entry.application_records %}
+                                    <tr id="inverse-details-{{ forloop.parentloop.counter }}-{{ forloop.counter }}" style="display: none;">
+                                        <td colspan="11" class="bg-base-200 p-4">
+                                            <div class="card bg-base-100">
+                                                <div class="card-body p-3">
+                                                    <h4 class="font-bold mb-2">
+                                                        <i class="fas fa-list mr-2 text-info"></i>
+                                                        Enregistrements trouvés dans l'application ({{ entry.application_records|length }})
+                                                    </h4>
+                                                    <div class="overflow-x-auto">
+                                                        <table class="table table-sm">
+                                                            <thead>
+                                                                <tr>
+                                                                    {% if type_recoupement == 'releves' %}
+                                                                        <th>Point d'eau</th>
+                                                                        <th>Date relevé</th>
+                                                                        <th>Nouvel index</th>
+                                                                        <th>Volume (m³)</th>
+                                                                        <th>Montant</th>
+                                                                    {% elif type_recoupement == 'cartes_sociales' %}
+                                                                        <th>Point d'eau</th>
+                                                                        <th>Mois</th>
+                                                                        <th>Volume (m³)</th>
+                                                                        <th>Montant</th>
+                                                                    {% elif type_recoupement == 'demandes_bp' or type_recoupement == 'devis_bp' %}
+                                                                        <th>Point d'eau</th>
+                                                                        <th>Numéro DiameX</th>
+                                                                        <th>Base DiameX</th>
+                                                                        <th>Date</th>
+                                                                    {% endif %}
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                {% for rec in entry.application_records %}
+                                                                <tr>
+                                                                    {% if type_recoupement == 'releves' %}
+                                                                        <td>{{ rec.point_eau }}</td>
+                                                                        <td>{{ rec.date_releve|date:"d/m/Y" }}</td>
+                                                                        <td class="text-right">{{ rec.nouvel_index|floatformat:2 }}</td>
+                                                                        <td class="text-right">{{ rec.volume|floatformat:2 }}</td>
+                                                                        <td class="text-right font-mono">{{ rec.montant|floatformat:0 }} Ar</td>
+                                                                    {% elif type_recoupement == 'cartes_sociales' %}
+                                                                        <td>{{ rec.point_eau }}</td>
+                                                                        <td>{{ rec.mois }}</td>
+                                                                        <td class="text-right">{{ rec.volume|floatformat:2 }}</td>
+                                                                        <td class="text-right font-mono">{{ rec.montant|floatformat:0 }} Ar</td>
+                                                                    {% elif type_recoupement == 'demandes_bp' or type_recoupement == 'devis_bp' %}
+                                                                        <td>{{ rec.point_eau }}</td>
+                                                                        <td class="font-mono">{{ rec.numero_diamex }}</td>
+                                                                        <td>{{ rec.base_diamex }}</td>
+                                                                        <td>{{ rec.date|date:"d/m/Y" }}</td>
+                                                                    {% endif %}
+                                                                </tr>
+                                                                {% endfor %}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {% endif %}
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle"></i>
+                <span>Aucune donnée de vérification inverse disponible. Appliquez des filtres pour voir les résultats.</span>
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- ========== SECTION 3 : RECOUPEMENT PAR EXTRACTION ========== -->
+    {% if type_recoupement == 'cartes_sociales' %}
+    <div id="recoupement-extraction" class="mb-12">
+        <div class="card bg-gradient-to-r from-info/10 to-info/5 shadow-lg mb-6">
+            <div class="card-body">
+                <h2 class="card-title text-2xl mb-4">
+                    <i class="fas fa-search-plus mr-2 text-info"></i>
+                    Section 3 : Extraction Ouvrage depuis DiameX (Regroupé par Ouvrage/Mois)
+                </h2>
+                <p class="text-sm text-base-content/70 mb-4">
+                    <i class="fas fa-info-circle mr-2"></i>
+                    Extraction automatique du nom de l'ouvrage depuis les descriptions DiameX, puis comparaison
+                    des totaux regroupés par (ouvrage, mois) avec les consommations cartes sociales.
+                </p>
+            </div>
+        </div>
+
+        <!-- Navigation buttons -->
+        <div class="flex gap-2 mb-6 flex-wrap">
+            <a href="#recoupement-normal" class="btn btn-sm btn-outline btn-success">
+                <i class="fas fa-arrow-up mr-1"></i>
+                Section 1 : Normal
+            </a>
+            <a href="#recoupement-inverse" class="btn btn-sm btn-outline btn-warning">
+                <i class="fas fa-arrow-up mr-1"></i>
+                Section 2 : Inverse
+            </a>
+        </div>
+
+        <!-- Filtres Section 3 -->
+        <div class="card bg-base-200 shadow-md mb-6">
+            <div class="card-body">
+                <h3 class="card-title text-sm mb-4"><i class="fas fa-filter mr-2"></i>Filtres Extraction (Regroupés par Ouvrage/Mois)</h3>
+                <form method="GET" class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Statut</span></label>
+                        <select name="status_extraction" class="select select-bordered select-sm">
+                            <option value="">Tous les status</option>
+                            <option value="ok" {% if request.GET.status_extraction == 'ok' %}selected{% endif %}>✓ OK</option>
+                            <option value="warning" {% if request.GET.status_extraction == 'warning' %}selected{% endif %}>⚠ Attention</option>
+                            <option value="error" {% if request.GET.status_extraction == 'error' %}selected{% endif %}>✗ Erreur</option>
+                            <option value="missing" {% if request.GET.status_extraction == 'missing' %}selected{% endif %}>? Sans consommation</option>
+                        </select>
+                    </div>
+
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Prog</span></label>
+                        <select name="prog_extraction" class="select select-bordered select-sm">
+                            <option value="">Tous les progs</option>
+                            {% for prog in progs_list_extraction %}
+                            <option value="{{ prog }}" {% if request.GET.prog_extraction == prog %}selected{% endif %}>{{ prog }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Ouvrage extrait</span></label>
+                        <input type="text" name="ouvrage_extraction" value="{{ request.GET.ouvrage_extraction }}"
+                               placeholder="Nom d'ouvrage..." class="input input-bordered input-sm" />
+                    </div>
+
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Mois</span></label>
+                        <input type="month" name="mois_extraction" value="{{ request.GET.mois_extraction }}" class="input input-bordered input-sm" />
+                    </div>
+
+                    <div class="form-control flex flex-row gap-2 items-end">
+                        <button type="submit" class="btn btn-primary btn-sm flex-1"><i class="fas fa-search mr-2"></i>Filtrer</button>
+                        <a href="{% url 'accounting:recoupement_cartes_sociales' %}#recoupement-extraction" class="btn btn-ghost btn-sm"><i class="fas fa-times"></i></a>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Stats Section 3 -->
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+            <div class="stat bg-base-200 rounded-lg p-4 shadow">
+                <div class="stat-title">Total</div>
+                <div class="stat-value text-primary">{{ stats_extraction.total|intcomma }}</div>
+                <div class="stat-desc">regroupements</div>
+            </div>
+            <div class="stat bg-success/10 rounded-lg p-4 shadow">
+                <div class="stat-value text-success">{{ stats_extraction.ok|intcomma }}</div>
+                <div class="stat-desc">OK</div>
+            </div>
+            <div class="stat bg-warning/10 rounded-lg p-4 shadow">
+                <div class="stat-value text-warning">{{ stats_extraction.warning|intcomma }}</div>
+                <div class="stat-desc">Attention</div>
+            </div>
+            <div class="stat bg-error/10 rounded-lg p-4 shadow">
+                <div class="stat-value text-error">{{ stats_extraction.error|intcomma }}</div>
+                <div class="stat-desc">Erreur</div>
+            </div>
+            <div class="stat bg-base-300 rounded-lg p-4 shadow">
+                <div class="stat-value text-base-content/50">{{ stats_extraction.missing|intcomma }}</div>
+                <div class="stat-desc">Sans consommation</div>
+            </div>
+        </div>
+
+        <!-- Tableau Section 3 avec regroupement par Prog puis Ouvrage/Mois -->
+        <div class="space-y-4">
+            {% for prog, ouvrages_dict in recoupements_extraction_par_prog.items %}
+            <details class="collapse collapse-arrow bg-base-200" open>
+                <summary class="collapse-title text-lg font-semibold">
+                    <i class="fas fa-database mr-2"></i>Prog: {{ prog }}
+                    <span class="badge badge-accent ml-2">{{ ouvrages_dict|length }} ouvrage(s)</span>
+                </summary>
+                <div class="collapse-content">
+                    {% for ouvrage_nom, recs_list in ouvrages_dict.items %}
+                    <details class="collapse collapse-arrow bg-base-100 ml-4 mb-2" open>
+                        <summary class="collapse-title font-medium">
+                            <i class="fas fa-water mr-2"></i>{{ ouvrage_nom }}
+                            <span class="badge badge-sm ml-2">{{ recs_list|length }} regroupement(s)</span>
+                        </summary>
+                        <div class="collapse-content">
+                            <div class="overflow-x-auto">
+                                <table class="table table-zebra w-full table-sm">
+                                    <thead>
+                                        <tr class="bg-base-300">
+                                            <th>Année/Mois</th>
+                                            <th class="text-center">Nb Entrées DiameX</th>
+                                            <th class="text-right">Total DiameX (Ar)</th>
+                                            <th class="text-center">Nb Consommations</th>
+                                            <th class="text-right">Total Consommations (Ar)</th>
+                                            <th class="text-right">Écart (Ar)</th>
+                                            <th class="text-center">Status</th>
+                                            <th class="text-center">Détails</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for rec in recs_list %}
+                                        <tr>
+                                            <td class="font-medium">
+                                                {% if rec.annee and rec.mois %}
+                                                    {{ rec.annee }}-{{ rec.mois|stringformat:"02d" }}
+                                                {% else %}
+                                                    <span class="text-base-content/50">-</span>
+                                                {% endif %}
+                                            </td>
+                                            <td class="text-center">
+                                                <span class="badge badge-info badge-sm">{{ rec.nb_entries_diamex }}</span>
+                                            </td>
+                                            <td class="text-right font-mono font-bold text-info">
+                                                {{ rec.total_diamex|floatformat:2|intcomma }}
+                                            </td>
+                                            <td class="text-center">
+                                                <span class="badge badge-primary badge-sm">{{ rec.nb_consos }}</span>
+                                            </td>
+                                            <td class="text-right font-mono font-bold text-primary">
+                                                {{ rec.total_consos|floatformat:2|intcomma }}
+                                            </td>
+                                            <td class="text-right font-mono font-bold
+                                                {% if rec.ecart > 0 %}text-warning{% elif rec.ecart < 0 %}text-error{% else %}text-success{% endif %}">
+                                                {{ rec.ecart|floatformat:2|intcomma }}
+                                            </td>
+                                            <td class="text-center">
+                                                {% if rec.status == 'ok' %}
+                                                    <span class="badge badge-success badge-sm">✓ OK</span>
+                                                {% elif rec.status == 'warning' %}
+                                                    <span class="badge badge-warning badge-sm">⚠ Attention</span>
+                                                {% elif rec.status == 'error' %}
+                                                    <span class="badge badge-error badge-sm">✗ Erreur</span>
+                                                {% else %}
+                                                    <span class="badge badge-ghost badge-sm">? Sans consommation</span>
+                                                {% endif %}
+                                            </td>
+                                            <td class="text-center">
+                                                <button class="btn btn-xs btn-ghost" onclick="toggleDetailsExtraction{{ forloop.parentloop.counter }}_{{ forloop.counter }}()">
+                                                    <i class="fas fa-chevron-down"></i>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                        <!-- Ligne de détails masquée par défaut -->
+                                        <tr id="detailsExtraction{{ forloop.parentloop.counter }}_{{ forloop.counter }}" style="display:none;">
+                                            <td colspan="8" class="bg-base-200 p-4">
+                                                <div class="text-sm font-semibold mb-2">
+                                                    <i class="fas fa-list-ul mr-2"></i>Détail des {{ rec.nb_entries_diamex }} entrée(s) DiameX :
+                                                </div>
+                                                <div class="overflow-x-auto">
+                                                    <table class="table table-xs w-full">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>ID</th>
+                                                                <th>Description</th>
+                                                                <th>Date</th>
+                                                                <th class="text-right">Montant (Ar)</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {% for entry in rec.diamex_entries %}
+                                                            <tr>
+                                                                <td class="font-mono text-xs">{{ entry.id_access }}</td>
+                                                                <td class="max-w-md truncate text-xs" title="{{ entry.description }}">
+                                                                    {{ entry.description|truncatewords:10 }}
+                                                                </td>
+                                                                <td class="text-xs">{{ entry.date_m|date:"d/m/Y" }}</td>
+                                                                <td class="text-right font-mono text-xs">{{ entry.montant_in|floatformat:2|intcomma }}</td>
+                                                            </tr>
+                                                            {% endfor %}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        <script>
+                                        function toggleDetailsExtraction{{ forloop.parentloop.counter }}_{{ forloop.counter }}() {
+                                            const detailsRow = document.getElementById('detailsExtraction{{ forloop.parentloop.counter }}_{{ forloop.counter }}');
+                                            if (detailsRow.style.display === 'none') {
+                                                detailsRow.style.display = 'table-row';
+                                            } else {
+                                                detailsRow.style.display = 'none';
+                                            }
+                                        }
+                                        </script>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </details>
+                    {% endfor %}
+                </div>
+            </details>
+            {% empty %}
+            <div class="text-center text-base-content/50 py-8">
+                <i class="fas fa-inbox text-4xl mb-2"></i>
+                <p>Aucune entrée DiameX trouvée</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+
+<!-- Modal Modifier Points d'Eau (Demandes BP / Devis BP) -->
+<dialog id="edit_modal" class="modal">
+    <div class="modal-box w-11/12 max-w-5xl">
+        <h3 class="font-bold text-lg mb-4" id="modal_title">
+            <i class="fas fa-edit mr-2 text-primary"></i>
+            Modifier les points d'eau
+        </h3>
+
+        <div id="modal_loading" class="flex justify-center items-center py-8">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+        </div>
+
+        <div id="modal_content" class="hidden">
+            <div class="alert alert-info mb-4 text-sm">
+                <i class="fas fa-info-circle"></i>
+                <span>Modifiez les informations DiameX pour chaque point d'eau. Les modifications sont enregistrées individuellement.</span>
+            </div>
+
+            <div class="overflow-x-auto max-h-96">
+                <table class="table table-zebra table-sm">
+                    <thead class="bg-base-200 sticky top-0" id="modal_table_header">
+                        <!-- Filled by JavaScript -->
+                    </thead>
+                    <tbody id="points_eau_tbody">
+                        <!-- Filled by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="modal-action">
+            <button type="button" class="btn" onclick="document.getElementById('edit_modal').close()">
+                Fermer
+            </button>
+        </div>
+    </div>
+</dialog>
+
+<script>
+function toggleDetails(detailsId) {
+    const detailsRow = document.getElementById(detailsId);
+    if (detailsRow.classList.contains('hidden')) {
+        detailsRow.classList.remove('hidden');
+    } else {
+        detailsRow.classList.add('hidden');
+    }
+}
+
+function openFileViaServer(filePath) {
+    const formData = new FormData();
+    formData.append('file_path', filePath);
+
+    fetch('{% url "accounting:open_file_windows" %}', {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-CSRFToken': getCookie('csrftoken')
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.success) {
+            alert('Erreur: ' + (data.error || 'Impossible d\'ouvrir le fichier'));
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        alert('Erreur réseau lors de l\'ouverture du fichier');
+    });
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Déterminer le type de recoupement depuis la page
+const typeRecoupement = '{{ type_recoupement }}';
+
+// Configuration selon le type
+const config = {
+    'demandes_bp': {
+        titre: 'Demandes BP',
+        apiGet: '{% url "accounting:api_get_points_eau_demande_bp" %}',
+        apiUpdate: '{% url "accounting:api_update_point_eau_demande_bp" %}',
+        numeroField: 'numerodiamexdemande',
+        baseField: 'basediamexdemande',
+        montantField: 'montant_demande_bp',
+        datePaiementField: 'datepaiementdemande',
+        headerNumero: 'Numéro DiameX Demande',
+        headerBase: 'Base DiameX Demande',
+        headerMontant: 'Montant Demande (Ar)',
+        headerDatePaiement: 'Date Paiement Demande'
+    },
+    'devis_bp': {
+        titre: 'Devis BP',
+        apiGet: '{% url "accounting:api_get_points_eau_devis_bp" %}',
+        apiUpdate: '{% url "accounting:api_update_point_eau_devis_bp" %}',
+        numeroField: 'numerodiamexdevis',
+        baseField: 'basediamexdevis',
+        montantField: 'montantdevispaye',
+        datePaiementField: 'datepaiementdevis',
+        headerNumero: 'Numéro DiameX Devis',
+        headerBase: 'Base DiameX Devis',
+        headerMontant: 'Montant Devis (Ar)',
+        headerDatePaiement: 'Date Paiement Devis'
+    }
+};
+
+// Fonction pour ouvrir le modal d'édition
+async function openEditModal(numero, base) {
+    const currentConfig = config[typeRecoupement];
+    if (!currentConfig) return;
+
+    const modal = document.getElementById('edit_modal');
+    const modalTitle = document.getElementById('modal_title');
+    const modalLoading = document.getElementById('modal_loading');
+    const modalContent = document.getElementById('modal_content');
+    const thead = document.getElementById('modal_table_header');
+    const tbody = document.getElementById('points_eau_tbody');
+
+    // Mettre à jour le titre
+    modalTitle.innerHTML = `<i class="fas fa-edit mr-2 text-primary"></i>Modifier les points d'eau - ${currentConfig.titre}`;
+
+    // Réinitialiser
+    modalLoading.classList.remove('hidden');
+    modalContent.classList.add('hidden');
+    thead.innerHTML = '';
+    tbody.innerHTML = '';
+
+    // Header du tableau
+    thead.innerHTML = `
+        <tr>
+            <th>ID xls</th>
+            <th>Nom Abonné</th>
+            <th>Ouvrage</th>
+            <th>${currentConfig.headerNumero}</th>
+            <th>${currentConfig.headerBase}</th>
+            <th class="text-right">${currentConfig.headerMontant}</th>
+            <th>Date Branchement</th>
+            <th>${currentConfig.headerDatePaiement}</th>
+            <th class="text-center">Actions</th>
+        </tr>
+    `;
+
+    // Ouvrir la modal
+    modal.showModal();
+
+    try {
+        const response = await fetch(`${currentConfig.apiGet}?numero=${encodeURIComponent(numero)}&base=${encodeURIComponent(base)}`);
+        const data = await response.json();
+
+        if (data.success) {
+            // Afficher les points d'eau
+            data.points_eau.forEach(pe => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td class="font-mono text-xs">${pe.idxls || '—'}</td>
+                    <td>
+                        <input type="text" class="input input-xs input-bordered w-full"
+                               id="nomabonne_${pe.id}" value="${pe.nomabonne}"
+                               placeholder="Nom abonné">
+                    </td>
+                    <td class="text-sm">${pe.ouvrage_nom || '—'}</td>
+                    <td>
+                        <input type="text" class="input input-xs input-bordered w-full font-mono"
+                               id="numero_${pe.id}" value="${pe[currentConfig.numeroField]}"
+                               placeholder="Numéro">
+                    </td>
+                    <td>
+                        <input type="text" class="input input-xs input-bordered w-full font-mono"
+                               id="base_${pe.id}" value="${pe[currentConfig.baseField]}"
+                               placeholder="Base">
+                    </td>
+                    <td>
+                        <input type="number" step="0.01" class="input input-xs input-bordered w-full text-right font-mono"
+                               id="montant_${pe.id}" value="${pe[currentConfig.montantField]}"
+                               placeholder="Montant">
+                    </td>
+                    <td class="text-sm">${pe.datebranchement ? formatDate(pe.datebranchement) : '—'}</td>
+                    <td class="text-sm">${pe[currentConfig.datePaiementField] ? formatDate(pe[currentConfig.datePaiementField]) : '—'}</td>
+                    <td class="text-center">
+                        <button onclick="savePointEau('${pe.id}')" class="btn btn-xs btn-success">
+                            <i class="fas fa-save"></i>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+
+            modalLoading.classList.add('hidden');
+            modalContent.classList.remove('hidden');
+        } else {
+            alert('Erreur: ' + data.error);
+            modal.close();
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau lors du chargement des points d\'eau');
+        modal.close();
+    }
+}
+
+// Fonction pour formater une date YYYY-MM-DD en DD/MM/YYYY
+function formatDate(dateStr) {
+    if (!dateStr) return '—';
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+        return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    return dateStr;
+}
+
+// Fonction pour sauvegarder un point d'eau
+async function savePointEau(pointEauId) {
+    const currentConfig = config[typeRecoupement];
+    if (!currentConfig) return;
+
+    const nomabonneInput = document.getElementById(`nomabonne_${pointEauId}`);
+    const numeroInput = document.getElementById(`numero_${pointEauId}`);
+    const baseInput = document.getElementById(`base_${pointEauId}`);
+    const montantInput = document.getElementById(`montant_${pointEauId}`);
+
+    const data = {
+        point_eau_id: pointEauId,
+        nomabonne: nomabonneInput.value.trim()
+    };
+
+    // Ajouter les champs selon le type
+    data[currentConfig.numeroField] = numeroInput.value.trim();
+    data[currentConfig.baseField] = baseInput.value.trim();
+    data[currentConfig.montantField] = parseFloat(montantInput.value) || 0;
+
+    try {
+        const response = await fetch(currentConfig.apiUpdate, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            // Feedback visuel
+            [nomabonneInput, numeroInput, baseInput, montantInput].forEach(input => {
+                input.classList.add('input-success');
+                setTimeout(() => input.classList.remove('input-success'), 1000);
+            });
+
+            // Toast notification
+            const toast = document.createElement('div');
+            toast.className = 'toast toast-top toast-end';
+            toast.innerHTML = `
+                <div class="alert alert-success">
+                    <span><i class="fas fa-check-circle mr-2"></i>Point d'eau mis à jour</span>
+                </div>
+            `;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2000);
+
+            // Recharger la page après 1.5s pour voir les changements
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau lors de la sauvegarde');
+    }
+}
+
+// Functions for Base DiameX grouping toggle
+function toggleBase(button) {
+    const card = button.closest('.base-card');
+    const content = card.querySelector('.base-content');
+    const icon = button.querySelector('i');
+
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        icon.classList.remove('fa-chevron-down');
+        icon.classList.add('fa-chevron-up');
+    } else {
+        content.style.display = 'none';
+        icon.classList.remove('fa-chevron-up');
+        icon.classList.add('fa-chevron-down');
+    }
+}
+
+function collapseAllBases() {
+    const baseCards = document.querySelectorAll('.base-card');
+    baseCards.forEach(card => {
+        const content = card.querySelector('.base-content');
+        const icon = card.querySelector('.btn i');
+        if (content && icon) {
+            content.style.display = 'none';
+            icon.classList.remove('fa-chevron-up');
+            icon.classList.add('fa-chevron-down');
+        }
+    });
+}
+
+function expandAllBases() {
+    const baseCards = document.querySelectorAll('.base-card');
+    baseCards.forEach(card => {
+        const content = card.querySelector('.base-content');
+        const icon = card.querySelector('.btn i');
+        if (content && icon) {
+            content.style.display = 'block';
+            icon.classList.remove('fa-chevron-down');
+            icon.classList.add('fa-chevron-up');
+        }
+    });
+}
+
+// Functions for Prog grouping toggle (inverse verification)
+function toggleProg(element) {
+    const card = element.closest('.prog-card');
+    const content = card.querySelector('.prog-content');
+    // L'icône chevron est le premier <i> dans le conteneur cliqué
+    const icon = element.querySelector('.fa-chevron-down, .fa-chevron-up');
+
+    if (content.style.display === 'none' || !content.style.display) {
+        content.style.display = 'block';
+        if (icon) {
+            icon.classList.remove('fa-chevron-down');
+            icon.classList.add('fa-chevron-up');
+        }
+    } else {
+        content.style.display = 'none';
+        if (icon) {
+            icon.classList.remove('fa-chevron-up');
+            icon.classList.add('fa-chevron-down');
+        }
+    }
+}
+
+function collapseAllProgs() {
+    const progCards = document.querySelectorAll('.prog-card');
+    progCards.forEach(card => {
+        const content = card.querySelector('.prog-content');
+        // L'icône chevron est directement dans le header cliquable
+        const icon = card.querySelector('.fa-chevron-down, .fa-chevron-up');
+        if (content) {
+            content.style.display = 'none';
+        }
+        if (icon) {
+            icon.classList.remove('fa-chevron-up');
+            icon.classList.add('fa-chevron-down');
+        }
+    });
+}
+
+function expandAllProgs() {
+    const progCards = document.querySelectorAll('.prog-card');
+    progCards.forEach(card => {
+        const content = card.querySelector('.prog-content');
+        // L'icône chevron est directement dans le header cliquable
+        const icon = card.querySelector('.fa-chevron-down, .fa-chevron-up');
+        if (content) {
+            content.style.display = 'block';
+        }
+        if (icon) {
+            icon.classList.remove('fa-chevron-down');
+            icon.classList.add('fa-chevron-up');
+        }
+    });
+}
+
+// Toggle details for inverse verification
+function toggleDetailsInverse(detailsId) {
+    const detailsRow = document.getElementById(detailsId);
+    if (detailsRow) {
+        detailsRow.classList.toggle('hidden');
+    }
+}
+</script>
+{% endblock %}

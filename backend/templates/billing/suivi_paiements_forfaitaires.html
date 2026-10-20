@@ -1,0 +1,2159 @@
+{% extends "planning/base.html" %}
+{% load humanize %}
+{% load static %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex flex-col gap-3 lg:flex-row lg:justify-between lg:items-center">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">
+                <i class="fas fa-money-bill-wave mr-2 text-success"></i>Suivi des Paiements Forfaitaires
+            </h1>
+            <p class="text-base-content/70 mt-1">Analyse par ouvrage avec calcul des soldes</p>
+        </div>
+        <a href="{% url 'billing:encaissement_groupe' %}" class="btn btn-success btn-sm w-full sm:w-auto">
+            <i class="fas fa-cash-register mr-2"></i>Encaissement
+        </a>
+    </div>
+
+    <!-- Statistiques Globales -->
+    <div class="stats stats-vertical lg:stats-horizontal shadow w-full">
+        <div class="stat">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-water text-4xl"></i>
+            </div>
+            <div class="stat-title">Ouvrages</div>
+            <div class="stat-value text-primary" id="stat-total-ouvrages">0</div>
+            <div class="stat-desc">Avec modalité forfaitaire</div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-figure text-info">
+                <i class="fas fa-tint text-4xl"></i>
+            </div>
+            <div class="stat-title">Points d'eau</div>
+            <div class="stat-value text-info" id="stat-total-points-eau">0</div>
+            <div class="stat-desc">Avec tarif forfaitaire</div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-figure text-warning">
+                <i class="fas fa-exclamation-triangle text-4xl"></i>
+            </div>
+            <div class="stat-title">Factures manquantes</div>
+            <div class="stat-value text-warning" id="stat-factures-manquantes">0</div>
+            <div class="stat-desc">Trous de facturation</div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-figure text-error">
+                <i class="fas fa-file-invoice text-4xl"></i>
+            </div>
+            <div class="stat-title">Factures impayées</div>
+            <div class="stat-value text-error" id="stat-factures-impayees">0</div>
+            <div class="stat-desc">À recouvrer</div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-figure text-error">
+                <i class="fas fa-cut text-4xl"></i>
+            </div>
+            <div class="stat-title">À couper</div>
+            <div class="stat-value text-error" id="stat-recommandations-coupure">0</div>
+            <div class="stat-desc">Factures expirées impayées</div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-figure text-error">
+                <i class="fas fa-ban text-4xl"></i>
+            </div>
+            <div class="stat-title">Coupés</div>
+            <div class="stat-value text-error" id="stat-coupes-actifs">0</div>
+            <div class="stat-desc">Coupures actives</div>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-200 shadow-md">
+        <div class="card-body">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Région</span></label>
+                    <select id="filter-region" class="select select-bordered select-sm">
+                        <option value="all">Toutes les régions</option>
+                        {% for region in regions %}
+                        <option value="{{ region.id }}">{{ region.nom_region }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">District</span></label>
+                    <select id="filter-district" class="select select-bordered select-sm">
+                        <option value="all">Tous les districts</option>
+                        {% for district in districts %}
+                        <option value="{{ district.id }}">{{ district.nom_district }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Commune</span></label>
+                    <select id="filter-commune" class="select select-bordered select-sm">
+                        <option value="all">Toutes les communes</option>
+                        {% for commune in communes %}
+                        <option value="{{ commune.id }}">{{ commune.nom_commune }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Recherche ouvrage</span></label>
+                    <input type="text" id="filter-recherche" class="input input-bordered input-sm" placeholder="Nom de l'ouvrage...">
+                </div>
+            </div>
+
+            <!-- Filtres rapides pour problèmes -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Statut de paiement</span></label>
+                    <select id="filter-statut-paiement" class="select select-bordered select-sm">
+                        <option value="all">Tous les statuts</option>
+                        <option value="impaye">❌ Impayés uniquement</option>
+                        <option value="paye">✓ Payés uniquement</option>
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Problèmes de facturation</span></label>
+                    <select id="filter-probleme" class="select select-bordered select-sm">
+                        <option value="all">Tous</option>
+                        <option value="factures_manquantes">⚠️ Factures manquantes uniquement</option>
+                        <option value="sans_probleme">✓ Sans problème uniquement</option>
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Recommandations</span></label>
+                    <select id="filter-recommandation-coupure" class="select select-bordered select-sm">
+                        <option value="all">Tous</option>
+                        <option value="a_couper">✂️ À couper uniquement</option>
+                        <option value="sans_recommandation">✓ Sans recommandation</option>
+                    </select>
+                </div>
+
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">État des coupures</span></label>
+                    <select id="filter-statut-coupure" class="select select-bordered select-sm">
+                        <option value="all">Tous</option>
+                        <option value="coupe">✂️ Coupés uniquement</option>
+                        <option value="en_service">✓ En service uniquement</option>
+                    </select>
+                </div>
+
+            </div>
+
+            <div class="mt-4 space-y-2">
+                <div class="flex flex-wrap gap-2">
+                    <button onclick="applyFilters()" class="btn btn-primary btn-xs sm:btn-sm flex-1 sm:flex-none">
+                        <i class="fas fa-filter mr-1 sm:mr-2"></i>Filtrer
+                    </button>
+                    <button onclick="resetFilters()" class="btn btn-ghost btn-xs sm:btn-sm flex-1 sm:flex-none">
+                        <i class="fas fa-redo mr-1 sm:mr-2"></i>Réinitialiser
+                    </button>
+                </div>
+
+                <!-- Filtres rapides -->
+                <div class="flex flex-wrap gap-2">
+                    <button onclick="filtrerFacturesManquantes()" class="btn btn-warning btn-xs sm:btn-sm">
+                        <i class="fas fa-exclamation-triangle mr-1 sm:mr-2"></i>Factures manquantes
+                    </button>
+                    <button onclick="filtrerFacturesImpayes()" class="btn btn-error btn-xs sm:btn-sm">
+                        <i class="fas fa-file-invoice-dollar mr-1 sm:mr-2"></i>À recouvrer
+                    </button>
+                    <button onclick="filtrerRecommandationsCoupure()" class="btn btn-error btn-xs sm:btn-sm">
+                        <i class="fas fa-cut mr-1 sm:mr-2"></i>À couper
+                    </button>
+                    <button onclick="filtrerCoupes()" class="btn btn-error btn-xs sm:btn-sm">
+                        <i class="fas fa-ban mr-1 sm:mr-2"></i>Coupés
+                    </button>
+                </div>
+
+                <!-- Boutons Export Excel (paiements + coupures) -->
+                <div class="flex flex-wrap gap-2 lg:justify-end">
+                    <button onclick="exporterExcel()" class="btn btn-success btn-xs sm:btn-sm">
+                        <i class="fas fa-file-excel mr-1 sm:mr-2"></i>Exporter Paiements
+                    </button>
+
+                    <!-- Dropdown pour Coupures d'eau -->
+                    <div class="dropdown dropdown-end">
+                        <label tabindex="0" class="btn btn-error btn-xs sm:btn-sm">
+                            <i class="fas fa-exclamation-circle mr-1 sm:mr-2"></i>Coupures d'eau
+                            <i class="fas fa-chevron-down ml-1"></i>
+                        </label>
+                        <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-56 mt-2 z-[60]">
+                            <li><a onclick="telechargerTemplateCoupures()">
+                                <i class="fas fa-download text-info"></i>Télécharger Template
+                            </a></li>
+                            <li><a onclick="document.getElementById('fileInputCoupures').click()">
+                                <i class="fas fa-upload text-warning"></i>Importer Coupures
+                            </a></li>
+                            <li><a onclick="exporterCoupures()">
+                                <i class="fas fa-file-excel text-success"></i>Exporter Coupures
+                            </a></li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Input file caché pour import -->
+                <input type="file" id="fileInputCoupures" accept=".xlsx,.xls" style="display: none;" onchange="importerCoupures(event)">
+            </div>
+        </div>
+    </div>
+
+    <!-- Onglets de vue -->
+    <div role="tablist" class="tabs tabs-boxed bg-base-200 shadow-md">
+        <a role="tab" class="tab tab-active" id="tab-cards" onclick="switchView('cards')">
+            <i class="fas fa-th-large mr-2"></i>Vue Cards
+        </a>
+        <a role="tab" class="tab" id="tab-table" onclick="switchView('table')">
+            <i class="fas fa-table mr-2"></i>Vue Tableau
+        </a>
+    </div>
+
+    <!-- Vue Cards (regroupement par District > Commune > Ouvrage) -->
+    <div id="view-cards" class="space-y-6">
+        <div class="col-span-full text-center py-8">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+            <p class="mt-2">Chargement des ouvrages...</p>
+        </div>
+    </div>
+
+    <!-- Vue Tableau -->
+    <div id="view-table" class="hidden">
+        <div class="overflow-x-auto bg-base-100 shadow-md rounded-lg">
+            <table class="table table-zebra table-sm">
+                <thead class="bg-primary text-primary-content sticky top-0">
+                    <tr>
+                        <th>District</th>
+                        <th>Commune</th>
+                        <th>Ouvrage</th>
+                        <th>Type</th>
+                        <th>Points d'eau</th>
+                        <th>Factures manquantes</th>
+                        <th>Factures impayées</th>
+                        <th>À couper</th>
+                        <th>Coupés</th>
+                        <th>Coupures actives</th>
+                        <th>Remises</th>
+                        <th>Dernière coupure</th>
+                        <th>Dernière remise</th>
+                    </tr>
+                </thead>
+                <tbody id="table-body">
+                    <tr>
+                        <td colspan="13" class="text-center py-8">
+                            <span class="loading loading-spinner loading-lg text-primary"></span>
+                            <p class="mt-2">Chargement des données...</p>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Modal : Détails Point d'Eau -->
+<dialog id="modalDetailsPointEau" class="modal">
+    <div class="modal-box w-11/12 max-w-4xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-tint mr-2 text-info"></i><span id="detail-pe-nom">Point d'eau</span>
+        </h3>
+
+        <div class="tabs tabs-boxed mb-4">
+            <a class="tab tab-active" id="tab-paiements" onclick="switchTab('paiements')">
+                <i class="fas fa-file-invoice mr-2"></i>Paiements
+            </a>
+            <a class="tab" id="tab-coupures" onclick="switchTab('coupures')">
+                <i class="fas fa-cut mr-2"></i>Coupures
+            </a>
+            <a class="tab" id="tab-soldes" onclick="switchTab('soldes')">
+                <i class="fas fa-calculator mr-2"></i>Soldes
+            </a>
+        </div>
+
+        <!-- Tab Paiements -->
+        <div id="content-paiements" style="min-height: 400px;">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm">
+                    <thead>
+                        <tr>
+                            <th>Date facture</th>
+                            <th>Date paiement</th>
+                            <th>Quantité</th>
+                            <th>Prix unitaire</th>
+                            <th>Montant</th>
+                            <th>Durée</th>
+                            <th>Date fin validité</th>
+                            <th>Statut</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody-paiements">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Tab Coupures -->
+        <div id="content-coupures" class="hidden" style="min-height: 400px;">
+            <div class="flex justify-between mb-4">
+                <h4 class="font-semibold">Historique des coupures</h4>
+                <button onclick="openAddCoupureModal()" class="btn btn-sm btn-primary">
+                    <i class="fas fa-plus mr-2"></i>Ajouter coupure
+                </button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Date</th>
+                            <th>Raison</th>
+                            <th>Notes</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody-coupures">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Tab Soldes -->
+        <div id="content-soldes" class="hidden" style="min-height: 400px;">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="card bg-base-200">
+                    <div class="card-body">
+                        <h4 class="font-semibold mb-2">
+                            <i class="fas fa-calendar-alt mr-2"></i>Période de fonctionnement
+                        </h4>
+                        <div class="space-y-2 text-sm">
+                            <div class="flex justify-between">
+                                <span>Premier paiement:</span>
+                                <span id="solde-premier-paiement" class="font-semibold">-</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span>Dernier paiement:</span>
+                                <span id="solde-dernier-paiement" class="font-semibold">-</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span>Mois de fonctionnement:</span>
+                                <span id="solde-mois-fonctionnement" class="font-semibold">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card bg-base-200">
+                    <div class="card-body">
+                        <h4 class="font-semibold mb-2">
+                            <i class="fas fa-file-invoice mr-2"></i>Facturation
+                        </h4>
+                        <div class="space-y-2 text-sm">
+                            <div class="flex justify-between">
+                                <span>Tranches attendues:</span>
+                                <span id="solde-tranches-attendues" class="font-semibold">-</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span>Tranches facturées:</span>
+                                <span id="solde-tranches-facturees" class="font-semibold">-</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-warning font-bold">Factures manquantes:</span>
+                                <span id="solde-factures-manquantes" class="font-bold text-warning">-</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-error font-bold">Factures impayées:</span>
+                                <span id="solde-factures-impayees" class="font-bold text-error">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="alert alert-info mt-4">
+                <i class="fas fa-info-circle"></i>
+                <div class="text-sm">
+                    <p><strong>Règle de calcul:</strong> 1 an de fonctionnement = 4 tranches facturées (1 tranche = 3 mois)</p>
+                    <p class="mt-1">Les périodes de coupure ne comptent pas dans le calcul.</p>
+                </div>
+            </div>
+
+            <!-- Périodes de coupure -->
+            <div id="periodes-coupure-container" class="mt-4 hidden">
+                <h4 class="font-semibold mb-2">
+                    <i class="fas fa-cut mr-2"></i>Périodes de coupure
+                </h4>
+                <div class="space-y-2" id="periodes-coupure-list">
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-action">
+            <form method="dialog">
+                <button class="btn">Fermer</button>
+            </form>
+        </div>
+    </div>
+</dialog>
+
+<!-- Modal : Ajouter Coupure -->
+<dialog id="modalAddCoupure" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-cut mr-2 text-warning"></i>Ajouter une coupure/remise
+        </h3>
+        <form id="formAddCoupure" class="space-y-4">
+            <input type="hidden" id="coupure-point-eau-id">
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Type d'événement *</span></label>
+                <select id="coupure-type" class="select select-bordered" required>
+                    <option value="">-- Sélectionner --</option>
+                    <option value="coupure">Coupure d'eau</option>
+                    <option value="remise">Remise en eau</option>
+                </select>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Date *</span></label>
+                <input type="date" id="coupure-date" class="input input-bordered" required>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Raison</span></label>
+                <select id="coupure-raison" class="select select-bordered">
+                    <option value="">-- Sélectionner --</option>
+                    <option value="non_paiement">Non paiement</option>
+                    <option value="travaux">Travaux</option>
+                    <option value="maintenance">Maintenance</option>
+                    <option value="saison">Fermeture saisonnière</option>
+                    <option value="autre">Autre</option>
+                </select>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Notes</span></label>
+                <textarea id="coupure-notes" class="textarea textarea-bordered" rows="3"></textarea>
+            </div>
+
+            <div class="modal-action">
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+                <button type="button" onclick="document.getElementById('modalAddCoupure').close()" class="btn">Annuler</button>
+            </div>
+        </form>
+    </div>
+</dialog>
+
+<!-- Modal Nouveau Paiement -->
+<dialog id="modalNouveauPaiement" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-plus mr-2 text-success"></i>Nouveau Paiement Forfaitaire
+        </h3>
+        <form id="formNouveauPaiement" class="space-y-4">
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle"></i>
+                <span class="text-sm">
+                    Point d'eau: <strong id="nouveau-paiement-point-eau-nom"></strong>
+                </span>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Date facture *</span></label>
+                <input type="date" id="nouveau-paiement-date" class="input input-bordered" required onchange="updateNouveauPaiementCalcul()">
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Quantité *</span></label>
+                    <input type="number" id="nouveau-paiement-quantite" class="input input-bordered" min="1" value="1" required onchange="updateNouveauPaiementCalcul()">
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Durée (mois) *</span></label>
+                    <input type="number" id="nouveau-paiement-duree" class="input input-bordered" min="1" value="3" required onchange="updateNouveauPaiementCalcul()">
+                </div>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Prix unitaire *</span></label>
+                <input type="number" id="nouveau-paiement-tarif" class="input input-bordered" required onchange="updateNouveauPaiementCalcul()">
+            </div>
+
+            <div class="card bg-base-200">
+                <div class="card-body">
+                    <h4 class="font-semibold">Résumé</h4>
+                    <div class="space-y-2">
+                        <div class="flex justify-between">
+                            <span>Montant total:</span>
+                            <span id="nouveau-paiement-montant" class="font-bold text-primary">0 Ar</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>Valide jusqu'au:</span>
+                            <span id="nouveau-paiement-date-fin" class="font-bold">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+                <button type="button" onclick="document.getElementById('modalNouveauPaiement').close()" class="btn">Annuler</button>
+            </div>
+        </form>
+    </div>
+</dialog>
+
+<script>
+let allOuvragesData = [];
+let filteredOuvragesData = [];
+let globalStats = null; // Statistiques globales du backend
+let currentPointEauDetails = null;
+let currentOuvrageData = null;
+
+// Charger les ouvrages au démarrage
+document.addEventListener('DOMContentLoaded', () => {
+    applyFilters();
+
+    // Event listeners pour les filtres statut/problème (filtrage côté client)
+    document.getElementById('filter-statut-paiement').addEventListener('change', applyClientSideFilters);
+    document.getElementById('filter-probleme').addEventListener('change', applyClientSideFilters);
+    document.getElementById('filter-recommandation-coupure').addEventListener('change', applyClientSideFilters);
+    document.getElementById('filter-statut-coupure').addEventListener('change', applyClientSideFilters);
+});
+
+// Appliquer les filtres
+async function applyFilters() {
+    const params = new URLSearchParams({
+        region_id: document.getElementById('filter-region').value,
+        district_id: document.getElementById('filter-district').value,
+        commune_id: document.getElementById('filter-commune').value,
+        recherche: document.getElementById('filter-recherche').value,
+    });
+
+    try {
+        const response = await fetch(`/facturation/suivi-forfaitaires/api/ouvrages/?${params}`);
+        const data = await response.json();
+
+        console.log('Réponse API complète:', data);
+
+        if (data.success) {
+            allOuvragesData = data.ouvrages;
+
+            // Stocker les statistiques globales du backend
+            if (data.stats) {
+                globalStats = data.stats;
+                console.log('Statistiques globales:', globalStats);
+            }
+
+            console.log('Nombre d\'ouvrages:', allOuvragesData.length);
+            if (allOuvragesData.length > 0) {
+                console.log('Premier ouvrage:', allOuvragesData[0]);
+                if (allOuvragesData[0].points_eau && allOuvragesData[0].points_eau.length > 0) {
+                    console.log('Premier point d\'eau:', allOuvragesData[0].points_eau[0]);
+                }
+            }
+            // Appliquer les filtres côté client
+            applyClientSideFilters();
+        } else {
+            console.error('Erreur API:', data.error);
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur fetch:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+}
+
+// Réinitialiser les filtres
+function resetFilters() {
+    document.getElementById('filter-region').value = 'all';
+    document.getElementById('filter-district').value = 'all';
+    document.getElementById('filter-commune').value = 'all';
+    document.getElementById('filter-recherche').value = '';
+    document.getElementById('filter-statut-paiement').value = 'all';
+    document.getElementById('filter-probleme').value = 'all';
+    applyFilters();
+}
+
+// Filtres rapides
+function filtrerFacturesManquantes() {
+    // Réinitialiser les autres filtres géographiques
+    document.getElementById('filter-region').value = 'all';
+    document.getElementById('filter-district').value = 'all';
+    document.getElementById('filter-commune').value = 'all';
+    document.getElementById('filter-recherche').value = '';
+    // Appliquer le filtre problème
+    document.getElementById('filter-probleme').value = 'factures_manquantes';
+    document.getElementById('filter-statut-paiement').value = 'all';
+    document.getElementById('filter-recommandation-coupure').value = 'all';
+    document.getElementById('filter-statut-coupure').value = 'all';
+
+    // Appliquer le filtrage côté client
+    applyClientSideFilters();
+}
+
+function filtrerFacturesImpayes() {
+    // Réinitialiser les autres filtres géographiques
+    document.getElementById('filter-region').value = 'all';
+    document.getElementById('filter-district').value = 'all';
+    document.getElementById('filter-commune').value = 'all';
+    document.getElementById('filter-recherche').value = '';
+    // Appliquer le filtre statut
+    document.getElementById('filter-statut-paiement').value = 'impaye';
+    document.getElementById('filter-probleme').value = 'all';
+    document.getElementById('filter-recommandation-coupure').value = 'all';
+    document.getElementById('filter-statut-coupure').value = 'all';
+
+    // Appliquer le filtrage côté client
+    applyClientSideFilters();
+}
+
+function filtrerRecommandationsCoupure() {
+    // Réinitialiser les autres filtres géographiques
+    document.getElementById('filter-region').value = 'all';
+    document.getElementById('filter-district').value = 'all';
+    document.getElementById('filter-commune').value = 'all';
+    document.getElementById('filter-recherche').value = '';
+    // Appliquer le filtre recommandation
+    document.getElementById('filter-recommandation-coupure').value = 'a_couper';
+    document.getElementById('filter-statut-paiement').value = 'all';
+    document.getElementById('filter-probleme').value = 'all';
+    document.getElementById('filter-statut-coupure').value = 'all';
+
+    // Appliquer le filtrage côté client
+    applyClientSideFilters();
+}
+
+function filtrerCoupes() {
+    // Réinitialiser les autres filtres géographiques
+    document.getElementById('filter-region').value = 'all';
+    document.getElementById('filter-district').value = 'all';
+    document.getElementById('filter-commune').value = 'all';
+    document.getElementById('filter-recherche').value = '';
+    // Appliquer le filtre coupure
+    document.getElementById('filter-statut-coupure').value = 'coupe';
+    document.getElementById('filter-statut-paiement').value = 'all';
+    document.getElementById('filter-probleme').value = 'all';
+    document.getElementById('filter-recommandation-coupure').value = 'all';
+
+    // Appliquer le filtrage côté client
+    applyClientSideFilters();
+}
+
+// Appliquer les filtres côté client (statut paiement et problèmes)
+function applyClientSideFilters() {
+    const statutPaiement = document.getElementById('filter-statut-paiement').value;
+    const probleme = document.getElementById('filter-probleme').value;
+    const recommandation = document.getElementById('filter-recommandation-coupure').value;
+
+    // Filtrer les ouvrages
+    let ouvragesFiltres = allOuvragesData;
+
+    // Filtre par problème
+    if (probleme === 'factures_manquantes') {
+        ouvragesFiltres = ouvragesFiltres.filter(ouvrage => ouvrage.total_factures_manquantes > 0);
+    } else if (probleme === 'sans_probleme') {
+        ouvragesFiltres = ouvragesFiltres.filter(ouvrage =>
+            ouvrage.total_factures_manquantes === 0 && ouvrage.total_factures_impayees === 0 && (ouvrage.total_recommandations_coupure || 0) === 0
+        );
+    }
+
+    // Filtre par statut de paiement (nécessite de filtrer les points d'eau)
+    if (statutPaiement === 'impaye') {
+        ouvragesFiltres = ouvragesFiltres.filter(ouvrage => ouvrage.total_factures_impayees > 0);
+    } else if (statutPaiement === 'paye') {
+        ouvragesFiltres = ouvragesFiltres.filter(ouvrage => {
+            // Ouvrage avec au moins une facture payée (toutes les factures créées sont payées)
+            return ouvrage.points_eau.some(pe =>
+                pe.soldes.tranches_facturees > 0 && pe.soldes.factures_impayees === 0
+            );
+        });
+    }
+
+    // Filtre par recommandation de coupure
+    if (recommandation === 'a_couper') {
+        ouvragesFiltres = ouvragesFiltres.filter(ouvrage => (ouvrage.total_recommandations_coupure || 0) > 0);
+    } else if (recommandation === 'sans_recommandation') {
+        ouvragesFiltres = ouvragesFiltres.filter(ouvrage => (ouvrage.total_recommandations_coupure || 0) === 0);
+    }
+
+    // Filtre par statut de coupure
+    const statutCoupure = document.getElementById('filter-statut-coupure').value;
+    if (statutCoupure === 'coupe') {
+        ouvragesFiltres = ouvragesFiltres.filter(ouvrage => {
+            // Ouvrage avec au moins un point d'eau coupé
+            return ouvrage.points_eau.some(pe => pe.soldes.coupure_active);
+        });
+    } else if (statutCoupure === 'en_service') {
+        ouvragesFiltres = ouvragesFiltres.filter(ouvrage => {
+            // Ouvrage avec tous les points d'eau en service
+            return ouvrage.points_eau.every(pe => !pe.soldes.coupure_active);
+        });
+    }
+
+    // Sauvegarder les données filtrées
+    filteredOuvragesData = ouvragesFiltres;
+
+    // Réafficher avec les filtres appliqués
+    displayOuvragesCards(ouvragesFiltres);
+    updateStats(ouvragesFiltres);
+
+    // Mettre à jour le tableau si on est dans la vue tableau
+    if (currentView === 'table') {
+        displayOuvragesTable(ouvragesFiltres);
+    }
+}
+
+// Mettre à jour les statistiques
+function updateStats(ouvrages) {
+    let totalPointsEau = 0;
+    let totalFacturesManquantes = 0;
+    let totalFacturesImpayees = 0;
+    let totalRecommandationsCoupure = 0;
+    let totalCoupesActifs = 0;
+
+    ouvrages.forEach(ouvrage => {
+        totalPointsEau += ouvrage.nb_points_eau;
+        totalFacturesManquantes += ouvrage.total_factures_manquantes;
+        totalFacturesImpayees += ouvrage.total_factures_impayees;
+        totalRecommandationsCoupure += ouvrage.total_recommandations_coupure || 0;
+
+        // Compter les points d'eau avec coupure active
+        ouvrage.points_eau.forEach(pe => {
+            if (pe.soldes.coupure_active) {
+                totalCoupesActifs++;
+            }
+        });
+    });
+
+    document.getElementById('stat-total-ouvrages').textContent = ouvrages.length;
+    document.getElementById('stat-total-points-eau').textContent = totalPointsEau;
+    document.getElementById('stat-factures-manquantes').textContent = totalFacturesManquantes;
+    document.getElementById('stat-factures-impayees').textContent = totalFacturesImpayees;
+    document.getElementById('stat-recommandations-coupure').textContent = totalRecommandationsCoupure;
+    document.getElementById('stat-coupes-actifs').textContent = totalCoupesActifs;
+}
+
+// Basculer entre les vues
+let currentView = 'cards';
+
+function switchView(view) {
+    currentView = view;
+
+    if (view === 'cards') {
+        document.getElementById('view-cards').classList.remove('hidden');
+        document.getElementById('view-table').classList.add('hidden');
+        document.getElementById('tab-cards').classList.add('tab-active');
+        document.getElementById('tab-table').classList.remove('tab-active');
+    } else {
+        document.getElementById('view-cards').classList.add('hidden');
+        document.getElementById('view-table').classList.remove('hidden');
+        document.getElementById('tab-cards').classList.remove('tab-active');
+        document.getElementById('tab-table').classList.add('tab-active');
+
+        // Afficher le tableau avec les données filtrées actuelles
+        const dataToDisplay = filteredOuvragesData.length > 0 ? filteredOuvragesData : allOuvragesData;
+        displayOuvragesTable(dataToDisplay);
+    }
+}
+
+// Afficher les ouvrages dans le tableau avec regroupement par District et Commune
+function displayOuvragesTable(ouvrages) {
+    const tbody = document.getElementById('table-body');
+
+    if (ouvrages.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="13" class="text-center py-8 text-base-content/50">
+                    <i class="fas fa-inbox text-4xl mb-2"></i>
+                    <p>Aucun ouvrage trouvé avec les filtres appliqués</p>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    // Formater les dates
+    const formatDate = (dateStr) => {
+        if (!dateStr) return '-';
+        const date = new Date(dateStr);
+        return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    };
+
+    // Regrouper par district puis commune
+    const parDistrict = {};
+    ouvrages.forEach(ouvrage => {
+        const district = ouvrage.district || 'N/A';
+        const commune = ouvrage.commune || 'N/A';
+
+        if (!parDistrict[district]) {
+            parDistrict[district] = {};
+        }
+        if (!parDistrict[district][commune]) {
+            parDistrict[district][commune] = [];
+        }
+        parDistrict[district][commune].push(ouvrage);
+    });
+
+    let html = '';
+
+    // Pour chaque district
+    Object.keys(parDistrict).sort().forEach(district => {
+        const communes = parDistrict[district];
+        const totalOuvragesDistrict = Object.values(communes).reduce((sum, arr) => sum + arr.length, 0);
+
+        // Calculer les stats du district
+        let districtStats = {
+            pointsEau: 0,
+            facturesManquantes: 0,
+            facturesImpayees: 0,
+            recommandations: 0,
+            coupes: 0,
+            coupuresActives: 0,
+            remises: 0
+        };
+
+        Object.values(communes).flat().forEach(ouvrage => {
+            districtStats.pointsEau += ouvrage.nb_points_eau;
+            districtStats.facturesManquantes += ouvrage.total_factures_manquantes;
+            districtStats.facturesImpayees += ouvrage.total_factures_impayees;
+            districtStats.recommandations += ouvrage.total_recommandations_coupure || 0;
+
+            ouvrage.points_eau.forEach(pe => {
+                if (pe.soldes.coupure_active) districtStats.coupes++;
+                if (pe.coupures) {
+                    pe.coupures.forEach(c => {
+                        if (c.type_evenement === 'coupure') districtStats.coupuresActives++;
+                        else if (c.type_evenement === 'remise') districtStats.remises++;
+                    });
+                }
+            });
+        });
+
+        // Ligne header du district (pliable)
+        const districtId = `district-${district.replace(/\s+/g, '-')}`;
+        html += `
+            <tr class="bg-primary text-primary-content cursor-pointer" onclick="toggleTableGroup('${districtId}')">
+                <td colspan="4" class="font-bold text-lg">
+                    <i class="fas fa-chevron-down mr-2" id="${districtId}-icon"></i>
+                    ${district} (${totalOuvragesDistrict} ouvrage${totalOuvragesDistrict > 1 ? 's' : ''})
+                </td>
+                <td class="text-center"><span class="badge badge-sm">${districtStats.pointsEau > 0 ? districtStats.pointsEau : ''}</span></td>
+                <td class="text-center">${districtStats.facturesManquantes > 0 ? `<span class="badge badge-warning badge-sm">${districtStats.facturesManquantes}</span>` : ''}</td>
+                <td class="text-center">${districtStats.facturesImpayees > 0 ? `<span class="badge badge-error badge-sm">${districtStats.facturesImpayees}</span>` : ''}</td>
+                <td class="text-center">${districtStats.recommandations > 0 ? `<span class="badge badge-error badge-sm">${districtStats.recommandations}</span>` : ''}</td>
+                <td class="text-center">${districtStats.coupes > 0 ? `<span class="badge badge-error badge-sm">${districtStats.coupes}</span>` : ''}</td>
+                <td class="text-center">${districtStats.coupuresActives > 0 ? `<span class="badge badge-error badge-sm">${districtStats.coupuresActives}</span>` : ''}</td>
+                <td class="text-center">${districtStats.remises > 0 ? `<span class="badge badge-success badge-sm">${districtStats.remises}</span>` : ''}</td>
+                <td colspan="2"></td>
+            </tr>
+        `;
+
+        // Pour chaque commune dans le district
+        Object.keys(communes).sort().forEach(commune => {
+            const ouvragesCommune = communes[commune];
+
+            // Calculer les stats de la commune
+            let communeStats = {
+                pointsEau: 0,
+                facturesManquantes: 0,
+                facturesImpayees: 0,
+                recommandations: 0,
+                coupes: 0,
+                coupuresActives: 0,
+                remises: 0
+            };
+
+            ouvragesCommune.forEach(ouvrage => {
+                communeStats.pointsEau += ouvrage.nb_points_eau;
+                communeStats.facturesManquantes += ouvrage.total_factures_manquantes;
+                communeStats.facturesImpayees += ouvrage.total_factures_impayees;
+                communeStats.recommandations += ouvrage.total_recommandations_coupure || 0;
+
+                ouvrage.points_eau.forEach(pe => {
+                    if (pe.soldes.coupure_active) communeStats.coupes++;
+                    if (pe.coupures) {
+                        pe.coupures.forEach(c => {
+                            if (c.type_evenement === 'coupure') communeStats.coupuresActives++;
+                            else if (c.type_evenement === 'remise') communeStats.remises++;
+                        });
+                    }
+                });
+            });
+
+            // Ligne header de la commune (pliable)
+            const communeId = `commune-${district.replace(/\s+/g, '-')}-${commune.replace(/\s+/g, '-')}`;
+            html += `
+                <tr class="bg-secondary text-secondary-content cursor-pointer ${districtId}-row" onclick="toggleTableGroup('${communeId}')">
+                    <td colspan="4" class="font-semibold pl-8">
+                        <i class="fas fa-chevron-down mr-2" id="${communeId}-icon"></i>
+                        ${commune} (${ouvragesCommune.length} ouvrage${ouvragesCommune.length > 1 ? 's' : ''})
+                    </td>
+                    <td class="text-center"><span class="badge badge-sm">${communeStats.pointsEau > 0 ? communeStats.pointsEau : ''}</span></td>
+                    <td class="text-center">${communeStats.facturesManquantes > 0 ? `<span class="badge badge-warning badge-sm">${communeStats.facturesManquantes}</span>` : ''}</td>
+                    <td class="text-center">${communeStats.facturesImpayees > 0 ? `<span class="badge badge-error badge-sm">${communeStats.facturesImpayees}</span>` : ''}</td>
+                    <td class="text-center">${communeStats.recommandations > 0 ? `<span class="badge badge-error badge-sm">${communeStats.recommandations}</span>` : ''}</td>
+                    <td class="text-center">${communeStats.coupes > 0 ? `<span class="badge badge-error badge-sm">${communeStats.coupes}</span>` : ''}</td>
+                    <td class="text-center">${communeStats.coupuresActives > 0 ? `<span class="badge badge-error badge-sm">${communeStats.coupuresActives}</span>` : ''}</td>
+                    <td class="text-center">${communeStats.remises > 0 ? `<span class="badge badge-success badge-sm">${communeStats.remises}</span>` : ''}</td>
+                    <td colspan="2"></td>
+                </tr>
+            `;
+
+            // Lignes des ouvrages de la commune
+            ouvragesCommune.forEach(ouvrage => {
+                // Calculer les statistiques de coupures
+                let totalCoupuresActives = 0;
+                let totalRemises = 0;
+                let derniereCoupure = null;
+                let derniereRemise = null;
+                let totalCoupes = 0;
+
+                ouvrage.points_eau.forEach(pe => {
+                    if (pe.coupures && pe.coupures.length > 0) {
+                        pe.coupures.forEach(coupure => {
+                            if (coupure.type_evenement === 'coupure') {
+                                totalCoupuresActives++;
+                                if (!derniereCoupure || new Date(coupure.date_evenement) > new Date(derniereCoupure)) {
+                                    derniereCoupure = coupure.date_evenement;
+                                }
+                            } else if (coupure.type_evenement === 'remise') {
+                                totalRemises++;
+                                if (!derniereRemise || new Date(coupure.date_evenement) > new Date(derniereRemise)) {
+                                    derniereRemise = coupure.date_evenement;
+                                }
+                            }
+                        });
+                    }
+
+                    if (pe.soldes.coupure_active) {
+                        totalCoupes++;
+                    }
+                });
+
+                html += `
+                    <tr class="hover ${communeId}-row" style="display: table-row;">
+                        <td class="pl-12">${district}</td>
+                        <td>${commune}</td>
+                        <td class="font-semibold">${ouvrage.nom}</td>
+                        <td>${ouvrage.type}</td>
+                        <td class="text-center">
+                            <span class="badge badge-info badge-sm">${ouvrage.nb_points_eau > 0 ? ouvrage.nb_points_eau : ''}</span>
+                        </td>
+                        <td class="text-center">
+                            ${ouvrage.total_factures_manquantes > 0
+                                ? `<span class="badge badge-warning badge-sm">${ouvrage.total_factures_manquantes > 0 ? ouvrage.total_factures_manquantes : ''}</span>`
+                                : ''}
+                        </td>
+                        <td class="text-center">
+                            ${ouvrage.total_factures_impayees > 0
+                                ? `<span class="badge badge-error badge-sm">${ouvrage.total_factures_impayees > 0 ? ouvrage.total_factures_impayees : ''}</span>`
+                                : ''}
+                        </td>
+                        <td class="text-center">
+                            ${(ouvrage.total_recommandations_coupure || 0) > 0
+                                ? `<span class="badge badge-error badge-sm">✂️ ${ouvrage.total_recommandations_coupure}</span>`
+                                : ''}
+                        </td>
+                        <td class="text-center">
+                            ${totalCoupes > 0
+                                ? `<span class="badge badge-error badge-sm">✂️ ${totalCoupes}</span>`
+                                : ''}
+                        </td>
+
+                        <td class="text-center">
+                            ${totalCoupuresActives > 0
+                                ? `<span class="badge badge-error badge-sm">${totalCoupuresActives > 0 ? totalCoupuresActives : ''}</span>`
+                                : ''}
+                        </td>
+                        <td class="text-center">
+                            ${totalRemises > 0
+                                ? `<span class="badge badge-success badge-sm">${totalRemises}</span>`
+                                : ''}
+                        </td>
+                        <td class="text-xs">${formatDate(derniereCoupure)}</td>
+                        <td class="text-xs">${formatDate(derniereRemise)}</td>
+                    </tr>
+                `;
+            });
+        });
+    });
+
+    tbody.innerHTML = html;
+}
+
+// Fonction pour plier/déplier les groupes du tableau
+function toggleTableGroup(groupId) {
+    const icon = document.getElementById(`${groupId}-icon`);
+    const rows = document.querySelectorAll(`.${groupId}-row`);
+
+    if (icon && rows.length > 0) {
+        const isCollapsed = rows[0].style.display === 'none';
+
+        rows.forEach(row => {
+            row.style.display = isCollapsed ? 'table-row' : 'none';
+        });
+
+        // Changer l'icône
+        if (icon.classList.contains('fa-chevron-down')) {
+            icon.classList.remove('fa-chevron-down');
+            icon.classList.add('fa-chevron-right');
+        } else {
+            icon.classList.remove('fa-chevron-right');
+            icon.classList.add('fa-chevron-down');
+        }
+    }
+}
+
+// Afficher les ouvrages en cards (regroupés par District > Commune)
+function displayOuvragesCards(ouvrages) {
+    const container = document.getElementById('view-cards');
+
+    if (ouvrages.length === 0) {
+        container.innerHTML = `
+            <div class="col-span-full text-center py-8 text-base-content/50">
+                <i class="fas fa-inbox text-4xl mb-2"></i>
+                <p>Aucun ouvrage trouvé avec les filtres appliqués</p>
+            </div>
+        `;
+        return;
+    }
+
+    // Regrouper par District puis Commune
+    const grouped = {};
+    ouvrages.forEach(ouvrage => {
+        const district = ouvrage.district || 'Sans district';
+        const commune = ouvrage.commune || 'Sans commune';
+
+        if (!grouped[district]) {
+            grouped[district] = {};
+        }
+        if (!grouped[district][commune]) {
+            grouped[district][commune] = [];
+        }
+        grouped[district][commune].push(ouvrage);
+    });
+
+    // Générer le HTML
+    container.innerHTML = '';
+    container.className = 'space-y-6';
+
+    // Parcourir les districts (triés)
+    Object.keys(grouped).sort().forEach((district, districtIndex) => {
+        const districtSection = document.createElement('div');
+        districtSection.className = 'space-y-4';
+
+        const districtId = `district-${districtIndex}`;
+        const districtOuvrages = Object.values(grouped[district]).flat();
+
+        // Compter les soldes pour ce district
+        const districtStats = districtOuvrages.reduce((acc, o) => {
+            let coupes_actifs = 0;
+            o.points_eau.forEach(pe => {
+                if (pe.soldes.coupure_active) coupes_actifs++;
+            });
+
+            return {
+                factures_manquantes: acc.factures_manquantes + o.total_factures_manquantes,
+                factures_impayees: acc.factures_impayees + o.total_factures_impayees,
+                recommandations_coupure: acc.recommandations_coupure + (o.total_recommandations_coupure || 0),
+                coupes_actifs: acc.coupes_actifs + coupes_actifs,
+            };
+        }, { factures_manquantes: 0, factures_impayees: 0, recommandations_coupure: 0, coupes_actifs: 0 });
+
+        // Header District
+        const districtHeader = document.createElement('div');
+        districtHeader.className = 'bg-primary text-primary-content px-4 py-3 rounded-lg cursor-pointer hover:opacity-90';
+        districtHeader.innerHTML = `
+            <h3 class="text-lg font-bold flex items-center justify-between">
+                <span>
+                    <i id="icon-${districtId}" class="fas fa-chevron-down mr-2"></i>
+                    <i class="fas fa-map-marked-alt mr-2"></i>
+                    District: ${district}
+                    <span class="badge badge-neutral ml-2">${districtOuvrages.length} ouvrage(s)</span>
+                </span>
+                <span class="flex gap-2">
+                    ${districtStats.factures_manquantes > 0 ? `<span class="badge badge-warning badge-sm">Manquantes: ${districtStats.factures_manquantes}</span>` : ''}
+                    ${districtStats.factures_impayees > 0 ? `<span class="badge badge-error badge-sm">Impayées: ${districtStats.factures_impayees}</span>` : ''}
+                    ${districtStats.recommandations_coupure > 0 ? `<span class="badge badge-error badge-sm">✂️ À couper: ${districtStats.recommandations_coupure}</span>` : ''}
+                    ${districtStats.coupes_actifs > 0 ? `<span class="badge badge-error badge-sm">✂️ Coupés: ${districtStats.coupes_actifs}</span>` : ''}
+                </span>
+
+            </h3>
+        `;
+        districtHeader.onclick = () => toggleSection(districtId);
+        districtSection.appendChild(districtHeader);
+
+        // Container pour les communes
+        const districtContent = document.createElement('div');
+        districtContent.id = districtId;
+        districtContent.className = 'space-y-4';
+
+        // Parcourir les communes (triées)
+        Object.keys(grouped[district]).sort().forEach((commune, communeIndex) => {
+            const communeOuvrages = grouped[district][commune];
+            const communeId = `commune-${districtIndex}-${communeIndex}`;
+
+            // Header Commune
+            const communeHeader = document.createElement('div');
+            communeHeader.className = 'bg-secondary text-secondary-content px-4 py-2 rounded-md ml-4 cursor-pointer hover:opacity-90';
+            communeHeader.innerHTML = `
+                <h4 class="font-semibold flex items-center justify-between">
+                    <span>
+                        <i id="icon-${communeId}" class="fas fa-chevron-down mr-2"></i>
+                        <i class="fas fa-map-marker-alt mr-2"></i>
+                        Commune: ${commune}
+                        <span class="badge badge-ghost badge-sm ml-2">${communeOuvrages.length} ouvrage(s)</span>
+                    </span>
+                </h4>
+            `;
+            communeHeader.onclick = () => toggleSection(communeId);
+            districtContent.appendChild(communeHeader);
+
+            // Grid des cartes pour cette commune
+            const communeGrid = document.createElement('div');
+            communeGrid.id = communeId;
+            communeGrid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 ml-8 mt-2';
+
+            communeOuvrages.forEach(ouvrage => {
+                const card = createOuvrageCard(ouvrage);
+                communeGrid.appendChild(card);
+            });
+
+            districtContent.appendChild(communeGrid);
+        });
+
+        districtSection.appendChild(districtContent);
+        container.appendChild(districtSection);
+    });
+}
+
+// Créer une card pour un ouvrage
+function createOuvrageCard(ouvrage) {
+    const card = document.createElement('div');
+    card.className = 'card bg-base-100 shadow-md hover:shadow-xl transition-shadow';
+
+    const alertClass = ouvrage.total_factures_manquantes > 0 || ouvrage.total_factures_impayees > 0
+        ? 'border-l-4 border-warning'
+        : 'border-l-4 border-success';
+
+    card.className += ' ' + alertClass;
+
+    // Calculer les statistiques de coupures pour l'ouvrage
+    let totalCoupuresActives = 0;
+    let totalRemises = 0;
+    let derniereCoupure = null;
+    let derniereRemise = null;
+
+    ouvrage.points_eau.forEach(pe => {
+        if (pe.coupures && pe.coupures.length > 0) {
+            // Trier les coupures par date (plus récente en premier)
+            const coupuresSorted = [...pe.coupures].sort((a, b) =>
+                new Date(b.date_evenement) - new Date(a.date_evenement)
+            );
+
+            // Compter les coupures et remises
+            coupuresSorted.forEach(coupure => {
+                if (coupure.type_evenement === 'coupure') {
+                    totalCoupuresActives++;
+                    if (!derniereCoupure || new Date(coupure.date_evenement) > new Date(derniereCoupure)) {
+                        derniereCoupure = coupure.date_evenement;
+                    }
+                } else if (coupure.type_evenement === 'remise') {
+                    totalRemises++;
+                    if (!derniereRemise || new Date(coupure.date_evenement) > new Date(derniereRemise)) {
+                        derniereRemise = coupure.date_evenement;
+                    }
+                }
+            });
+        }
+    });
+
+    // Formater les dates
+    const formatDate = (dateStr) => {
+        if (!dateStr) return '';
+        const date = new Date(dateStr);
+        return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    };
+
+    card.innerHTML = `
+        <div class="card-body p-4">
+            <h3 class="card-title text-base">
+                <i class="fas fa-water mr-2 text-primary"></i>
+                ${ouvrage.nom}
+            </h3>
+            <p class="text-xs text-base-content/70">${ouvrage.type}</p>
+
+            <div class="divider my-2"></div>
+
+            <div class="stats stats-vertical shadow-sm bg-base-200">
+                <div class="stat p-2">
+                    <div class="stat-title text-xs">Points d'eau</div>
+                    <div class="stat-value text-lg text-info">${ouvrage.nb_points_eau > 0 ? ouvrage.nb_points_eau : ''}</div>
+                </div>
+                ${ouvrage.total_factures_manquantes > 0 ? `
+                <div class="stat p-2">
+                    <div class="stat-title text-xs">Factures manquantes</div>
+                    <div class="stat-value text-lg text-warning">
+                        ${ouvrage.total_factures_manquantes}
+                    </div>
+                </div>
+                ` : ''}
+                <div class="stat p-2">
+                    <div class="stat-title text-xs">Factures impayées</div>
+                    <div class="stat-value text-lg ${ouvrage.total_factures_impayees > 0 ? 'text-error' : 'text-success'}">
+                        ${ouvrage.total_factures_impayees > 0 ? ouvrage.total_factures_impayees : ''}
+                    </div>
+                </div>
+                ${(ouvrage.total_recommandations_coupure || 0) > 0 ? `
+                <div class="stat p-2 bg-error/10">
+                    <div class="stat-title text-xs">⚠️ À couper</div>
+                    <div class="stat-value text-lg text-error">
+                        ${ouvrage.total_recommandations_coupure}
+                    </div>
+                    <div class="stat-desc text-error">Factures expirées</div>
+                </div>
+                ` : ''}
+                ${totalCoupuresActives > 0 ? `
+                <div class="stat p-2">
+                    <div class="stat-title text-xs">Coupures actives</div>
+                    <div class="stat-value text-lg text-error">
+                        ${totalCoupuresActives}
+                    </div>
+                </div>
+                ` : ''}
+                ${totalRemises > 0 ? `
+                <div class="stat p-2">
+                    <div class="stat-title text-xs">Remises en service</div>
+                    <div class="stat-value text-lg text-success">
+                        ${totalRemises}
+                    </div>
+                </div>
+                ` : ''}
+            </div>
+
+            ${(derniereCoupure || derniereRemise) ? `
+            <div class="mt-2 text-xs text-base-content/70">
+                ${derniereCoupure ? `<div><i class="fas fa-cut text-error mr-1"></i>Dernière coupure: ${formatDate(derniereCoupure)}</div>` : ''}
+                ${derniereRemise ? `<div><i class="fas fa-sync text-success mr-1"></i>Dernière remise: ${formatDate(derniereRemise)}</div>` : ''}
+            </div>
+            ` : ''}
+
+            <div class="divider my-2"></div>
+
+            <!-- Liste des points d'eau -->
+            <div class="space-y-2">
+                <h4 class="font-semibold text-sm">Points d'eau:</h4>
+                ${ouvrage.points_eau.map(pe => {
+                    // Compter les coupures actives pour ce point d'eau
+                    const coupuresActives = pe.coupures ? pe.coupures.filter(c => c.type_evenement === 'coupure').length : 0;
+                    const remises = pe.coupures ? pe.coupures.filter(c => c.type_evenement === 'remise').length : 0;
+                    const recommander = pe.soldes.recommander_coupure || false;
+
+                    return `
+                    <div class="flex justify-between items-center p-2 bg-base-200 rounded hover:bg-base-300 cursor-pointer ${recommander ? 'border-l-4 border-error' : ''}"
+                         onclick="viewPointEauDetails('${pe.id}')">
+                        <div>
+                            <p class="text-sm font-semibold">${pe.nom}</p>
+                            <p class="text-xs text-base-content/70">
+                                ${pe.soldes.tranches_facturees > 0 ? pe.soldes.tranches_facturees + ' facture(s) | ' : ''}${pe.tarif_forfaitaire.toLocaleString('fr-FR')} Ar/3 mois
+                            </p>
+                            ${recommander && pe.soldes.factures_expirees && pe.soldes.factures_expirees.length > 0 ? `
+                            <p class="text-xs text-error font-semibold mt-1">
+                                ⚠️ ${pe.soldes.factures_expirees.length} facture(s) expirée(s) - Max ${Math.max(...pe.soldes.factures_expirees.map(f => f.jours_depassement))} jours
+                            </p>
+                            ` : ''}
+                        </div>
+                        <div class="flex gap-1 flex-wrap justify-end">
+                            ${pe.soldes.factures_manquantes > 0 ? `<span class="badge badge-warning badge-sm">${pe.soldes.factures_manquantes} 📋</span>` : ''}
+                            ${pe.soldes.factures_impayees > 0 ? `<span class="badge badge-error badge-sm">${pe.soldes.factures_impayees} 💰</span>` : ''}
+                            ${recommander ? `<span class="badge badge-error badge-sm">✂️ À COUPER</span>` : ''}
+                            ${coupuresActives > 0 ? `<span class="badge badge-error badge-sm"><i class="fas fa-circle text-error"></i> ${coupuresActives}</span>` : ''}
+                            ${remises > 0 ? `<span class="badge badge-success badge-sm">${remises} ✓</span>` : ''}
+
+                            ${!recommander && pe.soldes.factures_manquantes === 0 && pe.soldes.factures_impayees === 0 && coupuresActives === 0 ? '<span class="badge badge-success badge-sm">OK</span>' : ''}
+                        </div>
+                    </div>
+                `;
+                }).join('')}
+            </div>
+        </div>
+    `;
+
+    return card;
+}
+
+// Toggle section
+function toggleSection(sectionId) {
+    const section = document.getElementById(sectionId);
+    const icon = document.getElementById(`icon-${sectionId}`);
+
+    if (section.classList.contains('hidden')) {
+        section.classList.remove('hidden');
+        icon.classList.remove('fa-chevron-right');
+        icon.classList.add('fa-chevron-down');
+    } else {
+        section.classList.add('hidden');
+        icon.classList.remove('fa-chevron-down');
+        icon.classList.add('fa-chevron-right');
+    }
+}
+
+// Voir les détails d'un point d'eau
+function viewPointEauDetails(pointEauId) {
+    console.log('=== viewPointEauDetails appelé ===');
+    console.log('Point d\'eau ID:', pointEauId);
+    console.log('Nombre d\'ouvrages disponibles:', allOuvragesData.length);
+
+    // Trouver le point d'eau dans les données
+    let pointEau = null;
+    let ouvrageParent = null;
+    for (const ouvrage of allOuvragesData) {
+        pointEau = ouvrage.points_eau.find(pe => pe.id === pointEauId);
+        if (pointEau) {
+            console.log('Point d\'eau trouvé:', pointEau);
+            ouvrageParent = ouvrage;
+            break;
+        }
+    }
+
+    if (!pointEau) {
+        console.error('Point d\'eau introuvable:', pointEauId);
+        console.log('Tous les ouvrages:', allOuvragesData);
+        return;
+    }
+
+    currentPointEauDetails = pointEau;
+    currentOuvrageData = ouvrageParent;
+
+    // Titre
+    document.getElementById('detail-pe-nom').textContent = pointEau.nom;
+
+    console.log('Paiements:', pointEau.paiements);
+    console.log('Coupures:', pointEau.coupures);
+    console.log('Soldes:', pointEau.soldes);
+
+    // S'assurer que l'onglet Paiements est actif
+    switchTab('paiements');
+
+    // Tab paiements
+    displayPaiements(pointEau.paiements || []);
+
+    // Tab coupures
+    displayCoupures(pointEau.coupures || []);
+
+    // Tab soldes
+    displaySoldes(pointEau.soldes || {});
+
+    // Ouvrir le modal
+    const modal = document.getElementById('modalDetailsPointEau');
+    modal.showModal();
+
+    // Debug: vérifier la visibilité
+    setTimeout(() => {
+        const contentPaiements = document.getElementById('content-paiements');
+        const tbody = document.getElementById('tbody-paiements');
+        const table = tbody.closest('table');
+
+        console.log('=== DEBUG VISIBILITÉ ===');
+        console.log('Modal open?', modal.open);
+        console.log('content-paiements classes:', contentPaiements.className);
+        console.log('content-paiements visible?', !contentPaiements.classList.contains('hidden'));
+        console.log('content-paiements offsetHeight:', contentPaiements.offsetHeight);
+        console.log('table offsetHeight:', table ? table.offsetHeight : 'null');
+        console.log('tbody rows:', tbody.children.length);
+        console.log('tbody offsetHeight:', tbody.offsetHeight);
+        console.log('tbody first 300 chars:', tbody.innerHTML.substring(0, 300));
+
+        // Vérifier les styles computed
+        const computedStyle = window.getComputedStyle(contentPaiements);
+        console.log('display:', computedStyle.display);
+        console.log('visibility:', computedStyle.visibility);
+        console.log('opacity:', computedStyle.opacity);
+        console.log('height:', computedStyle.height);
+    }, 200);
+}
+
+// Afficher les paiements
+function displayPaiements(paiements) {
+    console.log('displayPaiements appelé avec:', paiements);
+    const tbody = document.getElementById('tbody-paiements');
+
+    if (!paiements || paiements.length === 0) {
+        console.log('Aucun paiement à afficher');
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="9" class="text-center text-base-content/50 py-4">
+                    Aucun paiement enregistré
+                    <button onclick="genererProchainPaiement()" class="btn btn-sm btn-primary ml-4">
+                        <i class="fas fa-plus mr-2"></i>Générer le premier paiement
+                    </button>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    console.log('Affichage de', paiements.length, 'paiement(s)');
+
+    // Déterminer si c'est le dernier paiement pour appliquer la couleur rouge si expiré
+    const dernierIndex = paiements.length - 1;
+
+    const html = paiements.map((p, index) => {
+        const estDernier = index === dernierIndex;
+        const dateExpire = isDateExpired(p.date_fin_validite);
+
+        // Couleur selon la logique:
+        // - Dernier paiement expiré → rouge
+        // - Dernier paiement valide → vert
+        // - Paiements intermédiaires → gris neutre
+        let couleurDate = 'text-base-content';
+        if (estDernier && p.date_fin_validite) {
+            couleurDate = dateExpire ? 'text-error font-bold' : 'text-success font-semibold';
+        }
+
+        return `
+        <tr class="${estDernier ? 'bg-base-200' : ''}">
+            <td>${formatDate(p.date_facture)}</td>
+            <td>${p.date_paiement ? formatDate(p.date_paiement) : '-'}</td>
+            <td>${p.quantite}</td>
+            <td>${p.prix_unitaire.toLocaleString('fr-FR')} Ar</td>
+            <td class="font-bold">${p.montant.toLocaleString('fr-FR')} Ar</td>
+            <td>${p.duree_mois} mois</td>
+            <td>
+                ${p.date_fin_validite ?
+                    `<span class="text-sm ${couleurDate}">
+                        ${formatDate(p.date_fin_validite)}
+                        ${estDernier && dateExpire ? '<i class="fas fa-exclamation-triangle ml-1 text-error"></i>' : ''}
+                        ${estDernier && !dateExpire ? '<i class="fas fa-check-circle ml-1 text-success"></i>' : ''}
+                    </span>`
+                    : '-'}
+            </td>
+            <td>
+                <span class="badge ${p.paye ? 'badge-success' : 'badge-warning'} badge-sm">
+                    ${p.paye ? 'Payé' : 'Non payé'}
+                </span>
+            </td>
+            <td>
+                <div class="flex flex-wrap gap-1 items-center">
+                    ${!p.paye ? `
+                        <button onclick="imprimerEtValiderPaiement('${p.id}')" class="btn btn-xs btn-primary" title="Imprimer et valider (unique)">
+                            <i class="fas fa-print mr-1"></i>Imprimer
+                        </button>
+                        <button onclick="encaisserPaiement('${p.id}')" class="btn btn-xs btn-success" title="Encaisser le paiement">
+                            <i class="fas fa-cash-register mr-1"></i>Encaisser
+                        </button>
+                    ` : `
+                        <span class="text-xs text-success">
+                            <i class="fas fa-check-circle mr-1"></i>Payé
+                            ${p.numeroDiameX ? `<span class="badge badge-xs badge-info ml-1">${p.numeroDiameX}</span>` : ''}
+                        </span>
+                    `}
+                    <button onclick="deletePaiement('${p.id}')" class="btn btn-xs btn-error" title="Supprimer la facture">
+                        <i class="fas fa-trash mr-1"></i>Supprimer
+                    </button>
+                </div>
+            </td>
+        </tr>
+        `;
+    }).join('');
+
+    // Ajouter un bouton pour générer le prochain paiement
+    const dernierPaiement = paiements[paiements.length - 1];
+    const htmlBouton = `
+        <tr>
+            <td colspan="9" class="text-center py-4 bg-base-200">
+                <button onclick="genererProchainPaiement()" class="btn btn-sm btn-primary">
+                    <i class="fas fa-plus mr-2"></i>Générer le prochain paiement
+                </button>
+            </td>
+        </tr>
+    `;
+
+    tbody.innerHTML = html + htmlBouton;
+}
+
+// Afficher les coupures
+function displayCoupures(coupures) {
+    const tbody = document.getElementById('tbody-coupures');
+
+    if (coupures.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="4" class="text-center text-base-content/50 py-4">
+                    Aucune coupure enregistrée
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = coupures.map(c => `
+        <tr>
+            <td>
+                <span class="badge ${c.type_evenement === 'coupure' ? 'badge-error' : 'badge-success'} badge-sm">
+                    ${c.type_evenement === 'coupure' ? 'Coupure' : 'Remise'}
+                </span>
+            </td>
+            <td>${formatDate(c.date_evenement)}</td>
+            <td>${c.raison || '-'}</td>
+            <td>${c.notes || '-'}</td>
+            <td>
+                <button onclick="openEditCoupureModal('${c.id}')" class="btn btn-xs btn-ghost text-info" title="Modifier">
+                    <i class="fas fa-edit"></i>
+                </button>
+                <button onclick="deleteCoupure('${c.id}')" class="btn btn-xs btn-ghost text-error" title="Supprimer">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+// Global pour stocker l'ID de la coupure en cours d'édition
+let currentCoupureId = null;
+
+// Ouvrir modal modification coupure
+function openEditCoupureModal(coupureId) {
+    if (!currentPointEauDetails || !currentPointEauDetails.coupures) return;
+
+    const coupure = currentPointEauDetails.coupures.find(c => c.id === coupureId);
+    if (!coupure) return;
+
+    currentCoupureId = coupureId;
+
+    // Titre de la modal
+    document.getElementById('modalAddCoupure').querySelector('h3').innerHTML =
+        '<i class="fas fa-edit mr-2 text-warning"></i>Modifier la coupure/remise';
+
+    // Remplir les champs
+    document.getElementById('coupure-point-eau-id').value = currentPointEauDetails.id;
+    document.getElementById('coupure-type').value = coupure.type_evenement;
+    document.getElementById('coupure-date').value = coupure.date_evenement;
+    document.getElementById('coupure-raison').value = coupure.raison || '';
+    document.getElementById('coupure-notes').value = coupure.notes || '';
+
+    document.getElementById('modalAddCoupure').showModal();
+}
+
+// Supprimer une coupure
+async function deleteCoupure(coupureId) {
+    if (!confirm('Voulez-vous vraiment supprimer cet événement ?')) return;
+
+    try {
+        const response = await fetch(`/facturation/suivi-forfaitaires/api/coupure/${coupureId}/delete/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            alert('Evénement supprimé avec succès');
+            applyFilters(); // Recharger les données
+            // Si le modal de détails est ouvert, on le rafraîchit (en trouvant le pe dans les nouvelles données)
+            setTimeout(() => {
+                if (currentPointEauDetails) {
+                    viewPointEauDetails(currentPointEauDetails.id);
+                }
+            }, 500);
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau');
+    }
+}
+
+// Afficher les soldes
+function displaySoldes(soldes) {
+    document.getElementById('solde-premier-paiement').textContent = soldes.premier_paiement ? formatDate(soldes.premier_paiement) : '-';
+    document.getElementById('solde-dernier-paiement').textContent = soldes.dernier_paiement ? formatDate(soldes.dernier_paiement) : '-';
+    document.getElementById('solde-mois-fonctionnement').textContent = soldes.mois_fonctionnement + ' mois';
+    document.getElementById('solde-tranches-attendues').textContent = soldes.tranches_attendues;
+    document.getElementById('solde-tranches-facturees').textContent = soldes.tranches_facturees;
+    document.getElementById('solde-factures-manquantes').textContent = soldes.factures_manquantes;
+    document.getElementById('solde-factures-impayees').textContent = soldes.factures_impayees;
+
+    // Périodes de coupure
+    const container = document.getElementById('periodes-coupure-container');
+    const list = document.getElementById('periodes-coupure-list');
+
+    if (soldes.periodes_coupure && soldes.periodes_coupure.length > 0) {
+        container.classList.remove('hidden');
+        list.innerHTML = soldes.periodes_coupure.map(p => `
+            <div class="alert alert-warning">
+                <i class="fas fa-cut"></i>
+                <span>Du ${formatDate(p.debut)} au ${formatDate(p.fin)}</span>
+            </div>
+        `).join('');
+    } else {
+        container.classList.add('hidden');
+    }
+}
+
+// Switch tab
+function switchTab(tab) {
+    // Tabs
+    document.getElementById('tab-paiements').classList.toggle('tab-active', tab === 'paiements');
+    document.getElementById('tab-coupures').classList.toggle('tab-active', tab === 'coupures');
+    document.getElementById('tab-soldes').classList.toggle('tab-active', tab === 'soldes');
+
+    // Content
+    document.getElementById('content-paiements').classList.toggle('hidden', tab !== 'paiements');
+    document.getElementById('content-coupures').classList.toggle('hidden', tab !== 'coupures');
+    document.getElementById('content-soldes').classList.toggle('hidden', tab !== 'soldes');
+}
+
+// Ouvrir modal ajout coupure
+function openAddCoupureModal() {
+    if (!currentPointEauDetails) return;
+
+    currentCoupureId = null;
+    // Reset titre modal
+    document.getElementById('modalAddCoupure').querySelector('h3').innerHTML =
+        '<i class="fas fa-cut mr-2 text-warning"></i>Ajouter une coupure/remise';
+
+    // Reset champs
+    document.getElementById('coupure-point-eau-id').value = currentPointEauDetails.id;
+    document.getElementById('coupure-type').value = '';
+    document.getElementById('coupure-date').value = new Date().toISOString().split('T')[0];
+    document.getElementById('coupure-raison').value = '';
+    document.getElementById('coupure-notes').value = '';
+
+    document.getElementById('modalAddCoupure').showModal();
+}
+
+// Soumettre formulaire coupure
+document.getElementById('formAddCoupure').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const data = {
+        point_eau_id: document.getElementById('coupure-point-eau-id').value,
+        type_evenement: document.getElementById('coupure-type').value,
+        date_evenement: document.getElementById('coupure-date').value,
+        raison: document.getElementById('coupure-raison').value,
+        notes: document.getElementById('coupure-notes').value,
+    };
+
+    const url = currentCoupureId
+        ? `/facturation/suivi-forfaitaires/api/coupure/${currentCoupureId}/update/`
+        : '/facturation/suivi-forfaitaires/api/coupure/create/';
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert(currentCoupureId ? 'Coupure mise à jour' : 'Coupure enregistrée');
+            document.getElementById('modalAddCoupure').close();
+            applyFilters(); // Recharger les données
+            // Si le modal de détails est ouvert, on le rafraîchit
+            setTimeout(() => {
+                if (currentPointEauDetails) {
+                    viewPointEauDetails(currentPointEauDetails.id);
+                }
+            }, 500);
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau');
+    }
+});
+
+// Handler du formulaire nouveau paiement
+document.getElementById('formNouveauPaiement').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    if (!currentPointEauDetails) {
+        alert('Erreur: Point d\'eau non trouvé');
+        return;
+    }
+
+    const data = {
+        point_eau_id: currentPointEauDetails.id,
+        date_facture: document.getElementById('nouveau-paiement-date').value,
+        quantite: parseInt(document.getElementById('nouveau-paiement-quantite').value),
+        prix_unitaire: parseFloat(document.getElementById('nouveau-paiement-tarif').value),
+        duree_mois: parseInt(document.getElementById('nouveau-paiement-duree').value),
+    };
+
+    try {
+        const response = await fetch('/facturation/suivi-forfaitaires/api/paiement/create/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert('Paiement enregistré avec succès');
+            document.getElementById('modalNouveauPaiement').close();
+            applyFilters(); // Recharger les données
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+});
+
+// Formatter une date
+function formatDate(dateStr) {
+    if (!dateStr) return '-';
+    const parts = dateStr.split('-');
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+// Vérifier si une date est expirée
+function isDateExpired(dateStr) {
+    if (!dateStr) return false;
+    const dateParts = dateStr.split('-');
+    const date = new Date(parseInt(dateParts[0]), parseInt(dateParts[1]) - 1, parseInt(dateParts[2]));
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return date < today;
+}
+
+// G?n?rer le prochain paiement
+function calculerDureeMoisDepuisMontant(montant, tarifForfaitaire, quantite) {
+    if (!tarifForfaitaire || tarifForfaitaire <= 0 || !montant) {
+        return quantite ? quantite * 3 : 3;
+    }
+    const mois = Math.round((montant * 3) / tarifForfaitaire);
+    if (mois > 0) {
+        return mois;
+    }
+    return quantite ? quantite * 3 : 3;
+}
+
+function genererProchainPaiement() {
+    if (!currentPointEauDetails) {
+        alert('Erreur: Point d\'eau non trouv?');
+        return;
+    }
+
+    // Ouvrir un modal pour ajuster la quantit?
+    const modal = document.getElementById('modalNouveauPaiement');
+
+    // Pr?-remplir les donn?es
+    document.getElementById('nouveau-paiement-point-eau-nom').textContent = currentPointEauDetails.nom;
+    document.getElementById('nouveau-paiement-tarif').value = currentPointEauDetails.tarif_forfaitaire;
+    document.getElementById('nouveau-paiement-quantite').value = 1;
+
+    const dernierPaiement = currentPointEauDetails.paiements && currentPointEauDetails.paiements.length > 0
+        ? currentPointEauDetails.paiements[currentPointEauDetails.paiements.length - 1]
+        : null;
+
+    const parseDate = (dateStr) => {
+        const parts = dateStr.split('-');
+        return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+    };
+
+    let dateFacture = new Date();
+    if (dernierPaiement && dernierPaiement.date_facture) {
+        const baseDate = parseDate(dernierPaiement.date_facture);
+        const moisAjout = calculerDureeMoisDepuisMontant(
+            dernierPaiement.montant,
+            currentPointEauDetails.tarif_forfaitaire,
+            dernierPaiement.quantite
+        );
+        baseDate.setMonth(baseDate.getMonth() + moisAjout);
+        dateFacture = baseDate;
+    }
+
+    let derniereRemise = null;
+    if (currentPointEauDetails.coupures && currentPointEauDetails.coupures.length > 0) {
+        currentPointEauDetails.coupures.forEach(coupure => {
+            if (coupure.type_evenement === 'remise') {
+                const remiseDate = parseDate(coupure.date_evenement);
+                if (!derniereRemise || remiseDate > derniereRemise) {
+                    derniereRemise = remiseDate;
+                }
+            }
+        });
+    }
+
+    if (derniereRemise && dateFacture < derniereRemise) {
+        dateFacture = derniereRemise;
+    }
+
+    const dateStr = dateFacture.toISOString().split('T')[0];
+    document.getElementById('nouveau-paiement-date').value = dateStr;
+
+    // Mettre ? jour le calcul automatiquement
+    updateNouveauPaiementCalcul();
+
+    modal.showModal();
+}
+
+// Mettre ? jour le calcul du nouveau paiement
+function updateNouveauPaiementCalcul() {
+    const quantite = parseInt(document.getElementById('nouveau-paiement-quantite').value) || 1;
+    const prixUnitaire = parseFloat(document.getElementById('nouveau-paiement-tarif').value) || 0;
+    const dateFacture = document.getElementById('nouveau-paiement-date').value;
+    const tarifForfaitaire = currentPointEauDetails && currentPointEauDetails.tarif_forfaitaire
+        ? parseFloat(currentPointEauDetails.tarif_forfaitaire)
+        : prixUnitaire;
+
+    const montant = quantite * prixUnitaire;
+    document.getElementById('nouveau-paiement-montant').textContent = montant.toLocaleString('fr-FR') + ' Ar';
+
+    let duree = calculerDureeMoisDepuisMontant(montant, tarifForfaitaire, quantite);
+    if (duree) {
+        document.getElementById('nouveau-paiement-duree').value = duree;
+    } else {
+        duree = parseInt(document.getElementById('nouveau-paiement-duree').value) || 3;
+    }
+
+    // Calculer la date fin de validité
+    if (dateFacture) {
+        const parts = dateFacture.split('-');
+        const date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+        date.setMonth(date.getMonth() + duree);
+        date.setDate(date.getDate() - 1); // La veille
+
+        const dateFinValidite = date.toISOString().split('T')[0];
+        document.getElementById('nouveau-paiement-date-fin').textContent = formatDate(dateFinValidite);
+    }
+}
+
+// Mettre à jour le calcul du nouveau paiement
+function updateNouveauPaiementCalcul() {
+    const quantite = parseInt(document.getElementById('nouveau-paiement-quantite').value) || 1;
+    const prixUnitaire = parseFloat(document.getElementById('nouveau-paiement-tarif').value) || 0;
+    const duree = parseInt(document.getElementById('nouveau-paiement-duree').value) || 3;
+    const dateFacture = document.getElementById('nouveau-paiement-date').value;
+
+    const montant = quantite * prixUnitaire;
+    document.getElementById('nouveau-paiement-montant').textContent = montant.toLocaleString('fr-FR') + ' Ar';
+
+    // Calculer la date fin de validité
+    if (dateFacture) {
+        const parts = dateFacture.split('-');
+        const date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+        date.setMonth(date.getMonth() + duree);
+        date.setDate(date.getDate() - 1); // La veille
+
+        const dateFinValidite = date.toISOString().split('T')[0];
+        document.getElementById('nouveau-paiement-date-fin').textContent = formatDate(dateFinValidite);
+    }
+}
+
+// Encaisser un paiement (crée ligne DiameX temporaire)
+async function encaisserPaiement(paiementId) {
+    if (!confirm('Confirmer l\'encaissement de ce paiement ?\n\nCela créera automatiquement une ligne dans les transactions DiameX temporaires.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('{% url "billing:api_encaisser_paiements_forfaitaires" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                paiement_ids: [paiementId]
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            let message = result.message;
+            if (result.erreurs && result.erreurs.length > 0) {
+                message += '\n\nAvertissements:\n' + result.erreurs.join('\n');
+            }
+            alert(message + '\n\nUne ligne a été créée dans DiameX Temporaire et est en attente de validation.');
+            applyFilters(); // Recharger les données
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+}
+
+// Supprimer un paiement
+async function deletePaiement(paiementId) {
+    if (!confirm('Voulez-vous vraiment supprimer cette facture ?')) return;
+
+    try {
+        const response = await fetch(`/facturation/suivi-forfaitaires/api/paiement/${paiementId}/delete/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            alert(result.message || 'Facture supprimée avec succès');
+            applyFilters(); // Recharger les données
+            setTimeout(() => {
+                if (currentPointEauDetails) {
+                    viewPointEauDetails(currentPointEauDetails.id);
+                }
+            }, 500);
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau');
+    }
+}
+
+// Récupérer le cookie CSRF
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Imprimer et valider le paiement
+async function imprimerEtValiderPaiement(paiementId) {
+    if (!currentPointEauDetails) {
+        alert('Erreur: Point d\'eau non trouvé');
+        return;
+    }
+
+    // Trouver le paiement
+    const paiement = currentPointEauDetails.paiements.find(p => p.id === paiementId);
+    if (!paiement) {
+        alert('Paiement non trouvé');
+        return;
+    }
+
+    // Confirmation avant impression (unique)
+    const montantFormate = paiement.montant.toLocaleString('fr-FR');
+    if (!confirm(`⚠️ ATTENTION: Impression unique\n\nMontant: ${montantFormate} Ar\nPoint d'eau: ${currentPointEauDetails.nom}\n\nCette facture ne pourra être imprimée qu'une seule fois.\nVoulez-vous continuer ?`)) {
+        return;
+    }
+
+    // Générer un numéro de reçu unique
+    const numeroRecu = `PAY-${new Date().getTime()}`;
+
+    // Appeler la fonction d'impression du ticket (depuis workflow_terrain.js)
+    if (typeof window.imprimerTicket === 'function') {
+        window.imprimerTicket({
+            type: 'Paiement Forfaitaire',
+            designation: 'Paiement forfaitaire',
+            montant: paiement.montant,
+            date: new Date().toLocaleString('fr-FR'),
+            point_eau: currentPointEauDetails.nom,
+            nom_abonne: currentPointEauDetails.nom,
+            ouvrage: currentOuvrageData ? currentOuvrageData.nom : 'N/A',
+            organisation: currentOuvrageData ? currentOuvrageData.organisation_nom : 'N/A',
+            numero_bon: numeroRecu,
+            isBonPaiement: true,
+            quantite: paiement.quantite,
+            prix_unitaire: paiement.prix_unitaire,
+            date_facture: formatDate(paiement.date_facture),
+            date_fin_validite: paiement.date_fin_validite ? formatDate(paiement.date_fin_validite) : 'N/A'
+        });
+
+        // Après impression, valider le paiement
+        setTimeout(async () => {
+            if (confirm('L\'impression est terminée. Voulez-vous valider le paiement ?')) {
+                await validerPaiement(paiementId);
+            }
+        }, 2000);
+    } else {
+        alert('Erreur: La fonction d\'impression n\'est pas disponible');
+    }
+}
+
+// Valider le paiement (marquer comme payé)
+async function validerPaiement(paiementId) {
+    try {
+        const response = await fetch('/facturation/suivi-forfaitaires/api/paiement/valider/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ paiement_id: paiementId })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert('Paiement validé avec succès');
+            // Recharger les données
+            applyFilters();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+}
+
+// Exporter en Excel (Paiements)
+function exporterExcel() {
+    // Construire l'URL avec les mêmes filtres que la recherche
+    const params = new URLSearchParams({
+        region_id: document.getElementById('filter-region').value,
+        district_id: document.getElementById('filter-district').value,
+        commune_id: document.getElementById('filter-commune').value,
+        recherche: document.getElementById('filter-recherche').value,
+    });
+
+    // Ouvrir l'URL d'export dans une nouvelle fenêtre (téléchargement direct)
+    const url = `/facturation/suivi-forfaitaires/export-excel/?${params.toString()}`;
+    window.location.href = url;
+}
+
+// === FONCTIONS IMPORT/EXPORT COUPURES D'EAU ===
+
+// Télécharger le template Excel pour les coupures
+function telechargerTemplateCoupures() {
+    window.location.href = '{% url "billing:template_excel_coupures" %}';
+}
+
+// Exporter les coupures existantes en Excel
+function exporterCoupures() {
+    // Construire l'URL avec les mêmes filtres que la recherche
+    const params = new URLSearchParams({
+        region_id: document.getElementById('filter-region').value,
+        district_id: document.getElementById('filter-district').value,
+        commune_id: document.getElementById('filter-commune').value,
+        recherche: document.getElementById('filter-recherche').value,
+    });
+
+    const url = `/facturation/suivi-forfaitaires/coupures/export-excel/?${params.toString()}`;
+    window.location.href = url;
+}
+
+// Importer des coupures depuis un fichier Excel
+async function importerCoupures(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    // Vérifier le type de fichier
+    if (!file.name.match(/\.(xlsx|xls)$/)) {
+        alert('Veuillez sélectionner un fichier Excel (.xlsx ou .xls)');
+        return;
+    }
+
+    if (!confirm(`Importer les coupures depuis "${file.name}" ?\n\nLes nouvelles coupures/remises seront ajoutées à la base de données.`)) {
+        event.target.value = ''; // Reset input
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        // Afficher un indicateur de chargement
+        const loadingDiv = document.createElement('div');
+        loadingDiv.id = 'import-loading';
+        loadingDiv.className = 'fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-base-100 p-6 rounded-lg shadow-xl z-50';
+        loadingDiv.innerHTML = `
+            <div class="flex flex-col items-center gap-4">
+                <span class="loading loading-spinner loading-lg text-error"></span>
+                <p class="text-lg">Import des coupures en cours...</p>
+            </div>
+        `;
+        document.body.appendChild(loadingDiv);
+
+        const response = await fetch('{% url "billing:import_excel_coupures" %}', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        });
+
+        // Retirer l'indicateur de chargement
+        document.getElementById('import-loading')?.remove();
+
+        const result = await response.json();
+
+        if (result.success) {
+            let message = `✓ ${result.nb_imported} coupure(s)/remise(s) importée(s) avec succès`;
+
+            // Afficher les erreurs s'il y en a
+            if (result.erreurs && result.erreurs.length > 0) {
+                message += `\n\n⚠️ ${result.erreurs.length} erreur(s) détectée(s):\n\n`;
+                message += result.erreurs.slice(0, 10).join('\n');
+                if (result.erreurs.length > 10) {
+                    message += `\n\n... et ${result.erreurs.length - 10} autre(s) erreur(s)`;
+                }
+            }
+
+            alert(message);
+
+            // Recharger la page après succès
+            if (result.nb_imported > 0) {
+                setTimeout(() => {
+                    location.reload();
+                }, 1000);
+            }
+        } else {
+            alert('Erreur lors de l\'import:\n' + result.error);
+        }
+
+    } catch (error) {
+        console.error('Erreur:', error);
+        document.getElementById('import-loading')?.remove();
+        alert('Erreur réseau lors de l\'import: ' + error.message);
+    }
+
+    // Reset le input file
+    event.target.value = '';
+}
+</script>
+
+<!-- Charger le script d'impression des tickets -->
+<script src="{% static 'js/workflow_terrain.js' %}"></script>
+{% endblock %}

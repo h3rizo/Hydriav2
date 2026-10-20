@@ -1,0 +1,840 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Configuration Tranches IRSA - Hydria{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">Configuration des Tranches IRSA</h1>
+            <p class="text-base-content/70 mt-1">Gérer les tranches de calcul de l'impôt sur les salaires</p>
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'employees:config_salaire' %}" class="btn btn-outline gap-2">
+                <i class="fas fa-arrow-left"></i>
+                Retour config salaires
+            </a>
+            <button onclick="openCreateModal()" class="btn btn-primary gap-2">
+                <i class="fas fa-plus"></i>
+                Nouvelle tranche
+            </button>
+        </div>
+    </div>
+
+    <!-- Tableau des tranches -->
+    <div class="card bg-base-100 shadow-xl mb-6">
+        <div class="card-body">
+            <h2 class="card-title text-xl mb-4">
+                <i class="fas fa-layer-group text-primary"></i>
+                Tranches IRSA configurées
+            </h2>
+
+            <div class="overflow-x-auto">
+                <table class="table table-zebra">
+                    <thead>
+                        <tr>
+                            <th>Ordre</th>
+                            <th>Tranche (Ar)</th>
+                            <th>Pourcentage</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody-tranches">
+                        {% if tranches %}
+                            {% for tranche in tranches %}
+                            <tr>
+                                <td>
+                                    <span class="badge badge-primary badge-lg">{{ tranche.ordre }}</span>
+                                </td>
+                                <td class="font-mono font-semibold">
+                                    Jusqu'à {{ tranche.tranche_superieure|floatformat:0 }} Ar
+                                </td>
+                                <td>
+                                    <span class="badge badge-info badge-lg">{{ tranche.pourcentage|floatformat:0 }}%</span>
+                                </td>
+                                <td>
+                                    <div class="flex gap-2">
+                                        <button onclick="openEditModal('{{ tranche.id }}', {{ tranche.ordre }}, {{ tranche.tranche_superieure }}, {{ tranche.pourcentage }})" class="btn btn-sm btn-info gap-1">
+                                            <i class="fas fa-edit"></i>
+                                            Modifier
+                                        </button>
+                                        <button onclick="deleteTranche('{{ tranche.id }}', {{ tranche.ordre }})" class="btn btn-sm btn-error gap-1">
+                                            <i class="fas fa-trash"></i>
+                                            Supprimer
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="4" class="text-center text-base-content/60">
+                                    <i class="fas fa-info-circle mr-2"></i>
+                                    Aucune tranche IRSA configurée
+                                </td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Simulateur salaire complet -->
+    <div class="card bg-base-100 shadow-xl mb-6">
+        <div class="card-body">
+            <h2 class="card-title text-xl mb-2">
+                <i class="fas fa-money-check-dollar text-secondary"></i>
+                Simulateur salaire complet
+            </h2>
+            <p class="text-sm text-base-content/70 mb-4">
+                Valeur cible à partir d'un salaire net pour obtenir le brut, la base imposable, la CNaPS, la mutuelle santé et l'IRSA.
+            </p>
+
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-bullseye text-primary mr-1"></i>
+                            Salaire net cible (Ar)
+                        </span>
+                    </label>
+                    <input
+                        type="number"
+                        id="input-salaire-net-cible"
+                        step="0.01"
+                        min="0"
+                        class="input input-bordered input-lg font-mono"
+                        placeholder="Ex: 800000"
+                    >
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-users text-info mr-1"></i>
+                            Personnes à charge
+                        </span>
+                    </label>
+                    <input
+                        type="number"
+                        id="input-salaire-personnes-charge"
+                        min="0"
+                        step="1"
+                        value="0"
+                        class="input input-bordered input-lg font-mono"
+                    >
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-sliders text-accent mr-1"></i>
+                            Mode de simulation
+                        </span>
+                    </label>
+                    <select id="select-mode-simulation" class="select select-bordered select-lg" onchange="updateSalaireSimulatorFields()">
+                        <option value="standard">Mensuel standard</option>
+                        <option value="prorata">Mensuel au prorata</option>
+                        <option value="journalier">Journalier</option>
+                        <option value="gardien">Gardien</option>
+                    </select>
+                </div>
+
+                <div class="flex items-end">
+                    <button onclick="calculerSalaireComplet()" class="btn btn-secondary btn-lg gap-2 w-full">
+                        <i class="fas fa-calculator"></i>
+                        Simuler le salaire
+                    </button>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mt-4">
+                <div class="form-control hidden" id="field-jours-presence">
+                    <label class="label">
+                        <span class="label-text font-semibold" id="label-jours-presence">Nombre de jours</span>
+                    </label>
+                    <input
+                        type="number"
+                        id="input-salaire-jours-presence"
+                        min="0"
+                        step="1"
+                        value="0"
+                        class="input input-bordered font-mono"
+                    >
+                    <label class="label">
+                        <span class="label-text-alt" id="hint-jours-presence">Utilisé pour le prorata ou le journalier</span>
+                    </label>
+                </div>
+
+                <div class="form-control hidden" id="field-gardien-jours-feries">
+                    <label class="label">
+                        <span class="label-text font-semibold">Jours fériés gardien</span>
+                    </label>
+                    <input
+                        type="number"
+                        id="input-salaire-jours-feries"
+                        min="0"
+                        step="1"
+                        value="0"
+                        class="input input-bordered font-mono"
+                    >
+                </div>
+
+                <div class="form-control hidden" id="field-gardien-heures">
+                    <label class="label">
+                        <span class="label-text font-semibold">Heures de remplacement gardien</span>
+                    </label>
+                    <input
+                        type="number"
+                        id="input-salaire-heures-remplacement"
+                        min="0"
+                        step="0.01"
+                        value="0"
+                        class="input input-bordered font-mono"
+                    >
+                </div>
+            </div>
+
+            <div class="alert alert-info mt-4">
+                <i class="fas fa-circle-info"></i>
+                <span>
+                    Hypothèses actuelles : salaire minimum {{ config.salaire_minimum|floatformat:0 }} Ar, déduction IRSA unitaire {{ config.deduction_irsa|floatformat:0 }} Ar, minimum IRSA {{ config.minimum_irsa|floatformat:0 }} Ar.
+                </span>
+            </div>
+
+            <div id="result-salaire-complet" class="hidden mt-6">
+                <div class="divider">Simulation complète</div>
+
+                <div class="stats stats-vertical xl:stats-horizontal shadow w-full">
+                    <div class="stat">
+                        <div class="stat-title">Net cible</div>
+                        <div class="stat-value text-secondary text-lg" id="result-salaire-net-cible"></div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-title">Brut de base</div>
+                        <div class="stat-value text-primary text-lg" id="result-salaire-brut-base"></div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-title">Brut total</div>
+                        <div class="stat-value text-info text-lg" id="result-salaire-brut-total"></div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-title">Net obtenu</div>
+                        <div class="stat-value text-success text-lg" id="result-salaire-net-obtenu"></div>
+                        <div class="stat-desc" id="result-salaire-ecart-net"></div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 mt-6">
+                    <div class="card bg-base-200">
+                        <div class="card-body">
+                            <h3 class="card-title text-lg">Décomposition salariale</h3>
+                            <div class="overflow-x-auto">
+                                <table class="table table-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td class="font-semibold">Majoration nuit gardien (30%)</td>
+                                            <td class="text-right font-mono" id="result-majoration-nuit"></td>
+                                        </tr>
+                                        <tr>
+                                            <td class="font-semibold">Base CNaPS</td>
+                                            <td class="text-right font-mono" id="result-base-cnaps"></td>
+                                        </tr>
+                                        <tr>
+                                            <td class="font-semibold">CNaPS employé</td>
+                                            <td class="text-right font-mono" id="result-charge-cnaps"></td>
+                                        </tr>
+                                        <tr>
+                                            <td class="font-semibold">Mutuelle santé</td>
+                                            <td class="text-right font-mono" id="result-mutuelle-sante"></td>
+                                        </tr>
+                                        <tr>
+                                            <td class="font-semibold">Base imposable</td>
+                                            <td class="text-right font-mono" id="result-base-imposable-complet"></td>
+                                        </tr>
+                                        <tr>
+                                            <td class="font-semibold">Déduction impôts</td>
+                                            <td class="text-right font-mono" id="result-deduction-impots-complet"></td>
+                                        </tr>
+                                        <tr>
+                                            <td class="font-semibold">IRSA final</td>
+                                            <td class="text-right font-mono text-success font-bold" id="result-irsa-complet"></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <p class="text-xs text-base-content/70" id="result-salaire-hypotheses"></p>
+                        </div>
+                    </div>
+
+                    <div class="card bg-base-200">
+                        <div class="card-body">
+                            <h3 class="card-title text-lg">Majorations éventuelles</h3>
+                            <div class="overflow-x-auto">
+                                <table class="table table-sm">
+                                    <tbody>
+                                        <tr>
+                                            <td class="font-semibold">Majoration dimanche gardien</td>
+                                            <td class="text-right font-mono" id="result-majoration-dimanche"></td>
+                                        </tr>
+                                        <tr>
+                                            <td class="font-semibold">Montant jours fériés gardien</td>
+                                            <td class="text-right font-mono" id="result-majoration-feries"></td>
+                                        </tr>
+                                        <tr>
+                                            <td class="font-semibold">Montant remplacement gardien</td>
+                                            <td class="text-right font-mono" id="result-majoration-remplacement"></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <p class="text-xs text-base-content/70" id="result-majoration-note"></p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-6">
+                    <h3 class="text-lg font-semibold mb-2">Détail IRSA par tranche</h3>
+                    <div class="overflow-x-auto">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Ordre</th>
+                                    <th>Tranche</th>
+                                    <th>%</th>
+                                    <th>Montant taxable</th>
+                                    <th>IRSA tranche</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tbody-salaire-detail-tranches"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Simulateur IRSA -->
+    <div class="card bg-base-200 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title text-xl mb-4">
+                <i class="fas fa-calculator text-success"></i>
+                Simulateur IRSA pur
+            </h2>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-wallet text-primary mr-1"></i>
+                            Base imposable (Ar)
+                        </span>
+                    </label>
+                    <input
+                        type="number"
+                        id="input-base-imposable"
+                        step="0.01"
+                        min="0"
+                        class="input input-bordered input-lg font-mono"
+                        placeholder="Ex: 500000"
+                    >
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-child text-info mr-1"></i>
+                            Enfants à charge
+                        </span>
+                    </label>
+                    <input
+                        type="number"
+                        id="input-enfants-charge"
+                        min="0"
+                        step="1"
+                        value="0"
+                        class="input input-bordered input-lg font-mono"
+                        placeholder="0"
+                    >
+                </div>
+
+                <div class="flex items-end">
+                    <button onclick="calculerIrsaTest()" class="btn btn-success btn-lg gap-2 w-full">
+                        <i class="fas fa-calculator"></i>
+                        Calculer l'IRSA
+                    </button>
+                </div>
+            </div>
+
+            <!-- Résultat du calcul -->
+            <div id="result-calcul-irsa" class="hidden mt-6">
+                <div class="divider">Résultat du calcul</div>
+
+                <div class="stats stats-vertical lg:stats-horizontal shadow w-full">
+                    <div class="stat">
+                        <div class="stat-title">Base imposable</div>
+                        <div class="stat-value text-primary text-lg" id="result-base"></div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-title">IRSA par tranches</div>
+                        <div class="stat-value text-info text-lg" id="result-irsa-tranches"></div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-title">Déduction enfants</div>
+                        <div class="stat-value text-warning text-lg" id="result-deduction"></div>
+                        <div class="stat-desc" id="result-deduction-detail"></div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-title">IRSA final à payer</div>
+                        <div class="stat-value text-success text-lg" id="result-irsa"></div>
+                        <div class="stat-desc" id="result-minimum-note"></div>
+                    </div>
+                </div>
+
+                <!-- Détail des tranches -->
+                <div class="mt-4">
+                    <h3 class="text-lg font-semibold mb-2">Détail par tranche :</h3>
+                    <div class="overflow-x-auto">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Ordre</th>
+                                    <th>Tranche</th>
+                                    <th>%</th>
+                                    <th>Montant taxable</th>
+                                    <th>IRSA tranche</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tbody-detail-tranches">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- Modal Créer/Modifier Tranche -->
+<dialog id="modal-tranche" class="modal">
+    <div class="modal-box max-w-2xl">
+        <h3 class="font-bold text-lg mb-4" id="modal-title">Nouvelle tranche IRSA</h3>
+
+        <form id="form-tranche">
+            <input type="hidden" id="tranche-id" value="">
+
+            <div class="space-y-4">
+                <!-- Ordre -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Ordre *</span>
+                    </label>
+                    <input
+                        type="number"
+                        id="input-ordre"
+                        min="1"
+                        step="1"
+                        class="input input-bordered"
+                        placeholder="Ex: 1"
+                        required
+                    >
+                    <label class="label">
+                        <span class="label-text-alt">Ordre d'application de la tranche (1, 2, 3...)</span>
+                    </label>
+                </div>
+
+                <!-- Tranche supérieure -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Tranche supérieure (Ar) *</span>
+                    </label>
+                    <input
+                        type="number"
+                        id="input-tranche-superieure"
+                        step="0.01"
+                        min="0"
+                        class="input input-bordered font-mono"
+                        placeholder="Ex: 350000"
+                        required
+                    >
+                    <label class="label">
+                        <span class="label-text-alt">Montant maximum de cette tranche</span>
+                    </label>
+                </div>
+
+                <!-- Pourcentage -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Pourcentage (%) *</span>
+                    </label>
+                    <input
+                        type="number"
+                        id="input-pourcentage"
+                        step="0.01"
+                        min="0"
+                        max="100"
+                        class="input input-bordered font-mono"
+                        placeholder="Ex: 5"
+                        required
+                    >
+                    <label class="label">
+                        <span class="label-text-alt">Pourcentage d'IRSA applicable (0-100)</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('modal-tranche').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary gap-2">
+                    <i class="fas fa-save"></i>
+                    Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<script>
+// Fonction helper pour récupérer le cookie CSRF
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+function formatAr(value) {
+    return Number(value || 0).toLocaleString('fr-FR') + ' Ar';
+}
+
+function updateSalaireSimulatorFields() {
+    const mode = document.getElementById('select-mode-simulation').value;
+    const fieldJours = document.getElementById('field-jours-presence');
+    const fieldFeries = document.getElementById('field-gardien-jours-feries');
+    const fieldHeures = document.getElementById('field-gardien-heures');
+    const labelJours = document.getElementById('label-jours-presence');
+    const hintJours = document.getElementById('hint-jours-presence');
+
+    const showJours = mode === 'prorata' || mode === 'journalier';
+    fieldJours.classList.toggle('hidden', !showJours);
+    fieldFeries.classList.toggle('hidden', mode !== 'gardien');
+    fieldHeures.classList.toggle('hidden', mode !== 'gardien');
+
+    if (mode === 'journalier') {
+        labelJours.textContent = 'Nombre de jours travaillés';
+        hintJours.textContent = 'Le brut total est calculé comme brut de base × jours.';
+    } else if (mode === 'prorata') {
+        labelJours.textContent = 'Nombre de jours de présence';
+        hintJours.textContent = 'Le brut total est calculé au prorata sur 30 jours.';
+    } else {
+        labelJours.textContent = 'Nombre de jours';
+        hintJours.textContent = 'Utilisé pour le prorata ou le journalier';
+    }
+}
+
+// Ouvrir le modal de création
+function openCreateModal() {
+    document.getElementById('modal-title').textContent = 'Nouvelle tranche IRSA';
+    document.getElementById('tranche-id').value = '';
+    document.getElementById('input-ordre').value = '';
+    document.getElementById('input-tranche-superieure').value = '';
+    document.getElementById('input-pourcentage').value = '';
+    document.getElementById('modal-tranche').showModal();
+}
+
+// Ouvrir le modal de modification
+function openEditModal(id, ordre, trancheSup, pourcentage) {
+    document.getElementById('modal-title').textContent = 'Modifier la tranche IRSA';
+    document.getElementById('tranche-id').value = id;
+    document.getElementById('input-ordre').value = ordre;
+    document.getElementById('input-tranche-superieure').value = trancheSup;
+    document.getElementById('input-pourcentage').value = pourcentage;
+    document.getElementById('modal-tranche').showModal();
+}
+
+// Soumission du formulaire tranche
+document.getElementById('form-tranche').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const trancheId = document.getElementById('tranche-id').value;
+    const ordre = parseInt(document.getElementById('input-ordre').value);
+    const trancheSup = parseFloat(document.getElementById('input-tranche-superieure').value);
+    const pourcentage = parseFloat(document.getElementById('input-pourcentage').value);
+
+    // Validation
+    if (ordre < 1) {
+        alert('L\'ordre doit être supérieur ou égal à 1');
+        return;
+    }
+
+    if (trancheSup <= 0) {
+        alert('La tranche supérieure doit être strictement positive');
+        return;
+    }
+
+    if (pourcentage < 0 || pourcentage > 100) {
+        alert('Le pourcentage doit être entre 0 et 100');
+        return;
+    }
+
+    const url = trancheId
+        ? `{% url 'employees:api_update_tranche_irsa' '00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', trancheId)
+        : '{% url "employees:api_create_tranche_irsa" %}';
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                ordre: ordre,
+                tranche_superieure: trancheSup,
+                pourcentage: pourcentage
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert('✓ ' + data.message);
+            document.getElementById('modal-tranche').close();
+            location.reload();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+});
+
+// Supprimer une tranche
+async function deleteTranche(id, ordre) {
+    if (!confirm(`Supprimer la tranche ${ordre} ?\n\nCette action est irréversible.`)) {
+        return;
+    }
+
+    const url = `{% url 'employees:api_delete_tranche_irsa' '00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', id);
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert('✓ Tranche supprimée');
+            location.reload();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+}
+
+async function calculerSalaireComplet() {
+    const salaireNetCible = parseFloat(document.getElementById('input-salaire-net-cible').value);
+    const personnesCharge = parseInt(document.getElementById('input-salaire-personnes-charge').value) || 0;
+    const modeSimulation = document.getElementById('select-mode-simulation').value;
+    const nbJoursPresence = parseInt(document.getElementById('input-salaire-jours-presence').value) || 0;
+    const nbJoursFeriesGardien = parseInt(document.getElementById('input-salaire-jours-feries').value) || 0;
+    const nbHeuresRemplacementGardien = parseFloat(document.getElementById('input-salaire-heures-remplacement').value) || 0;
+
+    if (!salaireNetCible || salaireNetCible <= 0) {
+        alert('Veuillez saisir un salaire net cible valide');
+        return;
+    }
+
+    if (personnesCharge < 0 || nbJoursPresence < 0 || nbJoursFeriesGardien < 0 || nbHeuresRemplacementGardien < 0) {
+        alert('Les quantités doivent être positives');
+        return;
+    }
+
+    if ((modeSimulation === 'prorata' || modeSimulation === 'journalier') && nbJoursPresence <= 0) {
+        alert('Veuillez saisir un nombre de jours de présence valide');
+        return;
+    }
+
+    try {
+        const response = await fetch('{% url "employees:api_simuler_salaire_depuis_net" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                salaire_net_cible: salaireNetCible,
+                personnes_charge: personnesCharge,
+                mode_simulation: modeSimulation,
+                nb_jours_presence: nbJoursPresence,
+                nb_jours_feries_gardien: nbJoursFeriesGardien,
+                nb_heures_remplacement_gardien: nbHeuresRemplacementGardien
+            })
+        });
+
+        const data = await response.json();
+
+        if (!data.success) {
+            alert('Erreur: ' + data.error);
+            return;
+        }
+
+        document.getElementById('result-salaire-net-cible').textContent = formatAr(data.salaire_net_cible);
+        document.getElementById('result-salaire-brut-base').textContent = formatAr(data.salaire_brut_base);
+        document.getElementById('result-salaire-brut-total').textContent = formatAr(data.salaire_brut_total);
+        document.getElementById('result-salaire-net-obtenu').textContent = formatAr(data.salaire_net);
+        document.getElementById('result-salaire-ecart-net').textContent = 'Écart net: ' + formatAr(data.ecart_net);
+
+        document.getElementById('result-base-cnaps').textContent = formatAr(data.base_cnaps);
+        document.getElementById('result-charge-cnaps').textContent = formatAr(data.charge_cnaps_employe);
+        document.getElementById('result-mutuelle-sante').textContent = formatAr(data.mutuelle_sante);
+        document.getElementById('result-base-imposable-complet').textContent = formatAr(data.base_imposable);
+        document.getElementById('result-deduction-impots-complet').textContent = formatAr(data.deduction_impots);
+        document.getElementById('result-irsa-complet').textContent = formatAr(data.irsa);
+
+        document.getElementById('result-majoration-nuit').textContent = formatAr(data.majoration_nuit_gardien);
+        document.getElementById('result-majoration-dimanche').textContent = formatAr(data.majoration_dimanche_gardien);
+        document.getElementById('result-majoration-feries').textContent = formatAr(data.montant_jours_feries_gardien);
+        document.getElementById('result-majoration-remplacement').textContent = formatAr(data.montant_remplacement_gardien);
+
+        const hypotheses = data.hypotheses || {};
+        document.getElementById('result-salaire-hypotheses').textContent =
+            `Hypothèses: salaire minimum ${formatAr(hypotheses.salaire_minimum)}, ` +
+            `déduction IRSA unitaire ${formatAr(hypotheses.deduction_irsa_unitaire)}, ` +
+            `minimum IRSA ${formatAr(hypotheses.minimum_irsa)}.`;
+
+        const totalMajoration =
+            Number(data.majoration_nuit_gardien || 0) +
+            Number(data.majoration_dimanche_gardien || 0) +
+            Number(data.montant_jours_feries_gardien || 0) +
+            Number(data.montant_remplacement_gardien || 0);
+        document.getElementById('result-majoration-note').textContent = totalMajoration > 0
+            ? 'Des majorations gardien ont été intégrées au brut total.'
+            : 'Aucune majoration spécifique n’a été appliquée pour cette simulation.';
+
+        const tbody = document.getElementById('tbody-salaire-detail-tranches');
+        tbody.innerHTML = '';
+        (data.irsa_detail?.detail_tranches || []).forEach(tranche => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><span class="badge badge-sm badge-primary">${tranche.ordre}</span></td>
+                <td class="font-mono text-sm">${tranche.tranche_inf.toLocaleString('fr-FR')} - ${tranche.tranche_sup.toLocaleString('fr-FR')}</td>
+                <td><span class="badge badge-sm badge-info">${Math.round(tranche.pourcentage)}%</span></td>
+                <td class="font-mono">${formatAr(tranche.montant_taxable)}</td>
+                <td class="font-mono font-semibold text-success">${formatAr(tranche.irsa_tranche)}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        document.getElementById('result-salaire-complet').classList.remove('hidden');
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+}
+
+// Calculer l'IRSA de test
+async function calculerIrsaTest() {
+    const baseImposable = parseFloat(document.getElementById('input-base-imposable').value);
+    const enfantsCharge = parseInt(document.getElementById('input-enfants-charge').value) || 0;
+
+    if (!baseImposable || baseImposable < 0) {
+        alert('Veuillez saisir une base imposable valide');
+        return;
+    }
+
+    if (enfantsCharge < 0) {
+        alert('Le nombre d\'enfants doit être positif');
+        return;
+    }
+
+    try {
+        const response = await fetch('{% url "employees:api_calculer_irsa_test" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                base_imposable: baseImposable,
+                enfants_charge: enfantsCharge
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            // Afficher les résultats
+            document.getElementById('result-base').textContent = data.base_imposable.toLocaleString('fr-FR') + ' Ar';
+            document.getElementById('result-irsa-tranches').textContent = data.irsa_par_tranches.toLocaleString('fr-FR') + ' Ar';
+            document.getElementById('result-deduction').textContent = '- ' + data.deduction_enfants.toLocaleString('fr-FR') + ' Ar';
+            document.getElementById('result-deduction-detail').textContent = enfantsCharge + ' enfant(s) × ' + data.deduction_irsa_unitaire.toLocaleString('fr-FR') + ' Ar';
+            document.getElementById('result-irsa').textContent = data.irsa_final.toLocaleString('fr-FR') + ' Ar';
+
+            // Afficher une note si le minimum IRSA a été appliqué
+            const minimumApplique = !!data.minimum_applique;
+            const noteMinimum = document.getElementById('result-minimum-note');
+            if (minimumApplique) {
+                noteMinimum.textContent = 'Minimum IRSA appliqué: ' + data.minimum_irsa.toLocaleString('fr-FR') + ' Ar';
+                noteMinimum.classList.add('text-warning');
+            } else {
+                noteMinimum.textContent = '';
+                noteMinimum.classList.remove('text-warning');
+            }
+
+            // Remplir le tableau des tranches
+            const tbody = document.getElementById('tbody-detail-tranches');
+            tbody.innerHTML = '';
+
+            data.detail_tranches.forEach(tranche => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><span class="badge badge-sm badge-primary">${tranche.ordre}</span></td>
+                    <td class="font-mono text-sm">${tranche.tranche_inf.toLocaleString('fr-FR')} - ${tranche.tranche_sup.toLocaleString('fr-FR')}</td>
+                    <td><span class="badge badge-sm badge-info">${Math.round(tranche.pourcentage)}%</span></td>
+                    <td class="font-mono">${tranche.montant_taxable.toLocaleString('fr-FR')} Ar</td>
+                    <td class="font-mono font-semibold text-success">${tranche.irsa_tranche.toLocaleString('fr-FR')} Ar</td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            // Afficher la section résultat
+            document.getElementById('result-calcul-irsa').classList.remove('hidden');
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+}
+
+updateSalaireSimulatorFields();
+</script>
+
+{% endblock %}

@@ -1,0 +1,1287 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% load static %}
+
+{% block title %}Représentantes des Usagers{% endblock %}
+
+{% block content %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script><script>
+// =========================================================
+// 🛠️ INITIALISATION GLOBALE
+// =========================================================
+document.addEventListener("DOMContentLoaded", function () {
+    console.log("📌 DOM chargé – initialisation du script representants_list");
+
+    const csrfToken = "{{ csrf_token }}";
+    const currentEmployeId = "{{ current_employe_id }}";
+    const avisCache = {};
+
+    // =========================================================
+    // 🛠️ UTILITAIRES GENERAUX
+    // =========================================================
+    function showMessage(containerId, message, type = "error") {
+        const container = document.getElementById(containerId);
+        if (!container) return console.error("❌ Missing container:", containerId);
+
+        const alertClass = type === "error" ? "alert-error" : "alert-success";
+        container.innerHTML = `<div class="alert ${alertClass}"><span>${message}</span></div>`;
+        container.classList.remove("hidden");
+    }
+
+    function safeGetFile(input) {
+        return input && input.files && input.files.length > 0 ? input.files[0] : null;
+    }
+
+    // =========================================================
+    // 📥 IMPORT - AVIS
+    // =========================================================
+    function triggerImportAvis() {
+        const input = document.getElementById("import_avis_file");
+        if (!input) return console.error("❌ import_avis_file introuvable");
+        setTimeout(() => input.click(), 50);
+    }
+
+    function importAvis(input) {
+        const file = safeGetFile(input);
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        fetch("/usagers/avis/import/", {
+            method: "POST",
+            body: formData,
+            headers: { "X-CSRFToken": csrfToken },
+        })
+            .then((r) => r.json())
+            .then((data) => {
+                if (!data.success) {
+                    alert("Erreur : " + data.message);
+                    return;
+                }
+                alert(`Import terminé:\n- ${data.imported} avis créés\n- ${data.updated || 0} avis mis à jour`);
+                location.reload();
+            })
+            .catch((err) => alert("Erreur réseau : " + err.message));
+
+        input.value = "";
+    }
+
+    // =========================================================
+    // 📤 IMPORT - REPRESENTANTS
+    // =========================================================
+    function triggerImportRepresentants() {
+        const input = document.getElementById("import_representants_file");
+        if (!input) return console.error("❌ import_representants_file introuvable");
+        input.click();
+    }
+
+    function importRepresentants(input) {
+        const file = safeGetFile(input);
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        fetch("/usagers/representants/import/", {
+            method: "POST",
+            body: formData,
+            headers: { "X-CSRFToken": csrfToken },
+        })
+            .then((r) => r.json())
+            .then((data) => {
+                if (!data.success) {
+                    alert("Erreur : " + data.message);
+                    return;
+                }
+                const errors = Array.isArray(data.errors) ? data.errors : [];
+                const errorPreview = errors.length
+                    ? `\n- ${errors.length} erreur(s)\n${errors.slice(0, 5).join("\n")}${errors.length > 5 ? "\n..." : ""}`
+                    : "";
+                alert(`Import réussi :\n- ${data.imported} créés\n- ${data.updated} mis à jour${errorPreview}`);
+                location.reload();
+            })
+            .catch((err) => alert("Erreur réseau : " + err.message));
+
+        input.value = "";
+    }
+
+    function triggerImportRepresentantsDatesDebut() {
+        const input = document.getElementById("import_representants_dates_debut_file");
+        if (!input) return console.error("import_representants_dates_debut_file introuvable");
+        input.click();
+    }
+
+    function importRepresentantsDatesDebut(input) {
+        const file = safeGetFile(input);
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        fetch("/usagers/representants/import-dates-debut/", {
+            method: "POST",
+            body: formData,
+            headers: { "X-CSRFToken": csrfToken },
+        })
+            .then((r) => r.json())
+            .then((data) => {
+                if (!data.success) {
+                    alert("Erreur : " + data.message);
+                    return;
+                }
+                const errors = Array.isArray(data.errors) ? data.errors : [];
+                const errorPreview = errors.length
+                    ? `\n- ${errors.length} erreur(s)\n${errors.slice(0, 5).join("\n")}${errors.length > 5 ? "\n..." : ""}`
+                    : "";
+                alert(`Import dates de début réussi :\n- ${data.updated || 0} mis à jour\n- ${data.skipped || 0} ignorés${errorPreview}`);
+                location.reload();
+            })
+            .catch((err) => alert("Erreur réseau : " + err.message));
+
+        input.value = "";
+    }
+
+    // listeners import
+    const importAvisInput = document.getElementById("import_avis_file");
+    const importRepInput = document.getElementById("import_representants_file");
+    const importRepDatesDebutInput = document.getElementById("import_representants_dates_debut_file");
+    if (importAvisInput) importAvisInput.addEventListener("change", () => importAvis(importAvisInput));
+    if (importRepInput) importRepInput.addEventListener("change", () => importRepresentants(importRepInput));
+    if (importRepDatesDebutInput) importRepDatesDebutInput.addEventListener("change", () => importRepresentantsDatesDebut(importRepDatesDebutInput));
+
+    window.triggerImportAvis = triggerImportAvis;
+    window.triggerImportRepresentants = triggerImportRepresentants;
+    window.triggerImportRepresentantsDatesDebut = triggerImportRepresentantsDatesDebut;
+
+    // =========================================================
+    // 💬 CHARGEMENT DES AVIS
+    // =========================================================
+    function loadAvis(representantId) {
+        const container = document.getElementById("avis_content_" + representantId);
+        if (!container) return;
+
+        const avisUrl = new URL(`/usagers/representants/${representantId}/avis/`, window.location.origin);
+        const selectedYear = new URLSearchParams(window.location.search).get("annee");
+        if (selectedYear) {
+            avisUrl.searchParams.set("annee", selectedYear);
+        }
+
+        // Indicateur de chargement (pas de AbortController - le problème venait de là)
+        container.innerHTML = '<div class="flex items-center justify-center py-6 gap-2"><span class="loading loading-spinner loading-sm"></span><span class="text-sm">Chargement des avis...</span></div>';
+
+        const fetchPromise = fetch(avisUrl.toString());
+
+        // Timeout manuel de 20 secondes
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('timeout')), 20000)
+        );
+
+        Promise.race([fetchPromise, timeoutPromise])
+            .then((r) => {
+                if (!r.ok) {
+                    throw new Error('HTTP ' + r.status);
+                }
+                const contentType = r.headers.get('content-type') || '';
+                if (!contentType.includes('application/json')) {
+                    throw new Error('Réponse non-JSON (login requis ?)');
+                }
+                return r.json();
+            })
+            .then((data) => {
+                if (!data.success) {
+                    const errMsg = data.error || data.message || 'Erreur chargement avis';
+                    container.innerHTML = '<div class="alert alert-warning text-sm"><i class="fas fa-exclamation-triangle mr-2"></i>' + errMsg + '</div>';
+                    return;
+                }
+
+                const avisList = data.avis || [];
+                if (avisList.length === 0) {
+                    container.innerHTML = '<div class="text-center py-8 text-gray-500"><i class="fas fa-comments text-4xl mb-2"></i><p>Aucun avis enregistré</p></div>';
+                    return;
+                }
+
+                let tableRows = "";
+                let cardBody = "";
+
+                avisList.forEach((a) => {
+                    avisCache[a.id] = {
+                        ...a,
+                        representant_id: representantId,
+                        representant_nom: (data.representant && data.representant.nom) ? data.representant.nom : ""
+                    };
+                    const scoreBadge = a.score === 4 ? 'badge-success' : a.score >= 2 ? 'badge-warning' : 'badge-error';
+
+                    tableRows += `
+                        <tr>
+                            <td>${a.date_avis}</td>
+                            <td>${a.employe}</td>
+                            <td>${a.quantite_ok ? '<i class="fas fa-check-circle text-success"></i>' : '<i class="fas fa-times-circle text-error"></i>'}</td>
+                            <td>${a.qualite_ok ? '<i class="fas fa-check-circle text-success"></i>' : '<i class="fas fa-times-circle text-error"></i>'}</td>
+                            <td>${a.delai_reparation_ok ? '<i class="fas fa-check-circle text-success"></i>' : '<i class="fas fa-times-circle text-error"></i>'}</td>
+                            <td>${a.relation_gestionnaire_ok ? '<i class="fas fa-check-circle text-success"></i>' : '<i class="fas fa-times-circle text-error"></i>'}</td>
+                            <td><span class="badge ${scoreBadge} badge-sm">${a.score}/4 (${a.pourcentage}%)</span></td>
+                            <td class="text-xs" style="min-width:200px;white-space:normal;">${[a.probleme_technique ? 'Tech: '+a.probleme_technique : '', a.probleme_recouvrement ? 'Rec: '+a.probleme_recouvrement : '', a.probleme_regles_utilisation ? 'Reg: '+a.probleme_regles_utilisation : ''].filter(Boolean).join('<br>') || '-'}</td>
+                            <td class="text-xs" style="min-width:180px;white-space:normal;">${a.remarque || '-'}</td>
+                            <td>
+                                <div class="flex gap-1">
+                                    <button class="btn btn-xs btn-info" onclick="openEditAvisModal('${a.id}')"><i class="fas fa-pen"></i></button>
+                                    <button class="btn btn-xs btn-error" onclick="deleteAvis('${a.id}', '${a.date_avis}')"><i class="fas fa-trash"></i></button>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+
+                    cardBody += `
+                        <div class="card card-compact bg-base-200 shadow-sm border border-base-300">
+                            <div class="card-body">
+                                <div class="flex justify-between items-start mb-2">
+                                    <div>
+                                        <h4 class="font-bold text-sm">${a.date_avis}</h4>
+                                        <p class="text-xs opacity-70">Employé: ${a.employe}</p>
+                                    </div>
+                                    <span class="badge ${scoreBadge} badge-sm">${a.score}/4</span>
+                                </div>
+                                <div class="grid grid-cols-2 gap-2 text-xs mb-2">
+                                    <div>Qté: ${a.quantite_ok ? '<i class="fas fa-check text-success"></i>' : '<i class="fas fa-times text-error"></i>'}</div>
+                                    <div>Qlté: ${a.qualite_ok ? '<i class="fas fa-check text-success"></i>' : '<i class="fas fa-times text-error"></i>'}</div>
+                                    <div>Délai: ${a.delai_reparation_ok ? '<i class="fas fa-check text-success"></i>' : '<i class="fas fa-times text-error"></i>'}</div>
+                                    <div>Rel: ${a.relation_gestionnaire_ok ? '<i class="fas fa-check text-success"></i>' : '<i class="fas fa-times text-error"></i>'}</div>
+                                </div>
+                                <div class="card-actions justify-end pt-2 border-t border-base-300">
+                                    <button class="btn btn-xs btn-info" onclick="openEditAvisModal('${a.id}')"><i class="fas fa-pen"></i></button>
+                                    <button class="btn btn-xs btn-error" onclick="deleteAvis('${a.id}', '${a.date_avis}')"><i class="fas fa-trash"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                const viewMode = localStorage.getItem('avisViewMode') || 'auto';
+                const tableClass = viewMode === 'card' ? 'hidden' : (viewMode === 'table' ? 'block' : 'hidden md:block');
+                const cardClass = viewMode === 'table' ? 'hidden' : (viewMode === 'card' ? 'block' : 'block md:hidden');
+                const toggleIcon = viewMode === 'table' ? 'fa-table' : (viewMode === 'card' ? 'fa-th-large' : 'fa-mobile-alt');
+                const toggleLabel = viewMode === 'table' ? 'Tableau' : (viewMode === 'card' ? 'Cartes' : 'Auto');
+
+                const html = '<div class="flex justify-start mb-2">' +
+                    '<button class="btn btn-xs btn-outline gap-1" onclick="switchAvisViewMode(\'' + representantId + '\')">' +
+                    '<i class="fas ' + toggleIcon + '"></i> ' + toggleLabel +
+                    '</button></div>' +
+                    '<div class="' + tableClass + ' w-full overflow-x-auto">' +
+                    '<table class="table table-xs table-zebra w-full" style="min-width:780px;">' +
+                    '<thead><tr class="bg-base-300"><th>Date</th><th>Employé</th><th>Qté</th><th>Qlté</th><th>Délai</th><th>Rel</th><th>Score</th><th>Problèmes</th><th>Remarque</th><th>Actions</th></tr></thead>' +
+                    '<tbody>' + tableRows + '</tbody></table></div>' +
+                    '<div class="' + cardClass + ' grid grid-cols-1 md:grid-cols-2 gap-3 p-1">' + cardBody + '</div>';
+
+                container.innerHTML = html;
+            })
+            .catch((err) => {
+                console.error("Erreur loadAvis:", err.message);
+                const msg = err.message === 'timeout'
+                    ? 'Délai dépassé (>20s).'
+                    : ('Erreur: ' + err.message);
+                container.innerHTML = '<div class="alert alert-error text-sm"><i class="fas fa-exclamation-circle mr-2"></i>' + msg + ' <a href="#" onclick="event.preventDefault();loadAvis(\'' + representantId + '\')">Réessayer</a></div>';
+            });
+    }
+
+    window.switchAvisViewMode = function(representantId) {
+        const current = localStorage.getItem('avisViewMode') || 'auto';
+        const next = current === 'auto' ? 'table' : (current === 'table' ? 'card' : 'auto');
+        localStorage.setItem('avisViewMode', next);
+        loadAvis(representantId);
+    };
+
+    window.loadAvis = loadAvis;
+
+    // Listeners collapse
+    document.querySelectorAll('[id^="collapse_"]').forEach((checkbox) => {
+        checkbox.addEventListener("change", function () {
+            if (this.checked) loadAvis(this.id.replace("collapse_", ""));
+        });
+    });
+
+
+    // =========================================================
+    // 👤 MODAL REPRESENTANT
+    // =========================================================
+    const editVillageSelect = document.getElementById("edit_village");
+    const editVillageSearch = document.getElementById("edit_village_search");
+
+    function syncVillageSelectFromSearch() {
+        const inputValue = (editVillageSearch.value || "").trim().toLowerCase();
+        let matchedOption = null;
+        for (const option of editVillageSelect.options) {
+            if (option.value && option.textContent.toLowerCase().includes(inputValue)) {
+                matchedOption = option;
+                break;
+            }
+        }
+        editVillageSelect.value = matchedOption ? matchedOption.value : "";
+    }
+
+    function syncVillageSearchFromSelect() {
+        const selectedOption = editVillageSelect.options[editVillageSelect.selectedIndex];
+        editVillageSearch.value = selectedOption && selectedOption.value ? selectedOption.textContent.trim() : "";
+    }
+
+    if (editVillageSearch && editVillageSelect) {
+        editVillageSearch.addEventListener("input", syncVillageSelectFromSearch);
+    }
+
+    function getTodayIso() { return new Date().toISOString().slice(0, 10); }
+
+    window.openCreateModal = function () {
+        document.getElementById("modal_title").textContent = "Nouvelle Représentante";
+        document.getElementById("representant_id").value = "";
+        document.getElementById("edit_village").value = "";
+        document.getElementById("edit_village_search").value = "";
+        document.getElementById("edit_nom").value = "";
+        document.getElementById("edit_contact").value = "";
+        document.getElementById("edit_observation").value = "";
+        document.getElementById("edit_date_debut").value = getTodayIso();
+        document.getElementById("edit_date_fin").value = "";
+        document.getElementById("representant_messages").classList.add("hidden");
+        document.getElementById("representant_modal").showModal();
+    };
+
+    window.openEditModal = function (button) {
+        const d = button.dataset;
+        document.getElementById("modal_title").textContent = "Modifier Représentante";
+        document.getElementById("representant_id").value = d.id;
+        document.getElementById("edit_village").value = d.villageId;
+        syncVillageSearchFromSelect();
+        document.getElementById("edit_nom").value = d.nom;
+        document.getElementById("edit_contact").value = d.contact || "";
+        document.getElementById("edit_observation").value = d.observation || "";
+        document.getElementById("edit_date_debut").value = d.dateDebut || "";
+        document.getElementById("edit_date_fin").value = d.dateFin || "";
+        document.getElementById("representant_messages").classList.add("hidden");
+        document.getElementById("representant_modal").showModal();
+    };
+
+    document.getElementById("representant_form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        syncVillageSelectFromSearch();
+        const id = document.getElementById("representant_id").value;
+        const url = id ? `/usagers/representants/${id}/update/` : "/usagers/representants/create/";
+        fetch(url, {
+            method: "POST",
+            body: new FormData(this),
+            headers: { "X-CSRFToken": csrfToken },
+        })
+            .then((r) => r.json())
+            .then((data) => {
+                if (data.success) location.reload();
+                else showMessage("representant_messages", data.message, "error");
+            })
+            .catch(() => showMessage("representant_messages", "Erreur réseau", "error"));
+    });
+
+    window.deleteRepresentant = function (button) {
+        if (!confirm(`Supprimer "${button.dataset.nom}" ?`)) return;
+        fetch(`/usagers/representants/${button.dataset.id}/delete/`, {
+            method: "POST",
+            headers: { "X-CSRFToken": csrfToken },
+        })
+            .then((r) => r.json())
+            .then((data) => {
+                if (data.success) location.reload();
+                else alert(data.message);
+            });
+    };
+
+    // =========================================================
+    // 📝 MODAL AVIS
+    // =========================================================
+    window.openAvisModal = function (button) {
+        document.getElementById("avis_modal_title").textContent = "Nouvel Avis - " + button.dataset.nom;
+        document.getElementById("avis_id").value = "";
+        document.getElementById("avis_representant_id").value = button.dataset.id;
+        document.getElementById("avis_date").value = getTodayIso();
+        document.getElementById("avis_employe").value = currentEmployeId || "";
+        document.getElementById("avis_quantite").checked = false;
+        document.getElementById("avis_qualite").checked = false;
+        document.getElementById("avis_delai").checked = false;
+        document.getElementById("avis_relation").checked = false;
+        document.getElementById("avis_probleme_technique").value = "";
+        document.getElementById("avis_probleme_recouvrement").value = "";
+        document.getElementById("avis_probleme_regles").value = "";
+        document.getElementById("avis_remarque").value = "";
+        document.getElementById("avis_messages").classList.add("hidden");
+        document.getElementById("avis_modal").showModal();
+    };
+
+    window.openEditAvisModal = function (avisId) {
+        const avis = avisCache[avisId];
+        if (!avis) return alert("Avis introuvable");
+        document.getElementById("avis_modal_title").textContent = "Modifier Avis - " + (avis.representant_nom || "");
+        document.getElementById("avis_id").value = avis.id;
+        document.getElementById("avis_representant_id").value = avis.representant_id;
+        document.getElementById("avis_date").value = avis.date_avis_iso || "";
+        document.getElementById("avis_employe").value = avis.employe_id || "";
+        document.getElementById("avis_quantite").checked = !!avis.quantite_ok;
+        document.getElementById("avis_qualite").checked = !!avis.qualite_ok;
+        document.getElementById("avis_delai").checked = !!avis.delai_reparation_ok;
+        document.getElementById("avis_relation").checked = !!avis.relation_gestionnaire_ok;
+        document.getElementById("avis_probleme_technique").value = avis.probleme_technique || "";
+        document.getElementById("avis_probleme_recouvrement").value = avis.probleme_recouvrement || "";
+        document.getElementById("avis_probleme_regles").value = avis.probleme_regles_utilisation || "";
+        document.getElementById("avis_remarque").value = avis.remarque || "";
+        document.getElementById("avis_messages").classList.add("hidden");
+        document.getElementById("avis_modal").showModal();
+    };
+
+    document.getElementById("avis_form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        const avisId = document.getElementById("avis_id").value;
+        const repId = document.getElementById("avis_representant_id").value;
+        const formData = new FormData(this);
+        formData.append("quantite_ok", document.getElementById("avis_quantite").checked);
+        formData.append("qualite_ok", document.getElementById("avis_qualite").checked);
+        formData.append("delai_reparation_ok", document.getElementById("avis_delai").checked);
+        formData.append("relation_gestionnaire_ok", document.getElementById("avis_relation").checked);
+        const url = avisId ? `/usagers/avis/${avisId}/update/` : `/usagers/representants/${repId}/avis/create/`;
+        fetch(url, {
+            method: "POST",
+            body: formData,
+            headers: { "X-CSRFToken": csrfToken },
+        })
+            .then((r) => r.json())
+            .then((data) => {
+                if (data.success) {
+                    document.getElementById("avis_modal").close();
+                    loadAvis(repId);
+                } else showMessage("avis_messages", data.message, "error");
+            })
+            .catch(() => showMessage("avis_messages", "Erreur réseau", "error"));
+    });
+
+    window.deleteAvis = function (id, date) {
+        if (!confirm(`Supprimer l'avis du ${date} ?`)) return;
+        fetch(`/usagers/avis/${id}/delete/`, {
+            method: "POST",
+            headers: { "X-CSRFToken": csrfToken },
+        })
+            .then((r) => r.json())
+            .then((data) => {
+                if (data.success) location.reload();
+                else alert(data.message);
+            });
+    };
+
+    // =========================================================
+    // 📊 GRAPHIQUES CHART.JS
+    // =========================================================
+    const scoreMoyenProgress = document.getElementById("score_moyen_progress");
+    if (scoreMoyenProgress) {
+        const val = parseFloat(String(scoreMoyenProgress.dataset.value || "0").replace(",", "."));
+        scoreMoyenProgress.style.setProperty("--value", (Number.isFinite(val) ? Math.max(0, Math.min(100, val)) : 0).toString());
+    }
+
+    if (window.ChartDataLabels) Chart.register(window.ChartDataLabels);
+
+    const criteresStackedData = JSON.parse('{{ chart_criteres_stacked_json|escapejs }}');
+    const communesStackedData = JSON.parse('{{ chart_communes_stacked_json|escapejs }}');
+
+    function replaceChartWithMessage(canvasId, message) {
+        const canvas = document.getElementById(canvasId);
+        if (canvas && canvas.parentElement) canvas.parentElement.innerHTML = `<div class="h-full flex items-center justify-center text-sm text-base-content/60 text-center px-4">${message}</div>`;
+    }
+
+    function createStacked100Chart(canvasId, payload, config = {}) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return null;
+        const labels = Array.isArray(payload?.labels) ? payload.labels : [];
+        const totals = Array.isArray(payload?.totals) ? payload.totals : [];
+        if (!labels.length || !totals.some(t => Number(t) > 0)) {
+            replaceChartWithMessage(canvasId, config.emptyMessage || 'Aucune donnée.');
+            return null;
+        }
+        const wrapper = config.wrapperId ? document.getElementById(config.wrapperId) : canvas.parentElement;
+        if (wrapper && config.dynamicHeight) wrapper.style.height = `${Math.max(config.minHeight || 280, labels.length * (config.rowHeight || 42))}px`;
+        if (wrapper && config.dynamicWidth) {
+            const w = Math.max(config.minWidth || 720, labels.length * (config.barWidth || 84));
+            wrapper.style.width = wrapper.style.minWidth = canvas.style.minWidth = `${w}px`;
+            canvas.style.width = '100%';
+        }
+        return new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [
+                    { label: 'Positifs', data: payload.positive_percentages, rawCounts: payload.positive_counts, backgroundColor: 'rgba(34, 197, 94, 0.78)', borderColor: 'rgba(22, 163, 74, 1)', borderWidth: 1 },
+                    { label: 'Negatifs', data: payload.negative_percentages, rawCounts: payload.negative_counts, backgroundColor: 'rgba(239, 68, 68, 0.78)', borderColor: 'rgba(220, 38, 38, 1)', borderWidth: 1 }
+                ]
+            },
+            options: {
+                indexAxis: config.indexAxis || 'x',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: true, position: config.legendPosition || 'top' },
+                    tooltip: {
+                        callbacks: {
+                            label: (ctx) => {
+                                const raw = ctx.dataset.rawCounts[ctx.dataIndex];
+                                return `${ctx.dataset.label}: ${raw} (${ctx.parsed.y || ctx.parsed.x}%)`;
+                            }
+                        }
+                    },
+                    datalabels: window.ChartDataLabels ? {
+                        color: '#fff', font: { weight: 'bold', size: 10 },
+                        formatter: (val, ctx) => {
+                            const raw = ctx.dataset.rawCounts[ctx.dataIndex];
+                            return (raw && val >= (config.minLabelPercent || 8)) ? raw : '';
+                        },
+                        anchor: 'center', align: 'center', clamp: true
+                    } : false
+                },
+                scales: {
+                    x: { stacked: true, min: (config.indexAxis === 'y' ? 0 : undefined), max: (config.indexAxis === 'y' ? 100 : undefined) },
+                    y: { stacked: true, min: (config.indexAxis !== 'y' ? 0 : undefined), max: (config.indexAxis !== 'y' ? 100 : undefined) }
+                }
+            }
+        });
+    }
+
+    createStacked100Chart('chartCriteres', criteresStackedData, { emptyMessage: 'Aucun avis.', minLabelPercent: 6 });
+    
+    if (ctxPN) {
+        const totalAvisVal = Number("{{ stats.total_avis|default:0 }}");
+        const positifsVal = Number("{{ stats.avis_positifs|default:0 }}");
+        const negatifsVal = Number("{{ stats.avis_negatifs|default:0 }}");
+        const mitigesVal = Math.max(0, totalAvisVal - positifsVal - negatifsVal);
+        
+        new Chart(ctxPN, {
+            type: 'doughnut',
+            data: {
+                labels: ['Positif', 'Négatif', 'Mitigé'],
+                datasets: [{
+                    data: [positifsVal, negatifsVal, mitigesVal],
+                    backgroundColor: ['rgba(34, 197, 94, 0.7)', 'rgba(239, 68, 68, 0.7)', 'rgba(251, 191, 36, 0.7)']
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+    }
+
+    createStacked100Chart('chartCommunes', communesStackedData, {
+        wrapperId: 'chartCommunesWrapper', dynamicWidth: true, minWidth: 960, barWidth: 92,
+        emptyMessage: 'Aucune donnée commune.', minLabelPercent: 10
+    });
+
+    function registerChartCollapseResize(detailsId, canvasId) {
+        const d = document.getElementById(detailsId);
+        const c = document.getElementById(canvasId);
+        if (d && c) d.addEventListener('toggle', () => {
+            if (d.open) setTimeout(() => { const chart = Chart.getChart(c); if (chart) chart.resize(); }, 100);
+        });
+    }
+    registerChartCollapseResize('chartCriteresCollapse', 'chartCriteres');
+    registerChartCollapseResize('chartPositifNegatifCollapse', 'chartPositifNegatif');
+    registerChartCollapseResize('chartCommunesCollapse', 'chartCommunes');
+});
+</script>
+
+
+<div class="container mx-auto px-4 py-6">
+    <div class="flex flex-col gap-4 lg:flex-row lg:justify-between lg:items-center mb-6">
+        <h1 class="text-3xl font-bold">
+            <i class="fas fa-users mr-3 text-primary"></i>Représentantes des Usagers
+        </h1>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:flex gap-2 w-full lg:w-auto">
+            <a href="{% url 'usagers:representants_reparations_dashboard' %}" class="btn btn-outline btn-sm w-full sm:w-auto justify-start sm:justify-center">
+                <i class="fas fa-chart-line mr-2"></i>Avis + Reparations
+            </a>
+            <a href="/usagers/representants-evolution/" class="btn btn-outline btn-sm w-full sm:w-auto justify-start sm:justify-center">
+                <i class="fas fa-chart-area mr-2"></i>Evolution avis
+            </a>
+            <a href="{% url 'usagers:reunions_list' %}" class="btn btn-outline btn-sm w-full sm:w-auto justify-start sm:justify-center">
+                <i class="fas fa-people-group mr-2"></i>Réunions
+            </a>
+            <a href="{% url 'usagers:autorites_tiers_list' %}" class="btn btn-outline btn-sm w-full sm:w-auto justify-start sm:justify-center">
+                <i class="fas fa-user-shield mr-2"></i>Autorités &amp; Tiers
+            </a>
+            <button onclick="openCreateModal()" class="btn btn-primary btn-sm w-full sm:w-auto justify-start sm:justify-center">
+                <i class="fas fa-plus mr-2"></i>Nouvelle Représentante
+            </button>
+
+            <div class="dropdown dropdown-end w-full sm:w-auto">
+                <label tabindex="0" class="btn btn-success btn-sm w-full sm:w-auto justify-start sm:justify-center">
+                    <i class="fas fa-file-excel mr-2"></i>Excel
+                </label>
+                <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52">
+                    <li><a href="{% url 'usagers:export_representants_excel' %}{% if export_querystring %}?{{ export_querystring }}{% endif %}">
+                        <i class="fas fa-download"></i>Exporter Représentantes
+                    </a></li>
+                    <li><a href="{% url 'usagers:export_avis_excel' %}{% if export_querystring %}?{{ export_querystring }}{% endif %}">
+                        <i class="fas fa-download"></i>Exporter les Avis
+                    </a></li>
+                    <li class="divider"></li>
+                    <li><a href="{% url 'usagers:template_representants_excel' %}">
+                        <i class="fas fa-file-download"></i>Template Représentantes + dates
+                    </a></li>
+                    <li><a href="{% url 'usagers:template_representants_dates_debut_excel' %}">
+                        <i class="fas fa-file-download"></i>Template dates de début
+                    </a></li>
+                    <li><a href="{% url 'usagers:template_avis_excel' %}">
+                        <i class="fas fa-file-download"></i>Template des Avis
+                    </a></li>
+                    <li class="divider"></li>
+                    <li><a onclick="triggerImportRepresentants()">
+                        <i class="fas fa-upload"></i>Importer Représentantes + dates
+                    </a></li>
+                    <li><a onclick="triggerImportRepresentantsDatesDebut()">
+                        <i class="fas fa-upload"></i>Importer dates de début
+                    </a></li>
+                    <li><a onclick="triggerImportAvis()">
+                        <i class="fas fa-upload"></i>Importer les Avis
+                    </a></li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Inputs cachés pour import -->
+    <input type="file" id="import_representants_file" accept=".xlsx" class="hidden">
+    <input type="file" id="import_representants_dates_debut_file" accept=".xlsx" class="hidden">
+    <input type="file" id="import_avis_file" accept=".xlsx" class="hidden">
+
+    <!-- Stats Principales -->
+    <div class="stats stats-horizontal shadow w-full mb-6">
+        <div class="stat">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-users text-3xl"></i>
+            </div>
+            <div class="stat-title">Total Représentantes</div>
+            <div class="stat-value text-primary">{{ stats.total }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-figure text-success">
+                <i class="fas fa-check-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Actifs</div>
+            <div class="stat-value text-success">{{ stats.actifs }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-figure text-error">
+                <i class="fas fa-times-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Inactifs</div>
+            <div class="stat-value text-error">{{ stats.inactifs }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-figure text-secondary">
+                <i class="fas fa-water text-3xl"></i>
+            </div>
+            <div class="stat-title">Ouvrages concernés</div>
+            <div class="stat-value text-secondary">{{ stats.nb_ouvrages }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-figure text-info">
+                <i class="fas fa-comments text-3xl"></i>
+            </div>
+            <div class="stat-title">Total Avis</div>
+            <div class="stat-value text-info">{{ stats.total_avis }}</div>
+        </div>
+    </div>
+
+    <!-- Stats Avis Détaillées -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <!-- Score moyen -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h3 class="card-title text-sm">
+                    <i class="fas fa-chart-line mr-2 text-primary"></i>Score Moyen
+                </h3>
+                <div class="text-center">
+                    <div
+                        id="score_moyen_progress"
+                        class="radial-progress text-primary"
+                        data-value="{{ stats.taux_satisfaction_moyen|default:0 }}"
+                        style="--value:0; --size:8rem; --thickness:8px;"
+                        role="progressbar"
+                    >
+                        <div class="text-2xl font-bold">{{ stats.score_moyen }}/4</div>
+                        <div class="text-xs">{{ stats.taux_satisfaction_moyen }}%</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Graphique par critère -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h3 class="card-title text-sm">
+                    <i class="fas fa-tasks mr-2 text-success"></i>Par Critère
+                </h3>
+                <div class="flex items-center justify-between gap-3 mb-2">
+                    <p class="text-xs text-base-content/70">Histogramme empile 100% des reponses positives et negatives.</p>
+                    <div class="badge badge-outline badge-sm">100%</div>
+                </div>
+                <details id="chartCriteresCollapse" class="collapse collapse-arrow">
+                    <summary class="collapse-title min-h-0 px-0 py-2 text-xs font-medium text-base-content/70">
+                        Afficher le graphique
+                    </summary>
+                    <div class="collapse-content px-0 pt-0">
+                        <div style="height: 200px;">
+                            <canvas id="chartCriteres"></canvas>
+                        </div>
+                    </div>
+                </details>
+            </div>
+        </div>
+
+        <!-- Répartition avis -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h3 class="card-title text-sm">
+                    <i class="fas fa-chart-pie mr-2 text-warning"></i>Répartition
+                </h3>
+                <details id="chartPositifNegatifCollapse" class="collapse collapse-arrow">
+                    <summary class="collapse-title min-h-0 px-0 py-2 text-xs font-medium text-base-content/70">
+                        Afficher le graphique
+                    </summary>
+                    <div class="collapse-content px-0 pt-0">
+                        <div style="height: 200px;">
+                            <canvas id="chartPositifNegatif"></canvas>
+                        </div>
+                        <div class="grid grid-cols-3 gap-2 mt-2 text-xs text-center">
+                    <div>
+                        <div class="badge badge-success badge-sm">Positifs</div>
+                        <div class="font-bold">{{ stats.avis_positifs }}</div>
+                    </div>
+                    <div>
+                        <div class="badge badge-error badge-sm">Négatifs</div>
+                        <div class="font-bold">{{ stats.avis_negatifs }}</div>
+                    </div>
+                    <div>
+                        <div class="badge badge-warning badge-sm">Mitigés</div>
+                        <div class="font-bold">{{ stats.total_avis|add:"-"|add:stats.avis_positifs|add:"-"|add:stats.avis_negatifs }}</div>
+                    </div>
+                </div>
+                    </div>
+                </details>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stats Répartition par District et Commune -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <div class="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                <div>
+                    <h3 class="card-title text-sm">
+                        <i class="fas fa-city mr-2 text-primary"></i>Par Commune
+                    </h3>
+                    <p class="text-xs text-base-content/70">
+                        Histogramme vertical 100% empile, regroupe par commune avec les 4 criteres visibles ensemble, trie par district et region.
+                    </p>
+                </div>
+                <div class="badge badge-outline badge-sm">100%</div>
+            </div>
+            <details id="chartCommunesCollapse" class="collapse collapse-arrow">
+                <summary class="collapse-title min-h-0 px-0 py-2 text-xs font-medium text-base-content/70">
+                    Afficher le graphique
+                </summary>
+                <div class="collapse-content px-0 pt-0">
+                    <div class="overflow-x-auto">
+                        <div id="chartCommunesWrapper" style="height: 320px;">
+                            <canvas id="chartCommunes"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </details>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-md mb-6">
+        <details class="collapse collapse-arrow">
+            <summary class="collapse-title font-semibold text-sm">
+                <i class="fas fa-chart-bar mr-2 text-primary"></i>Répartition par District et Commune
+            </summary>
+            <div class="collapse-content pt-0">
+                <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                        <tr class="bg-base-200">
+                            <th>District / Commune</th>
+                            <th class="text-right">Nombre</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for district_stat in stats_repartition %}
+                        <!-- District row -->
+                        <tr class="bg-primary/10 font-semibold">
+                            <td>
+                                <i class="fas fa-map-marked-alt mr-2 text-primary"></i>
+                                {{ district_stat.district }}
+                            </td>
+                            <td class="text-right text-lg">{{ district_stat.total }}</td>
+                        </tr>
+                        <!-- Communes rows -->
+                        {% for commune in district_stat.communes %}
+                        <tr class="hover">
+                            <td class="pl-8">
+                                <i class="fas fa-map-marker-alt mr-2 text-success text-xs"></i>
+                                {{ commune.nom }}
+                            </td>
+                            <td class="text-right text-sm">{{ commune.count }}</td>
+                        </tr>
+                        {% endfor %}
+                        {% empty %}
+                        <tr>
+                            <td colspan="2" class="text-center text-gray-500">Aucune donnée</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+            </div>
+        </details>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow-md mb-4">
+        <div class="card-body py-4">
+            <form method="get" autocomplete="off" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-4">
+                <div class="form-control">
+                    <label class="label py-0"><span class="label-text text-xs">Région</span></label>
+                    <select name="region" class="select select-bordered select-sm" onchange="this.form.submit()">
+                        <option value="">Toutes</option>
+                        {% for region in regions %}
+                        <option value="{{ region.id }}" {% if selected_region == region.id|stringformat:"s" %}selected{% endif %}>
+                            {{ region.nom_region }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label py-0"><span class="label-text text-xs">District</span></label>
+                    <select name="district" class="select select-bordered select-sm" onchange="this.form.submit()">
+                        <option value="">Tous</option>
+                        {% for district in districts %}
+                        <option value="{{ district.id }}" {% if selected_district == district.id|stringformat:"s" %}selected{% endif %}>
+                            {{ district.nom_district }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label py-0"><span class="label-text text-xs">Commune</span></label>
+                    <select name="commune" class="select select-bordered select-sm" onchange="this.form.submit()">
+                        <option value="">Toutes</option>
+                        {% for commune in communes %}
+                        <option value="{{ commune.id }}" {% if selected_commune == commune.id|stringformat:"s" %}selected{% endif %}>
+                            {{ commune.nom_commune }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label py-0"><span class="label-text text-xs">Village</span></label>
+                    <select name="village" class="select select-bordered select-sm" onchange="this.form.submit()">
+                        <option value="">Tous</option>
+                        {% for village in villages %}
+                        <option value="{{ village.id }}" {% if selected_village == village.id|stringformat:"s" %}selected{% endif %}>
+                            {{ village.nom_village }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label py-0"><span class="label-text text-xs">Statut</span></label>
+                    <select name="actif" class="select select-bordered select-sm" onchange="this.form.submit()">
+                        <option value="tous" {% if selected_actif == 'tous' or not selected_actif %}selected{% endif %}>Tous</option>
+                        <option value="oui" {% if selected_actif == 'oui' %}selected{% endif %}>Actifs</option>
+                        <option value="non" {% if selected_actif == 'non' %}selected{% endif %}>Inactifs</option>
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label py-0"><span class="label-text text-xs">Année</span></label>
+                    <select name="annee" class="select select-bordered select-sm" onchange="this.form.submit()">
+                        <option value="">Toutes</option>
+                        {% for year in years_available %}
+                        <option value="{{ year }}" {% if selected_annee == year|stringformat:"s" %}selected{% endif %}>
+                            {{ year }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label py-0"><span class="label-text text-xs">Recherche</span></label>
+                    <div class="join">
+                        <input type="text" name="search" value="{{ search_query }}" placeholder="Nom, contact..." class="input input-bordered input-sm join-item flex-1">
+                        <a href="?clear=1" class="btn btn-sm join-item btn-ghost" title="Vider les filtres">
+                            <i class="fas fa-times"></i>
+                        </a>
+                        <button type="submit" class="btn btn-sm join-item">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toggle affichage des représentants non actifs (date de fin renseignée) -->
+    <style>
+        #representants_list_container.hide-inactifs .representant-inactif { display: none; }
+    </style>
+    <script>
+        function applyInactifsToggle(showInactifs) {
+            var container = document.getElementById('representants_list_container');
+            if (!container) return;
+            container.classList.toggle('hide-inactifs', !showInactifs);
+
+            container.querySelectorAll('.js-ouvrage').forEach(function (ouvrage) {
+                var badge = ouvrage.querySelector('.js-nb-representants');
+                if (!badge) return;
+                var total = parseInt(badge.dataset.total, 10) || 0;
+                var inactifs = ouvrage.querySelectorAll('.representant-item.representant-inactif').length;
+                var count = showInactifs ? total : (total - inactifs);
+                badge.textContent = count + ' représentant(s)';
+            });
+        }
+        document.addEventListener('DOMContentLoaded', function () {
+            var toggle = document.getElementById('toggle_inactifs');
+            applyInactifsToggle(toggle ? toggle.checked : false);
+        });
+    </script>
+    <div class="flex justify-end mb-2">
+        <label class="label cursor-pointer gap-2 py-0">
+            <span class="label-text text-xs">Afficher les représentants non actifs</span>
+            <input type="checkbox" id="toggle_inactifs" class="toggle toggle-sm toggle-primary"
+                   onchange="applyInactifsToggle(this.checked)">
+        </label>
+    </div>
+
+    <!-- Liste des représentants regroupés par District > Commune > Ouvrage -->
+    <div id="representants_list_container" class="space-y-4 hide-inactifs">
+        {% for district in groupes_ordonnes %}
+        <!-- District -->
+        <details class="collapse collapse-arrow bg-base-100 shadow-lg" open>
+            <summary class="collapse-title p-4 cursor-pointer hover:bg-base-200">
+                <h2 class="inline-flex items-center text-primary text-xl font-bold">
+                    <i class="fas fa-map-marked-alt mr-2"></i>
+                    {{ district.nom }}
+                    <span class="badge badge-primary badge-sm ml-2">{{ district.nb_communes }} commune(s)</span>
+                </h2>
+            </summary>
+            <div class="collapse-content">
+                <div class="space-y-3 mt-2">
+                    {% for commune in district.communes %}
+                    <!-- Commune -->
+                    <details class="collapse collapse-arrow border-l-4 border-secondary pl-4 bg-base-100" open>
+                        <summary class="collapse-title cursor-pointer hover:bg-base-200 p-2 rounded">
+                            <h3 class="inline-flex items-center font-semibold text-secondary text-lg">
+                                <i class="fas fa-city mr-2"></i>
+                                {{ commune.nom }}
+                                <span class="badge badge-secondary badge-sm ml-2">{{ commune.nb_ouvrages }} ouvrage(s)</span>
+                            </h3>
+                        </summary>
+
+                        <div class="collapse-content space-y-2 mt-2">
+                            {% for ouvrage in commune.ouvrages %}
+                            <!-- Ouvrage -->
+                            <details class="collapse collapse-arrow border-l-4 border-info pl-4 bg-base-100 js-ouvrage" open>
+                                <summary class="collapse-title cursor-pointer hover:bg-base-200 p-2 rounded">
+                                    <h4 class="inline-flex items-center font-medium text-info">
+                                        <i class="fas fa-water mr-2"></i>
+                                        {{ ouvrage.nom }}
+                                        <span class="badge badge-info badge-xs ml-2 js-nb-representants" data-total="{{ ouvrage.nb_representants }}">{{ ouvrage.nb_representants }} représentant(s)</span>
+                                        {% if ouvrage.saisonnier %}
+                                        <span class="badge badge-warning badge-xs ml-2">
+                                            <i class="fas fa-sun mr-1"></i>Saisonnier
+                                        </span>
+                                        {% endif %}
+                                    </h4>
+                                </summary>
+
+                                <!-- Représentants de cet ouvrage -->
+                                <div class="space-y-1 mt-2">
+                                    {% for item in ouvrage.representants %}
+                                    {% with representant=item.representant %}
+                                    <div class="collapse collapse-arrow bg-base-200 shadow-sm representant-item{% if representant.date_fin %} representant-inactif{% endif %}">
+                                        <input type="checkbox" id="collapse_{{ representant.id }}" />
+                                        <div class="collapse-title py-2">
+                                            <div class="flex items-center justify-between">
+                                                <div class="flex items-center gap-3 flex-wrap">
+                                                    <span class="badge badge-outline badge-xs">
+                                                        Début {{ representant.date_debut|date:"d/m/Y"|default:"-" }}
+                                                    </span>
+                                                    <span class="badge {% if representant.est_actif %}badge-success{% else %}badge-neutral{% endif %} badge-xs">
+                                                        Fin {{ representant.date_fin|date:"d/m/Y"|default:"En cours" }}
+                                                    </span>
+                                                    <strong>{{ representant.nom|default:"Sans nom" }}</strong>
+                                                    <span class="badge badge-ghost badge-xs">
+                                                        <i class="fas fa-map-marker-alt mr-1"></i>{{ representant.village.nom_village }}
+                                                    </span>
+                                                    {% if representant.contact %}
+                                                    <a href="tel:{{ representant.contact|cut:' ' }}"
+                                                       class="text-xs text-primary hover:underline"
+                                                       title="Appeler {{ representant.contact }}">
+                                                        <i class="fas fa-phone"></i> {{ representant.contact }}
+                                                    </a>
+                                                    {% endif %}
+                                                </div>
+                                                <div class="flex items-center gap-2">
+                                                    <span class="badge badge-info badge-xs">
+                                                        <i class="fas fa-comments mr-1"></i>{{ item.nb_avis }} avis
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            {% if representant.observation %}
+                                            <div class="text-xs text-gray-500 mt-1">
+                                                <i class="fas fa-info-circle"></i> {{ representant.observation }}
+                                            </div>
+                                            {% endif %}
+                                        </div>
+                                        <div class="collapse-content">
+                                            <!-- Boutons d'action en dehors de la zone de titre -->
+                                            <div class="flex flex-col sm:flex-row gap-2 mb-3">
+                                                <button onclick="openEditModal(this)"
+                                                        data-id="{{ representant.id }}"
+                                                        data-village-id="{{ representant.village.id }}"
+                                                        data-nom="{{ representant.nom|default:''|escapejs }}"
+                                                        data-contact="{{ representant.contact|default:''|escapejs }}"
+                                                        data-observation="{{ representant.observation|default:''|escapejs }}"
+                                                        data-date-debut="{{ representant.date_debut|date:'Y-m-d' }}"
+                                                        data-date-fin="{{ representant.date_fin|date:'Y-m-d' }}"
+                                                        class="btn btn-sm btn-primary w-full sm:w-auto justify-start sm:justify-center" title="Modifier">
+                                                    <i class="fas fa-edit"></i> Modifier
+                                                </button>
+                                                <button onclick="openAvisModal(this)"
+                                                        data-id="{{ representant.id }}"
+                                                        data-nom="{{ representant.nom|default:''|escapejs }}"
+                                                        class="btn btn-sm btn-success w-full sm:w-auto justify-start sm:justify-center" title="Ajouter un avis">
+                                                    <i class="fas fa-plus"></i> Ajouter un avis
+                                                </button>
+                                                {% if request.user.employe.is_directeur %}
+                                                <button onclick="deleteRepresentant(this)"
+                                                        data-id="{{ representant.id }}"
+                                                        data-nom="{{ representant.nom|default:''|escapejs }}"
+                                                        class="btn btn-sm btn-error w-full sm:w-auto justify-start sm:justify-center" title="Supprimer">
+                                                    <i class="fas fa-trash"></i> Supprimer
+                                                </button>
+                                                {% endif %}
+                                            </div>
+                                            <div class="divider my-1"></div>
+                                            <div id="avis_content_{{ representant.id }}" class="min-h-[100px] w-full overflow-x-auto" style="touch-action: pan-x; -webkit-overflow-scrolling: touch;">
+                                                <div class="text-center py-4">
+                                                    <span class="loading loading-spinner loading-md"></span>
+                                                    <p class="mt-2 text-sm">Chargement des avis...</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endwith %}
+                                    {% endfor %}
+                                </div>
+                            </details>
+                            {% endfor %}
+                        </div>
+                    </details>
+                    {% endfor %}
+                </div>
+            </div>
+        </details>
+        {% empty %}
+        <div class="alert">
+            <i class="fas fa-inbox text-4xl"></i>
+            <span>Aucun représentant trouvé</span>
+        </div>
+        {% endfor %}
+    </div>
+
+</div>
+
+
+<!-- Modal Créer/Modifier Représentante -->
+<dialog id="representant_modal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-user-edit mr-2 text-primary"></i><span id="modal_title">Nouvelle Représentante</span>
+        </h3>
+        <form id="representant_form" class="space-y-4">
+            {% csrf_token %}
+            <input type="hidden" id="representant_id" />
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Village *</span></label>
+                <input
+                    type="text"
+                    id="edit_village_search"
+                    class="input input-bordered"
+                    list="edit_villages_datalist"
+                    placeholder="Rechercher un village..."
+                    autocomplete="off"
+                    required
+                />
+                <datalist id="edit_villages_datalist">
+                    {% for village in villages %}
+                    <option value="{{ village.nom_village }} ({{ village.fokontany.nom_fokontany }} - {{ village.fokontany.commune.nom_commune }})"></option>
+                    {% endfor %}
+                </datalist>
+                <select id="edit_village" name="village_id" class="hidden">
+                    <option value="">Sélectionner...</option>
+                    {% for village in villages %}
+                    <option value="{{ village.id }}">{{ village.nom_village }} ({{ village.fokontany.nom_fokontany }} - {{ village.fokontany.commune.nom_commune }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Nom *</span></label>
+                <input type="text" id="edit_nom" name="nom" class="input input-bordered" required />
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Contact</span></label>
+                <input type="text" id="edit_contact" name="contact" class="input input-bordered" placeholder="0340101010" />
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Observation</span></label>
+                <textarea id="edit_observation" name="observation" class="textarea textarea-bordered" rows="3"></textarea>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Date début</span></label>
+                    <input type="date" id="edit_date_debut" name="date_debut" class="input input-bordered" />
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Date fin</span></label>
+                    <input type="date" id="edit_date_fin" name="date_fin" class="input input-bordered" />
+                </div>
+            </div>
+
+            <div id="representant_messages" class="hidden"></div>
+
+            <div class="modal-action">
+                <button type="button" onclick="document.getElementById('representant_modal').close()" class="btn btn-ghost">
+                    <i class="fas fa-times mr-2"></i>Annuler
+                </button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Modal Avis -->
+<dialog id="avis_modal" class="modal">
+    <div class="modal-box w-11/12 max-w-3xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-comment-alt mr-2 text-success"></i><span id="avis_modal_title">Nouvel Avis</span>
+        </h3>
+        <form id="avis_form" class="space-y-4">
+            {% csrf_token %}
+            <input type="hidden" id="avis_id" />
+            <input type="hidden" id="avis_representant_id" />
+
+            <div class="grid grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Date *</span></label>
+                    <input type="date" id="avis_date" name="date_avis" class="input input-bordered" required />
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Employé</span></label>
+                    <select id="avis_employe" name="employe_id" class="select select-bordered">
+                        <option value="">Non renseigné</option>
+                        {% for emp in employes %}
+                        <option value="{{ emp.id }}" {% if current_employe_id == emp.id|stringformat:"s" %}selected{% endif %}>{{ emp.surnom }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="divider">Evaluation</div>
+
+            <div class="alert alert-warning">
+                <span><i class="fas fa-exclamation-triangle mr-2"></i>Chaque champ "Problème" renseigné retire 1 point au score.</span>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label cursor-pointer">
+                        <span class="label-text">Quantité d'eau suffisante</span>
+                        <input type="checkbox" id="avis_quantite" name="quantite_ok" class="checkbox checkbox-success" />
+                    </label>
+                </div>
+
+                <div class="form-control">
+                    <label class="label cursor-pointer">
+                        <span class="label-text">Qualité satisfaisante</span>
+                        <input type="checkbox" id="avis_qualite" name="qualite_ok" class="checkbox checkbox-success" />
+                    </label>
+                </div>
+
+                <div class="form-control">
+                    <label class="label cursor-pointer">
+                        <span class="label-text">Délai de réparation correct</span>
+                        <input type="checkbox" id="avis_delai" name="delai_reparation_ok" class="checkbox checkbox-success" />
+                    </label>
+                </div>
+
+                <div class="form-control">
+                    <label class="label cursor-pointer">
+                        <span class="label-text">Bonne relation avec gestionnaire</span>
+                        <input type="checkbox" id="avis_relation" name="relation_gestionnaire_ok" class="checkbox checkbox-success" />
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Problème technique (texte libre, point négatif)</span></label>
+                <textarea id="avis_probleme_technique" name="probleme_technique" class="textarea textarea-bordered" rows="2"></textarea>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Problème de recouvrement (texte libre, point négatif)</span></label>
+                <textarea id="avis_probleme_recouvrement" name="probleme_recouvrement" class="textarea textarea-bordered" rows="2"></textarea>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Problème sur les règles d'utilisation (texte libre, point négatif)</span></label>
+                <textarea id="avis_probleme_regles" name="probleme_regles_utilisation" class="textarea textarea-bordered" rows="2"></textarea>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Remarques</span></label>
+                <textarea id="avis_remarque" name="remarque" class="textarea textarea-bordered" rows="3"></textarea>
+            </div>
+
+            <div id="avis_messages" class="hidden"></div>
+
+            <div class="modal-action">
+                <button type="button" onclick="document.getElementById('avis_modal').close()" class="btn btn-ghost">
+                    <i class="fas fa-times mr-2"></i>Annuler
+                </button>
+                <button type="submit" class="btn btn-success">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+
+
+{% endblock %}

@@ -1,0 +1,382 @@
+{% extends logistics_shell_base_template|default:"base.html" %}
+{% load humanize %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex justify-between items-center">
+        <h1 class="text-3xl font-bold text-base-content">{{ title }}</h1>
+
+        <div class="flex gap-2">
+            <!-- Dropdown Export -->
+            <div class="dropdown dropdown-end">
+                <label tabindex="0" class="btn btn-success btn-sm">
+                    <i class="fas fa-download mr-2"></i>Exporter
+                    <i class="fas fa-chevron-down ml-1"></i>
+                </label>
+                <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52 z-50">
+                    <li>
+                        <a href="{% url 'inventory:export_stocks' %}">
+                            <i class="fas fa-file-excel text-success"></i>
+                            Export Stocks Excel
+                        </a>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Dropdown Import -->
+            <div class="dropdown dropdown-end">
+                <label tabindex="0" class="btn btn-warning btn-sm">
+                    <i class="fas fa-upload mr-2"></i>Importer
+                    <i class="fas fa-chevron-down ml-1"></i>
+                </label>
+                <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52 z-50">
+                    <li>
+                        <a href="{% url 'inventory:template_stocks' %}">
+                            <i class="fas fa-download text-primary"></i>
+                            Télécharger Template
+                        </a>
+                    </li>
+                    <li>
+                        <a onclick="document.getElementById('importStocksFile').click()">
+                            <i class="fas fa-upload text-warning"></i>
+                            Importer Fichier Excel
+                        </a>
+                    </li>
+                </ul>
+            </div>
+
+            <button onclick="openAdjustModal()" class="btn btn-accent btn-sm">
+                <i class="fas fa-plus mr-2"></i>Ajuster Stock
+            </button>
+        </div>
+    </div>
+
+    <!-- Input fichier caché pour import -->
+    <input type="file" id="importStocksFile" accept=".xlsx,.xls" style="display:none" onchange="importStocksExcel(this)">
+
+    <div class="card bg-base-200 shadow-md">
+        <div class="card-body">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra w-full">
+                    <thead>
+                        <tr>
+                            <th>Désignation</th>
+                            <th>Magasin</th>
+                            <th>Date Inventaire</th>
+                            <th>Rapproché</th>
+                            <th>Utilisateur</th>
+                            <th>Stock Actuel</th>
+                            <th>Stock Réservé</th>
+                            <th>Stock Disponible</th>
+                            <th>Unité</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for stock in stocks %}
+                        <tr class="hover">
+                            <td class="font-semibold">
+                                {% if stock.designation %}
+                                    {{ stock.designation.nom }}
+                                {% else %}
+                                    <span class="text-base-content/50">-</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ stock.base.nom_base }}</td>
+                            <td>
+                                {% if stock.inventory_date %}
+                                    <span class="text-sm">{{ stock.inventory_date|date:"d/m/Y" }}</span>
+                                {% else %}
+                                    <span class="text-base-content/50">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if stock.rapproche %}
+                                    <span class="badge badge-success badge-sm">Oui</span>
+                                {% else %}
+                                    <span class="badge badge-ghost badge-sm">Non</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if stock.utilisateur %}
+                                    <span class="text-sm">{{ stock.utilisateur.surnom }}</span>
+                                {% else %}
+                                    <span class="text-base-content/50">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="font-bold">{{ stock.current_quantity|floatformat:2|intcomma }}</td>
+                            <td>{{ stock.reserved_quantity|floatformat:2|intcomma }}</td>
+                            <td class="font-bold text-success">{{ stock.available_quantity|floatformat:2|intcomma }}</td>
+                            <td>
+                                {% if stock.designation and stock.designation.unite %}
+                                    <span class="badge badge-ghost badge-sm">{{ stock.designation.unite }}</span>
+                                {% else %}
+                                    <span class="text-base-content/50">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="flex gap-1">
+                                    <button onclick="adjustStock('{{ stock.id }}', '{% if stock.designation %}{{ stock.designation.nom|escapejs }}{% endif %}', '{{ stock.base.nom_base|escapejs }}', {{ stock.current_quantity }}, {% if stock.rapproche %}true{% else %}false{% endif %}, '{% if stock.utilisateur %}{{ stock.utilisateur.id }}{% endif %}', '{% if stock.inventory_date %}{{ stock.inventory_date|date:"Y-m-d" }}{% endif %}')"
+                                            class="btn btn-ghost btn-xs" title="Ajuster stock">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="10" class="text-center text-gray-500 py-8">Aucun stock trouvé</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Ajustement de Stock -->
+<dialog id="adjustModal" class="modal">
+    <div class="modal-box w-11/12 max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-edit mr-2 text-accent"></i>Ajuster le Stock
+        </h3>
+        <form id="formAdjust" class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Produit</span>
+                    </label>
+                    <input type="text" id="adjust_product_name" class="input input-bordered" readonly>
+                    <input type="hidden" id="adjust_stock_id">
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Magasin</span>
+                    </label>
+                    <input type="text" id="adjust_base_name" class="input input-bordered" readonly>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Stock Actuel</span>
+                    </label>
+                    <input type="number" id="adjust_current_qty" class="input input-bordered" readonly>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-bold text-accent">Type d'Ajustement*</span>
+                    </label>
+                    <select id="adjust_type" class="select select-bordered" required>
+                        <option value="">-- Sélectionner --</option>
+                        <option value="add">Entrée (+)</option>
+                        <option value="remove">Sortie (-)</option>
+                        <option value="set">Définir valeur exacte</option>
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-bold text-accent">Quantité*</span>
+                    </label>
+                    <input type="number" id="adjust_quantity" class="input input-bordered" required min="0" step="0.01">
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Référence</span>
+                    </label>
+                    <input type="text" id="adjust_reference" class="input input-bordered" placeholder="Ex: BL-2025-001">
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Date Inventaire</span>
+                    </label>
+                    <input type="text" id="adjust_inventory_date" class="input input-bordered" placeholder="JJ/MM/AAAA">
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Rapproché</span>
+                    </label>
+                    <input type="checkbox" id="adjust_rapproche" class="checkbox checkbox-success">
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Utilisateur</span>
+                    </label>
+                    <select id="adjust_utilisateur" class="select select-bordered">
+                        <option value="">-- Sélectionner --</option>
+                        {% for employe in employes %}
+                        <option value="{{ employe.id }}">{{ employe.surnom }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control md:col-span-2">
+                    <label class="label">
+                        <span class="label-text">Motif / Notes</span>
+                    </label>
+                    <textarea id="adjust_notes" class="textarea textarea-bordered" rows="3" placeholder="Raison de l'ajustement..."></textarea>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('adjustModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-accent">
+                    <i class="fas fa-check mr-2"></i>Valider l'Ajustement
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<script>
+function openAdjustModal() {
+    document.getElementById('formAdjust').reset();
+    document.getElementById('adjust_stock_id').value = '';
+    document.getElementById('adjust_product_name').value = '';
+    document.getElementById('adjust_base_name').value = '';
+    document.getElementById('adjust_current_qty').value = '';
+    document.getElementById('adjustModal').showModal();
+}
+
+function adjustStock(stockId, productName, baseName, currentQty, rapproche, utilisateurId, inventoryDate) {
+    document.getElementById('adjust_stock_id').value = stockId;
+    document.getElementById('adjust_product_name').value = productName;
+    document.getElementById('adjust_base_name').value = baseName;
+    document.getElementById('adjust_current_qty').value = parseFloat(currentQty).toFixed(2);
+    document.getElementById('adjust_rapproche').checked = rapproche;
+    document.getElementById('adjust_utilisateur').value = utilisateurId || '';
+
+    // Convertir la date de YYYY-MM-DD vers DD/MM/YYYY
+    if (inventoryDate) {
+        const parts = inventoryDate.split('-');
+        if (parts.length === 3) {
+            document.getElementById('adjust_inventory_date').value = `${parts[2]}/${parts[1]}/${parts[0]}`;
+        }
+    } else {
+        document.getElementById('adjust_inventory_date').value = '';
+    }
+
+    document.getElementById('adjustModal').showModal();
+}
+
+document.getElementById('formAdjust').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const stockId = document.getElementById('adjust_stock_id').value;
+    const adjustType = document.getElementById('adjust_type').value;
+    const quantity = parseFloat(document.getElementById('adjust_quantity').value);
+    const reference = document.getElementById('adjust_reference').value;
+    const notes = document.getElementById('adjust_notes').value;
+    const inventoryDateInput = document.getElementById('adjust_inventory_date').value;
+    const rapproche = document.getElementById('adjust_rapproche').checked;
+    const utilisateurId = document.getElementById('adjust_utilisateur').value;
+
+    if (!stockId) {
+        alert('Erreur: Aucun stock sélectionné');
+        return;
+    }
+
+    // Convertir la date de DD/MM/YYYY vers YYYY-MM-DD
+    let inventoryDate = '';
+    if (inventoryDateInput) {
+        const parts = inventoryDateInput.split('/');
+        if (parts.length === 3) {
+            inventoryDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+        }
+    }
+
+    try {
+        const response = await fetch(`{% url 'inventory:api_adjust_stock' stock_id='00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', stockId), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                adjust_type: adjustType,
+                quantity: quantity,
+                reference: reference,
+                notes: notes,
+                inventory_date: inventoryDate,
+                rapproche: rapproche,
+                utilisateur_id: utilisateurId
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert('✓ Stock ajusté avec succès');
+            document.getElementById('adjustModal').close();
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        alert('Erreur: ' + error.message);
+    }
+});
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Import stocks depuis Excel
+async function importStocksExcel(input) {
+    if (!input.files || input.files.length === 0) return;
+
+    const file = input.files[0];
+    const formData = new FormData();
+    formData.append('fichier', file);
+
+    try {
+        const response = await fetch('{% url "inventory:import_stocks" %}', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            let message = `✓ ${result.nb_imported} stock(s) importé(s) avec succès`;
+            if (result.errors && result.errors.length > 0) {
+                message += `\n\n⚠️ ${result.errors.length} erreur(s):\n` + result.errors.join('\n');
+            }
+            alert(message);
+            location.reload();
+        } else {
+            alert('Erreur: ' + (result.error || 'Erreur inconnue'));
+        }
+    } catch (error) {
+        alert('Erreur réseau: ' + error.message);
+    }
+
+    // Réinitialiser l'input pour permettre de réimporter le même fichier
+    input.value = '';
+}
+</script>
+{% endblock %}

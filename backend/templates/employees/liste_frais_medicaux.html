@@ -1,0 +1,548 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% load employee_grouping %}
+
+{% block title %}Liste des Frais Médicaux{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex flex-wrap justify-between items-center gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">
+                <i class="fas fa-hospital mr-2 text-error"></i>
+                Frais Médicaux
+            </h1>
+            <p class="text-base-content/70 mt-1">Liste des remboursements de frais médicaux</p>
+        </div>
+        <a href="{% url 'employees:frais_medicaux_workflow' %}" class="btn btn-primary">
+            <i class="fas fa-plus mr-2"></i>Nouveau remboursement
+        </a>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Employé</span></label>
+                    <select id="filterEmploye" class="select select-bordered w-full" onchange="loadFrais()">
+                        {% grouped_employee_options employes "" "Tous les employés" %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mois</span></label>
+                    <input type="month" id="filterMois" class="input input-bordered w-full" onchange="loadFrais()">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Statut</span></label>
+                    <select id="filterStatut" class="select select-bordered w-full" onchange="loadFrais()">
+                        <option value="">Tous les statuts</option>
+                        <option value="en_attente">En attente</option>
+                        <option value="imprime">Imprimé</option>
+                        <option value="exporte">Exporté</option>
+                    </select>
+                </div>
+                <div class="form-control justify-end">
+                    <label class="label"><span class="label-text">&nbsp;</span></label>
+                    <button class="btn btn-ghost" onclick="loadFrais()">
+                        <i class="fas fa-search mr-2"></i>Rechercher
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tableau -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Employé</th>
+                            <th>Membre</th>
+                            <th>Affection</th>
+                            <th>Type</th>
+                            <th>Mois</th>
+                            <th class="text-right">Soins</th>
+                            <th class="text-right">Remboursé</th>
+                            <th>Statut</th>
+                            <th>DiameX</th>
+                            <th>Justificatif</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody">
+                        <tr><td colspan="12" class="text-center py-8 text-base-content/50">Chargement...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal définir montant -->
+<dialog id="modalMontantHospitalisation" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">Définir le montant remboursé</h3>
+        <div class="form-control mt-4">
+            <label class="label"><span class="label-text">Montant remboursé (Ar)</span></label>
+            <input type="number" id="inputMontantHospitalisation" class="input input-bordered w-full" min="0" step="100">
+        </div>
+        <input type="hidden" id="inputFraisIdHospitalisation">
+        <div class="modal-action">
+            <button type="button" class="btn btn-ghost" onclick="document.getElementById('modalMontantHospitalisation').close()">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="enregistrerMontantHospitalisation()">Enregistrer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal modifier membre famille -->
+<dialog id="modalEditMembre" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">Modifier le membre de famille</h3>
+        <input type="hidden" id="editMembreId">
+        <div class="form-control mt-4">
+            <label class="label"><span class="label-text">Nom complet</span></label>
+            <input type="text" id="editMembreNom" class="input input-bordered w-full">
+        </div>
+        <div class="form-control mt-3">
+            <label class="label"><span class="label-text">Date de naissance</span></label>
+            <input type="date" id="editMembreDateNaissance" class="input input-bordered w-full">
+        </div>
+        <div class="form-control mt-3">
+            <label class="label"><span class="label-text">Lien de parenté</span></label>
+            <select id="editMembreLien" class="select select-bordered w-full">
+                <option value="conjoint">Conjoint(e)</option>
+                <option value="enfant">Enfant</option>
+            </select>
+        </div>
+        <div class="form-control mt-3">
+            <label class="label"><span class="label-text">École</span></label>
+            <input type="text" id="editMembreEcole" class="input input-bordered w-full">
+        </div>
+        <div class="form-control mt-3">
+            <label class="label"><span class="label-text">Classe</span></label>
+            <input type="text" id="editMembreClasse" class="input input-bordered w-full">
+        </div>
+        <div class="modal-action">
+            <button type="button" class="btn btn-ghost" onclick="document.getElementById('modalEditMembre').close()">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="enregistrerMembre()">Enregistrer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Zone d'impression -->
+<div id="printArea" class="hidden print:block"></div>
+
+<style>
+@media print {
+    body > * {
+        display: none !important;
+    }
+    body > main {
+        display: block !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+    }
+    main > *:not(#printArea) {
+        display: none !important;
+    }
+    #printArea {
+        display: block !important;
+        position: relative !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    body {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    .facture {
+        page-break-after: avoid;
+        padding: 20px 40px;
+        font-family: Arial, sans-serif;
+        font-size: 12px;
+    }
+    .facture-header {
+        text-align: center;
+        border-bottom: 2px solid #333;
+        padding-bottom: 15px;
+        margin-bottom: 20px;
+    }
+    .facture-header h1 {
+        font-size: 20px;
+        margin: 8px 0;
+    }
+    .facture-header h2 {
+        font-size: 16px;
+        margin: 5px 0;
+    }
+    .facture-info {
+        margin: 15px 0;
+        font-size: 11px;
+    }
+    .facture-info p {
+        margin: 3px 0;
+    }
+    .facture-montant {
+        font-size: 22px;
+        font-weight: bold;
+        text-align: center;
+        margin: 20px 0;
+        padding: 15px;
+        border: 2px solid #333;
+    }
+    .facture-signature {
+        margin-top: 40px;
+        display: flex !important;
+        justify-content: space-between;
+    }
+    .signature-box {
+        width: 40%;
+        text-align: center;
+        font-size: 11px;
+        display: inline-block !important;
+    }
+    .signature-line {
+        border-top: 1px solid #333;
+        margin-top: 40px;
+        padding-top: 5px;
+    }
+    table {
+        font-size: 11px;
+        width: 100%;
+        border-collapse: collapse;
+    }
+}
+</style>
+
+<script>
+const userIsDirecteur = {{ user_is_directeur|yesno:"true,false" }};
+
+async function loadFrais() {
+    const employe_id = document.getElementById('filterEmploye').value;
+    const mois = document.getElementById('filterMois').value;
+    const statut = document.getElementById('filterStatut').value;
+
+    const params = new URLSearchParams();
+    if (employe_id) params.append('employe_id', employe_id);
+    if (mois) params.append('mois', mois);
+    if (statut) params.append('statut', statut);
+
+    try {
+        const response = await fetch(`{% url 'employees:api_liste_frais_medicaux' %}?${params.toString()}`);
+        const data = await response.json();
+
+        if (data.success) {
+            displayFrais(data.frais);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+    }
+}
+
+function displayFrais(frais) {
+    const tbody = document.getElementById('tableBody');
+
+    if (frais.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="12" class="text-center py-8 text-base-content/50">Aucun frais m?dical trouv?</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = frais.map(f => {
+        const statutBadge = f.statut === 'exporte' ? 'badge-success' :
+                           f.statut === 'imprime' ? 'badge-warning' : 'badge-ghost';
+        const statutLabel = f.statut === 'exporte' ? 'Export?' :
+                           f.statut === 'imprime' ? 'Imprimé' : 'En attente';
+        const typeLabel = f.type_soin === 'lunettes'
+            ? 'Lunettes / soins dentaires / accouchement'
+            : (f.type_soin === 'hospitalisation' ? 'Hospitalisation' : 'Soins');
+        const typeBadge = f.type_soin === 'hospitalisation' ? 'badge-error' :
+                          f.type_soin === 'lunettes' ? 'badge-info' : 'badge-primary';
+        const justificatif = f.justificatif_url
+            ? '<a href="' + f.justificatif_url + '" target="_blank" class="link">Voir</a>'
+            : '-';
+        const canSetMontant = f.type_soin === 'hospitalisation' && f.statut === 'en_attente';
+        const canImprimer = f.type_soin === 'hospitalisation' && f.statut === 'en_attente' && f.montant_rembourse > 0;
+        const btnMontant = canSetMontant
+            ? '<button class="btn btn-xs btn-outline" onclick="openMontantHospitalisation(\'' + f.id + '\', ' + f.montant_rembourse + ')">Montant</button>'
+            : '';
+        const btnImprimer = canImprimer
+            ? '<button class="btn btn-xs btn-primary ml-1" onclick="imprimerFrais(\'' + f.id + '\')">Imprimer</button>'
+            : '';
+        const btnModifierMembre = userIsDirecteur && f.membre_id
+            ? '<button class="btn btn-xs btn-outline ml-1" onclick="openEditMembreModal(' + encodeURIComponent(JSON.stringify(f)) + ')">Membre</button>'
+            : '';
+        const btnSupprimerMembre = userIsDirecteur && f.membre_id
+            ? '<button class="btn btn-xs btn-error ml-1" onclick="supprimerMembre(\'' + f.membre_id + '\', \'' + escapeJsString(f.membre_nom || f.membre) + '\')">Supprimer</button>'
+            : '';
+        return `
+            <tr>
+                <td class="font-mono">${formatDate(f.date)}</td>
+                <td>${f.employe}</td>
+                <td>${f.membre}</td>
+                <td>${f.affection}</td>
+                <td><span class="badge badge-sm ${typeBadge}">${typeLabel}</span></td>
+                <td class="font-mono">${formatMois(f.mois_concerne)}</td>
+                <td class="text-right font-mono">${f.montant_soins.toLocaleString('fr-FR')}</td>
+                <td class="text-right font-mono font-bold">${f.montant_rembourse.toLocaleString('fr-FR')}</td>
+                <td><span class="badge ${statutBadge}">${statutLabel}</span></td>
+                <td class="font-mono text-xs">${f.numero_diamex || '-'}</td>
+                <td>${justificatif}</td>
+                <td>${btnMontant}${btnImprimer}${btnModifierMembre}${btnSupprimerMembre}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function escapeJsString(value) {
+    return String(value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function openEditMembreModal(encodedPayload) {
+    const payload = JSON.parse(decodeURIComponent(encodedPayload));
+    document.getElementById('editMembreId').value = payload.membre_id || '';
+    document.getElementById('editMembreNom').value = payload.membre_nom || '';
+    document.getElementById('editMembreDateNaissance').value = payload.membre_date_naissance || '';
+    document.getElementById('editMembreLien').value = payload.membre_lien_parente || 'enfant';
+    document.getElementById('editMembreEcole').value = payload.membre_ecole || '';
+    document.getElementById('editMembreClasse').value = payload.membre_classe || '';
+    document.getElementById('modalEditMembre').showModal();
+}
+
+async function enregistrerMembre() {
+    const membreId = document.getElementById('editMembreId').value;
+    if (!membreId) {
+        alert('Membre introuvable');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/famille/${membreId}/modifier/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                nom: document.getElementById('editMembreNom').value,
+                date_naissance: document.getElementById('editMembreDateNaissance').value,
+                lien_parente: document.getElementById('editMembreLien').value,
+                ecole: document.getElementById('editMembreEcole').value,
+                classe: document.getElementById('editMembreClasse').value
+            })
+        });
+        const data = await response.json();
+        if (!data.success) {
+            alert('Erreur: ' + data.error);
+            return;
+        }
+        document.getElementById('modalEditMembre').close();
+        loadFrais();
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau');
+    }
+}
+
+async function supprimerMembre(membreId, membreNom) {
+    if (!confirm(`Supprimer le membre "${membreNom}" ?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/famille/${membreId}/supprimer/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        });
+        const data = await response.json();
+        if (!data.success) {
+            alert('Erreur: ' + data.error);
+            return;
+        }
+        loadFrais();
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau');
+    }
+}
+
+function formatDate(dateStr) {
+    if (!dateStr) return '';
+    const parts = dateStr.split('-');
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+function formatMois(moisStr) {
+    if (!moisStr) return '';
+    const [year, month] = moisStr.split('-');
+    return `${month}/${year}`;
+}
+
+
+function openMontantHospitalisation(fraisId, montant) {
+    document.getElementById('inputFraisIdHospitalisation').value = fraisId;
+    document.getElementById('inputMontantHospitalisation').value = montant || '';
+    document.getElementById('modalMontantHospitalisation').showModal();
+}
+
+async function enregistrerMontantHospitalisation() {
+    const fraisId = document.getElementById('inputFraisIdHospitalisation').value;
+    const montant = document.getElementById('inputMontantHospitalisation').value;
+    if (!montant || parseFloat(montant) <= 0) {
+        alert('Veuillez saisir un montant valide');
+        return;
+    }
+    try {
+        const response = await fetch('{% url "employees:api_definir_montant_frais_medicaux" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ frais_id: fraisId, montant_rembourse: parseFloat(montant) })
+        });
+        const data = await response.json();
+        if (data.success) {
+            document.getElementById('modalMontantHospitalisation').close();
+            loadFrais();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur r?seau');
+    }
+}
+
+async function imprimerFrais(fraisId) {
+    try {
+        const response = await fetch(`{% url 'employees:api_facture_frais_medicaux' frais_id='00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', fraisId));
+        const data = await response.json();
+        if (!data.success) {
+            alert('Erreur: ' + data.error);
+            return;
+        }
+
+        genererFacture(data.facture, fraisId);
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur r?seau');
+    }
+}
+
+function genererFacture(facture, fraisId) {
+    const printArea = document.getElementById('printArea');
+    const typeLabel = facture.type_soin === 'lunettes'
+        ? 'Lunettes / soins dentaires / accouchement'
+        : (facture.type_soin === 'hospitalisation' ? 'Hospitalisation' : 'Soins m?dicaux');
+    const logoHtml = facture.organisation.logo
+        ? '<img src="' + facture.organisation.logo + '" style="max-height:80px;">'
+        : '';
+
+    printArea.innerHTML = `
+        <div class="facture">
+            <div class="facture-header">
+                ${logoHtml}
+                <h1>${facture.organisation.nom}</h1>
+                <h2>FACTURE DE REMBOURSEMENT - FRAIS MEDICAUX</h2>
+            </div>
+            <div class="facture-info">
+                <p><strong>Date:</strong> ${facture.date}</p>
+                <p><strong>Employe:</strong> ${facture.employe.nom}</p>
+                <p><strong>Poste:</strong> ${facture.employe.poste}</p>
+                <p><strong>Base:</strong> ${facture.employe.base}</p>
+            </div>
+            <div class="facture-info">
+                <p><strong>Beneficiaire:</strong> ${facture.membre.nom} (${facture.membre.lien})</p>
+                <p><strong>Mois concerne:</strong> ${facture.mois}</p>
+                <p><strong>Affection:</strong> ${facture.affection}</p>
+                <p><strong>Type de soin:</strong> ${typeLabel}</p>
+            </div>
+            <table style="width:100%; border-collapse:collapse; margin:20px 0;">
+                <tr>
+                    <td style="border:1px solid #333; padding:10px;">Montant des soins remboursables</td>
+                    <td style="border:1px solid #333; padding:10px; text-align:right;">${facture.montant_soins.toLocaleString('fr-FR')} Ar</td>
+                </tr>
+                <tr>
+                    <td style="border:1px solid #333; padding:10px;">Taux de remboursement</td>
+                    <td style="border:1px solid #333; padding:10px; text-align:right;">${facture.type_soin === 'hospitalisation' ? 'Variable' : '80%'}</td>
+                </tr>
+            </table>
+            <div class="facture-montant">
+                MONTANT REMBOURSE: ${facture.montant_rembourse.toLocaleString('fr-FR')} Ar
+            </div>
+            <div class="facture-signature">
+                <div class="signature-box">
+                    <p>Signature de l'employ?</p>
+                    <div class="signature-line">${facture.employe.nom}</div>
+                </div>
+                <div class="signature-box">
+                    <p>Visa du responsable</p>
+                    <div class="signature-line">Date: _______________</div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    setTimeout(() => {
+        window.print();
+        marquerImprimes([fraisId]);
+    }, 100);
+}
+
+
+async function marquerImprimes(fraisIds) {
+    setTimeout(async () => {
+        if (!confirm("Avez-vous terminé l'impression ? Cliquez OK pour exporter vers DiameX.")) return;
+
+        try {
+            const response = await fetch('{% url "employees:api_imprimer_frais_medicaux" %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                body: JSON.stringify({ frais_ids: fraisIds })
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                alert(data.message);
+                location.reload();
+            } else {
+                alert('Erreur: ' + data.error);
+            }
+        } catch (error) {
+            console.error('Erreur:', error);
+        }
+    }, 2000);
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+document.addEventListener('DOMContentLoaded', loadFrais);
+</script>
+{% endblock %}

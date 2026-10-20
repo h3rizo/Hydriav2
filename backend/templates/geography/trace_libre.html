@@ -1,0 +1,1287 @@
+{% extends 'base.html' %}
+
+{% block title %}Tracé libre des routes - Hydria{% endblock %}
+
+{% block content %}
+<div class="mx-auto py-4 sm:py-6">
+    <div class="mb-4">
+        <h1 class="text-3xl font-bold"><i class="fas fa-pen mr-2 text-warning"></i>Tracé libre</h1>
+        <p class="text-base-content/70 mt-1">
+            Villages éloignés de toute route. Choisis un village, puis dessine sur le satellite le chemin qui le relie au réseau :
+            clique pour ajouter des points, fais glisser le point orange pour choisir où le chemin rejoint une route.
+        </p>
+        <div role="tablist" class="tabs tabs-boxed w-fit mt-3">
+            <a role="tab" id="tab-villages" class="tab tab-active" onclick="changerMode('villages')"><i class="fas fa-home mr-2"></i>Villages isolés</a>
+            <a role="tab" id="tab-libre" class="tab" onclick="changerMode('libre')"><i class="fas fa-draw-polygon mr-2"></i>Tracé libre (SIG)</a>
+            <a role="tab" id="tab-village" class="tab" onclick="changerMode('village')"><i class="fas fa-map-pin mr-2"></i>Nouveau village</a>
+            <a role="tab" id="tab-edition" class="tab" onclick="changerMode('edition')"><i class="fas fa-pen mr-2"></i>Éditer / rechercher</a>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div id="mode-villages-card" class="card bg-base-100 shadow lg:col-span-1">
+            <div class="card-body p-4">
+                <div class="flex items-center justify-between">
+                    <h2 class="card-title text-lg">Villages isolés <span id="badge-total" class="badge badge-warning">0</span></h2>
+                    <button class="btn btn-ghost btn-xs" onclick="chargerListe()" title="Recharger"><i class="fas fa-sync"></i></button>
+                </div>
+                <label class="form-control w-full">
+                    <span class="label-text text-xs">Route la plus proche à plus de <b id="seuil-val">1000</b> m</span>
+                    <input id="seuil" type="range" min="200" max="5000" step="100" value="1000" class="range range-xs"
+                           oninput="document.getElementById('seuil-val').textContent = this.value"
+                           onchange="chargerListe()">
+                </label>
+                <input id="recherche" type="search" placeholder="Rechercher un village..." class="input input-bordered input-sm w-full"
+                       oninput="rechercheDiffere()">
+                <p id="progression" class="text-xs text-base-content/60"></p>
+                <div id="liste-loading" class="flex items-center gap-2 text-sm">
+                    <span class="loading loading-spinner loading-sm"></span> Chargement...
+                </div>
+                <div id="liste" class="flex flex-col gap-2 overflow-y-auto" style="max-height: 52vh;"></div>
+            </div>
+        </div>
+
+        <div id="mode-libre-card" class="card bg-base-100 shadow lg:col-span-1 hidden">
+            <div class="card-body p-4 gap-3">
+                <h2 class="card-title text-lg"><i class="fas fa-draw-polygon text-warning"></i>Dessiner une route</h2>
+                <p class="text-xs text-base-content/70">
+                    Clique sur la carte pour poser chaque point du chemin, dans l'ordre. Un point posé sur une route existante
+                    (accroché) devient une <b>jonction</b> : la route est coupée à cet endroit pour que les deux soient reliées.
+                </p>
+                <label class="form-control w-full">
+                    <span class="label-text text-xs">Type de voie</span>
+                    <select id="libre-categorie" class="select select-bordered select-sm w-full">
+                        <option value="piste">Piste</option>
+                        <option value="sentier">Sentier (à pied)</option>
+                        <option value="route">Route</option>
+                        <option value="communale">Chemin communal</option>
+                        <option value="provinciale">Route provinciale</option>
+                        <option value="nationale">Route nationale</option>
+                    </select>
+                </label>
+                <label class="form-control w-full">
+                    <span class="label-text text-xs">Nom (facultatif)</span>
+                    <input id="libre-nom" type="text" maxlength="120" placeholder="Ex. Piste Ambodimanga - Vohilengo" class="input input-bordered input-sm w-full">
+                </label>
+                <label class="label cursor-pointer justify-start gap-2 py-0">
+                    <input type="checkbox" id="libre-snap" class="checkbox checkbox-sm" checked>
+                    <span class="label-text">Accrocher aux routes existantes</span>
+                </label>
+                <div id="libre-info" class="badge badge-ghost h-auto py-2 whitespace-normal text-left">Aucun point posé</div>
+                <div class="grid grid-cols-2 gap-2">
+                    <button class="btn btn-ghost btn-sm" onclick="libreAnnuler()"><i class="fas fa-undo mr-1"></i>Annuler le dernier</button>
+                    <button class="btn btn-ghost btn-sm" onclick="libreEffacer()"><i class="fas fa-trash mr-1"></i>Tout effacer</button>
+                </div>
+                <button id="libre-save" class="btn btn-success btn-sm" onclick="libreEnregistrer()" disabled><i class="fas fa-check mr-1"></i>Enregistrer la route</button>
+                <p id="libre-reseau-statut" class="text-xs text-base-content/60"></p>
+                <ul class="text-xs text-base-content/60 space-y-1">
+                    <li><kbd class="kbd kbd-xs">Clic</kbd> poser un point · <kbd class="kbd kbd-xs">Glisser</kbd> déplacer un point</li>
+                    <li><kbd class="kbd kbd-xs">Clic droit</kbd> sur un point : le supprimer</li>
+                    <li><kbd class="kbd kbd-xs">Retour arr.</kbd> / <kbd class="kbd kbd-xs">Z</kbd> annuler le dernier point</li>
+                    <li><kbd class="kbd kbd-xs">Entrée</kbd> enregistrer · <kbd class="kbd kbd-xs">Échap</kbd> tout effacer</li>
+                    <li><span style="color:#2563eb">&#9644;</span> réseau existant · <span style="color:#f59e0b">&#9679;</span> village non relié · <span style="color:#f97316">&#9644;</span> ton tracé</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="mode-village-card" class="card bg-base-100 shadow lg:col-span-1 hidden">
+            <div class="card-body p-4 gap-3">
+                <h2 class="card-title text-lg"><i class="fas fa-map-pin text-warning"></i>Nouveau village</h2>
+                <p class="text-xs text-base-content/70">
+                    Clique sur la carte à l'emplacement du village (tu peux ensuite glisser le repère). Le fokontany, la commune, le district
+                    et la région sont proposés d'après les contours ; corrige-les si besoin.
+                </p>
+                <div id="village-position" class="badge badge-ghost h-auto py-2 whitespace-normal text-left">Aucune position choisie</div>
+                <p id="village-detecte" class="text-xs text-base-content/70"></p>
+                <label class="form-control w-full">
+                    <span class="label-text text-xs">Nom du village <b class="text-error">*</b></span>
+                    <input id="village-nom" type="text" maxlength="255" placeholder="Ex. Ambodimanga" class="input input-bordered input-sm w-full"
+                           oninput="villageMajBouton()">
+                </label>
+                <label class="form-control w-full">
+                    <span class="label-text text-xs">Région</span>
+                    <select id="village-region" class="select select-bordered select-sm w-full" onchange="villageCascade('region')"></select>
+                </label>
+                <label class="form-control w-full">
+                    <span class="label-text text-xs">District</span>
+                    <select id="village-district" class="select select-bordered select-sm w-full" onchange="villageCascade('district')" disabled></select>
+                </label>
+                <label class="form-control w-full">
+                    <span class="label-text text-xs">Commune</span>
+                    <select id="village-commune" class="select select-bordered select-sm w-full" onchange="villageCascade('commune')" disabled></select>
+                </label>
+                <label class="form-control w-full">
+                    <span class="label-text text-xs">Fokontany <b class="text-error">*</b></span>
+                    <select id="village-fokontany" class="select select-bordered select-sm w-full" onchange="villageMajBouton()" disabled></select>
+                </label>
+                <button id="village-creer" class="btn btn-success btn-sm" onclick="villageCreer()" disabled><i class="fas fa-check mr-1"></i>Créer le village</button>
+                <div id="village-resultat" class="text-xs"></div>
+                <p id="village-reseau-statut" class="text-xs text-base-content/60"></p>
+                <ul class="text-xs text-base-content/60 space-y-1">
+                    <li><span style="color:#2563eb">&#9644;</span> réseau routier · <span style="color:#a16207">&#9633;</span> fokontany · <span style="color:#16a34a">&#9679;</span> ton nouveau village</li>
+                    <li>Après la création, la région, le district, la commune et le fokontany restent choisis pour enchaîner les villages.</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="mode-edition-card" class="card bg-base-100 shadow lg:col-span-1 hidden">
+            <div class="card-body p-4 gap-3">
+                <h2 class="card-title text-lg"><i class="fas fa-pen text-info"></i>Rechercher et éditer</h2>
+                <label class="form-control w-full">
+                    <span class="label-text text-xs">Rechercher un village (zoom automatique)</span>
+                    <input id="ed-q" type="search" maxlength="60" placeholder="Nom du village…" autocomplete="off"
+                           class="input input-bordered input-sm w-full" oninput="edRechercheSaisie()" onkeydown="edRechercheEntree(event)">
+                </label>
+                <div id="ed-resultats" class="flex flex-col gap-1 text-xs max-h-48 overflow-y-auto"></div>
+
+                <div id="ed-village-panel" class="hidden border border-base-300 rounded-lg p-3 flex flex-col gap-2">
+                    <div class="font-semibold text-sm"><i class="fas fa-map-pin text-error mr-1"></i>Modifier le village</div>
+                    <p class="text-xs text-base-content/70">Glisse le repère rouge (ou clique sur la carte) pour déplacer le village.</p>
+                    <div id="ed-v-position" class="badge badge-ghost h-auto py-2 whitespace-normal text-left"></div>
+                    <p id="ed-v-detecte" class="text-xs text-base-content/70"></p>
+                    <label class="form-control w-full">
+                        <span class="label-text text-xs">Nom du village <b class="text-error">*</b></span>
+                        <input id="ed-v-nom" type="text" maxlength="255" class="input input-bordered input-sm w-full">
+                    </label>
+                    <label class="form-control w-full">
+                        <span class="label-text text-xs">Région</span>
+                        <select id="ed-v-region" class="select select-bordered select-sm w-full" onchange="edCascade('region')"></select>
+                    </label>
+                    <label class="form-control w-full">
+                        <span class="label-text text-xs">District</span>
+                        <select id="ed-v-district" class="select select-bordered select-sm w-full" onchange="edCascade('district')" disabled></select>
+                    </label>
+                    <label class="form-control w-full">
+                        <span class="label-text text-xs">Commune</span>
+                        <select id="ed-v-commune" class="select select-bordered select-sm w-full" onchange="edCascade('commune')" disabled></select>
+                    </label>
+                    <label class="form-control w-full">
+                        <span class="label-text text-xs">Fokontany <b class="text-error">*</b></span>
+                        <select id="ed-v-fokontany" class="select select-bordered select-sm w-full" disabled></select>
+                    </label>
+                    <div class="flex gap-2">
+                        <button class="btn btn-success btn-sm flex-1" onclick="edVillageEnregistrer()"><i class="fas fa-check mr-1"></i>Enregistrer</button>
+                        <button class="btn btn-ghost btn-sm" onclick="edVillageFermer()">Fermer</button>
+                    </div>
+                    <div id="ed-v-resultat" class="text-xs"></div>
+                </div>
+
+                <div id="ed-route-panel" class="hidden border border-base-300 rounded-lg p-3 flex flex-col gap-2">
+                    <div class="font-semibold text-sm"><i class="fas fa-road text-warning mr-1"></i>Modifier la route</div>
+                    <p class="text-xs text-base-content/70">
+                        Glisse un sommet pour le déplacer · glisse (ou clique) un petit cercle entre deux sommets pour créer un nœud ·
+                        clic droit sur un sommet pour le supprimer. Une extrémité lâchée sur un autre sommet du réseau s'y raccorde.
+                        <span style="color:#dc2626">&#9679;</span> = jonction partagée avec d'autres routes (elles suivent).
+                    </p>
+                    <div id="ed-r-info" class="badge badge-ghost h-auto py-2 whitespace-normal text-left"></div>
+                    <label class="form-control w-full">
+                        <span class="label-text text-xs">Nom</span>
+                        <input id="ed-r-nom" type="text" maxlength="255" class="input input-bordered input-sm w-full" oninput="edition.dirty = true">
+                    </label>
+                    <label class="form-control w-full">
+                        <span class="label-text text-xs">Type de voie</span>
+                        <select id="ed-r-cat" class="select select-bordered select-sm w-full" onchange="edition.dirty = true">
+                            <option value="nationale">Route nationale</option>
+                            <option value="provinciale">Route provinciale</option>
+                            <option value="communale">Chemin communal</option>
+                            <option value="route">Route</option>
+                            <option value="piste">Piste</option>
+                            <option value="sentier">Sentier</option>
+                            <option value="autre">Non renseigné</option>
+                        </select>
+                    </label>
+                    <div class="flex gap-2">
+                        <button id="ed-r-enregistrer" class="btn btn-success btn-sm flex-1" onclick="edTronconEnregistrer()"><i class="fas fa-check mr-1"></i>Enregistrer</button>
+                        <button class="btn btn-ghost btn-sm" onclick="edTronconAnnuler()" title="Revenir à la version enregistrée">Annuler</button>
+                        <button class="btn btn-ghost btn-sm" onclick="edTronconFermer()">Fermer</button>
+                    </div>
+                </div>
+
+                <p class="text-xs text-base-content/60">
+                    <i class="fas fa-hand-pointer mr-1"></i>Clique sur un village (<span style="color:#16a34a">&#9679;</span>) ou sur une route pour l'éditer ; zoome (niveau 12 ou plus) pour les voir.
+                </p>
+                <label class="label cursor-pointer justify-start gap-2 py-0">
+                    <input id="ed-etiquettes" type="checkbox" class="checkbox checkbox-sm" checked onchange="edChargerVillages()">
+                    <span class="label-text text-xs">Afficher les noms des villages</span>
+                </label>
+                <p id="edition-villages-statut" class="text-xs text-base-content/60"></p>
+                <p id="edition-reseau-statut" class="text-xs text-base-content/60"></p>
+            </div>
+        </div>
+
+        <div id="carte-card" class="card bg-base-100 shadow lg:col-span-2 scroll-mt-16">
+            <div class="card-body p-4">
+                <div id="panneau-action" class="hidden mb-2 sticky top-14 z-[1100] -mx-1 px-1 py-2 bg-base-100/95 backdrop-blur rounded-lg">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span id="titre-selection" class="font-semibold"></span>
+                        <span id="info-trace" class="badge badge-ghost"></span>
+                        <div class="ml-auto flex flex-wrap items-center gap-2">
+                            <select id="categorie" class="select select-bordered select-sm" title="Type de voie du tracé">
+                                <option value="sentier">Sentier (à pied)</option>
+                                <option value="piste">Piste</option>
+                                <option value="route">Route</option>
+                            </select>
+                            <button class="btn btn-ghost btn-sm" onclick="annulerPoint()"><i class="fas fa-undo mr-1"></i>Annuler le dernier point</button>
+                            <button class="btn btn-ghost btn-sm" onclick="reinitialiserTrace()"><i class="fas fa-redo mr-1"></i>Ligne droite</button>
+                            <button class="btn btn-ghost btn-sm" onclick="passer()"><i class="fas fa-forward mr-1"></i>Passer</button>
+                            <button id="btn-valider" class="btn btn-success btn-sm" onclick="valider()"><i class="fas fa-check mr-1"></i>Enregistrer le tracé</button>
+                        </div>
+                    </div>
+                    <p class="text-xs text-base-content/60 mt-1">
+                        Clic sur la carte : ajoute un point · Glisser un point : le déplace · Clic droit sur un point : le supprime ·
+                        Le point orange est ramené sur la route la plus proche.
+                    </p>
+                </div>
+                <div class="relative">
+                    <div id="carte" class="rounded-lg" style="height: 66vh; min-height: 420px;"></div>
+                    <div id="carte-loading" class="hidden absolute inset-0 z-[1000] flex items-center justify-center rounded-lg bg-base-100/60">
+                        <span class="loading loading-spinner loading-lg"></span>
+                    </div>
+                    <div id="carte-vide" class="absolute inset-0 z-[500] flex items-center justify-center pointer-events-none">
+                        <p id="carte-vide-txt" class="rounded-lg bg-base-100/85 px-4 py-2 text-sm text-center">Choisis un village dans la liste</p>
+                    </div>
+                </div>
+                <div class="flex flex-wrap gap-4 text-xs mt-2">
+                    <span><span style="color:#2563eb">&#9644;</span> Réseau existant</span>
+                    <span><span style="color:#16a34a">&#9679;</span> Village à relier</span>
+                    <span><span style="color:#94a3b8">&#9679;</span> Autres villages</span>
+                    <span><span style="color:#f59e0b">&#9644;</span> Tracé en cours</span>
+                    <span class="ml-auto hidden lg:inline text-base-content/60">
+                        <kbd class="kbd kbd-xs">&uarr;</kbd> <kbd class="kbd kbd-xs">&darr;</kbd> naviguer ·
+                        <kbd class="kbd kbd-xs">Entrée</kbd> enregistrer · <kbd class="kbd kbd-xs">S</kbd> passer ·
+                        <kbd class="kbd kbd-xs">Z</kbd> annuler un point
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="toast" class="toast toast-end hidden z-50"><div id="toast-msg" class="alert alert-success"></div></div>
+
+<style>.village-etiquette-edit{border-color:#dc2626!important;background:#fee2e2!important}.village-etiquette{font-size:11px;font-weight:600;padding:1px 5px;background:rgba(255,255,255,.9);color:#111;border:1px solid #16a34a}</style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const URL_LISTE = "{% url 'geography:api_trace_libre_liste' %}";
+const URL_CONTEXTE = "{% url 'geography:api_trace_libre_contexte' %}";
+const URL_CREER = "{% url 'geography:api_trace_libre_creer' %}";
+const URL_LIGNE = "{% url 'geography:api_trace_libre_ligne' %}";
+const URL_RESEAU = "{% url 'geography:api_geojson_routes_reseau' %}";
+const URL_CONTOURS = "{% url 'geography:api_geojson_contours' %}";
+const URL_VILLAGE_LIEU = "{% url 'geography:api_village_lieu' %}";
+const URL_VILLAGE_LISTE = "{% url 'geography:api_village_liste' %}";
+const URL_VILLAGE_CREER = "{% url 'geography:api_village_creer' %}";
+const URL_VILLAGES_ZONE = "{% url 'geography:api_villages_zone' %}";
+const URL_VILLAGE_RECHERCHE = "{% url 'geography:api_village_recherche' %}";
+const URL_VILLAGE_DETAIL = "{% url 'geography:api_village_detail' '00000000-0000-0000-0000-000000000000' %}";
+const URL_VILLAGE_MODIFIER = "{% url 'geography:api_village_modifier' '00000000-0000-0000-0000-000000000000' %}";
+const URL_TRONCON_DETAIL = "{% url 'geography:api_troncon_detail' '00000000-0000-0000-0000-000000000000' %}";
+const URL_TRONCON_MODIFIER = "{% url 'geography:api_troncon_modifier' '00000000-0000-0000-0000-000000000000' %}";
+const URL_NON_RELIES = "{% url 'geography:api_geojson_villages_non_relies' %}";
+
+let carte, coucheContexte, coucheTrace, ligneTrace = null;
+let villages = [], ignores = new Set(), courant = null, nbTraces = 0, minuteur = null;
+let trace = { depart: null, waypoints: [], fin: null };
+
+const COULEURS = { nationale: '#7c3aed', provinciale: '#2563eb', communale: '#0891b2', route: '#2563eb', piste: '#64748b', sentier: '#94a3b8', autre: '#94a3b8' };
+const ll = p => [p[1], p[0]];   // [lon, lat] -> [lat, lon] pour Leaflet
+
+function getCookie(name) {
+    const v = document.cookie.split('; ').find(r => r.startsWith(name + '='));
+    return v ? decodeURIComponent(v.split('=')[1]) : null;
+}
+function toast(msg, ok = true) {
+    const box = document.getElementById('toast'), m = document.getElementById('toast-msg');
+    m.className = 'alert ' + (ok ? 'alert-success' : 'alert-error');
+    m.textContent = msg;
+    box.classList.remove('hidden');
+    setTimeout(() => box.classList.add('hidden'), 4000);
+}
+function distM(a, b) {  // a, b = [lon, lat] ; haversine
+    const R = 6371008.8, rad = x => x * Math.PI / 180;
+    const dp = rad(b[1] - a[1]), dl = rad(b[0] - a[0]);
+    const h = Math.sin(dp / 2) ** 2 + Math.cos(rad(a[1])) * Math.cos(rad(b[1])) * Math.sin(dl / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+}
+const fmtDist = m => m >= 1000 ? (m / 1000).toFixed(1).replace('.', ',') + ' km' : Math.round(m) + ' m';
+
+function initCarte() {
+    carte = L.map('carte').setView([-18.9, 47.5], 6);
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' });
+    const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        { maxZoom: 21, maxNativeZoom: 17, attribution: 'Imagery &copy; Esri' });
+    sat.addTo(carte);
+    L.control.layers({ 'Satellite': sat, 'Plan': osm }).addTo(carte);
+    coucheContexte = L.layerGroup().addTo(carte);
+    coucheTrace = L.layerGroup().addTo(carte);
+    carte.on('click', e => {
+        if (mode !== 'villages' || !courant) return;
+        trace.waypoints.push([e.latlng.lng, e.latlng.lat]);
+        redessinerTrace();
+    });
+    initLibre();
+}
+
+function rechercheDiffere() {
+    clearTimeout(minuteur);
+    minuteur = setTimeout(chargerListe, 300);
+}
+
+/** `silencieux` : rafraîchit sans spinner ni vidage de la liste. */
+async function chargerListe(silencieux = false) {
+    if (!silencieux) document.getElementById('liste-loading').classList.remove('hidden');
+    const seuil = document.getElementById('seuil').value;
+    const q = document.getElementById('recherche').value.trim();
+    try {
+        const r = await fetch(URL_LISTE + '?seuil_m=' + encodeURIComponent(seuil) + '&q=' + encodeURIComponent(q));
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Erreur');
+        villages = d.villages;
+        total = d.total;
+        afficherListe();
+    } catch (e) {
+        toast('Chargement impossible : ' + e.message, false);
+    } finally {
+        document.getElementById('liste-loading').classList.add('hidden');
+    }
+}
+let total = 0;
+
+function listeVisible() { return villages.filter(v => !ignores.has(v.id)); }
+
+function afficherListe() {
+    const box = document.getElementById('liste');
+    box.replaceChildren();
+    const visibles = listeVisible();
+    document.getElementById('badge-total').textContent = total;
+    document.getElementById('progression').textContent =
+        nbTraces + ' tracé' + (nbTraces > 1 ? 's' : '') + ' enregistré' + (nbTraces > 1 ? 's' : '') + ' · ' + ignores.size + ' ignoré' + (ignores.size > 1 ? 's' : '') +
+        (total > villages.length ? ' · ' + villages.length + ' affichés sur ' + total : '');
+    if (!visibles.length) {
+        const p = document.createElement('p');
+        p.className = 'text-sm text-success';
+        p.textContent = 'Aucun village à traiter avec ces critères.';
+        box.appendChild(p);
+        return;
+    }
+    visibles.forEach(v => {
+        const el = document.createElement('button');
+        const actif = !!courant && courant.id === v.id;
+        el.className = 'text-left border rounded-lg p-2 hover:bg-base-200 ' + (actif ? 'bg-base-200 border-primary ring-1 ring-primary' : 'border-base-300');
+        const t = document.createElement('div');
+        t.className = 'flex items-center gap-2 text-sm font-semibold';
+        t.textContent = v.nom;
+        const b = document.createElement('span');
+        b.className = 'badge badge-sm ' + (v.distance_m <= 2000 ? 'badge-success' : (v.distance_m <= 4000 ? 'badge-warning' : 'badge-error'));
+        b.textContent = fmtDist(v.distance_m);
+        t.appendChild(b);
+        const c = document.createElement('div');
+        c.className = 'text-xs text-base-content/70';
+        c.textContent = v.commune || '';
+        el.append(t, c);
+        el.onclick = () => selectionner(v);
+        if (actif) el.dataset.actif = '1';
+        box.appendChild(el);
+    });
+    const actifEl = box.querySelector('[data-actif]');
+    if (actifEl) actifEl.scrollIntoView({ block: 'nearest' });
+}
+
+function naviguer(delta) {
+    const liste = listeVisible();
+    if (!liste.length) return;
+    const i = courant ? liste.findIndex(v => v.id === courant.id) : -1;
+    selectionner(liste[Math.max(0, Math.min(liste.length - 1, i + delta))]);
+}
+
+async function selectionner(v) {
+    courant = v;
+    afficherListe();
+    coucheContexte.clearLayers();
+    coucheTrace.clearLayers();
+    document.getElementById('carte-vide').classList.add('hidden');
+    document.getElementById('carte-loading').classList.remove('hidden');
+    document.getElementById('panneau-action').classList.remove('hidden');
+    document.getElementById('titre-selection').textContent = v.nom + ' · route à ' + fmtDist(v.distance_m);
+    if (window.innerWidth < 1024) document.getElementById('carte-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const pts = L.latLngBounds([ll([v.lon, v.lat]), ll(v.route)]);
+    carte.fitBounds(pts.pad(0.6), { maxZoom: 17 });
+    try {
+        const r = await fetch(URL_CONTEXTE + '?lon=' + v.lon + '&lat=' + v.lat + '&marge=' + Math.max(0.02, Math.min(0.06, v.distance_m / 111000 * 1.8)));
+        const d = await r.json();
+        if (!courant || courant.id !== v.id) return;   // sélection changée entre-temps
+        if (d.success) {
+            L.geoJSON(d.troncons, { style: f => ({ color: COULEURS[f.properties.categorie] || '#2563eb', weight: f.properties.source === 'manuel' ? 3 : 2, opacity: 0.85 }) }).addTo(coucheContexte);
+            d.villages.filter(x => x.id !== v.id).forEach(x => {
+                L.circleMarker([x.lat, x.lon], { radius: 4, color: '#fff', weight: 1, fillColor: '#94a3b8', fillOpacity: 0.9 })
+                    .bindTooltip(x.nom + ' (' + fmtDist(x.distance_m) + ' de la route)').addTo(coucheContexte);
+            });
+        }
+    } catch (e) { toast('Réseau alentour indisponible : ' + e.message, false); }
+    finally { document.getElementById('carte-loading').classList.add('hidden'); }
+    reinitialiserTrace();
+}
+
+function reinitialiserTrace() {
+    if (!courant) return;
+    trace = { depart: [courant.lon, courant.lat], waypoints: [], fin: courant.route.slice() };
+    redessinerTrace();
+}
+function annulerPoint() {
+    if (trace.waypoints.length) { trace.waypoints.pop(); redessinerTrace(); }
+}
+
+function icone(taille, fond, bord) {
+    return L.divIcon({ className: '', iconSize: [taille, taille], iconAnchor: [taille / 2, taille / 2],
+        html: '<div style="width:' + taille + 'px;height:' + taille + 'px;border-radius:50%;background:' + fond + ';border:3px solid ' + bord + ';box-shadow:0 0 3px #000"></div>' });
+}
+
+function redessinerTrace() {
+    coucheTrace.clearLayers();
+    const pts = [trace.depart, ...trace.waypoints, trace.fin];
+    ligneTrace = L.polyline(pts.map(ll), { color: '#f59e0b', weight: 4, dashArray: '8 6' }).addTo(coucheTrace);
+    L.circleMarker(ll(trace.depart), { radius: 9, color: '#fff', weight: 2, fillColor: '#16a34a', fillOpacity: 1 }).addTo(coucheTrace);
+    trace.waypoints.forEach((w, i) => {
+        const m = L.marker(ll(w), { draggable: true, icon: icone(12, '#fff', '#f59e0b') }).addTo(coucheTrace);
+        m.on('drag', e => { trace.waypoints[i] = [e.latlng.lng, e.latlng.lat]; majLigne(); });
+        m.on('contextmenu', () => { trace.waypoints.splice(i, 1); redessinerTrace(); });
+    });
+    const fin = L.marker(ll(trace.fin), { draggable: true, icon: icone(16, '#f59e0b', '#fff') }).addTo(coucheTrace);
+    fin.on('drag', e => { trace.fin = [e.latlng.lng, e.latlng.lat]; majLigne(); });
+    majLigne();
+}
+function majLigne() {
+    const pts = [trace.depart, ...trace.waypoints, trace.fin];
+    ligneTrace.setLatLngs(pts.map(ll));
+    let longueur = 0;
+    for (let i = 1; i < pts.length; i++) longueur += distM(pts[i - 1], pts[i]);
+    const vol = distM(trace.depart, trace.fin);
+    const info = document.getElementById('info-trace');
+    info.textContent = 'Tracé : ' + fmtDist(longueur) + (vol > 0 ? ' (×' + (longueur / vol).toFixed(1).replace('.', ',') + ' à vol d\'oiseau)' : '');
+    info.className = 'badge ' + (longueur > 3000 ? 'badge-warning' : 'badge-ghost');
+}
+
+function viderCarte(message) {
+    courant = null;
+    coucheContexte.clearLayers();
+    coucheTrace.clearLayers();
+    document.getElementById('panneau-action').classList.add('hidden');
+    document.getElementById('carte-vide-txt').textContent = message;
+    document.getElementById('carte-vide').classList.remove('hidden');
+}
+function avancer(rang) {
+    const liste = listeVisible();
+    if (liste.length) selectionner(liste[Math.min(rang, liste.length - 1)]);
+    else { viderCarte('Plus aucun village à traiter.'); afficherListe(); }
+}
+
+function passer() {
+    if (!courant) return;
+    const rang = Math.max(0, listeVisible().findIndex(v => v.id === courant.id));
+    ignores.add(courant.id);
+    avancer(rang);
+}
+
+async function valider() {
+    if (!courant) return;
+    const btn = document.getElementById('btn-valider');
+    btn.disabled = true;
+    try {
+        const r = await fetch(URL_CREER, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify({ village_id: courant.id, waypoints: trace.waypoints, fin: trace.fin,
+                                   categorie: document.getElementById('categorie').value })
+        });
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Erreur');
+        let msg = 'Tracé enregistré (' + fmtDist(d.longueur_m) + ').';
+        if (d.voisins_rattaches) msg += ' ' + d.voisins_rattaches + ' village(s) voisin(s) rattaché(s).';
+        if (!d.reseau_principal) msg += ' Attention : rejoint un morceau de réseau isolé du réseau principal.';
+        toast(msg, d.reseau_principal);
+        nbTraces++;
+        const rang = Math.max(0, listeVisible().findIndex(v => v.id === courant.id));
+        villages = villages.filter(v => v.id !== courant.id);
+        total = Math.max(0, total - 1);
+        avancer(rang);
+        chargerListe(true);   // des voisins ont pu être rattachés : on rafraîchit en arrière-plan
+    } catch (e) {
+        toast(e.message, false);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+// =====================================================================================================
+// Mode « Tracé libre » : numérisation d'une route clic par clic, avec accrochage au réseau existant.
+// =====================================================================================================
+let mode = 'villages';
+const libre = { points: [], couche: null, ligne: null, elastique: null, curseur: null };   // points : { ll: [lon, lat], accroche: bool }
+const reseauLibre = { couche: null, lignes: [], requete: 0, minuteur: null, refs: null };
+const SNAP_PX = 14;
+const ZOOM_RESEAU_MIN = 12;
+
+function initLibre() {
+    libre.couche = L.layerGroup().addTo(carte);
+    reseauLibre.couche = L.layerGroup().addTo(carte);
+    village.refs = L.layerGroup().addTo(carte);
+    edInit();
+    carte.on('moveend', () => {
+        if (mode !== 'libre' && mode !== 'village' && mode !== 'edition') return;
+        clearTimeout(reseauLibre.minuteur);
+        reseauLibre.minuteur = setTimeout(() => { chargerReseauLibre(); if (mode === 'village') chargerContoursVillage(); if (mode === 'edition') edChargerVillages(); }, 350);
+    });
+    carte.on('mousemove', e => { if (mode === 'libre') libreSuivre(e.latlng); });
+    carte.on('mouseout', () => { if (libre.curseur) { libre.couche.removeLayer(libre.curseur); libre.curseur = null; } if (libre.elastique) libre.elastique.setLatLngs([]); });
+    carte.on('click', e => {
+        if (mode === 'libre') librePoser(e.latlng);
+        else if (mode === 'village') villagePoser(e.latlng);
+        else if (mode === 'edition' && edition.villageId) edDeplacerVillage(e.latlng);
+    });
+}
+
+function changerMode(m) {
+    if (m === mode) return;
+    const ancien = mode;
+    mode = m;
+    for (const nom of ['villages', 'libre', 'village', 'edition']) {
+        document.getElementById('tab-' + nom).classList.toggle('tab-active', nom === m);
+    }
+    document.getElementById('mode-villages-card').classList.toggle('hidden', m !== 'villages');
+    document.getElementById('mode-libre-card').classList.toggle('hidden', m !== 'libre');
+    document.getElementById('mode-village-card').classList.toggle('hidden', m !== 'village');
+    document.getElementById('mode-edition-card').classList.toggle('hidden', m !== 'edition');
+    document.getElementById('panneau-action').classList.toggle('hidden', m !== 'villages' || !courant);
+    document.getElementById('carte-vide').classList.toggle('hidden', m !== 'villages' || !!courant);
+
+    // Nettoyage du mode quitté
+    if (ancien === 'libre') libreEffacer();
+    if (ancien === 'village') { villageEffacerPoint(); village.refs.clearLayers(); }
+    if (ancien === 'edition') { edVillageFermer(); edTronconFermer(true); edition.villages.clearLayers(); }
+    if (m !== 'libre' && m !== 'village' && m !== 'edition') { reseauLibre.couche.clearLayers(); reseauLibre.lignes = []; }
+    if (ancien === 'libre' && reseauLibre.refs) carte.removeLayer(reseauLibre.refs);
+
+    const dessin = m === 'libre' || m === 'village';
+    carte.getContainer().style.cursor = dessin ? 'crosshair' : '';
+    if (m === 'libre') carte.doubleClickZoom.disable(); else carte.doubleClickZoom.enable();
+    if (m === 'villages') {
+        coucheContexte.clearLayers();
+        if (courant) selectionner(courant); else document.getElementById('carte-vide-txt').textContent = 'Choisis un village dans la liste';
+        return;
+    }
+    coucheContexte.clearLayers();
+    coucheTrace.clearLayers();
+    chargerReseauLibre();
+    if (m === 'libre') chargerVillagesNonRelies();
+    if (m === 'village') { chargerContoursVillage(); villageInitListes(); }
+    if (m === 'edition') edChargerVillages();
+}
+
+/** Réseau existant dans la zone visible : affiché, et gardé (en pixels) pour l'accrochage. */
+async function chargerReseauLibre() {
+    if (mode !== 'libre' && mode !== 'village' && mode !== 'edition') return;
+    const statuts = ['libre-reseau-statut', 'village-reseau-statut', 'edition-reseau-statut'].map(id => document.getElementById(id));
+    const statut = { set textContent(t) { statuts.forEach(el => { if (el) el.textContent = t; }); } };
+    const zoom = carte.getZoom();
+    if (zoom < ZOOM_RESEAU_MIN) {
+        reseauLibre.couche.clearLayers();
+        reseauLibre.lignes = [];
+        statut.textContent = 'Zoome (niveau ' + ZOOM_RESEAU_MIN + ' ou plus) pour voir le réseau et activer l\'accrochage.';
+        return;
+    }
+    const b = carte.getBounds().pad(0.2);
+    const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map(v => v.toFixed(5)).join(',');
+    const requete = ++reseauLibre.requete;
+    statut.textContent = 'Chargement du réseau…';
+    try {
+        const r = await fetch(URL_RESEAU + '?bbox=' + bbox + '&zoom=' + Math.floor(zoom));
+        const d = await r.json();
+        if (requete !== reseauLibre.requete || (mode !== 'libre' && mode !== 'village' && mode !== 'edition')) return;       // réponse périmée
+        reseauLibre.couche.clearLayers();
+        reseauLibre.lignes = [];
+        const z = carte.getZoom();
+        L.geoJSON(d, {
+            interactive: mode === 'edition',       // hors édition, les clics doivent atteindre la carte pour poser des points
+            style: f => ({ color: COULEURS[f.properties.categorie] || '#2563eb', weight: (f.properties.source === 'manuel' ? 3.5 : 2.5) + (mode === 'edition' ? 1.5 : 0), opacity: 0.9, interactive: mode === 'edition' }),
+            onEachFeature: (f, layer) => {
+                reseauLibre.lignes.push(f.geometry.coordinates.map(c => carte.project(L.latLng(c[1], c[0]), z)));
+                if (mode === 'edition') {
+                    layer.on('click', ev => { L.DomEvent.stopPropagation(ev); edChoisirTroncon(f.properties.id); });
+                    layer.bindTooltip('Cliquer pour éditer cette route', { sticky: true });
+                }
+            },
+        }).addTo(reseauLibre.couche);
+        statut.textContent = d.features.length + ' tronçon' + (d.features.length > 1 ? 's' : '') + ' chargé' + (d.features.length > 1 ? 's' : '') +
+            (d.tronque ? ' (zoome pour voir le reste)' : '') + (mode === 'libre' ? ' — accrochage actif.' : '.');
+    } catch (e) {
+        statut.textContent = 'Réseau indisponible : ' + e.message;
+    }
+}
+
+/** Villages non reliés au réseau, en repères (couche légère, chargée une fois). */
+async function chargerVillagesNonRelies() {
+    if (reseauLibre.refs) { reseauLibre.refs.addTo(carte); return; }
+    try {
+        const d = await (await fetch(URL_NON_RELIES)).json();
+        reseauLibre.refs = L.geoJSON(d, {
+            filter: f => f.properties.type === 'village',
+            pointToLayer: (f, ll) => L.circleMarker(ll, { radius: 5, color: '#fff', weight: 1.5, fillColor: '#f59e0b', fillOpacity: 0.95, interactive: false }),
+        });
+        if (mode === 'libre') reseauLibre.refs.addTo(carte);
+    } catch (e) { /* repères facultatifs */ }
+}
+
+/** Accroche une position au réseau (sommet d'abord, sinon segment) ou à un point déjà posé. */
+function accrocher(latlng) {
+    if (!document.getElementById('libre-snap').checked) return { latlng, type: null };
+    const z = carte.getZoom();
+    const p = carte.project(latlng, z);
+    let meilleurSommet = null, meilleurSegment = null;
+    const candidatsSommets = libre.points.map(pt => carte.project(L.latLng(pt.ll[1], pt.ll[0]), z));
+    candidatsSommets.forEach(c => {
+        const d = Math.hypot(c.x - p.x, c.y - p.y);
+        if (d <= SNAP_PX && (!meilleurSommet || d < meilleurSommet.d)) meilleurSommet = { d, x: c.x, y: c.y, propre: true };
+    });
+    for (const ligne of reseauLibre.lignes) {
+        for (let i = 0; i < ligne.length; i++) {
+            const a = ligne[i];
+            const da = Math.hypot(a.x - p.x, a.y - p.y);
+            if (da <= SNAP_PX && (!meilleurSommet || da < meilleurSommet.d)) meilleurSommet = { d: da, x: a.x, y: a.y };
+            if (i === 0) continue;
+            const b = ligne[i - 1];
+            const dx = a.x - b.x, dy = a.y - b.y, l2 = dx * dx + dy * dy;
+            if (!l2) continue;
+            const t = Math.max(0, Math.min(1, ((p.x - b.x) * dx + (p.y - b.y) * dy) / l2));
+            const qx = b.x + t * dx, qy = b.y + t * dy, d = Math.hypot(qx - p.x, qy - p.y);
+            if (d <= SNAP_PX && (!meilleurSegment || d < meilleurSegment.d)) meilleurSegment = { d, x: qx, y: qy };
+        }
+    }
+    const choix = meilleurSommet || meilleurSegment;
+    if (!choix) return { latlng, type: null };
+    return { latlng: carte.unproject(L.point(choix.x, choix.y), z), type: choix.propre ? 'propre' : (meilleurSommet ? 'sommet' : 'segment') };
+}
+
+function libreSuivre(latlng) {
+    const s = accrocher(latlng);
+    const couleur = s.type === 'sommet' ? '#dc2626' : (s.type === 'segment' ? '#2563eb' : (s.type === 'propre' ? '#16a34a' : '#f97316'));
+    if (!libre.curseur) {
+        libre.curseur = L.circleMarker(s.latlng, { radius: 8, weight: 2, fillOpacity: 0.15, interactive: false }).addTo(libre.couche);
+    }
+    libre.curseur.setLatLng(s.latlng).setStyle({ color: couleur, fillColor: couleur });
+    if (!libre.elastique) libre.elastique = L.polyline([], { color: '#f97316', weight: 2, dashArray: '4 6', interactive: false }).addTo(libre.couche);
+    const dernier = libre.points[libre.points.length - 1];
+    libre.elastique.setLatLngs(dernier ? [[dernier.ll[1], dernier.ll[0]], s.latlng] : []);
+}
+
+function librePoser(latlng) {
+    const s = accrocher(latlng);
+    const dernier = libre.points[libre.points.length - 1];
+    if (dernier && distM(dernier.ll, [s.latlng.lng, s.latlng.lat]) < 0.5) return;   // double-clic : un seul point
+    libre.points.push({ ll: [s.latlng.lng, s.latlng.lat], accroche: s.type === 'sommet' || s.type === 'segment' });
+    libreRedessiner();
+}
+
+function libreAnnuler() {
+    if (!libre.points.length) return;
+    libre.points.pop();
+    libreRedessiner();
+}
+function libreEffacer() {
+    libre.points = [];
+    libreRedessiner();
+}
+
+function libreRedessiner() {
+    // On reconstruit tout sauf le curseur et le trait élastique, recréés au prochain mouvement de souris.
+    libre.couche.clearLayers();
+    libre.curseur = null;
+    libre.elastique = null;
+    const pts = libre.points.map(p => p.ll);
+    libre.ligne = pts.length > 1 ? L.polyline(pts.map(ll), { color: '#f97316', weight: 4, interactive: false }).addTo(libre.couche) : null;
+    libre.points.forEach((p, i) => {
+        const premier = i === 0, dernier = i === libre.points.length - 1;
+        const taille = dernier ? 16 : 12;
+        const m = L.marker(ll(p.ll), { draggable: true, icon: icone(taille, premier ? '#16a34a' : (dernier ? '#f97316' : '#fff'), p.accroche ? '#2563eb' : '#f97316') }).addTo(libre.couche);
+        m.on('drag', e => {
+            const s = accrocher(e.latlng);
+            m.setLatLng(s.latlng);
+            p.ll = [s.latlng.lng, s.latlng.lat];
+            p.accroche = s.type === 'sommet' || s.type === 'segment';
+            libreMajInfo();
+            if (libre.ligne) libre.ligne.setLatLngs(libre.points.map(q => ll(q.ll)));
+        });
+        m.on('dragend', libreRedessiner);
+        m.on('contextmenu', () => { libre.points.splice(i, 1); libreRedessiner(); });
+    });
+    libreMajInfo();
+}
+
+function libreMajInfo() {
+    const pts = libre.points.map(p => p.ll);
+    let longueur = 0;
+    for (let i = 1; i < pts.length; i++) longueur += distM(pts[i - 1], pts[i]);
+    const accroches = libre.points.filter(p => p.accroche).length;
+    const info = document.getElementById('libre-info');
+    info.textContent = pts.length === 0 ? 'Aucun point posé'
+        : pts.length + ' point' + (pts.length > 1 ? 's' : '') + ' · ' + fmtDist(longueur) + ' · ' + accroches + ' accroche' + (accroches > 1 ? 's' : '') + ' au réseau';
+    info.className = 'badge h-auto py-2 whitespace-normal text-left ' + (accroches > 0 ? 'badge-info' : 'badge-ghost');
+    document.getElementById('libre-save').disabled = pts.length < 2 || longueur < 5;
+}
+
+async function libreEnregistrer() {
+    const btn = document.getElementById('libre-save');
+    if (btn.disabled || mode !== 'libre') return;
+    btn.disabled = true;
+    try {
+        const r = await fetch(URL_LIGNE, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify({ points: libre.points.map(p => p.ll), categorie: document.getElementById('libre-categorie').value,
+                                   nom: document.getElementById('libre-nom').value.trim() })
+        });
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Erreur');
+        let msg = 'Route enregistrée (' + fmtDist(d.longueur_m) + ', ' + d.jonctions + ' jonction' + (d.jonctions > 1 ? 's' : '') + ').';
+        if (d.voisins_rattaches) msg += ' ' + d.voisins_rattaches + ' village(s) rattaché(s).';
+        if (!d.relie_reseau_principal) msg += ' Attention : ce tracé n\'est relié à aucune route du réseau principal.';
+        toast(msg, d.relie_reseau_principal);
+        document.getElementById('libre-nom').value = '';
+        libreEffacer();
+        chargerReseauLibre();     // le nouveau tracé (et les routes coupées) apparaît dans le réseau
+    } catch (e) {
+        toast(e.message, false);
+        libreMajInfo();
+    }
+}
+
+// =====================================================================================================
+// Mode « Nouveau village » : clic sur la carte + rattachement en cascade (région > district > commune > fokontany).
+// =====================================================================================================
+const village = { marqueur: null, lon: null, lat: null, requete: 0, refs: null, listesChargees: false, contoursRequete: 0 };
+const NIVEAUX_CASCADE = ['region', 'district', 'commune', 'fokontany'];
+const CASCADE_LIBELLES = { region: 'Région', district: 'District', commune: 'Commune', fokontany: 'Fokontany' };
+
+function villageSelect(niveau) { return document.getElementById('village-' + niveau); }
+
+async function villageChargerListe(niveau, parent, choisir) {
+    const sel = villageSelect(niveau);
+    sel.innerHTML = '';
+    const vide = document.createElement('option');
+    vide.value = '';
+    vide.textContent = '— ' + CASCADE_LIBELLES[niveau] + ' —';
+    sel.appendChild(vide);
+    sel.disabled = niveau !== 'region' && !parent;
+    if (niveau !== 'region' && !parent) { villageMajBouton(); return; }
+    try {
+        const r = await fetch(URL_VILLAGE_LISTE + '?niveau=' + niveau + (parent ? '&parent=' + encodeURIComponent(parent) : ''));
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Erreur');
+        d.items.forEach(it => {
+            const o = document.createElement('option');
+            o.value = it.id;
+            o.textContent = it.nom;
+            sel.appendChild(o);
+        });
+        sel.disabled = false;
+        if (choisir) sel.value = choisir;
+    } catch (e) { toast('Liste « ' + CASCADE_LIBELLES[niveau] + ' » indisponible : ' + e.message, false); }
+    villageMajBouton();
+}
+
+async function villageInitListes() {
+    if (village.listesChargees) return;
+    village.listesChargees = true;
+    await villageChargerListe('region', null, null);
+    for (const n of ['district', 'commune', 'fokontany']) await villageChargerListe(n, null, null);
+}
+
+/** Changement manuel d'un niveau : on recharge les niveaux inférieurs. */
+async function villageCascade(niveau) {
+    const i = NIVEAUX_CASCADE.indexOf(niveau);
+    const suivant = NIVEAUX_CASCADE[i + 1];
+    const parent = villageSelect(niveau).value;
+    await villageChargerListe(suivant, parent || null, null);
+    for (const n of NIVEAUX_CASCADE.slice(i + 2)) await villageChargerListe(n, null, null);
+}
+
+function villageMajBouton() {
+    const ok = village.lon !== null && document.getElementById('village-nom').value.trim() !== '' && !!villageSelect('fokontany').value;
+    document.getElementById('village-creer').disabled = !ok;
+}
+
+function villageEffacerPoint() {
+    if (village.marqueur) { carte.removeLayer(village.marqueur); village.marqueur = null; }
+    village.lon = village.lat = null;
+    document.getElementById('village-position').textContent = 'Aucune position choisie';
+    document.getElementById('village-detecte').textContent = '';
+    villageMajBouton();
+}
+
+function villagePoser(latlng) {
+    village.lon = latlng.lng;
+    village.lat = latlng.lat;
+    if (!village.marqueur) {
+        village.marqueur = L.marker(latlng, { draggable: true, icon: icone(18, '#16a34a', '#fff') }).addTo(carte);
+        village.marqueur.on('dragend', e => villagePoser(e.target.getLatLng()));
+    } else {
+        village.marqueur.setLatLng(latlng);
+    }
+    document.getElementById('village-position').textContent = 'Position : ' + latlng.lat.toFixed(6) + ', ' + latlng.lng.toFixed(6);
+    villageMajBouton();
+    villageDetecter();
+}
+
+/** Propose la hiérarchie administrative du point d'après les contours importés. */
+async function villageDetecter() {
+    const requete = ++village.requete;
+    const info = document.getElementById('village-detecte');
+    info.textContent = 'Recherche du fokontany…';
+    try {
+        const r = await fetch(URL_VILLAGE_LIEU + '?lon=' + village.lon + '&lat=' + village.lat);
+        const d = await r.json();
+        if (requete !== village.requete) return;           // le repère a bougé entre-temps
+        if (!d.success) throw new Error(d.error || 'Erreur');
+        const lieu = d.lieu || {};
+        if (!Object.keys(lieu).length) { info.textContent = 'Aucun contour à cet endroit : choisis le rattachement à la main.'; return; }
+        info.textContent = 'Détecté : ' + NIVEAUX_CASCADE.filter(n => lieu[n]).map(n => lieu[n].nom).join(' › ');
+        // Application en cascade : chaque niveau n'est choisi que si l'objet existe en base.
+        let parent = null;
+        for (const n of NIVEAUX_CASCADE) {
+            if (requete !== village.requete) return;
+            const trouve = lieu[n] && lieu[n].id;
+            if (!trouve) {
+                if (lieu[n]) info.textContent += ' — « ' + lieu[n].nom + ' » (' + CASCADE_LIBELLES[n].toLowerCase() + ') n\'existe pas en base : crée-le d\'abord ou choisis un autre rattachement.';
+                for (const reste of NIVEAUX_CASCADE.slice(NIVEAUX_CASCADE.indexOf(n))) if (reste !== 'region') await villageChargerListe(reste, reste === n ? parent : null, null);
+                break;
+            }
+            await villageChargerListe(n, n === 'region' ? null : parent, lieu[n].id);
+            parent = lieu[n].id;
+        }
+        villageMajBouton();
+    } catch (e) { info.textContent = 'Détection impossible : ' + e.message; }
+}
+
+/** Contours des fokontany visibles, en repères discrets (non cliquables : les clics servent à poser le village). */
+async function chargerContoursVillage() {
+    if (mode !== 'village') return;
+    const zoom = carte.getZoom();
+    village.refs.clearLayers();
+    if (zoom < 10) return;
+    const b = carte.getBounds().pad(0.1);
+    const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map(v => v.toFixed(5)).join(',');
+    const requete = ++village.contoursRequete;
+    try {
+        const d = await (await fetch(URL_CONTOURS + '?niveau=fokontany&bbox=' + bbox + '&zoom=' + Math.floor(zoom))).json();
+        if (requete !== village.contoursRequete || mode !== 'village') return;
+        village.refs.clearLayers();
+        L.geoJSON(d, { interactive: false, style: { color: '#a16207', weight: 1.2, fillOpacity: 0.03, opacity: 0.8, interactive: false } }).addTo(village.refs);
+    } catch (e) { /* repères facultatifs */ }
+}
+
+async function villageCreer(confirmer = false) {
+    const btn = document.getElementById('village-creer');
+    if (btn.disabled && !confirmer) return;
+    btn.disabled = true;
+    const resultat = document.getElementById('village-resultat');
+    try {
+        const r = await fetch(URL_VILLAGE_CREER, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify({ nom: document.getElementById('village-nom').value.trim(), fokontany_id: villageSelect('fokontany').value,
+                                   lon: village.lon, lat: village.lat, confirmer_proches: confirmer })
+        });
+        const d = await r.json();
+        if (r.status === 409 && d.confirmation_requise) {
+            const liste = d.proches.map(p => '• ' + p.nom + ' (' + p.distance_m + ' m, ' + p.fokontany + ')').join('\n');
+            if (confirm('Des villages existent déjà tout près :\n' + liste + '\n\nCréer quand même ce nouveau village ?')) return villageCreer(true);
+            return;
+        }
+        if (!d.success) throw new Error(d.error || 'Erreur');
+        // repère définitif + message avec lien vers la fiche
+        L.circleMarker([village.lat, village.lon], { radius: 7, color: '#fff', weight: 2, fillColor: '#16a34a', fillOpacity: 1 })
+            .bindTooltip(d.nom).addTo(village.refs);
+        resultat.replaceChildren();
+        const ok = document.createElement('div');
+        ok.className = 'alert alert-success text-xs py-2';
+        const lien = document.createElement('a');
+        lien.href = d.url;
+        lien.target = '_blank';
+        lien.className = 'link font-semibold';
+        lien.textContent = d.nom;
+        ok.append('Village créé : ', lien, ' (' + d.fokontany + ', ' + d.commune + ')' +
+            (d.distance_route_m !== null ? ' — route à ' + fmtDist(d.distance_route_m) + '.' : '.'));
+        resultat.appendChild(ok);
+        toast('Village « ' + d.nom + ' » créé.');
+        document.getElementById('village-nom').value = '';
+        villageEffacerPoint();
+        if (d.distance_route_m !== null && d.distance_route_m > 1000) {
+            const alerte = document.createElement('div');
+            alerte.className = 'alert alert-warning text-xs py-2 mt-1';
+            alerte.textContent = 'Ce village est à plus d\'1 km d\'une route : trace son chemin dans l\'onglet « Villages isolés ».';
+            resultat.appendChild(alerte);
+            chargerListe(true);
+        }
+    } catch (e) {
+        toast(e.message, false);
+        villageMajBouton();
+    }
+}
+
+// =====================================================================================================
+// Mode « Éditer » : recherche d'un village (zoom), modification d'un village (nom, rattachement, position)
+// et d'une route (sommets déplaçables, nouveaux nœuds, suppression de sommets).
+// =====================================================================================================
+const ZERO_UUID = '00000000-0000-0000-0000-000000000000';
+const urlEd = (modele, id) => modele.replace(ZERO_UUID, id);
+const edition = { marqueur: null, villageId: null, lon: null, lat: null, couche: null, ligne: null,
+                  troncon: null, pts: [], dirty: false, villages: null, requeteVillages: 0, minuteur: null, requeteRecherche: 0, requeteLieu: 0 };
+
+function edInit() { edition.couche = L.layerGroup().addTo(carte); edition.villages = L.layerGroup().addTo(carte); }
+
+/** Villages de la zone visible : repères cliquables avec leur nom (à fort zoom), pour éditer en voyant ce qu'on édite. */
+async function edChargerVillages() {
+    if (mode !== 'edition') return;
+    const statut = document.getElementById('edition-villages-statut');
+    const zoom = carte.getZoom();
+    if (zoom < 12) { edition.villages.clearLayers(); statut.textContent = 'Zoome (niveau 12 ou plus) pour voir les villages.'; return; }
+    const b = carte.getBounds().pad(0.1);
+    const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map(v => v.toFixed(5)).join(',');
+    const requete = ++edition.requeteVillages;
+    const etiquettes = document.getElementById('ed-etiquettes').checked;
+    try {
+        const d = await (await fetch(URL_VILLAGES_ZONE + '?bbox=' + bbox)).json();
+        if (requete !== edition.requeteVillages || mode !== 'edition') return;
+        if (!d.success) throw new Error(d.error || 'Erreur');
+        edition.villages.clearLayers();
+        d.items.forEach(v => {
+            if (v.id === edition.villageId) return;          // le village en cours d'édition a son propre repère
+            const m = L.circleMarker([v.lat, v.lon], { radius: 6, color: '#fff', weight: 1.5, fillColor: '#16a34a', fillOpacity: 0.95 }).addTo(edition.villages);
+            m.bindTooltip(v.nom, { permanent: etiquettes, direction: 'right', offset: [6, 0], className: 'village-etiquette' });
+            m.on('click', ev => { L.DomEvent.stopPropagation(ev); edChoisirVillage(v.id); });
+        });
+        statut.textContent = d.items.length + ' village(s) affiché(s)' + (d.tronque ? ' (zoome pour voir le reste)' : '') + '.';
+    } catch (e) { statut.textContent = 'Villages indisponibles : ' + e.message; }
+}
+
+// ---- Recherche de village -------------------------------------------------------------------------
+function edRechercheSaisie() {
+    clearTimeout(edition.minuteur);
+    edition.minuteur = setTimeout(edRechercher, 300);
+}
+function edRechercheEntree(e) {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const premier = document.querySelector('#ed-resultats button');
+    if (premier) premier.click(); else edRechercher();
+}
+async function edRechercher() {
+    const q = document.getElementById('ed-q').value.trim();
+    const liste = document.getElementById('ed-resultats');
+    liste.replaceChildren();
+    if (q.length < 2) return;
+    const requete = ++edition.requeteRecherche;
+    try {
+        const d = await (await fetch(URL_VILLAGE_RECHERCHE + '?q=' + encodeURIComponent(q))).json();
+        if (requete !== edition.requeteRecherche) return;
+        if (!d.success) throw new Error(d.error || 'Erreur');
+        if (!d.items.length) { liste.textContent = 'Aucun village trouvé.'; return; }
+        d.items.forEach(v => {
+            const b = document.createElement('button');
+            b.className = 'btn btn-ghost btn-xs justify-start w-full h-auto py-1 normal-case text-left';
+            b.textContent = v.nom + ' — ' + [v.fokontany, v.commune].filter(Boolean).join(', ');
+            b.onclick = () => edChoisirVillage(v.id);
+            liste.appendChild(b);
+        });
+    } catch (e) { liste.textContent = 'Recherche indisponible : ' + e.message; }
+}
+
+// ---- Village ----------------------------------------------------------------------------------------
+const edSel = n => document.getElementById('ed-v-' + n);
+
+async function edChargerListe(niveau, parent, choisir) {
+    const sel = edSel(niveau);
+    sel.innerHTML = '';
+    const vide = document.createElement('option');
+    vide.value = '';
+    vide.textContent = '— ' + CASCADE_LIBELLES[niveau] + ' —';
+    sel.appendChild(vide);
+    sel.disabled = niveau !== 'region' && !parent;
+    if (niveau !== 'region' && !parent) return;
+    try {
+        const d = await (await fetch(URL_VILLAGE_LISTE + '?niveau=' + niveau + (parent ? '&parent=' + encodeURIComponent(parent) : ''))).json();
+        if (!d.success) throw new Error(d.error || 'Erreur');
+        d.items.forEach(it => { const o = document.createElement('option'); o.value = it.id; o.textContent = it.nom; sel.appendChild(o); });
+        sel.disabled = false;
+        if (choisir) sel.value = choisir;
+    } catch (e) { toast('Liste « ' + CASCADE_LIBELLES[niveau] + ' » indisponible : ' + e.message, false); }
+}
+
+/** Applique une hiérarchie {niveau: {id, nom}} aux quatre listes (chaque niveau seulement s'il existe en base). */
+async function edAppliquerHierarchie(h, requete) {
+    let parent = null;
+    for (const n of NIVEAUX_CASCADE) {
+        if (requete !== undefined && requete !== edition.requeteLieu) return false;
+        const id = h[n] && h[n].id;
+        await edChargerListe(n, n === 'region' ? null : parent, id || null);
+        if (!id) {
+            for (const reste of NIVEAUX_CASCADE.slice(NIVEAUX_CASCADE.indexOf(n) + 1)) await edChargerListe(reste, null, null);
+            return false;
+        }
+        parent = id;
+    }
+    return true;
+}
+
+async function edCascade(niveau) {
+    const i = NIVEAUX_CASCADE.indexOf(niveau);
+    if (i >= NIVEAUX_CASCADE.length - 1) return;
+    await edChargerListe(NIVEAUX_CASCADE[i + 1], edSel(niveau).value || null, null);
+    for (const n of NIVEAUX_CASCADE.slice(i + 2)) await edChargerListe(n, null, null);
+}
+
+function edPoserVillage(latlng) {
+    edition.lon = latlng.lng;
+    edition.lat = latlng.lat;
+    if (!edition.marqueur) {
+        edition.marqueur = L.marker(latlng, { draggable: true, icon: icone(20, '#dc2626', '#fff'), zIndexOffset: 500 }).addTo(carte);
+        edition.marqueur.bindTooltip(() => document.getElementById('ed-v-nom').value || 'Village', { permanent: true, direction: 'right', offset: [10, 0], className: 'village-etiquette village-etiquette-edit' });
+        edition.marqueur.on('dragend', e => edDeplacerVillage(e.target.getLatLng()));
+    } else {
+        edition.marqueur.setLatLng(latlng);
+    }
+    document.getElementById('ed-v-position').textContent = 'Position : ' + latlng.lat.toFixed(6) + ', ' + latlng.lng.toFixed(6);
+}
+
+async function edChoisirVillage(id) {
+    if (!edTronconFermer()) return;
+    try {
+        const d = await (await fetch(urlEd(URL_VILLAGE_DETAIL, id))).json();
+        if (!d.success) throw new Error(d.error || 'Village introuvable');
+        const v = d.village;
+        edition.villageId = v.id;
+        document.getElementById('ed-village-panel').classList.remove('hidden');
+        document.getElementById('ed-v-nom').value = v.nom;
+        document.getElementById('ed-v-detecte').textContent = v.distance_route_m !== null ? 'Route la plus proche à ' + fmtDist(v.distance_route_m) + '.' : 'Aucun accès au réseau routier.';
+        document.getElementById('ed-v-resultat').replaceChildren();
+        edPoserVillage(L.latLng(v.lat, v.lon));
+        carte.setView([v.lat, v.lon], Math.max(carte.getZoom(), 15));
+        edChargerVillages();
+        edition.requeteLieu++;
+        await edAppliquerHierarchie(v.hierarchie || {});
+    } catch (e) { toast(e.message, false); }
+}
+
+/** Le repère a été déplacé : on repropose le rattachement d'après les contours. */
+async function edDeplacerVillage(latlng) {
+    edPoserVillage(latlng);
+    const requete = ++edition.requeteLieu;
+    const info = document.getElementById('ed-v-detecte');
+    info.textContent = 'Recherche du fokontany…';
+    try {
+        const d = await (await fetch(URL_VILLAGE_LIEU + '?lon=' + latlng.lng + '&lat=' + latlng.lat)).json();
+        if (requete !== edition.requeteLieu) return;
+        const lieu = d.lieu || {};
+        if (!Object.keys(lieu).length) { info.textContent = 'Aucun contour ici : vérifie le rattachement.'; return; }
+        info.textContent = 'Nouvel emplacement : ' + NIVEAUX_CASCADE.filter(n => lieu[n]).map(n => lieu[n].nom).join(' › ') + ' (rattachement mis à jour, corrige-le si besoin).';
+        await edAppliquerHierarchie(lieu, requete);
+    } catch (e) { info.textContent = 'Détection impossible : ' + e.message; }
+}
+
+function edVillageFermer() {
+    if (edition.marqueur) { carte.removeLayer(edition.marqueur); edition.marqueur = null; }
+    edition.villageId = edition.lon = edition.lat = null;
+    if (mode === 'edition') edChargerVillages();
+    document.getElementById('ed-village-panel').classList.add('hidden');
+}
+
+async function edVillageEnregistrer(confirmer = false) {
+    if (!edition.villageId) return;
+    const fkt = edSel('fokontany').value;
+    if (!fkt) { toast('Choisis le fokontany de rattachement.', false); return; }
+    try {
+        const r = await fetch(urlEd(URL_VILLAGE_MODIFIER, edition.villageId), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify({ nom: document.getElementById('ed-v-nom').value.trim(), fokontany_id: fkt,
+                                   lon: edition.lon, lat: edition.lat, confirmer_proches: confirmer })
+        });
+        const d = await r.json();
+        if (r.status === 409 && d.confirmation_requise) {
+            const liste = d.proches.map(p => '• ' + p.nom + ' (' + p.distance_m + ' m, ' + p.fokontany + ')').join('\n');
+            if (confirm('Des villages existent déjà tout près :\n' + liste + '\n\nDéplacer quand même ce village ici ?')) return edVillageEnregistrer(true);
+            return;
+        }
+        if (!d.success) throw new Error(d.error || 'Erreur');
+        let msg = 'Village « ' + d.nom + ' » enregistré.';
+        if (d.deplace) msg += d.distance_route_m !== null ? ' Route à ' + fmtDist(d.distance_route_m) + '.' : ' Aucun réseau routier trouvé.';
+        toast(msg);
+        document.getElementById('ed-v-detecte').textContent = d.distance_route_m !== null ? 'Route la plus proche à ' + fmtDist(d.distance_route_m) + '.' : '';
+        if (d.distance_route_m !== null && d.distance_route_m > 1000) toast(msg + ' Attention : à plus d\'1 km d\'une route (onglet « Villages isolés »).', false);
+    } catch (e) { toast(e.message, false); }
+}
+
+// ---- Route ------------------------------------------------------------------------------------------
+async function edChoisirTroncon(id) {
+    if (edition.dirty && !confirm('Abandonner les modifications non enregistrées de la route en cours ?')) return;
+    try {
+        const d = await (await fetch(urlEd(URL_TRONCON_DETAIL, id))).json();
+        if (!d.success) throw new Error(d.error || 'Tronçon introuvable');
+        edition.troncon = d.troncon;
+        edition.pts = d.troncon.points.map(p => [p[0], p[1]]);
+        edition.dirty = false;
+        document.getElementById('ed-route-panel').classList.remove('hidden');
+        document.getElementById('ed-r-nom').value = d.troncon.nom || '';
+        const cat = document.getElementById('ed-r-cat');
+        cat.value = ['nationale', 'provinciale', 'communale', 'route', 'piste', 'sentier', 'autre'].includes(d.troncon.categorie) ? d.troncon.categorie : 'autre';
+        edRedessiner();
+    } catch (e) { toast(e.message, false); }
+}
+
+function edLongueur() {
+    let s = 0;
+    for (let i = 1; i < edition.pts.length; i++) s += distM(edition.pts[i - 1], edition.pts[i]);
+    return s;
+}
+function edInfo() {
+    const t = edition.troncon;
+    document.getElementById('ed-r-info').textContent = (t.source === 'manuel' ? 'Tracé manuel' : 'Réseau importé') + ' · ' + edition.pts.length +
+        ' sommets · ' + fmtDist(edLongueur()) + (edition.dirty ? ' · modifié, non enregistré' : '');
+}
+
+/** Sommet du réseau (autre que ceux de la route éditée) à moins de 12 px : sert à raccorder une extrémité. */
+function edAccrocher(latlng) {
+    const z = carte.getZoom(), p = carte.project(latlng, z);
+    const propres = new Set(edition.pts.map(q => q[0].toFixed(6) + ',' + q[1].toFixed(6)));
+    let meilleur = null, dmin = 12;
+    for (const ligne of reseauLibre.lignes) {
+        for (const q of ligne) {
+            const d = Math.hypot(q.x - p.x, q.y - p.y);
+            if (d >= dmin) continue;
+            const ll2 = carte.unproject(q, z);
+            if (propres.has(ll2.lng.toFixed(6) + ',' + ll2.lat.toFixed(6))) continue;
+            dmin = d;
+            meilleur = ll2;
+        }
+    }
+    return meilleur || latlng;
+}
+
+function edRedessiner() {
+    edition.couche.clearLayers();
+    const n = edition.pts.length, t = edition.troncon;
+    edition.ligne = L.polyline(edition.pts.map(ll), { color: '#f59e0b', weight: 5, opacity: 0.9, interactive: false }).addTo(edition.couche);
+    // petits cercles au milieu de chaque segment : les glisser (ou cliquer) crée un nouveau nœud
+    for (let i = 0; i < n - 1; i++) {
+        const a = edition.pts[i], b = edition.pts[i + 1];
+        const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+        const m = L.marker(ll(mid), { draggable: true, zIndexOffset: -100,
+            icon: L.divIcon({ className: '', iconSize: [10, 10], iconAnchor: [5, 5],
+                html: '<div style="width:10px;height:10px;border-radius:50%;background:#fff;border:2px solid #f59e0b;opacity:.85"></div>' }) })
+            .addTo(edition.couche);
+        m.bindTooltip('Ajouter un nœud', { direction: 'top' });
+        let insere = false;
+        const inserer = () => { if (!insere) { edition.pts.splice(i + 1, 0, mid.slice()); insere = true; edition.dirty = true; } };
+        m.on('dragstart', inserer);
+        m.on('drag', e => {
+            const p = e.target.getLatLng();
+            edition.pts[i + 1] = [p.lng, p.lat];
+            edition.ligne.setLatLngs(edition.pts.map(ll));
+        });
+        m.on('dragend', () => { edInfo(); edRedessiner(); });
+        m.on('click', () => { inserer(); edRedessiner(); });
+    }
+    edition.pts.forEach((pt, i) => {
+        const extremite = i === 0 || i === n - 1;
+        const partage = (i === 0 && t.debut_partage > 0) || (i === n - 1 && t.fin_partage > 0);
+        const mk = L.marker(ll(pt), { draggable: true, zIndexOffset: 100,
+            icon: icone(extremite ? 16 : 12, partage ? '#dc2626' : (extremite ? '#2563eb' : '#fff'), '#111') }).addTo(edition.couche);
+        if (partage) mk.bindTooltip('Jonction partagée avec ' + (i === 0 ? t.debut_partage : t.fin_partage) + ' autre(s) route(s) : elles suivent', { direction: 'top' });
+        mk.on('drag', e => {
+            const p = e.target.getLatLng();
+            edition.pts[i] = [p.lng, p.lat];
+            edition.ligne.setLatLngs(edition.pts.map(ll));
+        });
+        mk.on('dragend', e => {
+            let p = e.target.getLatLng();
+            if (extremite) p = edAccrocher(p);
+            edition.pts[i] = [p.lng, p.lat];
+            edition.dirty = true;
+            edRedessiner();
+            edInfo();
+        });
+        mk.on('contextmenu', () => {
+            if (extremite) { toast('Les extrémités ne peuvent pas être supprimées (déplace-les).', false); return; }
+            edition.pts.splice(i, 1);
+            edition.dirty = true;
+            edRedessiner();
+        });
+    });
+    edInfo();
+}
+
+async function edTronconEnregistrer() {
+    if (!edition.troncon) return;
+    const btn = document.getElementById('ed-r-enregistrer');
+    btn.disabled = true;
+    try {
+        const id = edition.troncon.id;
+        const r = await fetch(urlEd(URL_TRONCON_MODIFIER, id), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify({ points: edition.pts, categorie: document.getElementById('ed-r-cat').value, nom: document.getElementById('ed-r-nom').value })
+        });
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Erreur');
+        toast('Route enregistrée (' + fmtDist(d.longueur_m) + ')' + (d.troncons_touches > 1 ? ' — ' + (d.troncons_touches - 1) + ' route(s) voisine(s) ajustée(s).' : '.'));
+        edition.dirty = false;
+        chargerReseauLibre();
+        edChoisirTroncon(id);
+    } catch (e) { toast(e.message, false); }
+    finally { btn.disabled = false; }
+}
+
+function edTronconAnnuler() {
+    if (!edition.troncon) return;
+    edition.dirty = false;
+    edChoisirTroncon(edition.troncon.id);
+}
+
+function edTronconFermer(silencieux = false) {
+    if (edition.dirty && !silencieux && !confirm('Abandonner les modifications non enregistrées ?')) return false;
+    edition.troncon = null;
+    edition.pts = [];
+    edition.dirty = false;
+    edition.couche.clearLayers();
+    document.getElementById('ed-route-panel').classList.add('hidden');
+    return true;
+}
+
+document.addEventListener('keydown', e => {
+    const cible = e.target instanceof Element ? e.target : null;
+    if ((cible && cible.closest('input, textarea, select')) || e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (mode === 'village') {
+        if (k === 'escape') villageEffacerPoint();
+        return;
+    }
+    if (mode === 'edition') {
+        if (k === 'escape') { edTronconAnnuler(); }
+        return;
+    }
+    if (mode === 'libre') {
+        if (k === 'enter') { e.preventDefault(); libreEnregistrer(); }
+        else if (k === 'backspace' || k === 'z') { e.preventDefault(); libreAnnuler(); }
+        else if (k === 'escape') { libreEffacer(); }
+        return;
+    }
+    if (k === 'arrowdown' || k === 'j') { e.preventDefault(); naviguer(1); }
+    else if (k === 'arrowup' || k === 'k') { e.preventDefault(); naviguer(-1); }
+    else if (k === 'enter' && courant) { e.preventDefault(); valider(); }
+    else if (k === 's' && courant) { passer(); }
+    else if (k === 'z' && courant) { annulerPoint(); }
+});
+
+document.addEventListener('DOMContentLoaded', () => { initCarte(); chargerListe(); });
+</script>
+{% endblock %}

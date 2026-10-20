@@ -1,0 +1,2308 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+{{ postes_data|json_script:"postes-data" }}
+{{ templates_data|json_script:"templates-data" }}
+
+<div class="hydria-v1-page px-4 py-6 max-w-7xl mx-auto" x-data="grillesSalarialesApp()">
+    <header class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+        <div>
+            <h1 class="hydria-v1-page-title text-2xl font-bold flex items-center gap-2">
+                <i class="fas fa-layer-group text-primary"></i>
+                Grilles Salariales
+            </h1>
+            <p class="text-base-content/70 mt-1">
+                Fourchettes salariales par poste : un palier Junior (non autonome), puis des tranches
+                d'anciennete comptees depuis la sortie du niveau Junior.
+            </p>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+            <a href="{% url 'employees:grilles_autonomie_home' %}" class="btn btn-outline">
+                <i class="fas fa-chart-line mr-1"></i> Grille par stade d'autonomie
+            </a>
+            <a href="{% url 'employees:revalorisations_list' %}" class="btn btn-outline">
+                <i class="fas fa-arrow-left mr-1"></i> Revalorisations
+            </a>
+            <a href="{% url 'employees:export_grilles_salariales_template_excel' %}" class="btn btn-outline">
+                <i class="fas fa-file-excel mr-1"></i> Modele Excel (Grilles)
+            </a>
+            <a href="{% url 'employees:export_templates_excel' %}" class="btn btn-outline">
+                <i class="fas fa-file-excel mr-1"></i> Modele Excel (Templates)
+            </a>
+            <a href="{% url 'employees:export_grilles_salariales_excel' %}" class="btn btn-outline">
+                <i class="fas fa-download mr-1"></i> Exporter Excel
+            </a>
+            {% if can_manage %}
+            <input type="file" class="hidden" x-ref="importFile" accept=".xlsx,.xlsm" @change="importExcel($event)">
+            <button class="btn btn-outline" @click="$refs.importFile.click()">
+                <i class="fas fa-upload mr-1"></i> Importer Grilles
+            </button>
+            <input type="file" class="hidden" x-ref="importTemplateFile" accept=".xlsx,.xlsm" @change="importTemplatesExcel($event)">
+            <button class="btn btn-outline" @click="$refs.importTemplateFile.click()">
+                <i class="fas fa-upload mr-1"></i> Importer Templates
+            </button>
+            <button class="btn btn-secondary" @click="openCreateTemplateModal()">
+                <i class="fas fa-layer-group mr-1"></i> Nouveau template
+            </button>
+            <button class="btn btn-primary" @click="openAssignPosteModal()">
+                <i class="fas fa-user-tie mr-1"></i> Affecter un poste
+            </button>
+            <button class="btn btn-primary" @click="openCreateModal()">
+                <i class="fas fa-plus mr-1"></i> Nouvelle grille
+            </button>
+            {% endif %}
+        </div>
+    </header>
+
+    <div class="alert alert-info mb-4 shadow-sm">
+        <i class="fas fa-info-circle"></i>
+        <span>
+            Cette page affiche et saisit des fourchettes nettes estimees. Le brut correspondant
+            est calcule et stocke automatiquement selon le poste, avec une reference standard a 0 personne a charge.
+            La fourchette haute peut etre fixe ou calculee par ratio annuel. Les anciennetes decimales sont acceptees, par exemple 0,5 an.
+        </span>
+    </div>
+
+    {% if user_organisation_name %}
+    <div class="alert alert-success mb-4 shadow-sm">
+        <i class="fas fa-building"></i>
+        <span>Organisation active : {{ user_organisation_name }}</span>
+    </div>
+    {% endif %}
+
+    {% if not can_manage %}
+    <div class="alert alert-warning shadow-sm">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span>Aucune organisation n'est associee a votre compte. Cette page ne peut pas etre utilisee.</span>
+    </div>
+    {% else %}
+    <div class="hydria-v1-filter-card card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <div class="hydria-v1-compact-filters grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Poste</span></label>
+                    <select class="select select-bordered" x-model="selectedPoste">
+                        <option value="">Tous les postes</option>
+                        <template x-for="poste in postes" :key="poste.id">
+                            <option :value="poste.id" x-text="formatPosteLabel(poste)"></option>
+                        </template>
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Statut</span></label>
+                    <select class="select select-bordered" x-model="selectedStatut">
+                        <option value="">Tous</option>
+                        <option value="actif">Actives</option>
+                        <option value="inactif">Inactives</option>
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Template</span></label>
+                    <select class="select select-bordered" x-model="selectedTemplateFilter">
+                        <option value="">Tous les templates</option>
+                        <option value="__manual__">Saisie directe</option>
+                        <template x-for="template in templates" :key="template.id">
+                            <option :value="template.id" x-text="formatTemplateLabel(template)"></option>
+                        </template>
+                    </select>
+                </div>
+                <div class="form-control justify-end">
+                    <label class="label"><span class="label-text invisible">Actions</span></label>
+                    <button class="btn btn-outline" @click="loadData()">
+                        <i class="fas fa-sync-alt" :class="{'fa-spin': loading}"></i> Rafraichir
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="alert alert-error mb-4 shadow-sm" x-show="errorMessage" style="display: none;">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span x-text="errorMessage"></span>
+    </div>
+
+    <div class="alert alert-success mb-4 shadow-sm" x-show="successMessage" style="display: none;">
+        <i class="fas fa-check-circle"></i>
+        <span x-text="successMessage"></span>
+    </div>
+
+    <div role="tablist" class="tabs tabs-boxed mb-6">
+        <a role="tab" class="tab" :class="{'tab-active': activeTab === 'tableau'}" @click="activeTab = 'tableau'">
+            <i class="fas fa-table mr-1"></i> Tableau
+        </a>
+        <a role="tab" class="tab" :class="{'tab-active': activeTab === 'graphique'}" @click="openCartoTab('graphique')">
+            <i class="fas fa-chart-area mr-1"></i> Vue graphique
+        </a>
+        <a role="tab" class="tab" :class="{'tab-active': activeTab === 'matrice'}" @click="openCartoTab('matrice')">
+            <i class="fas fa-th mr-1"></i> Vue matricielle
+        </a>
+        <a role="tab" class="tab" :class="{'tab-active': activeTab === 'frise'}" @click="openCartoTab('frise')">
+            <i class="fas fa-stream mr-1"></i> Frise par poste
+        </a>
+        <a role="tab" class="tab" :class="{'tab-active': activeTab === 'positionnement'}" @click="openCartoTab('positionnement')">
+            <i class="fas fa-users mr-1"></i> Positionnement des employes
+        </a>
+    </div>
+
+    <!-- Synthese commune aux vues de cartographie -->
+    <div x-show="activeTab !== 'tableau'" style="display: none;">
+        <div class="alert alert-info mb-4 shadow-sm text-sm">
+            <i class="fas fa-info-circle"></i>
+            <span>
+                Un employe sans <strong>date de sortie Junior</strong> est positionne sur la grille Junior de son poste.
+                Une fois la date saisie, son anciennete de grille est comptee a partir de cette date (et non de l'embauche).
+                Le salaire compare est le dernier salaire net reellement paye.
+            </span>
+        </div>
+
+        <div class="flex justify-center items-center py-16" x-show="cartoLoading">
+            <span class="loading loading-spinner text-primary loading-lg"></span>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6" x-show="!cartoLoading">
+            <template x-for="stat in cartoStats()" :key="stat.key">
+                <button type="button" class="stat bg-base-100 shadow rounded-lg p-3 text-left"
+                        :class="{'ring-2 ring-primary': selectedStatutEmploye === stat.key}"
+                        @click="selectedStatutEmploye = selectedStatutEmploye === stat.key ? '' : stat.key; refreshCartoViews()">
+                    <div class="stat-title text-xs" x-text="stat.label"></div>
+                    <div class="stat-value text-2xl" :class="stat.textClass" x-text="stat.count"></div>
+                </button>
+            </template>
+        </div>
+    </div>
+
+    <!-- Vue graphique -->
+    <div x-show="activeTab === 'graphique' && !cartoLoading" style="display: none;">
+        <div class="card bg-base-100 shadow mb-4">
+            <div class="card-body">
+                <p class="text-xs text-base-content/60 mb-2">
+                    Trait plein = fourchette haute, pointille = fourchette basse, couleur = type de poste.
+                </p>
+                {% include 'employees/partials/_grilles_postes_selection.html' %}
+
+                {% include 'employees/partials/_classification_filters.html' %}
+                {% include 'employees/partials/_classification_legend.html' %}
+            </div>
+        </div>
+
+        <div class="card bg-base-100 shadow-xl mb-6">
+            <div class="card-body">
+                <div class="alert" x-show="visibleChartPostes().length === 0">
+                    <i class="fas fa-eye-slash"></i>
+                    <span>Cochez au moins un poste (ou ajustez les filtres) pour afficher le graphique.</span>
+                </div>
+                <div class="relative" style="height: 520px;" x-show="visibleChartPostes().length > 0">
+                    <canvas id="chart_grilles_salariales"></canvas>
+                </div>
+                <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs mt-2 text-base-content/70">
+                    <span>Points = employes actifs, places sur le palier le plus proche de leur salaire (contour = couleur du poste, triangle = palier theorique different) :</span>
+                    <span><span class="inline-block w-3 h-3 rounded-full bg-success mr-1 align-middle"></span>dans la fourchette</span>
+                    <span><span class="inline-block w-3 h-3 rounded-full bg-error mr-1 align-middle"></span>sous la fourchette</span>
+                    <span><span class="inline-block w-3 h-3 rounded-full bg-info mr-1 align-middle"></span>au-dessus</span>
+                    <span><span class="inline-block w-3 h-3 bg-warning/30 mr-1 align-middle"></span>colonne Junior (non autonome)</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Vue matricielle -->
+    <div class="card bg-base-100 shadow mb-4" x-show="activeTab === 'matrice' && !cartoLoading" style="display: none;">
+        <div class="card-body">
+            <h3 class="font-semibold flex items-center gap-2">
+                <i class="fas fa-th text-primary"></i>
+                Matrice postes x paliers - fourchette nette
+            </h3>
+            <p class="text-xs text-base-content/60 max-w-3xl">
+                Chaque cellule affiche la fourchette nette (basse - haute) du palier. Les employes actifs sont places
+                sur le palier de leur poste dont la fourchette est la plus proche de leur dernier salaire net paye,
+                et colores selon leur situation. Survolez un badge pour le detail.
+            </p>
+            <p class="text-xs text-base-content/50 mt-1">
+                <span class="badge badge-xs badge-ghost ring-2 ring-warning ring-offset-1 ring-offset-base-100 align-middle">ex.</span>
+                = palier estime different du palier theorique (Junior, ou anciennete depuis la sortie Junior)
+            </p>
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-base-content/60 mt-1">
+                <span>Barres : position = montant, longueur = ecart basse-haute, sur une echelle commune aux postes affiches ;
+                    <span class="inline-block w-0.5 h-3 bg-base-content align-middle"></span> = salaire d'un employe.</span>
+                <span>Amplitude (haute / basse) :</span>
+                <span><span class="inline-block w-4 h-2 rounded-full bg-success align-middle mr-1"></span>&lt; 25 %</span>
+                <span><span class="inline-block w-4 h-2 rounded-full bg-warning align-middle mr-1"></span>25 - 50 %</span>
+                <span><span class="inline-block w-4 h-2 rounded-full bg-error align-middle mr-1"></span>&gt; 50 %</span>
+            </div>
+            <div class="mt-3">
+                {% include 'employees/partials/_grilles_postes_selection.html' %}
+            </div>
+            {% include 'employees/partials/_classification_filters.html' %}
+            {% include 'employees/partials/_classification_legend.html' %}
+        </div>
+    </div>
+
+    <div class="alert mb-6" x-show="activeTab === 'matrice' && !cartoLoading && carto.postes.length > 0 && matricePostes().length === 0" style="display: none;">
+        <i class="fas fa-eye-slash"></i>
+        <span>Cochez au moins un poste (ou ajustez les filtres) pour afficher la matrice.</span>
+    </div>
+
+    <div class="card bg-base-100 shadow-xl mb-6" x-show="activeTab === 'matrice' && !cartoLoading && matricePostes().length > 0" style="display: none;">
+        <div class="card-body p-0">
+            <div class="overflow-x-auto">
+                <table class="table table-sm w-full">
+                    <thead class="bg-base-200">
+                        <tr>
+                            <th class="sticky left-0 bg-base-200 z-10">Poste</th>
+                            <template x-for="col in carto.colonnes" :key="col.cle">
+                                <th class="text-center min-w-[11rem]" :class="col.est_junior ? 'bg-warning/20' : ''">
+                                    <div x-text="col.libelle"></div>
+                                    <div class="text-[10px] font-normal text-base-content/60"
+                                         x-text="col.est_junior ? 'non autonome' : 'depuis sortie Junior'"></div>
+                                </th>
+                            </template>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="poste in matricePostes()" :key="poste.poste_id">
+                            <tr class="align-top">
+                                <td class="sticky left-0 bg-base-100 z-10 font-semibold border-l-4"
+                                    :style="`border-left-color: ${PC.chartColor(poste.type_poste)}`">
+                                    <div x-text="poste.poste_nom"></div>
+                                    <div class="flex items-center gap-1 mt-1" x-show="poste.type_poste || poste.niveau_poste">
+                                        <span class="badge badge-xs" :class="PC.typeBadgeClass(poste.type_poste)" x-text="PC.typeLabel(poste.type_poste)"></span>
+                                        <span class="badge badge-xs" :class="PC.niveauBadgeClass(poste.type_poste, poste.niveau_poste)" x-text="PC.niveauLabel(poste.niveau_poste)"></span>
+                                    </div>
+                                </td>
+                                <template x-for="col in carto.colonnes" :key="col.cle">
+                                    <td class="text-center" :class="col.est_junior ? 'bg-warning/10' : ''">
+                                        <template x-if="poste.paliers[col.cle]">
+                                            <button type="button" class="font-mono text-xs hover:underline hover:text-primary cursor-pointer"
+                                                    title="Modifier la fourchette"
+                                                    @click="openFourchetteModal(poste, col.cle)">
+                                                <span x-text="formatPalier(poste.paliers[col.cle])"></span>
+                                                <i class="fas fa-pen text-[9px] ml-1 opacity-50"></i>
+                                            </button>
+                                        </template>
+                                        <!-- Barre de la fourchette sur l'echelle commune de la matrice : position = montant, longueur = ecart basse-haute -->
+                                        <template x-if="poste.paliers[col.cle]">
+                                            <div class="mt-1 px-1" :title="barreTitre(poste.paliers[col.cle])">
+                                                <div class="relative h-2.5 rounded-full bg-base-300/60">
+                                                    <div class="absolute top-0 h-2.5 rounded-full opacity-80"
+                                                         :class="amplitudeClasse(poste.paliers[col.cle])"
+                                                         :style="barreStyle(poste.paliers[col.cle])"></div>
+                                                    <template x-for="emp in employesCellule(poste.poste_id, col.cle)" :key="'m' + emp.employe_id">
+                                                        <div class="absolute -top-0.5 w-0.5 h-3.5 bg-base-content rounded"
+                                                             x-show="emp.salaire_net_reel !== null"
+                                                             :style="`left: ${positionEchelle(emp.salaire_position)}%`"
+                                                             :title="`${emp.nom_affichage} : ${formatMoney(emp.salaire_net_reel)}${libelleQuotite(emp)}`"></div>
+                                                    </template>
+                                                </div>
+                                                <div class="text-[10px] text-base-content/60 mt-0.5"
+                                                     x-text="`amplitude +${amplitudePct(poste.paliers[col.cle])} %`"></div>
+                                            </div>
+                                        </template>
+                                        <template x-if="!poste.paliers[col.cle]">
+                                            <div class="text-base-content/30">&mdash;</div>
+                                        </template>
+                                        <div class="flex flex-wrap justify-center gap-1 mt-1">
+                                            <template x-for="emp in employesCellule(poste.poste_id, col.cle)" :key="emp.employe_id">
+                                                <span class="badge badge-xs h-auto py-0.5 cursor-help whitespace-nowrap" :class="[statutBadgeClass(emp.statut), emp.coherent ? '' : 'ring-2 ring-warning ring-offset-1 ring-offset-base-100']"
+                                                      :title="employeTooltip(emp)"
+                                                      x-text="emp.salaire_net_reel === null ? emp.nom_affichage : `${emp.nom_affichage} · ${formatMoney(emp.salaire_net_reel)}${libelleQuotite(emp)}`"></span>
+                                            </template>
+                                        </div>
+                                    </td>
+                                </template>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+            <div class="p-4 text-xs text-base-content/60" x-show="employesHorsGrille().length > 0">
+                <i class="fas fa-exclamation-triangle text-warning mr-1"></i>
+                <span x-text="`${employesHorsGrille().length} employe(s) sans palier correspondant (pas de grille Junior, ou anciennete hors tranches) : `"></span>
+                <span x-text="employesHorsGrille().map(e => `${e.nom_affichage} (${e.poste_nom})`).join(', ')"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Frise par poste -->
+    <div x-show="activeTab === 'frise' && !cartoLoading" style="display: none;">
+        <div class="card bg-base-100 shadow mb-4">
+            <div class="card-body">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <h3 class="font-semibold flex items-center gap-2">
+                            <i class="fas fa-stream text-primary"></i>
+                            Frise par poste
+                        </h3>
+                        <p class="text-xs text-base-content/60 max-w-3xl">
+                            Chaque frise va du montant le plus bas au plus haut du poste : sa longueur est proportionnelle
+                            a cet ecart. Les tranches y sont empilees (cliquer pour modifier la fourchette) et chaque employe
+                            est un trait vertical place a son dernier salaire net paye.
+                        </p>
+                    </div>
+                    <div class="join">
+                        <button type="button" class="btn btn-xs join-item" :class="friseAlignement === 'commune' ? 'btn-active' : 'btn-outline'"
+                                @click="friseAlignement = 'commune'">Echelle commune</button>
+                        <button type="button" class="btn btn-xs join-item" :class="friseAlignement === 'gauche' ? 'btn-active' : 'btn-outline'"
+                                @click="friseAlignement = 'gauche'">Aligne a gauche</button>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    {% include 'employees/partials/_grilles_postes_selection.html' %}
+                </div>
+                {% include 'employees/partials/_classification_filters.html' %}
+            </div>
+        </div>
+
+        <div class="alert mb-6" x-show="carto.postes.length > 0 && matricePostes().length === 0">
+            <i class="fas fa-eye-slash"></i>
+            <span>Cochez au moins un poste (ou ajustez les filtres) pour afficher les frises.</span>
+        </div>
+
+        <div class="card bg-base-100 shadow-xl mb-6" x-show="matricePostes().length > 0">
+            <div class="card-body space-y-3">
+                <template x-for="poste in matricePostes()" :key="'frise-' + poste.poste_id">
+                    <div>
+                        <div class="flex flex-wrap items-baseline justify-between gap-2 mb-1">
+                            <div class="font-semibold text-sm flex items-center gap-2">
+                                <span class="inline-block w-3 h-3 rounded-full" :style="`background-color: ${PC.chartColor(poste.type_poste)}`"></span>
+                                <span x-text="poste.poste_nom"></span>
+                            </div>
+                            <div class="text-xs text-base-content/60 font-mono"
+                                 x-text="`${formatMoney(friseBornes(poste).min)} -> ${formatMoney(friseBornes(poste).max)} (ecart ${formatMoney(friseBornes(poste).max - friseBornes(poste).min)})`"></div>
+                        </div>
+                        <!-- Piste pleine largeur ; la frise du poste y est placee selon l'alignement choisi -->
+                        <div class="relative">
+                            <div class="relative rounded-lg bg-base-200/70 border border-base-300"
+                                 :style="friseStyle(poste)"
+                                 x-data="{ largeur: 0 }"
+                                 x-init="largeur = $el.clientWidth; new ResizeObserver(() => { largeur = $el.clientWidth }).observe($el)">
+                                <div class="relative" :style="`height: ${friseHauteur(poste, largeur)}px`">
+                                    <template x-for="(tranche, i) in friseTranches(poste)" :key="tranche.cle">
+                                        <button type="button"
+                                                class="absolute h-3.5 rounded text-[10px] leading-[14px] font-semibold text-left px-1 overflow-hidden whitespace-nowrap hover:ring-2 hover:ring-primary"
+                                                :class="trancheClasse(i, tranche.cle)"
+                                                :style="`top: ${tranche.voie * 16 + 3}px; left: ${positionDansFrise(poste, tranche.basse)}%; width: ${Math.max(positionDansFrise(poste, tranche.haute) - positionDansFrise(poste, tranche.basse), 2)}%`"
+                                                :title="`${tranche.libelle} : ${formatMoney(tranche.basse)} -> ${formatMoney(tranche.haute)} (cliquer pour modifier)`"
+                                                @click="openFourchetteModal(poste, tranche.cle)"
+                                                x-text="tranche.libelle"></button>
+                                    </template>
+                                    <!-- Employes : le trait reste au salaire exact, l'etiquette est rangee sur la premiere
+                                         ligne libre pour ne pas chevaucher une autre (voir etiquettesFrise). -->
+                                    <template x-for="et in etiquettesFrise(poste, largeur)" :key="'fe-' + et.emp.employe_id">
+                                        <div>
+                                            <div class="absolute top-0 w-0.5 -ml-px"
+                                                 :class="couleurEmploye(et.emp)"
+                                                 :style="`left: ${et.positionPct}%; height: ${et.top}px`"></div>
+                                            <div class="absolute z-10 text-[10px] leading-3 whitespace-nowrap font-semibold cursor-help bg-base-200 rounded px-0.5"
+                                                 :style="`left: ${et.gauchePx}px; top: ${et.top}px`"
+                                                 :title="employeTooltip(et.emp)"
+                                                 x-text="et.texte"></div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+                <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-base-content/60">
+                    <span>Trait employe :</span>
+                    <span><span class="inline-block w-0.5 h-3 bg-success align-middle mr-1"></span>dans sa fourchette</span>
+                    <span><span class="inline-block w-0.5 h-3 bg-error align-middle mr-1"></span>sous</span>
+                    <span><span class="inline-block w-0.5 h-3 bg-info align-middle mr-1"></span>au-dessus</span>
+                    <span>Un salaire hors des bornes du poste est place au bord de la frise.</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Positionnement des employes -->
+    <div class="card bg-base-100 shadow-xl mb-6" x-show="activeTab === 'positionnement' && !cartoLoading" style="display: none;">
+        <div class="card-body p-0">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm w-full">
+                    <thead class="bg-base-200">
+                        <tr>
+                            <th>Employe</th>
+                            <th>Poste</th>
+                            <th class="text-center">Niveau</th>
+                            <th>Embauche</th>
+                            <th>Sortie Junior</th>
+                            <th class="text-center">Anciennete grille</th>
+                            <th class="text-center" title="Quotite du contrat en vigueur : les fourchettes sont proratisees">Temps de travail</th>
+                            <th class="text-center">Palier estime (salaire)</th>
+                            <th class="text-right">Fourchette nette</th>
+                            <th class="text-right">Salaire net reel</th>
+                            <th class="text-right">Ecart</th>
+                            <th class="text-center">Situation</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="emp in filteredEmployes()" :key="emp.employe_id">
+                            <tr class="hover">
+                                <td class="font-semibold" x-text="emp.nom_affichage"></td>
+                                <td class="text-xs" x-text="emp.poste_nom"></td>
+                                <td class="text-center">
+                                    <span class="badge badge-sm" :class="emp.est_junior ? 'badge-warning' : 'badge-primary badge-outline'"
+                                          x-text="emp.est_junior ? 'Junior' : 'Confirme'"></span>
+                                </td>
+                                <td class="text-xs" x-text="formatDate(emp.date_embauche)"></td>
+                                <td>
+                                    <div class="flex items-center gap-1">
+                                        <input type="date" class="input input-bordered input-xs w-36"
+                                               :value="emp.date_sortie_junior || ''"
+                                               @change="saveDateSortieJunior(emp, $event.target.value)">
+                                        <button class="btn btn-ghost btn-xs" title="Repasser Junior"
+                                                x-show="emp.date_sortie_junior" @click="saveDateSortieJunior(emp, '')">
+                                            <i class="fas fa-undo"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                                <td class="text-center text-xs"
+                                    x-text="emp.est_junior ? '-' : `${formatAnciennete(emp.anciennete_grille)} an(s)`"></td>
+                                <td class="text-center">
+                                    <div class="flex items-center justify-center gap-1">
+                                        <input type="number" min="1" max="100" step="5" class="input input-bordered input-xs w-16 text-right"
+                                               :value="emp.quotite" @change="saveQuotite(emp, $event.target.value)">
+                                        <span class="text-xs">%</span>
+                                    </div>
+                                </td>
+                                <td class="text-center text-xs">
+                                    <div x-text="libelleColonne(emp.colonne)"></div>
+                                    <div class="text-[10px] text-warning" x-show="!emp.coherent && emp.colonne_theorique"
+                                         x-text="`theorique : ${libelleColonne(emp.colonne_theorique)}`"></div>
+                                </td>
+                                <td class="text-right font-mono text-xs"
+                                    x-text="emp.fourchette_basse === null ? '-' : `${formatMoney(emp.fourchette_basse)} - ${formatMoney(emp.fourchette_haute)}`"></td>
+                                <td class="text-right font-mono text-xs">
+                                    <div x-text="formatMoney(emp.salaire_net_reel)"></div>
+                                    <div class="text-[10px] text-base-content/50" x-show="emp.date_paiement" x-text="`paye le ${formatDate(emp.date_paiement)}`"></div>
+                                </td>
+                                <td class="text-right font-mono text-xs"
+                                    :class="emp.ecart_ariary < 0 ? 'text-error' : (emp.ecart_ariary > 0 ? 'text-info' : '')"
+                                    x-text="emp.ecart_ariary === null ? '-' : formatMoney(emp.ecart_ariary)"></td>
+                                <td class="text-center">
+                                    <span class="badge badge-sm" :class="statutBadgeClass(emp.statut)" x-text="statutLabel(emp.statut)"></span>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+            <div class="text-center py-10 text-base-content/60" x-show="filteredEmployes().length === 0">
+                Aucun employe actif pour ces filtres.
+            </div>
+        </div>
+    </div>
+
+    <div class="flex justify-center items-center py-16" x-show="loading && activeTab === 'tableau'">
+        <span class="loading loading-spinner text-primary loading-lg"></span>
+    </div>
+
+    <div class="hydria-v1-table-card card bg-base-100 shadow-xl" x-show="activeTab === 'tableau' && !loading && filteredGrilles().length > 0">
+        <div class="card-body p-0">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm w-full">
+                    <thead class="bg-base-200">
+                        <tr>
+                            <th>Organisation</th>
+                            <th>Poste</th>
+                            <th>Template</th>
+                            <th class="text-center">Niveau</th>
+                            <th class="text-center">Anciennete</th>
+                            <th class="text-right">Fourchette basse nette</th>
+                            <th class="text-right">Fourchette haute nette</th>
+                            <th>Validite</th>
+                            <th class="text-center">Statut</th>
+                            <th class="text-center">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="grille in filteredGrilles()" :key="grille.id">
+                            <tr class="hover">
+                                <td class="text-xs" x-text="grille.organisation_nom"></td>
+                                <td>
+                                    <div class="font-semibold" x-text="grille.poste_nom"></div>
+                                    <div class="text-[11px] text-base-content/60" x-text="grille.reference_net_label"></div>
+                                </td>
+                                <td class="text-xs">
+                                    <template x-if="grille.template_id">
+                                        <div>
+                                            <span class="badge badge-info badge-sm" x-text="grille.template_nom"></span>
+                                            <div class="text-[11px] text-base-content/60 mt-1">Parametres herites</div>
+                                        </div>
+                                    </template>
+                                    <template x-if="!grille.template_id">
+                                        <span class="badge badge-ghost badge-sm">Saisie directe</span>
+                                    </template>
+                                </td>
+                                <td class="text-center">
+                                    <span class="badge badge-sm" :class="grille.niveau === 'junior' ? 'badge-warning' : 'badge-primary badge-outline'"
+                                          x-text="grille.niveau === 'junior' ? 'Junior' : 'Confirme'"></span>
+                                </td>
+                                <td class="text-center">
+                                    <span class="badge badge-ghost badge-sm"
+                                          x-text="grille.niveau === 'junior' ? 'Sans objet' : `${formatAnciennete(grille.anciennete_min)} - ${formatAnciennete(grille.anciennete_max)} ans`"></span>
+                                </td>
+                                <td class="text-right font-mono" x-text="formatMoney(grille.fourchette_basse)"></td>
+                                <td class="text-right">
+                                    <template x-if="grille.mode_fourchette_haute === 'fixe'">
+                                        <div class="font-mono" x-text="formatMoney(grille.fourchette_haute)"></div>
+                                    </template>
+                                    <template x-if="grille.mode_fourchette_haute === 'ratio_annuel'">
+                                        <div>
+                                            <div class="font-mono" x-text="formatDynamicRange(grille)"></div>
+                                            <div class="text-[11px] text-base-content/60" x-text="grille.fourchette_haute_resume"></div>
+                                        </div>
+                                    </template>
+                                </td>
+                                <td class="text-xs">
+                                    <div x-text="`Du ${formatDate(grille.date_debut_validite)}`"></div>
+                                    <div class="text-base-content/60" x-text="grille.date_fin_validite ? `Au ${formatDate(grille.date_fin_validite)}` : 'Sans fin'"></div>
+                                </td>
+                                <td class="text-center">
+                                    <span class="badge badge-sm" :class="grille.est_active ? 'badge-success' : 'badge-ghost'" x-text="grille.est_active ? 'Active' : 'Inactive'"></span>
+                                </td>
+                                <td class="text-center">
+                                    <div class="flex gap-2 justify-center">
+                                        <button class="btn btn-ghost btn-xs text-info" @click="openEditModal(grille)">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        <button class="btn btn-ghost btn-xs text-error" @click="deleteGrille(grille)">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="text-center py-16" x-show="activeTab === 'tableau' && !loading && filteredGrilles().length === 0" style="display: none;">
+        <i class="fas fa-inbox text-4xl text-base-content/20 mb-4"></i>
+        <h3 class="text-lg font-bold">Aucune grille salariale</h3>
+        <p class="text-base-content/60">Ajoutez une premiere grille ou ajustez les filtres.</p>
+    </div>
+
+    <dialog id="modal_grille_salariale" class="modal">
+        <div class="modal-box w-11/12 max-w-2xl">
+            <h3 class="font-bold text-lg mb-4" x-text="currentGrille ? 'Modifier la grille salariale' : 'Nouvelle grille salariale'"></h3>
+
+            <form @submit.prevent="saveGrille()" class="space-y-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-bold">Poste</span></label>
+                    <select class="select select-bordered" x-model="formData.poste_id" @change="handlePosteChange()" required>
+                        <option value="">Selectionner un poste</option>
+                        <template x-for="poste in postes" :key="poste.id">
+                            <option :value="poste.id" x-text="formatPosteLabel(poste)"></option>
+                        </template>
+                    </select>
+                    <label class="label py-1" x-show="selectedPosteOrganisation()">
+                        <span class="label-text-alt" x-text="selectedPosteOrganisation()"></span>
+                    </label>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-bold">Niveau</span></label>
+                    <div class="join w-full">
+                        <button type="button" class="btn join-item flex-1" :class="isJunior() ? 'btn-warning' : 'btn-outline'" @click="setNiveau('junior')">
+                            <i class="fas fa-seedling mr-1"></i> Junior (non autonome)
+                        </button>
+                        <button type="button" class="btn join-item flex-1" :class="!isJunior() ? 'btn-primary' : 'btn-outline'" @click="setNiveau('confirme')">
+                            <i class="fas fa-user-check mr-1"></i> Confirme (anciennete)
+                        </button>
+                    </div>
+                    <label class="label py-1">
+                        <span class="label-text-alt" x-text="isJunior()
+                            ? 'Fourchette unique pour le poste, independante de l anciennete.'
+                            : 'Tranche d anciennete comptee a partir de la sortie du niveau Junior.'"></span>
+                    </label>
+                </div>
+
+                <div class="form-control" x-show="!isJunior()">
+                    <label class="label"><span class="label-text font-bold">Template de grille</span></label>
+                    <select class="select select-bordered" x-model="formData.template_id" @change="applySelectedTemplate()">
+                        <option value="">Aucun template</option>
+                        <template x-for="template in uniqueAvailableTemplates()" :key="template.id">
+                            <option :value="template.id" x-text="formatTemplateLabel(template)"></option>
+                        </template>
+                    </select>
+                    <label class="label py-1" x-show="selectedTemplate()">
+                        <span class="label-text-alt" x-text="selectedTemplateHint()"></span>
+                    </label>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4" x-show="!isJunior()">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text font-bold">Anciennete minimum</span></label>
+                        <input type="number" class="input input-bordered" x-model="formData.anciennete_min" min="0" step="0.01" inputmode="decimal" required>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text font-bold">Anciennete maximum</span></label>
+                        <input type="number" class="input input-bordered" x-model="formData.anciennete_max" min="0" step="0.01" inputmode="decimal" required>
+                    </div>
+                </div>
+
+                <div class="alert alert-info py-2 shadow-sm text-sm" x-show="hasSelectedTemplate()" style="display: none;">
+                    <i class="fas fa-link"></i>
+                    <span>Les parametres de fourchette salariale seront herites du template selectionne. Les champs manuels ci-dessous sont masques pendant cette configuration.</span>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4" x-show="!hasSelectedTemplate()">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text font-bold">Fourchette basse nette (Ar)</span></label>
+                        <input type="number" class="input input-bordered" x-model="formData.fourchette_basse" min="0" step="0.01" :required="!hasSelectedTemplate()">
+                    </div>
+                    <div class="form-control" x-show="!isJunior()">
+                        <label class="label"><span class="label-text font-bold">Mode fourchette haute</span></label>
+                        <select class="select select-bordered" x-model="formData.mode_fourchette_haute" :required="!hasSelectedTemplate()">
+                            <option value="fixe">Fixe</option>
+                            <option value="ratio_annuel">Ratio annuel</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="alert alert-info py-2 shadow-sm text-sm" x-show="!hasSelectedTemplate()">
+                    <i class="fas fa-calculator"></i>
+                    <span x-text="formData.mode_fourchette_haute === 'ratio_annuel'
+                        ? 'La reference haute nette sera convertie en brut puis le plafond sera recalcule par anciennete.'
+                        : 'Le salaire brut correspondant sera calcule automatiquement lors de l enregistrement.'"></span>
+                </div>
+
+                <div class="form-control" x-show="!hasSelectedTemplate() && formData.mode_fourchette_haute === 'fixe'">
+                    <label class="label"><span class="label-text font-bold">Fourchette haute nette (Ar)</span></label>
+                    <input type="number" class="input input-bordered" x-model="formData.fourchette_haute" min="0" step="0.01" :required="!hasSelectedTemplate() && formData.mode_fourchette_haute === 'fixe'">
+                </div>
+
+                <div class="space-y-4" x-show="!hasSelectedTemplate() && formData.mode_fourchette_haute === 'ratio_annuel'">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="form-control">
+                            <label class="label"><span class="label-text font-bold">Reference haute nette (Ar)</span></label>
+                            <input type="number" class="input input-bordered" x-model="formData.fourchette_haute_reference" min="0" step="0.01" :required="!hasSelectedTemplate() && formData.mode_fourchette_haute === 'ratio_annuel'">
+                        </div>
+                        <div class="form-control">
+                            <label class="label"><span class="label-text font-bold">Anciennete de reference</span></label>
+                            <input type="number" class="input input-bordered" x-model="formData.anciennete_reference_haute" min="0" step="0.01" inputmode="decimal" :required="!hasSelectedTemplate() && formData.mode_fourchette_haute === 'ratio_annuel'">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="form-control">
+                            <label class="label"><span class="label-text font-bold">Ratio annuel haute (%)</span></label>
+                            <input type="number" class="input input-bordered" x-model="formData.ratio_annuel_haute" min="0" step="0.01" :required="!hasSelectedTemplate() && formData.mode_fourchette_haute === 'ratio_annuel'">
+                        </div>
+                        <div class="form-control">
+                            <label class="label"><span class="label-text font-bold">Type de ratio</span></label>
+                            <select class="select select-bordered" x-model="formData.mode_ratio_haute" :required="!hasSelectedTemplate() && formData.mode_fourchette_haute === 'ratio_annuel'">
+                                <option value="compose">Compose</option>
+                                <option value="simple">Simple</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text font-bold">Date debut de validite</span></label>
+                        <input type="date" class="input input-bordered" x-model="formData.date_debut_validite" required>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text font-bold">Date fin de validite</span></label>
+                        <input type="date" class="input input-bordered" x-model="formData.date_fin_validite">
+                    </div>
+                </div>
+
+                <div class="modal-action">
+                    <button type="button" class="btn btn-ghost" onclick="modal_grille_salariale.close()">Annuler</button>
+                    <button type="submit" class="btn btn-primary" :disabled="saving">
+                        <span x-show="saving" class="loading loading-spinner loading-sm text-white"></span>
+                        <span x-show="!saving">Enregistrer</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+
+    <!-- Modal : modifier une fourchette depuis la matrice ou le graphique -->
+    <dialog id="modal_fourchette" class="modal">
+        <div class="modal-box w-11/12 max-w-lg">
+            <template x-if="fourchetteEdit">
+                <div class="space-y-4">
+                    <div>
+                        <h3 class="font-bold text-lg">Modifier la fourchette</h3>
+                        <p class="text-sm text-base-content/70" x-text="`${fourchetteEdit.poste_nom} - ${fourchetteEdit.libelle}`"></p>
+                    </div>
+
+                    <div class="form-control">
+                        <label class="label"><span class="label-text font-bold">Fourchette basse nette (Ar)</span></label>
+                        <input type="number" class="input input-bordered" min="0" step="1000" x-model="fourchetteEdit.fourchette_basse">
+                    </div>
+
+                    <template x-if="!fourchetteEdit.dynamique">
+                        <div class="form-control">
+                            <label class="label"><span class="label-text font-bold">Fourchette haute nette (Ar)</span></label>
+                            <input type="number" class="input input-bordered" min="0" step="1000" x-model="fourchetteEdit.fourchette_haute">
+                        </div>
+                    </template>
+
+                    <template x-if="fourchetteEdit.dynamique">
+                        <div class="space-y-3">
+                            <div class="form-control">
+                                <label class="label"><span class="label-text font-bold">Reference haute nette (Ar)</span></label>
+                                <input type="number" class="input input-bordered" min="0" step="1000" x-model="fourchetteEdit.fourchette_haute_reference">
+                            </div>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div class="form-control">
+                                    <label class="label"><span class="label-text font-bold">Ratio annuel (%)</span></label>
+                                    <input type="number" class="input input-bordered" min="0" step="0.1" x-model="fourchetteEdit.ratio_annuel_haute">
+                                </div>
+                                <div class="form-control">
+                                    <label class="label"><span class="label-text font-bold">Des (anciennete)</span></label>
+                                    <input type="number" class="input input-bordered" min="0" step="0.5" x-model="fourchetteEdit.anciennete_reference_haute">
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+
+                    <div class="alert alert-warning text-sm" x-show="fourchetteEdit.template_id">
+                        <i class="fas fa-layer-group"></i>
+                        <div>
+                            <div>Cette fourchette vient du template <strong x-text="fourchetteEdit.template_nom"></strong>,
+                                partage par <strong x-text="fourchetteEdit.template_postes.length"></strong> poste(s) :</div>
+                            <div class="text-xs mt-1" x-text="fourchetteEdit.template_postes.join(', ')"></div>
+                            <div class="text-xs mt-1" x-show="!fourchetteEdit.template_modifiable">
+                                Template global ou d'une autre organisation : seule la modification de ce poste est possible.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="modal-action flex-wrap">
+                        <button type="button" class="btn btn-ghost" onclick="modal_fourchette.close()">Annuler</button>
+                        <template x-if="!fourchetteEdit.template_id">
+                            <button type="button" class="btn btn-primary" :disabled="saving" @click="saveFourchette('grille')">
+                                <span x-show="saving" class="loading loading-spinner loading-sm"></span> Enregistrer
+                            </button>
+                        </template>
+                        <template x-if="fourchetteEdit.template_id">
+                            <div class="flex flex-wrap gap-2">
+                                <button type="button" class="btn btn-outline" :disabled="saving" @click="saveFourchette('grille')"
+                                        title="La grille est detachee du template et garde ses propres valeurs">
+                                    Ce poste seulement
+                                </button>
+                                <button type="button" class="btn btn-primary" :disabled="saving || !fourchetteEdit.template_modifiable"
+                                        @click="saveFourchette('template')">
+                                    <span x-text="`Tous les postes du template (${fourchetteEdit.template_postes.length})`"></span>
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </template>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <!-- Modal pour créer un template -->
+    <dialog id="modal_template" class="modal">
+        <div class="modal-box w-11/12 max-w-3xl">
+            <h3 class="font-bold text-lg mb-4">
+                <i class="fas fa-layer-group text-secondary"></i>
+                Nouveau template de grille salariale
+            </h3>
+
+            <form @submit.prevent="saveTemplate()" class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text font-bold">Nom du template *</span></label>
+                        <input type="text" class="input input-bordered" x-model="templateData.nom_template" placeholder="Ex: Grille Agents Techniques" required>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text font-bold">Description</span></label>
+                        <input type="text" class="input input-bordered" x-model="templateData.description" placeholder="Description courte">
+                    </div>
+                </div>
+
+                <div class="divider my-2">Paramètres d'ancienneté</div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text font-bold">Ancienneté min (années) *</span></label>
+                        <input type="number" class="input input-bordered" x-model="templateData.anciennete_min" min="0" step="0.01" inputmode="decimal" required>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text font-bold">Ancienneté max (années) *</span></label>
+                        <input type="number" class="input input-bordered" x-model="templateData.anciennete_max" min="0" step="0.01" inputmode="decimal" required>
+                    </div>
+                </div>
+
+                <div class="divider my-2">Fourchette salariale</div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text font-bold">Fourchette basse (Ar) *</span></label>
+                        <input type="number" class="input input-bordered" x-model="templateData.fourchette_basse" min="0" step="0.01" required>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text font-bold">Mode fourchette haute</span></label>
+                        <select class="select select-bordered" x-model="templateData.mode_fourchette_haute">
+                            <option value="fixe">Fixe</option>
+                            <option value="ratio_annuel">Ratio annuel</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div x-show="templateData.mode_fourchette_haute === 'fixe'">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text font-bold">Fourchette haute (Ar)</span></label>
+                        <input type="number" class="input input-bordered" x-model="templateData.fourchette_haute" min="0" step="0.01">
+                    </div>
+                </div>
+
+                <div x-show="templateData.mode_fourchette_haute === 'ratio_annuel'" class="space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="form-control">
+                            <label class="label"><span class="label-text font-bold">Référence haute (Ar)</span></label>
+                            <input type="number" class="input input-bordered" x-model="templateData.fourchette_haute_reference" min="0" step="0.01">
+                        </div>
+                        <div class="form-control">
+                            <label class="label"><span class="label-text font-bold">Ancienneté référence</span></label>
+                            <input type="number" class="input input-bordered" x-model="templateData.anciennete_reference_haute" min="0" step="0.01" inputmode="decimal">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="form-control">
+                            <label class="label"><span class="label-text font-bold">Ratio annuel (%)</span></label>
+                            <input type="number" class="input input-bordered" x-model="templateData.ratio_annuel_haute" min="0" step="0.01">
+                        </div>
+                        <div class="form-control">
+                            <label class="label"><span class="label-text font-bold">Type de ratio</span></label>
+                            <select class="select select-bordered" x-model="templateData.mode_ratio_haute">
+                                <option value="compose">Composé</option>
+                                <option value="simple">Simple</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="divider my-2">Période de validité</div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text font-bold">Date début validité *</span></label>
+                        <input type="date" class="input input-bordered" x-model="templateData.date_debut_validite" required>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text font-bold">Date fin validité</span></label>
+                        <input type="date" class="input input-bordered" x-model="templateData.date_fin_validite">
+                    </div>
+                </div>
+
+                <div class="alert alert-info py-2 shadow-sm text-sm mt-4" style="display: none;" x-show="true">
+                    <i class="fas fa-info-circle"></i>
+                    <span>Les templates permettent de définir des grilles standardisées réutilisables pour plusieurs postes.</span>
+                </div>
+
+                <div class="modal-action">
+                    <button type="button" class="btn btn-ghost" onclick="modal_template.close()">Annuler</button>
+                    <button type="submit" class="btn btn-secondary" :disabled="saving">
+                        <span x-show="saving" class="loading loading-spinner loading-sm text-white"></span>
+                        <span x-show="!saving">Créer le template</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+    <!-- Modal Affecter un poste -->
+    <dialog id="modal_assign_poste" class="modal">
+        <div class="modal-box w-11/12 max-w-2xl">
+            <h3 class="font-bold text-lg mb-4">
+                <i class="fas fa-user-tie text-secondary"></i>
+                Affecter un poste au template
+            </h3>
+            
+            <form @submit.prevent="assignPosteToTemplate()" class="space-y-4">
+                <div class="alert alert-info shadow-sm text-sm">
+                    <i class="fas fa-info-circle"></i>
+                    <span>Cette operation va creer des grilles salariales pour TOUTES les tranches d'anciennete du template selectionne.</span>
+                </div>
+                
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-bold">Template</span></label>
+                    <select class="select select-bordered" x-model="assignFormData.template_id" required>
+                        <option value="">Selectionner un template</option>
+                        <template x-for="template in uniqueTemplates()" :key="template.id">
+                            <option :value="template.id" x-text="formatTemplateLabel(template)"></option>
+                        </template>
+                    </select>
+                </div>
+                
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-bold">Poste</span></label>
+                    <select class="select select-bordered" x-model="assignFormData.poste_id" required>
+                        <option value="">Selectionner un poste</option>
+                        <template x-for="poste in postes" :key="poste.id">
+                            <option :value="poste.id" x-text="formatPosteLabel(poste)"></option>
+                        </template>
+                    </select>
+                    <label class="label py-1" x-show="assignFormData.poste_id">
+                        <span class="label-text-alt" x-text="getPosteOrganisation(assignFormData.poste_id)"></span>
+                    </label>
+                </div>
+                
+                <div class="alert alert-warning shadow-sm text-sm">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>Attention: Cette action est irreversible. Assurez-vous que le poste et le template sont compatibles (meme organisation).</span>
+                </div>
+                
+                <div class="modal-action">
+                    <button type="button" class="btn btn-ghost" onclick="modal_assign_poste.close()">Annuler</button>
+                    <button type="submit" class="btn btn-secondary" :disabled="saving">
+                        <span x-show="saving" class="loading loading-spinner loading-sm text-white"></span>
+                        <span x-show="!saving">Affecter le poste</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+    
+    {% endif %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="{% static 'js/post_classification.js' %}"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+<script>
+// Hors d'Alpine : un Chart.js enveloppe dans un proxy reactif casse ses mises a jour.
+let grillesSalarialesChart = null;
+
+// Les variables DaisyUI (oklch) ne se resolvent pas dans un canvas : passer par le DOM.
+function resolveThemeColor(expr) {
+    const el = document.createElement('div');
+    el.style.cssText = 'display:none';
+    el.style.color = expr;
+    document.body.appendChild(el);
+    const resolved = getComputedStyle(el).color;
+    document.body.removeChild(el);
+    return resolved;
+}
+
+function grillesSalarialesApp() {
+    const postesData = JSON.parse(document.getElementById('postes-data').textContent);
+    const templatesData = JSON.parse(document.getElementById('templates-data').textContent);
+
+    return {
+        postes: Array.isArray(postesData) ? postesData : [],
+        templates: Array.isArray(templatesData) ? templatesData : [],
+        grilles: [],
+        loading: false,
+        saving: false,
+        errorMessage: '',
+        successMessage: '',
+        selectedPoste: '',
+        selectedStatut: '',
+        selectedTemplateFilter: '',
+        currentGrille: null,
+        activeTab: 'tableau',
+        carto: { colonnes: [], postes: [], employes: [] },
+        cartoLoading: false,
+        cartoLoaded: false,
+        PC: window.PostClassification,
+        selectedChartPostes: [],
+        chartSelectionInitialized: false,
+        chartFilterType: '',
+        chartFilterNiveau: '',
+        selectedStatutEmploye: '',
+        fourchetteEdit: null,
+        friseAlignement: 'commune',
+        urls: {
+            cartographie: "{% url 'employees:api_grilles_salariales_cartographie' %}",
+            fourchette: "{% url 'employees:api_grille_modifier_fourchette' grille_id='00000000-0000-0000-0000-000000000000' %}",
+            quotite: "{% url 'employees:api_employe_quotite' employe_id='00000000-0000-0000-0000-000000000000' %}",
+            dateSortieJunior: "{% url 'employees:api_employe_date_sortie_junior' employe_id='00000000-0000-0000-0000-000000000000' %}",
+            list: "{% url 'employees:api_grilles_salariales_list' %}",
+            create: "{% url 'employees:api_grilles_salariales_create' %}",
+            updateTemplate: "{% url 'employees:api_grilles_salariales_update' grille_id='00000000-0000-0000-0000-000000000000' %}",
+            deleteTemplate: "{% url 'employees:api_grilles_salariales_delete' grille_id='00000000-0000-0000-0000-000000000000' %}",
+            import: "{% url 'employees:import_grilles_salariales_excel' %}",
+            templatesList: "{% url 'employees:api_templates_list' %}",
+            templatesCreate: "{% url 'employees:api_templates_create' %}"
+        },
+        formData: {
+            niveau: 'confirme',
+            poste_id: '',
+            template_id: '',
+            anciennete_min: 0,
+            anciennete_max: 0,
+            fourchette_basse: '',
+            fourchette_haute: '',
+            mode_fourchette_haute: 'fixe',
+            fourchette_haute_reference: '',
+            anciennete_reference_haute: '',
+            ratio_annuel_haute: '',
+            mode_ratio_haute: 'compose',
+            date_debut_validite: '{{ today }}',
+            date_fin_validite: ''
+        },
+        templateData: {
+            nom_template: '',
+            description: '',
+            anciennete_min: 0,
+            anciennete_max: 0,
+            fourchette_basse: 0,
+            fourchette_haute: '',
+            mode_fourchette_haute: 'fixe',
+            fourchette_haute_reference: '',
+            anciennete_reference_haute: '',
+            ratio_annuel_haute: '',
+            mode_ratio_haute: 'compose',
+            date_debut_validite: '',
+            date_fin_validite: ''
+        },
+        assignFormData: {
+            template_id: '',
+            poste_id: ''
+        },
+
+        init() {
+            this.loadData();
+            this.loadTemplates();
+            // Le filtre "Poste" de la page pilote aussi les vues de cartographie.
+            this.$watch('selectedPoste', () => this.refreshCartoViews());
+        },
+
+        // ---------- Niveau Junior / Confirme (formulaire) ----------
+        isJunior() {
+            return this.formData.niveau === 'junior';
+        },
+
+        setNiveau(niveau) {
+            this.formData.niveau = niveau;
+            if (niveau === 'junior') {
+                this.formData.template_id = '';
+                this.formData.anciennete_min = 0;
+                this.formData.anciennete_max = 0;
+                this.formData.mode_fourchette_haute = 'fixe';
+            }
+        },
+
+        // ---------- Cartographie ----------
+        openCartoTab(tab) {
+            this.activeTab = tab;
+            if (!this.cartoLoaded) {
+                this.loadCartographie();
+            } else {
+                this.refreshCartoViews();
+            }
+        },
+
+        refreshCartoViews() {
+            if (this.activeTab === 'graphique') {
+                this.$nextTick(() => this.renderChart());
+            }
+        },
+
+        loadCartographie() {
+            this.cartoLoading = true;
+            this.errorMessage = '';
+            return fetch(this.urls.cartographie)
+                .then(response => this.readJson(response))
+                .then(data => {
+                    this.carto = {
+                        colonnes: data.colonnes || [],
+                        postes: data.postes || [],
+                        employes: data.employes || [],
+                    };
+                    this.cartoLoaded = true;
+                    // Tous les postes affiches par defaut, sauf ceux masques par l'utilisateur
+                    // (memorises sur ce navigateur) ; la selection manuelle survit aux rechargements.
+                    const ids = this.carto.postes.map(p => p.poste_id);
+                    if (this.chartSelectionInitialized) {
+                        this.selectedChartPostes = this.selectedChartPostes.filter(id => ids.includes(id));
+                    } else {
+                        const masques = new Set(this.lirePostesMasques());
+                        this.selectedChartPostes = ids.filter(id => !masques.has(id));
+                    }
+                })
+                .catch(error => {
+                    this.errorMessage = error.message || 'Erreur de chargement de la cartographie';
+                })
+                .finally(() => {
+                    this.cartoLoading = false;
+                    this.refreshCartoViews();
+                });
+        },
+
+        filteredEmployes() {
+            return this.carto.employes.filter(emp =>
+                (!this.selectedPoste || emp.poste_id === this.selectedPoste)
+                && (!this.selectedStatutEmploye || emp.statut === this.selectedStatutEmploye)
+            );
+        },
+
+        cartoStats() {
+            const employes = this.carto.employes.filter(emp => !this.selectedPoste || emp.poste_id === this.selectedPoste);
+            const count = statut => employes.filter(e => e.statut === statut).length;
+            return [
+                { key: 'dans', label: 'Dans la fourchette', count: count('dans'), textClass: 'text-success' },
+                { key: 'sous', label: 'Sous la fourchette', count: count('sous'), textClass: 'text-error' },
+                { key: 'au_dessus', label: 'Au-dessus', count: count('au_dessus'), textClass: 'text-info' },
+                { key: 'sans_grille', label: 'Sans palier', count: count('sans_grille'), textClass: 'text-warning' },
+                { key: 'sans_salaire', label: 'Sans salaire paye', count: count('sans_salaire'), textClass: 'text-base-content/60' },
+            ];
+        },
+
+        matchesClassificationFilter(poste) {
+            if (this.chartFilterType && poste.type_poste !== this.chartFilterType) return false;
+            if (this.chartFilterNiveau && poste.niveau_poste !== this.chartFilterNiveau) return false;
+            return !this.selectedPoste || poste.poste_id === this.selectedPoste;
+        },
+
+        matricePostes() {
+            return this.visibleChartPostes();
+        },
+
+        // ---------- Frise par poste ----------
+        // Tranches du poste dans l'ordre Junior -> anciennete, avec leurs bornes nettes.
+        // Chaque tranche recoit une "voie" (ligne) : la premiere dont la derniere tranche se
+        // termine avant elle. Sans chevauchement, tout tient sur une seule ligne.
+        friseTranches(poste) {
+            const tranches = this.carto.colonnes
+                .filter(col => poste.paliers[col.cle])
+                .map(col => ({
+                    cle: col.cle,
+                    libelle: col.libelle,
+                    basse: poste.paliers[col.cle].fourchette_basse,
+                    haute: this.hautePalier(poste.paliers[col.cle]),
+                }));
+            const finDeVoie = [];
+            [...tranches].sort((a, b) => a.basse - b.basse).forEach(tranche => {
+                let voie = finDeVoie.findIndex(fin => fin <= tranche.basse);
+                if (voie === -1) {
+                    voie = finDeVoie.length;
+                    finDeVoie.push(0);
+                }
+                finDeVoie[voie] = tranche.haute;
+                tranche.voie = voie;
+            });
+            return tranches;
+        },
+
+        friseVoies(poste) {
+            const tranches = this.friseTranches(poste);
+            return tranches.length ? Math.max(...tranches.map(t => t.voie)) + 1 : 1;
+        },
+
+        friseBornes(poste) {
+            const tranches = this.friseTranches(poste);
+            if (!tranches.length) return { min: 0, max: 1 };
+            return {
+                min: Math.min(...tranches.map(t => t.basse)),
+                max: Math.max(...tranches.map(t => t.haute)),
+            };
+        },
+
+        // Longueur proportionnelle a l'ecart min-max du poste. Echelle commune : la frise est
+        // aussi decalee selon son montant le plus bas ; alignee a gauche : seules les longueurs comptent.
+        friseStyle(poste) {
+            const postes = this.matricePostes();
+            const bornes = postes.map(p => this.friseBornes(p));
+            const { min, max } = this.friseBornes(poste);
+            let debut = 0;
+            let largeur;
+            if (this.friseAlignement === 'gauche') {
+                const ecartMax = Math.max(...bornes.map(b => b.max - b.min), 1);
+                largeur = (max - min) / ecartMax * 100;
+            } else {
+                const gMin = Math.min(...bornes.map(b => b.min));
+                const gMax = Math.max(...bornes.map(b => b.max));
+                const etendue = Math.max(gMax - gMin, 1);
+                debut = (min - gMin) / etendue * 100;
+                largeur = (max - min) / etendue * 100;
+            }
+            largeur = Math.max(largeur, 8);
+            return `margin-left: ${Math.min(debut, 100 - largeur)}%; width: ${largeur}%`;
+        },
+
+        positionDansFrise(poste, montant) {
+            const { min, max } = this.friseBornes(poste);
+            if (max <= min) return 0;
+            return Math.max(0, Math.min(100, (montant - min) / (max - min) * 100));
+        },
+
+        couleurEmploye(emp) {
+            return emp.statut === 'dans' ? 'bg-success' : (emp.statut === 'sous' ? 'bg-error' : 'bg-info');
+        },
+
+        // Range les etiquettes des employes en lignes sans chevauchement : triees par position,
+        // chacune va sur la premiere ligne dont la derniere etiquette se termine avant elle.
+        etiquettesFrise(poste, largeur) {
+            const largeurPx = largeur || 600;
+            const haut = this.friseVoies(poste) * 16 + 5;
+            const finDeLigne = [];
+            return this.employesFrise(poste)
+                .map(emp => {
+                    const texte = `${emp.nom_affichage} · ${this.formatMoney(emp.salaire_net_reel)}${this.libelleQuotite(emp)}`;
+                    const positionPct = this.positionDansFrise(poste, emp.salaire_position);
+                    const largeurTexte = texte.length * 5.6 + 6;
+                    // Centree sur le trait, mais maintenue dans les bords de la frise.
+                    const gauchePx = Math.max(0, Math.min(largeurPx - largeurTexte, positionPct / 100 * largeurPx - largeurTexte / 2));
+                    return { emp, texte, positionPct, largeurTexte, gauchePx };
+                })
+                .sort((a, b) => a.gauchePx - b.gauchePx)
+                .map(et => {
+                    let ligne = finDeLigne.findIndex(fin => fin + 6 <= et.gauchePx);
+                    if (ligne === -1) {
+                        ligne = finDeLigne.length;
+                        finDeLigne.push(0);
+                    }
+                    finDeLigne[ligne] = et.gauchePx + et.largeurTexte;
+                    return { ...et, ligne, top: haut + ligne * 12 };
+                });
+        },
+
+        friseHauteur(poste, largeur) {
+            const etiquettes = this.etiquettesFrise(poste, largeur);
+            const lignes = etiquettes.length ? Math.max(...etiquettes.map(et => et.ligne)) + 1 : 0;
+            return this.friseVoies(poste) * 16 + 7 + lignes * 12;
+        },
+
+        employesFrise(poste) {
+            return this.filteredEmployes().filter(e => e.poste_id === poste.poste_id && e.salaire_net_reel !== null);
+        },
+
+        trancheClasse(index, cle) {
+            if (cle === 'junior') return 'bg-warning/80 text-warning-content';
+            const palette = [
+                'bg-info/70 text-info-content',
+                'bg-primary/70 text-primary-content',
+                'bg-secondary/70 text-secondary-content',
+                'bg-accent/70 text-accent-content',
+                'bg-success/70 text-success-content',
+            ];
+            return palette[index % palette.length];
+        },
+
+        // ---------- Barres de fourchette (vue matricielle) ----------
+        hautePalier(palier) {
+            return palier.fourchette_haute_max || palier.fourchette_haute;
+        },
+
+        // Echelle commune a tous les postes affiches : de la plus basse fourchette a la plus haute.
+        echelleMatrice() {
+            let min = Infinity;
+            let max = -Infinity;
+            this.matricePostes().forEach(poste => {
+                Object.values(poste.paliers).forEach(palier => {
+                    min = Math.min(min, palier.fourchette_basse);
+                    max = Math.max(max, this.hautePalier(palier));
+                });
+            });
+            return Number.isFinite(min) && max > min ? { min, max } : { min: 0, max: 1 };
+        },
+
+        positionEchelle(montant) {
+            const { min, max } = this.echelleMatrice();
+            return Math.max(0, Math.min(100, (montant - min) / (max - min) * 100));
+        },
+
+        barreStyle(palier) {
+            const debut = this.positionEchelle(palier.fourchette_basse);
+            const fin = this.positionEchelle(this.hautePalier(palier));
+            return `left: ${debut}%; width: ${Math.max(fin - debut, 1.5)}%`;
+        },
+
+        amplitudePct(palier) {
+            if (!palier.fourchette_basse) return 0;
+            return Math.round((this.hautePalier(palier) - palier.fourchette_basse) / palier.fourchette_basse * 100);
+        },
+
+        amplitudeClasse(palier) {
+            const amplitude = this.amplitudePct(palier);
+            if (amplitude < 25) return 'bg-success';
+            if (amplitude <= 50) return 'bg-warning';
+            return 'bg-error';
+        },
+
+        barreTitre(palier) {
+            const ecart = this.hautePalier(palier) - palier.fourchette_basse;
+            return `${this.formatMoney(palier.fourchette_basse)} -> ${this.formatMoney(this.hautePalier(palier))}`
+                + ` | ecart ${this.formatMoney(ecart)} (+${this.amplitudePct(palier)} %)`;
+        },
+
+        lirePostesMasques() {
+            try {
+                return JSON.parse(localStorage.getItem('grillesSalariales.postesMasques') || '[]');
+            } catch (e) {
+                return [];
+            }
+        },
+
+        onSelectionPostesChange() {
+            this.chartSelectionInitialized = true;
+            const coches = new Set(this.selectedChartPostes);
+            const masques = this.carto.postes.map(p => p.poste_id).filter(id => !coches.has(id));
+            try {
+                localStorage.setItem('grillesSalariales.postesMasques', JSON.stringify(masques));
+            } catch (e) {
+                // Stockage indisponible (navigation privee) : la selection reste valable pour la session.
+            }
+            this.renderChart();
+        },
+
+        visibleChartPostes() {
+            const selection = new Set(this.selectedChartPostes);
+            return this.carto.postes.filter(p => selection.has(p.poste_id) && this.matchesClassificationFilter(p));
+        },
+
+        selectAllChartPostes() {
+            this.selectedChartPostes = this.carto.postes.map(p => p.poste_id);
+            this.$nextTick(() => this.onSelectionPostesChange());
+        },
+
+        clearChartPostes() {
+            this.selectedChartPostes = [];
+            this.onSelectionPostesChange();
+        },
+
+        employesCellule(posteId, colonne) {
+            return this.filteredEmployes().filter(e => e.poste_id === posteId && e.colonne === colonne);
+        },
+
+        employesHorsGrille() {
+            // Postes masques exclus ; les postes sans aucune grille n'ont pas de case a cocher : on les garde.
+            const masques = new Set(this.carto.postes.map(p => p.poste_id).filter(id => !this.selectedChartPostes.includes(id)));
+            return this.filteredEmployes().filter(e => e.colonne === null && !masques.has(e.poste_id));
+        },
+
+        formatPalier(palier) {
+            const haute = palier.dynamique && palier.fourchette_haute_max
+                ? `${this.formatMoney(palier.fourchette_haute)} -> ${this.formatMoney(palier.fourchette_haute_max)}`
+                : this.formatMoney(palier.fourchette_haute);
+            return `${this.formatMoney(palier.fourchette_basse)} - ${haute}`;
+        },
+
+        statutLabel(statut) {
+            return {
+                dans: 'Dans la fourchette',
+                sous: 'Sous la fourchette',
+                au_dessus: 'Au-dessus',
+                sans_grille: 'Sans palier',
+                sans_salaire: 'Sans salaire paye',
+            }[statut] || statut;
+        },
+
+        statutBadgeClass(statut) {
+            return {
+                dans: 'badge-success',
+                sous: 'badge-error',
+                au_dessus: 'badge-info',
+                sans_grille: 'badge-warning badge-outline',
+                sans_salaire: 'badge-ghost',
+            }[statut] || 'badge-ghost';
+        },
+
+        openFourchetteModal(poste, cle) {
+            const palier = poste.paliers[cle];
+            if (!palier) return;
+            const arrondi = v => (v === null || v === undefined) ? '' : Math.round(v);
+            this.fourchetteEdit = {
+                ...palier,
+                poste_nom: poste.poste_nom,
+                libelle: this.libelleColonne(cle),
+                fourchette_basse: arrondi(palier.fourchette_basse),
+                fourchette_haute: arrondi(palier.fourchette_haute),
+                fourchette_haute_reference: arrondi(palier.fourchette_haute_reference),
+                template_postes: palier.template_postes || [],
+            };
+            document.getElementById('modal_fourchette').showModal();
+        },
+
+        saveFourchette(portee) {
+            const edit = this.fourchetteEdit;
+            if (portee === 'template' && !confirm(
+                `Modifier le template "${edit.template_nom}" ?\n\nLes ${edit.template_postes.length} poste(s) qui le partagent seront modifies :\n${edit.template_postes.join(', ')}`
+            )) return;
+
+            this.saving = true;
+            this.errorMessage = '';
+            this.successMessage = '';
+            fetch(this.urls.fourchette.replace('00000000-0000-0000-0000-000000000000', edit.grille_id), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': this.getCsrfToken() },
+                body: JSON.stringify({
+                    portee,
+                    fourchette_basse: edit.fourchette_basse,
+                    fourchette_haute: edit.fourchette_haute,
+                    fourchette_haute_reference: edit.fourchette_haute_reference,
+                    ratio_annuel_haute: edit.ratio_annuel_haute,
+                    anciennete_reference_haute: edit.anciennete_reference_haute,
+                }),
+            })
+                .then(response => this.readJson(response))
+                .then(data => {
+                    this.successMessage = data.message;
+                    document.getElementById('modal_fourchette').close();
+                    this.loadData();
+                    return this.loadCartographie();
+                })
+                .catch(error => {
+                    // L'erreur reste visible dans la page, la modale reste ouverte pour corriger.
+                    this.errorMessage = error.message || 'Erreur lors de la modification de la fourchette';
+                    alert(this.errorMessage);
+                })
+                .finally(() => { this.saving = false; });
+        },
+
+        // " · 25 %" pour un temps partiel, rien a temps plein.
+        libelleQuotite(emp) {
+            return emp && emp.quotite && emp.quotite < 100 ? ` · ${this.formatAnciennete(emp.quotite)} %` : '';
+        },
+
+        libelleColonne(cle) {
+            if (!cle) return '-';
+            const col = this.carto.colonnes.find(c => c.cle === cle);
+            return col ? col.libelle : cle;
+        },
+
+        employeTooltip(emp) {
+            const niveau = emp.est_junior ? 'Junior' : `Confirme, ${this.formatAnciennete(emp.anciennete_grille)} an(s) depuis sortie Junior`;
+            const theorique = emp.coherent ? '' : `\nPalier theorique : ${this.libelleColonne(emp.colonne_theorique)}`;
+            return `${emp.nom_affichage} - ${niveau}\nPalier estime : ${this.libelleColonne(emp.colonne)}${theorique}`
+                + `\nNet reel : ${this.formatMoney(emp.salaire_net_reel)}${this.libelleQuotite(emp)}`
+                + (emp.quotite < 100 ? `\nFourchette proratisee a ${this.formatAnciennete(emp.quotite)} % : ${this.formatMoney(emp.fourchette_basse)} - ${this.formatMoney(emp.fourchette_haute)}` : '')
+                + `\n${this.statutLabel(emp.statut)}`;
+        },
+
+        saveQuotite(emp, value) {
+            this.errorMessage = '';
+            this.successMessage = '';
+            fetch(this.urls.quotite.replace('00000000-0000-0000-0000-000000000000', emp.employe_id), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': this.getCsrfToken() },
+                body: JSON.stringify({ quotite: value }),
+            })
+                .then(response => this.readJson(response))
+                .then(data => {
+                    this.successMessage = data.message;
+                    // Fourchettes proratisees et placement changent : recalcul complet.
+                    return this.loadCartographie();
+                })
+                .catch(error => {
+                    this.errorMessage = error.message || 'Erreur lors de l enregistrement du temps de travail';
+                    this.loadCartographie();
+                });
+        },
+
+        saveDateSortieJunior(emp, value) {
+            this.errorMessage = '';
+            this.successMessage = '';
+            const url = this.urls.dateSortieJunior.replace('00000000-0000-0000-0000-000000000000', emp.employe_id);
+            fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': this.getCsrfToken() },
+                body: JSON.stringify({ date_sortie_junior: value || null }),
+            })
+                .then(response => this.readJson(response))
+                .then(data => {
+                    this.successMessage = `${emp.nom_affichage} : ${data.message}`;
+                    // Le palier et l'anciennete changent : on recalcule toute la cartographie.
+                    return this.loadCartographie();
+                })
+                .catch(error => {
+                    this.errorMessage = error.message || 'Erreur lors de l enregistrement de la date';
+                    this.loadCartographie();
+                });
+        },
+
+        renderChart() {
+            const canvas = document.getElementById('chart_grilles_salariales');
+            if (!canvas || typeof Chart === 'undefined') return;
+            if (grillesSalarialesChart) {
+                grillesSalarialesChart.destroy();
+                grillesSalarialesChart = null;
+            }
+            const postes = this.visibleChartPostes();
+            if (postes.length === 0) return;
+
+            // Axe X commun a tous les postes : Junior puis les tranches, limite aux paliers
+            // qu'au moins un poste affiche possede.
+            const colonnes = this.carto.colonnes.filter(col => postes.some(p => p.paliers[col.cle]));
+            const indexColonne = Object.fromEntries(colonnes.map((col, i) => [col.cle, i]));
+            const couleurs = {
+                junior: resolveThemeColor('oklch(var(--wa) / 0.12)'),
+                dans: resolveThemeColor('oklch(var(--su))'),
+                sous: resolveThemeColor('oklch(var(--er))'),
+                au_dessus: resolveThemeColor('oklch(var(--in))'),
+                texte: resolveThemeColor('oklch(var(--bc) / 0.7)'),
+                grille: resolveThemeColor('oklch(var(--bc) / 0.1)'),
+            };
+
+            // Decalage horizontal deterministe, partage entre postes, pour ne pas
+            // superposer les employes d'un meme palier.
+            const rangParColonne = {};
+            const decaler = cle => {
+                const rang = rangParColonne[cle] = (rangParColonne[cle] ?? -1) + 1;
+                return ((rang % 7) - 3) * 0.05;
+            };
+
+            const datasets = [];
+            postes.forEach(poste => {
+                const color = this.PC.chartColor(poste.type_poste);
+                const colonnesPoste = colonnes.filter(col => poste.paliers[col.cle]);
+                const haute = colonnesPoste.map(col => ({
+                    x: indexColonne[col.cle],
+                    y: poste.paliers[col.cle].fourchette_haute_max || poste.paliers[col.cle].fourchette_haute,
+                }));
+                const basse = colonnesPoste.map(col => ({ x: indexColonne[col.cle], y: poste.paliers[col.cle].fourchette_basse }));
+
+                // La bande (fill '+1') relie la haute a la basse qui suit immediatement.
+                datasets.push({
+                    type: 'line', label: `${poste.poste_nom} - haute`, data: haute,
+                    borderColor: color, backgroundColor: color + '14', fill: '+1',
+                    tension: 0, pointRadius: 3, _poste: poste,
+                });
+                datasets.push({
+                    type: 'line', label: `${poste.poste_nom} - basse`, data: basse,
+                    borderColor: color, borderDash: [6, 4], fill: false,
+                    tension: 0, pointRadius: 3, _poste: poste,
+                });
+
+                const points = this.carto.employes
+                    .filter(e => e.poste_id === poste.poste_id && e.colonne in indexColonne && e.salaire_net_reel !== null
+                        && (!this.selectedStatutEmploye || e.statut === this.selectedStatutEmploye))
+                    .map(e => ({ x: indexColonne[e.colonne] + decaler(e.colonne), y: e.salaire_position, emp: e }));
+                if (points.length > 0) {
+                    datasets.push({
+                        type: 'scatter', label: `${poste.poste_nom} (employes)`, data: points,
+                        pointRadius: 6, pointHoverRadius: 8,
+                        pointBackgroundColor: points.map(p => couleurs[p.emp.statut] || couleurs.texte),
+                        pointStyle: points.map(p => p.emp.coherent ? 'circle' : 'triangle'),
+                        pointBorderColor: color, pointBorderWidth: 2, _poste: poste,
+                    });
+                }
+            });
+
+            // Fond teinte derriere la colonne Junior.
+            const juniorBand = {
+                id: 'juniorBand',
+                beforeDatasetsDraw(chart) {
+                    const idx = colonnes.findIndex(col => col.est_junior);
+                    if (idx === -1) return;
+                    const { ctx, chartArea, scales } = chart;
+                    const gauche = Math.max(scales.x.getPixelForValue(idx - 0.5), chartArea.left);
+                    const droite = Math.min(scales.x.getPixelForValue(idx + 0.5), chartArea.right);
+                    ctx.save();
+                    ctx.fillStyle = couleurs.junior;
+                    ctx.fillRect(gauche, chartArea.top, droite - gauche, chartArea.bottom - chartArea.top);
+                    ctx.restore();
+                },
+            };
+
+            // Etiquettes : nom du poste au bout de sa courbe haute, surnom au-dessus de chaque employe.
+            const etiquettes = {
+                id: 'etiquettes',
+                afterDatasetsDraw(chart) {
+                    const { ctx } = chart;
+                    const aPlacer = [];
+                    ctx.save();
+                    chart.data.datasets.forEach((dataset, i) => {
+                        const meta = chart.getDatasetMeta(i);
+                        if (meta.hidden || !meta.data.length) return;
+                        if (dataset.type === 'line' && dataset.label.endsWith('- haute')) {
+                            const dernier = meta.data[meta.data.length - 1];
+                            ctx.font = 'bold 11px sans-serif';
+                            ctx.fillStyle = dataset.borderColor;
+                            ctx.textAlign = 'right';
+                            ctx.textBaseline = 'bottom';
+                            ctx.fillText(dataset._poste.poste_nom, dernier.x - 6, dernier.y - 6);
+                        } else if (dataset.type === 'scatter') {
+                            meta.data.forEach((point, j) => {
+                                const emp = dataset.data[j].emp;
+                                aPlacer.push({ x: point.x, y: point.y, texte: emp.nom_affichage + self.libelleQuotite(emp) });
+                            });
+                        }
+                    });
+
+                    // Surnoms des employes : on essaie des decalages verticaux croissants (dessus,
+                    // dessous...) jusqu'a trouver une place qui ne chevauche aucune etiquette deja posee.
+                    ctx.font = '10px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'bottom';
+                    const decalages = [-8, 20, -20, 32, -32, 44, -44, 56, -56];
+                    const posees = [];
+                    const chevauche = (a, b) => a.x1 < b.x2 && b.x1 < a.x2 && a.y1 < b.y2 && b.y1 < a.y2;
+                    aPlacer.sort((a, b) => a.x - b.x).forEach(et => {
+                        const largeurTexte = ctx.measureText(et.texte).width;
+                        let choix = null;
+                        for (const dy of decalages) {
+                            const bas = et.y + dy;
+                            const rect = { x1: et.x - largeurTexte / 2 - 2, x2: et.x + largeurTexte / 2 + 2, y1: bas - 11, y2: bas };
+                            if (!posees.some(p => chevauche(p, rect))) {
+                                choix = { dy, rect };
+                                break;
+                            }
+                        }
+                        choix = choix || { dy: decalages[0], rect: null };
+                        if (choix.rect) posees.push(choix.rect);
+                        if (Math.abs(choix.dy) > 8) {
+                            // Trait de rappel entre le point et son etiquette eloignee.
+                            ctx.strokeStyle = couleurs.grille;
+                            ctx.lineWidth = 1;
+                            ctx.beginPath();
+                            ctx.moveTo(et.x, et.y + (choix.dy > 0 ? 6 : -6));
+                            ctx.lineTo(et.x, et.y + choix.dy + (choix.dy > 0 ? -11 : 0));
+                            ctx.stroke();
+                        }
+                        ctx.fillStyle = couleurs.texte;
+                        ctx.fillText(et.texte, et.x, et.y + choix.dy);
+                    });
+                    ctx.restore();
+                },
+            };
+
+            const self = this;
+            grillesSalarialesChart = new Chart(canvas.getContext('2d'), {
+                data: { datasets },
+                plugins: [juniorBand, etiquettes],
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    parsing: false,
+                    interaction: { mode: 'nearest', intersect: true },
+                    // Clic sur un point de fourchette (basse ou haute) : modale d'edition du palier.
+                    onClick: (evt, elements) => {
+                        if (!elements.length) return;
+                        const el = elements[0];
+                        const dataset = grillesSalarialesChart.data.datasets[el.datasetIndex];
+                        if (dataset.type !== 'line' || !dataset._poste) return;
+                        const colonne = colonnes[Math.round(dataset.data[el.index].x)];
+                        if (colonne) self.openFourchetteModal(dataset._poste, colonne.cle);
+                    },
+                    onHover: (evt, elements) => {
+                        const surFourchette = elements.length
+                            && grillesSalarialesChart.data.datasets[elements[0].datasetIndex].type === 'line';
+                        evt.native.target.style.cursor = surFourchette ? 'pointer' : 'default';
+                    },
+                    plugins: {
+                        // La liste de cases a cocher sert de legende (trop de postes pour une legende Chart.js).
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                title: items => {
+                                    const item = items[0];
+                                    if (item.raw && item.raw.emp) return item.raw.emp.nom_affichage;
+                                    return item.dataset._poste ? item.dataset._poste.poste_nom : '';
+                                },
+                                label: item => {
+                                    if (item.raw && item.raw.emp) {
+                                        const emp = item.raw.emp;
+                                        const niveau = emp.est_junior
+                                            ? 'Junior'
+                                            : `Confirme, ${self.formatAnciennete(emp.anciennete_grille)} an(s) depuis sortie Junior`;
+                                        return [
+                                            `Poste : ${emp.poste_nom}`,
+                                            `Niveau : ${niveau}`,
+                                            `Palier estime : ${self.libelleColonne(emp.colonne)}`
+                                                + (emp.coherent ? '' : ` (theorique : ${self.libelleColonne(emp.colonne_theorique)})`),
+                                            `Net reel : ${self.formatMoney(emp.salaire_net_reel)}${self.libelleQuotite(emp)}`,
+                                            `Fourchette : ${self.formatMoney(emp.fourchette_basse)} - ${self.formatMoney(emp.fourchette_haute)}`,
+                                            self.statutLabel(emp.statut),
+                                        ];
+                                    }
+                                    const colonne = colonnes[Math.round(item.parsed.x)];
+                                    const borne = item.dataset.label.endsWith('haute') ? 'Fourchette haute' : 'Fourchette basse';
+                                    return [
+                                        `${colonne ? colonne.libelle : ''} - ${borne} : ${self.formatMoney(item.parsed.y)}`,
+                                        'Cliquer pour modifier la fourchette',
+                                    ];
+                                },
+                            },
+                        },
+                    },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            min: -0.5,
+                            max: Math.max(colonnes.length - 0.5, 0.5),
+                            grid: { color: couleurs.grille },
+                            title: { display: true, text: 'Palier (Junior, puis anciennete depuis la sortie Junior)', color: couleurs.texte },
+                            // min -0.5 decale les graduations auto sur des demi-valeurs : on les place au centre de chaque palier.
+                            afterBuildTicks: axis => { axis.ticks = colonnes.map((_, i) => ({ value: i })); },
+                            ticks: {
+                                color: couleurs.texte,
+                                callback: value => Number.isInteger(value) ? (colonnes[value]?.libelle || '') : '',
+                            },
+                        },
+                        y: {
+                            grid: { color: couleurs.grille },
+                            ticks: { color: couleurs.texte, callback: value => Math.round(Number(value) / 1000).toLocaleString('fr-FR') },
+                            title: { display: true, text: 'Salaire net mensuel (K Ar)', color: couleurs.texte },
+                        },
+                    },
+                },
+            });
+        },
+
+        formatPosteLabel(poste) {
+            if (!poste) return '-';
+            return poste.organisation_nom ? `${poste.nom_poste} (${poste.organisation_nom})` : poste.nom_poste;
+        },
+
+        formatTemplateLabel(template) {
+            if (!template) return '-';
+            return template.organisation_nom ? `${template.nom_template} (${template.organisation_nom})` : template.nom_template;
+        },
+
+        selectedPosteOrganisation() {
+            const poste = this.postes.find(item => item.id === this.formData.poste_id);
+            return poste ? `Organisation : ${poste.organisation_nom}` : '';
+        },
+
+        hasSelectedTemplate() {
+            return Boolean(this.formData.template_id);
+        },
+
+        selectedTemplate() {
+            return this.templates.find(item => item.id === this.formData.template_id) || null;
+        },
+
+        selectedTemplateHint() {
+            const template = this.selectedTemplate();
+            if (!template) return '';
+
+            const anciennete = `${this.formatAnciennete(template.anciennete_min)} - ${this.formatAnciennete(template.anciennete_max)} ans`;
+            const debut = template.date_debut_validite ? this.formatDate(template.date_debut_validite) : '-';
+            const fin = template.date_fin_validite ? this.formatDate(template.date_fin_validite) : 'Sans fin';
+            return `Template ${template.nom_template} | ${anciennete} | ${template.mode_fourchette_haute_display} | ${debut} -> ${fin}`;
+        },
+
+        availableTemplates() {
+            const poste = this.postes.find(item => item.id === this.formData.poste_id);
+            if (!poste) {
+                return this.templates;
+            }
+
+            return this.templates.filter(template => {
+                return !template.organisation_id || template.organisation_id === poste.organisation_id;
+            });
+        },
+
+        uniqueAvailableTemplates() {
+            // Filtrer par organisation ET regrouper par nom pour eviter les doublons
+            const filtered = this.availableTemplates();
+            const grouped = new Map();
+            
+            filtered.forEach(template => {
+                const key = `${template.nom_template}_${template.organisation_id || 'none'}`;
+                
+                if (!grouped.has(key)) {
+                    grouped.set(key, template);
+                } else {
+                    const existing = grouped.get(key);
+                    if (template.anciennete_min < existing.anciennete_min) {
+                        grouped.set(key, template);
+                    }
+                }
+            });
+            
+            return Array.from(grouped.values()).sort((a, b) => {
+                return a.nom_template.localeCompare(b.nom_template);
+            });
+        },
+
+        // Montants affiches en milliers d'Ariary : 994 100 -> "994,1 K Ar".
+        formatMoney(amount) {
+            if (amount === undefined || amount === null || amount === '') return '-';
+            const milliers = Number(amount) / 1000;
+            if (!Number.isFinite(milliers)) return '-';
+            return new Intl.NumberFormat('fr-FR', {
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 1
+            }).format(milliers) + ' K Ar';
+        },
+
+        formatDynamicRange(grille) {
+            if (!grille || grille.mode_fourchette_haute !== 'ratio_annuel') {
+                return this.formatMoney(grille?.fourchette_haute);
+            }
+
+            const minValue = this.formatMoney(grille.fourchette_haute_min);
+            const maxValue = this.formatMoney(grille.fourchette_haute_max);
+            return minValue === maxValue ? minValue : `${minValue} -> ${maxValue}`;
+        },
+
+        formatAnciennete(value) {
+            if (value === undefined || value === null || value === '') return '-';
+            return new Intl.NumberFormat('fr-FR', {
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 2
+            }).format(Number(value));
+        },
+
+        parseNumber(value) {
+            if (value === undefined || value === null || value === '') return null;
+            if (typeof value === 'number') return value;
+            const normalized = String(value).trim().replace(/\s+/g, '').replace(',', '.');
+            if (normalized === '') return null;
+            const parsed = Number(normalized);
+            return Number.isFinite(parsed) ? parsed : null;
+        },
+
+        formatDate(value) {
+            if (!value) return '-';
+            return new Intl.DateTimeFormat('fr-FR').format(new Date(`${value}T00:00:00`));
+        },
+
+        filteredGrilles() {
+            return this.grilles.filter(grille => {
+                const matchesPoste = !this.selectedPoste || grille.poste_id === this.selectedPoste;
+                const matchesStatut = !this.selectedStatut
+                    || (this.selectedStatut === 'actif' && grille.est_active)
+                    || (this.selectedStatut === 'inactif' && !grille.est_active);
+                const matchesTemplate = !this.selectedTemplateFilter
+                    || (this.selectedTemplateFilter === '__manual__' && !grille.template_id)
+                    || grille.template_id === this.selectedTemplateFilter;
+                return matchesPoste && matchesStatut && matchesTemplate;
+            });
+        },
+
+        async readJson(response) {
+            const contentType = response.headers.get('content-type') || '';
+            const data = contentType.includes('application/json') ? await response.json() : null;
+
+            if (!response.ok || !data || !data.success) {
+                throw new Error(data?.error || `Erreur HTTP ${response.status}`);
+            }
+
+            return data;
+        },
+
+        buildUpdateUrl(grilleId) {
+            return this.urls.updateTemplate.replace('00000000-0000-0000-0000-000000000000', grilleId);
+        },
+
+        buildDeleteUrl(grilleId) {
+            return this.urls.deleteTemplate.replace('00000000-0000-0000-0000-000000000000', grilleId);
+        },
+
+        loadData() {
+            this.loading = true;
+            this.errorMessage = '';
+            this.cartoLoaded = false;
+
+            fetch(this.urls.list)
+                .then(response => this.readJson(response))
+                .then(data => {
+                    this.grilles = Array.isArray(data.data) ? data.data : [];
+                })
+                .catch(error => {
+                    this.grilles = [];
+                    this.errorMessage = error.message || 'Erreur de chargement des grilles salariales';
+                })
+                .finally(() => {
+                    this.loading = false;
+                });
+        },
+
+        resetForm() {
+            this.formData = {
+                niveau: 'confirme',
+                poste_id: '',
+                template_id: '',
+                anciennete_min: 0,
+                anciennete_max: 0,
+                fourchette_basse: '',
+                fourchette_haute: '',
+                mode_fourchette_haute: 'fixe',
+                fourchette_haute_reference: '',
+                anciennete_reference_haute: '',
+                ratio_annuel_haute: '',
+                mode_ratio_haute: 'compose',
+                date_debut_validite: '{{ today }}',
+                date_fin_validite: ''
+            };
+        },
+
+        handlePosteChange() {
+            if (this.formData.template_id && !this.availableTemplates().some(template => template.id === this.formData.template_id)) {
+                this.formData.template_id = '';
+            }
+        },
+
+        applySelectedTemplate() {
+            const template = this.selectedTemplate();
+            if (!template) return;
+
+            this.formData.anciennete_min = template.anciennete_min ?? this.formData.anciennete_min;
+            this.formData.anciennete_max = template.anciennete_max ?? this.formData.anciennete_max;
+            this.formData.date_debut_validite = template.date_debut_validite || this.formData.date_debut_validite;
+            this.formData.date_fin_validite = template.date_fin_validite || '';
+        },
+
+        openCreateModal() {
+            this.currentGrille = null;
+            this.resetForm();
+            document.getElementById('modal_grille_salariale').showModal();
+        },
+
+        openCreateTemplateModal() {
+            this.resetTemplateForm();
+            // Initialiser la date de début à aujourd'hui
+            const today = new Date().toISOString().split('T')[0];
+            this.templateData.date_debut_validite = today;
+            document.getElementById('modal_template').showModal();
+        },
+
+        resetTemplateForm() {
+            this.templateData = {
+                nom_template: '',
+                description: '',
+                anciennete_min: 0,
+                anciennete_max: 0,
+                fourchette_basse: 0,
+                fourchette_haute: '',
+                mode_fourchette_haute: 'fixe',
+                fourchette_haute_reference: '',
+                anciennete_reference_haute: '',
+                ratio_annuel_haute: '',
+                mode_ratio_haute: 'compose',
+                date_debut_validite: '',
+                date_fin_validite: ''
+            };
+        },
+
+        saveTemplate() {
+            this.saving = true;
+            this.errorMessage = '';
+            this.successMessage = '';
+
+            const payload = {
+                nom_template: this.templateData.nom_template,
+                description: this.templateData.description,
+                anciennete_min: this.parseNumber(this.templateData.anciennete_min),
+                anciennete_max: this.parseNumber(this.templateData.anciennete_max),
+                fourchette_basse: this.parseNumber(this.templateData.fourchette_basse),
+                fourchette_haute: this.templateData.fourchette_haute === '' ? null : this.parseNumber(this.templateData.fourchette_haute),
+                mode_fourchette_haute: this.templateData.mode_fourchette_haute,
+                fourchette_haute_reference: this.templateData.fourchette_haute_reference === '' ? null : this.parseNumber(this.templateData.fourchette_haute_reference),
+                anciennete_reference_haute: this.templateData.anciennete_reference_haute === '' ? null : this.parseNumber(this.templateData.anciennete_reference_haute),
+                ratio_annuel_haute: this.templateData.ratio_annuel_haute === '' ? null : this.parseNumber(this.templateData.ratio_annuel_haute),
+                mode_ratio_haute: this.templateData.mode_ratio_haute,
+                date_debut_validite: this.templateData.date_debut_validite,
+                date_fin_validite: this.templateData.date_fin_validite || null
+            };
+
+            fetch(this.urls.templatesCreate, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCsrfToken()
+                },
+                body: JSON.stringify(payload)
+            })
+                .then(response => this.readJson(response))
+                .then(data => {
+                    if (data.success) {
+                        this.successMessage = data.message || 'Template créé avec succès';
+                        // Recharger la liste des templates
+                        this.loadTemplates();
+                        document.getElementById('modal_template').close();
+                    } else {
+                        this.errorMessage = data.error || 'Erreur lors de la création du template';
+                    }
+                })
+                .catch(error => {
+                    this.errorMessage = error.message || 'Erreur lors de la création du template';
+                })
+                .finally(() => {
+                    this.saving = false;
+                });
+        },
+
+        loadTemplates() {
+            fetch(this.urls.templatesList)
+                .then(response => this.readJson(response))
+                .then(data => {
+                    this.templates = Array.isArray(data.templates) ? data.templates : [];
+                })
+                .catch(error => {
+                    console.error('Erreur chargement templates:', error);
+                });
+        },
+
+        openEditModal(grille) {
+            this.currentGrille = grille;
+            this.formData = {
+                niveau: grille.niveau || 'confirme',
+                poste_id: grille.poste_id,
+                template_id: grille.template_id || '',
+                anciennete_min: grille.anciennete_min,
+                anciennete_max: grille.anciennete_max,
+                fourchette_basse: grille.fourchette_basse,
+                fourchette_haute: grille.fourchette_haute ?? '',
+                mode_fourchette_haute: grille.mode_fourchette_haute || 'fixe',
+                fourchette_haute_reference: grille.fourchette_haute_reference ?? '',
+                anciennete_reference_haute: grille.anciennete_reference_haute ?? '',
+                ratio_annuel_haute: grille.ratio_annuel_haute ?? '',
+                mode_ratio_haute: grille.mode_ratio_haute || 'compose',
+                date_debut_validite: grille.date_debut_validite,
+                date_fin_validite: grille.date_fin_validite || ''
+            };
+            document.getElementById('modal_grille_salariale').showModal();
+        },
+
+        saveGrille() {
+            this.saving = true;
+            this.errorMessage = '';
+            this.successMessage = '';
+
+            const payload = {
+                niveau: this.formData.niveau,
+                poste_id: this.formData.poste_id,
+                template_id: this.isJunior() ? null : (this.formData.template_id || null),
+                anciennete_min: this.parseNumber(this.formData.anciennete_min),
+                anciennete_max: this.parseNumber(this.formData.anciennete_max),
+                fourchette_basse: this.parseNumber(this.formData.fourchette_basse),
+                fourchette_haute: this.formData.fourchette_haute === '' ? null : this.parseNumber(this.formData.fourchette_haute),
+                mode_fourchette_haute: this.formData.mode_fourchette_haute,
+                fourchette_haute_reference: this.formData.fourchette_haute_reference === '' ? null : this.parseNumber(this.formData.fourchette_haute_reference),
+                anciennete_reference_haute: this.formData.anciennete_reference_haute === '' ? null : this.parseNumber(this.formData.anciennete_reference_haute),
+                ratio_annuel_haute: this.formData.ratio_annuel_haute === '' ? null : this.parseNumber(this.formData.ratio_annuel_haute),
+                mode_ratio_haute: this.formData.mode_ratio_haute,
+                date_debut_validite: this.formData.date_debut_validite,
+                date_fin_validite: this.formData.date_fin_validite || null
+            };
+
+            const url = this.currentGrille ? this.buildUpdateUrl(this.currentGrille.id) : this.urls.create;
+
+            fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCsrfToken()
+                },
+                body: JSON.stringify(payload)
+            })
+                .then(response => this.readJson(response))
+                .then(data => {
+                    this.successMessage = data.message || 'Grille enregistree avec succes';
+                    this.loadData();
+                    document.getElementById('modal_grille_salariale').close();
+                })
+                .catch(error => {
+                    this.errorMessage = error.message || 'Erreur lors de la sauvegarde';
+                })
+                .finally(() => {
+                    this.saving = false;
+                });
+        },
+
+        deleteGrille(grille) {
+            if (!confirm(`Supprimer la grille ${grille.poste_nom} (${this.formatAnciennete(grille.anciennete_min)}-${this.formatAnciennete(grille.anciennete_max)} ans) ?`)) {
+                return;
+            }
+
+            this.errorMessage = '';
+            this.successMessage = '';
+            fetch(this.buildDeleteUrl(grille.id), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCsrfToken()
+                }
+            })
+                .then(response => this.readJson(response))
+                .then(data => {
+                    this.successMessage = data.message || 'Grille supprimee avec succes';
+                    this.loadData();
+                })
+                .catch(error => {
+                    this.errorMessage = error.message || 'Erreur lors de la suppression';
+                });
+        },
+
+        importExcel(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            this.errorMessage = '';
+            this.successMessage = '';
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            fetch(this.urls.import, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': this.getCsrfToken()
+                },
+                body: formData
+            })
+                .then(response => this.readJson(response))
+                .then(data => {
+                    this.successMessage = data.message || 'Import Excel termine';
+                    this.loadData();
+                })
+                .catch(error => {
+                    this.errorMessage = error.message || 'Erreur lors de l import Excel';
+                })
+                .finally(() => {
+                    event.target.value = '';
+                });
+        },
+
+        importTemplatesExcel(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            this.errorMessage = '';
+            this.successMessage = '';
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            fetch("{% url 'employees:import_templates_excel' %}", {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': this.getCsrfToken()
+                },
+                body: formData
+            })
+                .then(response => this.readJson(response))
+                .then(data => {
+                    if (data.success) {
+                        this.successMessage = data.message || 'Import des templates termine';
+                        // Recharger la liste des templates
+                        this.loadTemplates();
+                    } else {
+                        this.errorMessage = data.error || 'Erreur lors de l import des templates';
+                    }
+                })
+                .catch(error => {
+                    this.errorMessage = error.message || 'Erreur lors de l import des templates';
+                })
+                .finally(() => {
+                    event.target.value = '';
+                });
+        },
+
+        getCsrfToken() {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, 10) === 'csrftoken=') {
+                        cookieValue = decodeURIComponent(cookie.substring(10));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        },
+
+        openAssignPosteModal() {
+            this.assignFormData = {
+                template_id: '',
+                poste_id: ''
+            };
+            document.getElementById('modal_assign_poste').showModal();
+        },
+
+        getPosteOrganisation(posteId) {
+            const poste = this.postes.find(p => p.id === posteId);
+            if (!poste) return '';
+            return poste.organisation_nom ? `Organisation: ${poste.organisation_nom}` : '';
+        },
+
+        uniqueTemplates() {
+            // Regrouper les templates par nom pour eviter les doublons dans le select
+            const grouped = new Map();
+            
+            this.templates.forEach(template => {
+                const key = `${template.nom_template}_${template.organisation_id || 'none'}`;
+                
+                if (!grouped.has(key)) {
+                    // Prendre la premiere tranche (la plus petite anciennete min) comme representant
+                    grouped.set(key, template);
+                } else {
+                    // Comparer et garder celui avec la plus petite anciennete min
+                    const existing = grouped.get(key);
+                    if (template.anciennete_min < existing.anciennete_min) {
+                        grouped.set(key, template);
+                    }
+                }
+            });
+            
+            // Convertir en tableau et trier par nom
+            return Array.from(grouped.values()).sort((a, b) => {
+                return a.nom_template.localeCompare(b.nom_template);
+            });
+        },
+
+        assignPosteToTemplate() {
+            this.saving = true;
+            this.errorMessage = '';
+            this.successMessage = '';
+
+            const payload = {
+                template_id: this.assignFormData.template_id,
+                poste_id: this.assignFormData.poste_id
+            };
+
+            console.log('Tentative affectation:', payload);
+            console.log('Template selectionne:', this.templates.find(t => t.id === payload.template_id));
+            console.log('Poste selectionne:', this.postes.find(p => p.id === payload.poste_id));
+
+            fetch("{% url 'employees:api_grilles_salariales_create' %}", {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCsrfToken()
+                },
+                body: JSON.stringify(payload)
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(err => { 
+                            throw new Error(err.error || `Erreur HTTP ${response.status}`); 
+                        });
+                    }
+                    return this.readJson(response);
+                })
+                .then(data => {
+                    if (data.success) {
+                        this.successMessage = data.message || 'Poste affecte avec succes';
+                        this.loadData();
+                        document.getElementById('modal_assign_poste').close();
+                        // Reset form
+                        this.assignFormData = { template_id: '', poste_id: '' };
+                    } else {
+                        this.errorMessage = data.error || 'Erreur lors de l\'affectation';
+                    }
+                })
+                .catch(error => {
+                    console.error('Erreur complete:', error);
+                    this.errorMessage = error.message || 'Erreur lors de l\'affectation - verifiez la console';
+                })
+                .finally(() => {
+                    this.saving = false;
+                });
+        }
+    };
+}
+</script>
+{% endblock %}

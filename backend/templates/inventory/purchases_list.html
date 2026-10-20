@@ -1,0 +1,997 @@
+{% extends logistics_shell_base_template|default:"base.html" %}
+{% load humanize %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- En-tête -->
+    <div class="flex justify-between items-center">
+        <h1 class="text-3xl font-bold text-base-content">{{ title }}</h1>
+
+        <div class="flex gap-2">
+            <!-- Dropdown Export -->
+            <div class="dropdown dropdown-end">
+                <label tabindex="0" class="btn btn-success btn-sm">
+                    <i class="fas fa-download mr-2"></i>
+                    Exporter
+                    <i class="fas fa-chevron-down ml-1"></i>
+                </label>
+                <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-64 z-50">
+                    <li>
+                        <a href="{% url 'inventory:export_purchases' %}">
+                            <i class="fas fa-file-excel text-success"></i>
+                            Export Simple (Achats)
+                        </a>
+                    </li>
+                    <li>
+                        <a href="{% url 'inventory:export_purchases_details' %}">
+                            <i class="fas fa-file-excel text-info"></i>
+                            Export Détaillé (avec articles)
+                        </a>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Dropdown Import -->
+            <div class="dropdown dropdown-end">
+                <label tabindex="0" class="btn btn-warning btn-sm">
+                    <i class="fas fa-upload mr-2"></i>
+                    Importer
+                    <i class="fas fa-chevron-down ml-1"></i>
+                </label>
+                <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-64 z-50">
+                    <li class="menu-title"><span>Achats (En-têtes)</span></li>
+                    <li>
+                        <a href="{% url 'inventory:template_purchases' %}">
+                            <i class="fas fa-download text-primary"></i>
+                            Télécharger Template
+                        </a>
+                    </li>
+                    <li>
+                        <a onclick="document.getElementById('importFile').click()">
+                            <i class="fas fa-upload text-warning"></i>
+                            Importer Fichier Excel
+                        </a>
+                    </li>
+                    <li class="divider"></li>
+                    <li class="menu-title"><span>Détails d'Achats (Lignes)</span></li>
+                    <li>
+                        <a href="{% url 'inventory:template_purchase_details' %}">
+                            <i class="fas fa-download text-info"></i>
+                            Télécharger Template Détails
+                        </a>
+                    </li>
+                    <li>
+                        <a onclick="document.getElementById('importDetailsFile').click()">
+                            <i class="fas fa-upload text-success"></i>
+                            Importer Détails Excel
+                        </a>
+                    </li>
+                </ul>
+            </div>
+
+            <a href="{% url 'inventory:purchases_consolidated' %}" class="btn btn-info btn-sm">
+                <i class="fas fa-chart-bar mr-2"></i>Vue Consolidée
+            </a>
+
+            <button onclick="openCreateModal()" class="btn btn-primary btn-sm">
+                <i class="fas fa-plus mr-2"></i>Nouvel Achat
+            </button>
+        </div>
+    </div>
+
+    <!-- Input fichier caché pour import -->
+    <input type="file" id="importFile" accept=".xlsx,.xls" style="display:none" onchange="importExcel(this)">
+    <input type="file" id="importDetailsFile" accept=".xlsx,.xls" style="display:none" onchange="importDetailsExcel(this)">
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <!-- Filtre Magasin -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Magasin</span>
+                    </label>
+                    <select id="filterMagasin" class="select select-bordered select-sm">
+                        <option value="">Tous les magasins</option>
+                        {% for magasin in magasins %}
+                            <option value="{{ magasin.id }}">{{ magasin.nom_magasin }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Filtre Fournisseur -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Fournisseur</span>
+                    </label>
+                    <select id="filterFournisseur" class="select select-bordered select-sm">
+                        <option value="">Tous les fournisseurs</option>
+                        {% for fournisseur in fournisseurs %}
+                            <option value="{{ fournisseur.id }}">{{ fournisseur.nom_fournisseur }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Filtre Statut -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Statut</span>
+                    </label>
+                    <select id="filterStatut" class="select select-bordered select-sm">
+                        <option value="">Tous les statuts</option>
+                        <option value="brouillon">Brouillon</option>
+                        <option value="commande">Commandé</option>
+                        <option value="livre">Livré</option>
+                        <option value="recu">Réceptionné</option>
+                        <option value="facture">Facturé</option>
+                        <option value="paye">Payé</option>
+                        <option value="annule">Annulé</option>
+                    </select>
+                </div>
+
+                <!-- Boutons -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">&nbsp;</span>
+                    </label>
+                    <div class="flex gap-2">
+                        <button onclick="applyFilters()" class="btn btn-primary btn-sm flex-1">
+                            <i class="fas fa-filter mr-1"></i>Filtrer
+                        </button>
+                        <button onclick="resetFilters()" class="btn btn-ghost btn-sm">
+                            <i class="fas fa-redo"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Table des achats -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body p-0">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra w-full">
+                    <thead>
+                        <tr>
+                            <th>N° Achat</th>
+                            <th>Date</th>
+                            <th>Fournisseur</th>
+                            <th>Magasin</th>
+                            <th>Désignations / Articles</th>
+                            <th>Montant Total</th>
+                            <th>Numéro DiameX</th>
+                            <th>Base DiameX</th>
+                            <th>Statut</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if purchases %}
+                            {% for purchase in purchases %}
+                            <tr class="hover">
+                                <td class="font-medium">{{ purchase.purchase_number }}</td>
+                                <td>{{ purchase.purchase_date|date:"d/m/Y" }}</td>
+                                <td>
+                                    {% if purchase.fournisseur %}
+                                        {{ purchase.fournisseur.nom_fournisseur }}
+                                    {% elif purchase.supplier %}
+                                        {{ purchase.supplier.supplier_name }}
+                                    {% else %}
+                                        <span class="text-base-content/50">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if purchase.magasin %}
+                                        <div class="flex flex-col">
+                                            <span class="font-semibold">{{ purchase.magasin.nom_magasin }}</span>
+                                            <span class="text-xs text-base-content/60">{{ purchase.magasin.base.nom_base }}</span>
+                                        </div>
+                                    {% else %}
+                                        <span class="text-base-content/50">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if purchase.purchase_items.count > 0 %}
+                                        <div class="flex flex-col gap-1">
+                                            {% for item in purchase.purchase_items.all %}
+                                                <div class="flex items-center gap-2 text-xs">
+                                                    <span class="badge badge-ghost badge-xs">{{ item.quantity_ordered|floatformat:0 }}</span>
+                                                    <span class="text-base-content/80">
+                                                        {{ item.designation.nom }}{% if item.designation.unite %} ({{ item.designation.unite }}){% endif %}
+                                                    </span>
+                                                </div>
+                                            {% endfor %}
+                                        </div>
+                                    {% else %}
+                                        <span class="badge badge-info badge-sm">0 article</span>
+                                    {% endif %}
+                                </td>
+                                <td class="font-semibold">{{ purchase.total_amount|floatformat:0|intcomma }} Ar</td>
+                                <td>
+                                    {% if purchase.numeroDiameX %}
+                                        <span class="font-mono text-sm">{{ purchase.numeroDiameX }}</span>
+                                    {% else %}
+                                        <span class="text-base-content/50">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if purchase.baseDiameX %}
+                                        <span class="text-sm">{{ purchase.baseDiameX }}</span>
+                                    {% else %}
+                                        <span class="text-base-content/50">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if purchase.purchase_status == 'livre' %}
+                                        <span class="badge badge-success">Livré</span>
+                                    {% elif purchase.purchase_status == 'commande' %}
+                                        <span class="badge badge-info">Commandé</span>
+                                    {% elif purchase.purchase_status == 'paye' %}
+                                        <span class="badge badge-success">Payé</span>
+                                    {% elif purchase.purchase_status == 'recu' %}
+                                        <span class="badge badge-success">Réceptionné</span>
+                                    {% elif purchase.purchase_status == 'brouillon' %}
+                                        <span class="badge badge-ghost">Brouillon</span>
+                                    {% elif purchase.purchase_status == 'annule' %}
+                                        <span class="badge badge-error">Annulé</span>
+                                    {% else %}
+                                        <span class="badge badge-warning">{{ purchase.get_purchase_status_display }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="flex gap-1">
+                                        <button onclick="viewPurchase('{{ purchase.id }}')" class="btn btn-ghost btn-xs" title="Voir détails">
+                                            <i class="fas fa-eye"></i>
+                                        </button>
+                                        {% if purchase.purchase_status == 'commande' or purchase.purchase_status == 'livre' %}
+                                        <button onclick="receivePurchase('{{ purchase.id }}', '{{ purchase.purchase_number }}')" class="btn btn-ghost btn-xs text-success" title="Réceptionner">
+                                            <i class="fas fa-check-circle"></i>
+                                        </button>
+                                        {% endif %}
+                                        <button onclick="editPurchase('{{ purchase.id }}')" class="btn btn-ghost btn-xs" title="Modifier">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        <button onclick="deletePurchase('{{ purchase.id }}', '{{ purchase.purchase_number }}')" class="btn btn-ghost btn-xs text-error" title="Supprimer">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="10" class="text-center py-8 text-base-content/50">
+                                    <i class="fas fa-inbox text-4xl mb-2"></i>
+                                    <p>Aucun achat enregistré</p>
+                                </td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Création/Modification -->
+<dialog id="purchaseModal" class="modal">
+    <div class="modal-box w-11/12 max-w-5xl">
+        <h3 id="modalTitle" class="font-bold text-lg mb-4">Nouvel Achat</h3>
+        <form id="purchaseForm" class="space-y-4">
+            <input type="hidden" id="purchaseId" value="">
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">N° Achat</span></label>
+                    <input type="text" id="purchase_number" class="input input-bordered bg-base-200" readonly placeholder="Auto-généré">
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Date d'achat*</span></label>
+                    <input type="date" id="purchase_date" class="input input-bordered" required>
+                </div>
+
+                <div class="form-control post-purchase-field">
+                    <label class="label"><span class="label-text">Fournisseur</span></label>
+                    <input type="text" id="fournisseur_text" list="fournisseurs_list" class="input input-bordered" placeholder="Rechercher un fournisseur..." onchange="selectFournisseur()">
+                    <datalist id="fournisseurs_list">
+                        {% for fournisseur in fournisseurs %}
+                        <option value="{{ fournisseur.nom_fournisseur }}" data-id="{{ fournisseur.id }}" data-idxls="{{ fournisseur.idxls }}"></option>
+                        {% endfor %}
+                    </datalist>
+                    <input type="hidden" id="fournisseur_id">
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Magasin*</span></label>
+                    <select id="magasin_id" class="select select-bordered" required>
+                        <option value="">Sélectionner...</option>
+                        {% for magasin in magasins %}
+                        <option value="{{ magasin.id }}">{{ magasin.nom_magasin }} ({{ magasin.base.nom_base }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control post-purchase-field">
+                    <label class="label"><span class="label-text">Compte comptable</span></label>
+                    <select id="compte_id" class="select select-bordered" disabled>
+                        <option value="">Sélectionner d'abord un magasin...</option>
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Date de livraison prévue</span></label>
+                    <input type="date" id="expected_delivery_date" class="input input-bordered">
+                </div>
+
+                <div class="form-control post-purchase-field">
+                    <label class="label"><span class="label-text">Commandé par</span></label>
+                    <select id="ordered_by_id" class="select select-bordered">
+                        <option value="">Sélectionner...</option>
+                        {% for employee in employees %}
+                        <option value="{{ employee.id }}">{{ employee.surnom|default:employee.nom_employe }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Statut</span></label>
+                    <select id="purchase_status" class="select select-bordered">
+                        <option value="brouillon">Brouillon</option>
+                        <option value="commande">Commandé</option>
+                        <option value="livre">Livré</option>
+                        <option value="recu">Réceptionné</option>
+                        <option value="facture">Facturé</option>
+                        <option value="paye">Payé</option>
+                        <option value="annule">Annulé</option>
+                    </select>
+                    <label class="label">
+                        <span class="label-text-alt text-info">
+                            <i class="fas fa-info-circle mr-1"></i>
+                            Pour réceptionner, utilisez le bouton vert <i class="fas fa-check-circle"></i> dans la liste
+                        </span>
+                    </label>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Numéro DiameX</span></label>
+                    <input type="text" id="numeroDiameX" class="input input-bordered" placeholder="Numéro de pièce DiameX">
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Base DiameX</span></label>
+                    <input type="text" id="baseDiameX" class="input input-bordered" placeholder="Base DiameX">
+                </div>
+            </div>
+
+            <div id="postPurchaseHint" class="alert alert-info hidden">
+                <i class="fas fa-info-circle"></i>
+                <span>Les informations fournisseur, compte comptable et "commandé par" seront renseignées après l'achat.</span>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Notes</span></label>
+                <textarea id="notes" class="textarea textarea-bordered" rows="2"></textarea>
+            </div>
+
+            <!-- Articles -->
+            <div class="divider">Articles</div>
+
+            <div class="space-y-2" id="itemsContainer">
+                <!-- Les articles seront ajoutés ici -->
+            </div>
+
+            <button type="button" onclick="addItem()" class="btn btn-sm btn-outline">
+                <i class="fas fa-plus mr-2"></i>Ajouter un article
+            </button>
+
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle"></i>
+                <span>Total: <strong id="totalAmount">0 Ar</strong></span>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost" onclick="purchaseModal.close()">Annuler</button>
+                <button type="submit" class="btn btn-primary">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal Détails (Lecture seule) -->
+<dialog id="viewModal" class="modal">
+    <div class="modal-box w-11/12 max-w-4xl">
+        <h3 class="font-bold text-lg mb-4">Détails de l'achat</h3>
+        <div id="viewContent" class="space-y-4">
+            <!-- Le contenu sera chargé dynamiquement -->
+        </div>
+        <div class="modal-action">
+            <button class="btn" onclick="viewModal.close()">Fermer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+const purchaseModal = document.getElementById('purchaseModal');
+const viewModal = document.getElementById('viewModal');
+const designations = {{ designations_json|safe }};
+let itemCounter = 0;
+
+// Ouvrir modal création
+// Charger les comptes liés au magasin sélectionné
+async function loadComptesByMagasin(magasinId) {
+    const compteSelect = document.getElementById('compte_id');
+
+    if (!magasinId) {
+        compteSelect.innerHTML = '<option value="">Sélectionner d\'abord un magasin...</option>';
+        compteSelect.disabled = true;
+        return;
+    }
+
+    try {
+        const response = await fetch(`/stocks/achats/api/comptes-by-magasin/${magasinId}/`);
+        const data = await response.json();
+
+        if (data.success) {
+            compteSelect.innerHTML = '<option value="">Sélectionner...</option>';
+            data.comptes.forEach(compte => {
+                const option = document.createElement('option');
+                option.value = compte.id;
+                option.textContent = `${compte.compte} - ${compte.nom_compte}`;
+                option.dataset.code = compte.compte;
+                compteSelect.appendChild(option);
+            });
+            compteSelect.disabled = false;
+        } else {
+            compteSelect.innerHTML = '<option value="">Erreur de chargement</option>';
+            compteSelect.disabled = true;
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        compteSelect.innerHTML = '<option value="">Erreur de chargement</option>';
+        compteSelect.disabled = true;
+    }
+}
+
+// Event listener pour le changement de magasin
+document.getElementById('magasin_id').addEventListener('change', function() {
+    loadComptesByMagasin(this.value);
+});
+
+function openCreateModal() {
+    document.getElementById('modalTitle').textContent = 'Nouvel Achat';
+    document.getElementById('purchaseForm').reset();
+    document.getElementById('purchaseId').value = '';
+    document.getElementById('itemsContainer').innerHTML = '';
+    document.getElementById('purchase_date').valueAsDate = new Date();
+
+    // Réinitialiser le champ fournisseur
+    document.getElementById('fournisseur_text').value = '';
+    document.getElementById('fournisseur_id').value = '';
+
+    // Réinitialiser le dropdown des comptes
+    const compteSelect = document.getElementById('compte_id');
+    compteSelect.innerHTML = '<option value="">Sélectionner d\'abord un magasin...</option>';
+    compteSelect.disabled = true;
+
+    togglePostPurchaseFields(false);
+
+    addItem();
+    purchaseModal.showModal();
+}
+
+function togglePostPurchaseFields(show) {
+    const fields = document.querySelectorAll('.post-purchase-field');
+    const hint = document.getElementById('postPurchaseHint');
+
+    fields.forEach(field => {
+        field.classList.toggle('hidden', !show);
+    });
+
+    hint.classList.toggle('hidden', show);
+}
+
+// Ajouter un article
+function addItem() {
+    itemCounter++;
+    const container = document.getElementById('itemsContainer');
+    const itemDiv = document.createElement('div');
+    itemDiv.className = 'grid grid-cols-12 gap-2 items-end';
+    itemDiv.id = `item_${itemCounter}`;
+
+    // Générer les options de désignations pour datalist (autocomplete)
+    let designationOptions = '';
+    designations.forEach(designation => {
+        const unitDisplay = designation.unit || '';
+        designationOptions += `<option value="${designation.designation_name} ${unitDisplay ? '(' + unitDisplay + ')' : ''}" data-id="${designation.id}" data-price="${designation.unit_price}" data-unit="${designation.unit}"></option>`;
+    });
+
+    itemDiv.innerHTML = `
+        <div class="col-span-5 form-control">
+            <label class="label label-text-alt">Désignation</label>
+            <input type="text" list="designations_${itemCounter}" class="input input-bordered input-sm item-designation-text" placeholder="Rechercher..." oninput="selectDesignation(${itemCounter})" onchange="selectDesignation(${itemCounter})" onblur="selectDesignation(${itemCounter})" required>
+            <datalist id="designations_${itemCounter}">
+                ${designationOptions}
+            </datalist>
+            <input type="hidden" class="item-designation">
+        </div>
+        <div class="col-span-2 form-control">
+            <label class="label label-text-alt">Quantité</label>
+            <input type="number" class="input input-bordered input-sm item-qty" step="0.01" min="0" value="1" onchange="calculateItemTotal(${itemCounter})" required>
+        </div>
+        <div class="col-span-2 form-control">
+            <label class="label label-text-alt">Prix U.</label>
+            <input type="number" class="input input-bordered input-sm item-price" step="0.01" min="0" value="0" onchange="calculateItemTotal(${itemCounter})" required>
+        </div>
+        <div class="col-span-2 form-control">
+            <label class="label label-text-alt">Total</label>
+            <input type="text" class="input input-bordered input-sm item-total" readonly>
+        </div>
+        <div class="col-span-1 form-control">
+            <button type="button" class="btn btn-sm btn-error" onclick="removeItem(${itemCounter})">
+                <i class="fas fa-trash"></i>
+            </button>
+        </div>
+    `;
+
+    container.appendChild(itemDiv);
+}
+
+// Sélectionner une désignation depuis l'autocomplétion
+function selectDesignation(id) {
+    const itemDiv = document.getElementById(`item_${id}`);
+    const textInput = itemDiv.querySelector('.item-designation-text');
+    const hiddenInput = itemDiv.querySelector('.item-designation');
+    const priceInput = itemDiv.querySelector('.item-price');
+    const datalist = document.getElementById(`designations_${id}`);
+
+    const selectedValue = textInput.value.trim();
+    const selectedOption = findDesignationOptionByText(selectedValue, datalist);
+
+    if (selectedOption) {
+        // Remplir les champs avec les données de la désignation
+        hiddenInput.value = selectedOption.dataset.id;
+        priceInput.value = selectedOption.dataset.price || 0;
+        calculateItemTotal(id);
+    } else {
+        // Si pas de correspondance exacte, vider les champs
+        hiddenInput.value = '';
+        priceInput.value = 0;
+    }
+}
+
+function normalizeText(value) {
+    return (value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function stripUnit(value) {
+    return (value || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+}
+
+function findDesignationOptionByText(textValue, datalist) {
+    if (!textValue) {
+        return null;
+    }
+
+    const normalizedInput = normalizeText(textValue);
+    const normalizedInputWithoutUnit = normalizeText(stripUnit(textValue));
+
+    for (let option of datalist.options) {
+        const optionLabel = option.value || '';
+        const normalizedOption = normalizeText(optionLabel);
+        const normalizedOptionWithoutUnit = normalizeText(stripUnit(optionLabel));
+
+        if (
+            normalizedOption === normalizedInput ||
+            normalizedOptionWithoutUnit === normalizedInput ||
+            normalizedOptionWithoutUnit === normalizedInputWithoutUnit
+        ) {
+            return option;
+        }
+    }
+
+    return null;
+}
+
+// Mettre à jour le prix quand on sélectionne un produit (ancienne fonction conservée pour compatibilité)
+function updateItemPrice(id) {
+    selectDesignation(id);
+}
+
+// Sélectionner un fournisseur depuis l'autocomplétion
+function selectFournisseur() {
+    const textInput = document.getElementById('fournisseur_text');
+    const hiddenInput = document.getElementById('fournisseur_id');
+    const datalist = document.getElementById('fournisseurs_list');
+
+    // Trouver l'option correspondante dans le datalist
+    const selectedValue = textInput.value.trim();
+    let selectedOption = null;
+
+    for (let option of datalist.options) {
+        if (option.value === selectedValue) {
+            selectedOption = option;
+            break;
+        }
+    }
+
+    if (selectedOption) {
+        // Remplir le champ caché avec l'ID du fournisseur
+        hiddenInput.value = selectedOption.dataset.id;
+    } else {
+        // Si pas de correspondance exacte, vider le champ
+        hiddenInput.value = '';
+    }
+}
+
+// Calculer le total d'un article
+function calculateItemTotal(id) {
+    const itemDiv = document.getElementById(`item_${id}`);
+    const qty = parseFloat(itemDiv.querySelector('.item-qty').value) || 0;
+    const price = parseFloat(itemDiv.querySelector('.item-price').value) || 0;
+    const total = qty * price;
+
+    itemDiv.querySelector('.item-total').value = total.toLocaleString('fr-MG') + ' Ar';
+    calculateGrandTotal();
+}
+
+// Calculer le montant total
+function calculateGrandTotal() {
+    let grandTotal = 0;
+    document.querySelectorAll('.item-qty').forEach((input, index) => {
+        const qty = parseFloat(input.value) || 0;
+        const price = parseFloat(input.closest('.grid').querySelector('.item-price').value) || 0;
+        grandTotal += qty * price;
+    });
+
+    document.getElementById('totalAmount').textContent = grandTotal.toLocaleString('fr-MG') + ' Ar';
+}
+
+// Supprimer un article
+function removeItem(id) {
+    document.getElementById(`item_${id}`).remove();
+    calculateGrandTotal();
+}
+
+// Soumettre le formulaire
+document.getElementById('purchaseForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const items = [];
+    const invalidItems = [];
+    document.querySelectorAll('#itemsContainer > div').forEach((itemDiv, index) => {
+        const textInput = itemDiv.querySelector('.item-designation-text');
+        const designationSelect = itemDiv.querySelector('.item-designation');
+        const datalist = itemDiv.querySelector('datalist');
+        const qty = itemDiv.querySelector('.item-qty').value;
+        const price = itemDiv.querySelector('.item-price').value;
+
+        if (!designationSelect.value && textInput.value.trim()) {
+            const option = findDesignationOptionByText(textInput.value.trim(), datalist);
+            if (option) {
+                designationSelect.value = option.dataset.id;
+            }
+        }
+
+        if (designationSelect.value) {
+            items.push({
+                designation_id: designationSelect.value,
+                quantity_ordered: qty,
+                unit_price: price
+            });
+        } else if (textInput.value.trim()) {
+            invalidItems.push(index + 1);
+        }
+    });
+
+    if (items.length === 0) {
+        alert('Veuillez ajouter au moins un article');
+        return;
+    }
+
+    if (invalidItems.length > 0) {
+        alert(`Désignation invalide pour la ligne: ${invalidItems.join(', ')}`);
+        return;
+    }
+
+    const data = {
+        purchase_date: document.getElementById('purchase_date').value,
+        expected_delivery_date: document.getElementById('expected_delivery_date').value || null,
+        fournisseur_id: document.getElementById('fournisseur_id').value,
+        magasin_id: document.getElementById('magasin_id').value,
+        compte_id: document.getElementById('compte_id').value,
+        ordered_by_id: document.getElementById('ordered_by_id').value || null,
+        purchase_status: document.getElementById('purchase_status').value,
+        numeroDiameX: document.getElementById('numeroDiameX').value || null,
+        baseDiameX: document.getElementById('baseDiameX').value || null,
+        notes: document.getElementById('notes').value,
+        items: items
+    };
+
+    const purchaseId = document.getElementById('purchaseId').value;
+    const url = purchaseId
+        ? `/stocks/achats/${purchaseId}/update/`
+        : '/stocks/achats/create/';
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert(result.message);
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        alert('Erreur: ' + error.message);
+    }
+});
+
+// Voir un achat
+async function viewPurchase(id) {
+    try {
+        const response = await fetch(`/stocks/achats/${id}/`);
+        const result = await response.json();
+
+        if (result.success) {
+            const p = result.purchase;
+            let itemsHtml = '';
+
+            p.items.forEach(item => {
+                const quantity = parseFloat(item.quantity_ordered).toLocaleString('fr-FR', {minimumFractionDigits: 0, maximumFractionDigits: 2});
+                const unit = item.unit && item.unit.trim() ? item.unit : '';
+                itemsHtml += `
+                    <tr>
+                        <td>${item.designation_name}</td>
+                        <td>${quantity} ${unit}</td>
+                        <td>${parseFloat(item.unit_price).toLocaleString('fr-FR')} Ar</td>
+                        <td class="font-semibold">${parseFloat(item.total_price).toLocaleString('fr-FR')} Ar</td>
+                    </tr>
+                `;
+            });
+
+            document.getElementById('viewContent').innerHTML = `
+                <div class="grid grid-cols-2 gap-4">
+                    <div><strong>N° Achat:</strong> ${p.purchase_number}</div>
+                    <div><strong>Date:</strong> ${new Date(p.purchase_date).toLocaleDateString('fr-FR')}</div>
+                    <div><strong>Fournisseur:</strong> ${p.supplier_name}</div>
+                    <div><strong>Base:</strong> ${p.base_name}</div>
+                    <div><strong>Commandé par:</strong> ${p.ordered_by_name || 'N/A'}</div>
+                    <div><strong>Statut:</strong> <span class="badge">${p.purchase_status}</span></div>
+                    <div><strong>Numéro DiameX:</strong> <span class="font-mono">${p.numeroDiameX || '-'}</span></div>
+                    <div><strong>Base DiameX:</strong> ${p.baseDiameX || '-'}</div>
+                </div>
+                ${p.notes ? `<div><strong>Notes:</strong> ${p.notes}</div>` : ''}
+                <div class="divider">Articles</div>
+                <table class="table table-sm">
+                    <thead><tr><th>Désignation</th><th>Quantité</th><th>Prix U.</th><th>Total</th></tr></thead>
+                    <tbody>${itemsHtml}</tbody>
+                </table>
+                <div class="text-right font-bold text-lg">Total: ${parseFloat(p.total_amount).toLocaleString('fr-MG')} Ar</div>
+            `;
+
+            viewModal.showModal();
+        }
+    } catch (error) {
+        alert('Erreur: ' + error.message);
+    }
+}
+
+// Modifier un achat
+async function editPurchase(id) {
+    try {
+        const response = await fetch(`/stocks/achats/${id}/`);
+        const result = await response.json();
+
+        if (result.success) {
+            const p = result.purchase;
+
+            // Debug: afficher les valeurs reçues
+            console.log('Purchase data:', p);
+            console.log('magasin_id:', p.magasin_id);
+            console.log('purchase_status:', p.purchase_status);
+
+            document.getElementById('modalTitle').textContent = 'Modifier l\'achat';
+            document.getElementById('purchaseId').value = p.id;
+            document.getElementById('purchase_number').value = p.purchase_number;
+            document.getElementById('purchase_date').value = p.purchase_date;
+            document.getElementById('expected_delivery_date').value = p.expected_delivery_date || '';
+
+            // Remplir le champ fournisseur (texte + ID caché)
+            document.getElementById('fournisseur_text').value = p.fournisseur_name || '';
+            document.getElementById('fournisseur_id').value = p.fournisseur_id || '';
+
+            document.getElementById('magasin_id').value = p.magasin_id || '';
+            document.getElementById('ordered_by_id').value = p.ordered_by_id || '';
+
+            // Charger les comptes puis sélectionner le compte actuel
+            if (p.magasin_id) {
+                await loadComptesByMagasin(p.magasin_id);
+                document.getElementById('compte_id').value = p.compte_id || '';
+            }
+            togglePostPurchaseFields(true);
+            document.getElementById('purchase_status').value = p.purchase_status || 'brouillon';
+            document.getElementById('numeroDiameX').value = p.numeroDiameX || '';
+            document.getElementById('baseDiameX').value = p.baseDiameX || '';
+            document.getElementById('notes').value = p.notes || '';
+
+            // Ajouter les articles
+            document.getElementById('itemsContainer').innerHTML = '';
+            p.items.forEach(item => {
+                addItem();
+                const lastItem = document.querySelector('#itemsContainer > div:last-child');
+
+                // Remplir le champ texte d'autocomplétion avec le nom de la désignation
+                const textInput = lastItem.querySelector('.item-designation-text');
+                const hiddenInput = lastItem.querySelector('.item-designation');
+
+                // Trouver la désignation correspondante dans la liste
+                const designation = designations.find(d => d.id === item.designation_id);
+                if (designation) {
+                    const unitDisplay = designation.unit || '';
+                    textInput.value = `${designation.designation_name} ${unitDisplay ? '(' + unitDisplay + ')' : ''}`;
+                }
+
+                hiddenInput.value = item.designation_id;
+                lastItem.querySelector('.item-qty').value = item.quantity_ordered;
+                lastItem.querySelector('.item-price').value = item.unit_price;
+                calculateItemTotal(itemCounter);
+            });
+
+            purchaseModal.showModal();
+        }
+    } catch (error) {
+        alert('Erreur: ' + error.message);
+    }
+}
+
+// Réceptionner un achat
+async function receivePurchase(id, number) {
+    if (!confirm(`Voulez-vous réceptionner l'achat ${number} ?\n\nCela créera automatiquement une transaction DiameX en attente d'export.`)) return;
+
+    try {
+        const response = await fetch(`/stocks/achats/${id}/receive/`, {method: 'POST'});
+        const result = await response.json();
+
+        if (result.success) {
+            alert('✓ ' + result.message);
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        alert('Erreur: ' + error.message);
+    }
+}
+
+// Supprimer un achat
+async function deletePurchase(id, number) {
+    if (!confirm(`Voulez-vous vraiment supprimer l'achat ${number} ?`)) return;
+
+    try {
+        const response = await fetch(`/stocks/achats/${id}/delete/`, {method: 'POST'});
+        const result = await response.json();
+
+        if (result.success) {
+            alert(result.message);
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        alert('Erreur: ' + error.message);
+    }
+}
+
+// Importer depuis Excel
+async function importExcel(input) {
+    if (!input.files || !input.files[0]) return;
+
+    const formData = new FormData();
+    formData.append('fichier', input.files[0]);
+
+    try {
+        const response = await fetch('/stocks/achats/import/', {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            if (result.errors && result.errors.length > 0) {
+                alert(`${result.message}\n\nErreurs:\n${result.errors.join('\n')}`);
+            } else {
+                alert(result.message);
+            }
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        alert('Erreur: ' + error.message);
+    } finally {
+        input.value = ''; // Réinitialiser l'input
+    }
+}
+
+async function importDetailsExcel(input) {
+    if (!input.files || !input.files[0]) return;
+
+    const formData = new FormData();
+    formData.append('fichier', input.files[0]);
+
+    try {
+        const response = await fetch('/stocks/achats/details/import/', {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            if (result.errors && result.errors.length > 0) {
+                alert(`${result.message}\n\nErreurs:\n${result.errors.join('\n')}`);
+            } else {
+                alert(result.message);
+            }
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        alert('Erreur: ' + error.message);
+    } finally {
+        input.value = ''; // Réinitialiser l'input
+    }
+}
+
+// Fonctions de filtrage
+function applyFilters() {
+    const magasin = document.getElementById('filterMagasin').value;
+    const fournisseur = document.getElementById('filterFournisseur').value;
+    const statut = document.getElementById('filterStatut').value;
+
+    const params = new URLSearchParams();
+    if (magasin) params.append('magasin_id', magasin);
+    if (fournisseur) params.append('fournisseur_id', fournisseur);
+    if (statut) params.append('statut', statut);
+
+    window.location.href = '{% url "inventory:purchases" %}' + (params.toString() ? '?' + params.toString() : '');
+}
+
+function resetFilters() {
+    window.location.href = '{% url "inventory:purchases" %}';
+}
+
+// Pré-remplir les filtres depuis l'URL
+document.addEventListener('DOMContentLoaded', function() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const magasin = urlParams.get('magasin_id');
+    const fournisseur = urlParams.get('fournisseur_id');
+    const statut = urlParams.get('statut');
+    const editId = urlParams.get('edit_id');
+
+    if (magasin) document.getElementById('filterMagasin').value = magasin;
+    if (fournisseur) document.getElementById('filterFournisseur').value = fournisseur;
+    if (statut) document.getElementById('filterStatut').value = statut;
+
+    if (editId) {
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('edit_id');
+        window.history.replaceState({}, '', cleanUrl.toString());
+        setTimeout(() => editPurchase(editId), 0);
+    }
+});
+</script>
+{% endblock %}

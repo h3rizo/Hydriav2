@@ -1,0 +1,660 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load employee_grouping %}
+
+{% block title %}Gestion des Récupérations{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- En-tête -->
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">Gestion des Récupérations</h1>
+            <p class="text-base-content/70 mt-1">
+                Jours de repos accordés après travail exceptionnel (dimanche/jour férié)
+            </p>
+        </div>
+        <button onclick="openCreateModal()" class="btn btn-primary">
+            <i class="fas fa-plus mr-2"></i>
+            Nouvelle Récupération
+        </button>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <!-- Filtre Employé -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Employé</span>
+                    </label>
+                    <select id="filter-employe" class="select select-bordered">
+                        {% grouped_employee_options employes "" "Tous les employés" %}
+                    </select>
+                </div>
+
+                <!-- Filtre Statut -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Statut</span>
+                    </label>
+                    <select id="filter-statut" class="select select-bordered">
+                        <option value="">Tous les statuts</option>
+                        <option value="acquise">Acquise (disponible)</option>
+                        <option value="demandee">Demandée</option>
+                        <option value="validee_chef">Validée par chef</option>
+                        <option value="validee_directeur">Validée par directeur</option>
+                        <option value="utilisee">Utilisée</option>
+                        <option value="expiree">Expirée</option>
+                        <option value="annulee">Annulée</option>
+                    </select>
+                </div>
+
+                <!-- Filtre Année -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Année</span>
+                    </label>
+                    <select id="filter-annee" class="select select-bordered">
+                        <option value="">Toutes les années</option>
+                        {% for annee in annees_recuperations %}
+                        <option value="{{ annee }}" {% if annee == annee_courante %}selected{% endif %}>{{ annee }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Boutons -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">&nbsp;</span>
+                    </label>
+                    <div class="flex gap-2">
+                        <button onclick="loadRecuperations()" class="btn btn-primary flex-1">
+                            <i class="fas fa-filter mr-2"></i>Filtrer
+                        </button>
+                        <button onclick="resetFilters()" class="btn btn-ghost">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tableau des récupérations -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra">
+                    <thead>
+                        <tr>
+                            <th>Employé</th>
+                            <th>Date Travail</th>
+                            <th>Motif</th>
+                            <th>Jours</th>
+                            <th>Statut</th>
+                            <th>Date Demandée</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-recuperations">
+                        <tr>
+                            <td colspan="7" class="text-center py-8">
+                                <span class="loading loading-spinner loading-lg"></span>
+                                <p class="mt-2">Chargement...</p>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Création Récupération - WORKFLOW AMÉLIORÉ -->
+<dialog id="modal-create" class="modal">
+    <div class="modal-box max-w-3xl">
+        <h3 class="font-bold text-lg mb-4">Enregistrer une Récupération</h3>
+
+        <!-- Étape 1: Sélection employé -->
+        <div id="step-1">
+            <div class="alert alert-info mb-4">
+                <i class="fas fa-info-circle"></i>
+                <span>Sélectionnez un employé pour voir ses dates récupérables (dimanches et jours fériés travaillés)</span>
+            </div>
+
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text">Employé <span class="text-error">*</span></span>
+                </label>
+                <select id="select-employe" class="select select-bordered" onchange="loadDatesRecuperables()">
+                    <option value="">Sélectionner un employé</option>
+                    {% for emp in employes %}
+                    <option value="{{ emp.id }}">{{ emp.surnom|default:emp.nom_complet }} - {{ emp.base.organisation.nom_organisation }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-control mt-4">
+                <label class="label">
+                    <span class="label-text">Année</span>
+                </label>
+                <select id="select-annee" class="select select-bordered" onchange="loadDatesRecuperables()">
+                    {% for annee in annees_recuperations %}
+                    <option value="{{ annee }}" {% if annee == annee_courante %}selected{% endif %}>{{ annee }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div id="loading-dates" class="hidden text-center py-8">
+                <span class="loading loading-spinner loading-lg"></span>
+                <p class="mt-2">Recherche des dates récupérables...</p>
+            </div>
+        </div>
+
+        <!-- Étape 2: Sélection de la date -->
+        <div id="step-2" class="hidden">
+            <div class="alert alert-success mb-4">
+                <i class="fas fa-check-circle"></i>
+                <span><span id="dates-count">0</span> date(s) récupérable(s) trouvée(s)</span>
+            </div>
+
+            <div class="alert alert-warning mb-4">
+                <i class="fas fa-clock"></i>
+                <span>Seules les journées récupérables des 15 derniers jours sont proposées. Les journées déjà récupérées ou hors délai sont exclues.</span>
+            </div>
+
+            <form id="form-create" onsubmit="submitCreate(event)">
+                <input type="hidden" name="employe_id" id="hidden-employe-id">
+                <input type="hidden" name="planning_id" id="hidden-planning-id">
+                <input type="hidden" name="date_travail_exceptionnel" id="hidden-date-travail">
+                <input type="hidden" name="motif_acquisition" id="hidden-motif">
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Sélectionner une date <span class="text-error">*</span></span>
+                    </label>
+                    <div id="dates-list" class="space-y-2 max-h-96 overflow-y-auto">
+                        <!-- Liste des dates sera remplie dynamiquement -->
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4 mt-4">
+                    <!-- Nombre de jours -->
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">Nombre de jours</span>
+                        </label>
+                        <input type="number" name="nb_jours_acquis" class="input input-bordered" value="1.0" step="0.5" min="0.5" max="2">
+                    </div>
+
+                    <!-- Date expiration (optionnel) -->
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">Date d'expiration (optionnel)</span>
+                        </label>
+                        <input type="date" name="date_expiration" class="input input-bordered">
+                    </div>
+                </div>
+
+                <div class="modal-action">
+                    <button type="button" class="btn" onclick="resetCreateModal()">Retour</button>
+                    <button type="button" class="btn" onclick="document.getElementById('modal-create').close()">Annuler</button>
+                    <button type="submit" class="btn btn-primary">Enregistrer</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Modal Demande Récupération -->
+<dialog id="modal-demande" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">Demander à utiliser cette récupération</h3>
+        <form id="form-demande" onsubmit="submitDemande(event)">
+            <input type="hidden" name="recuperation_id" id="demande-recuperation-id">
+
+            <div class="space-y-4">
+                <!-- Info récupération -->
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i>
+                    <span id="demande-info"></span>
+                </div>
+
+                <!-- Date début -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Date souhaitée (début) <span class="text-error">*</span></span>
+                    </label>
+                    <input type="date" name="date_debut_recup" class="input input-bordered" required>
+                </div>
+
+                <!-- Date fin -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Date de fin <span class="text-error">*</span></span>
+                    </label>
+                    <input type="date" name="date_fin_recup" class="input input-bordered" required>
+                </div>
+
+                <!-- Motif -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Motif de la demande</span>
+                    </label>
+                    <textarea name="motif_demande" class="textarea textarea-bordered" rows="3" placeholder="Expliquez pourquoi vous souhaitez prendre cette récupération..."></textarea>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('modal-demande').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary">Envoyer la demande</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<script>
+// Variables globales
+let recuperations = [];
+const defaultRecuperationYear = '{{ annee_courante|escapejs }}';
+
+function getInitialEmployeIdFromUrl() {
+    const params = new URLSearchParams(window.location.search || '');
+    return (params.get('employe_id') || params.get('employe') || '').trim();
+}
+
+function applyInitialEmployeFilterFromUrl() {
+    const employeId = getInitialEmployeIdFromUrl();
+    const select = document.getElementById('filter-employe');
+    if (!employeId || !select) {
+        return;
+    }
+
+    const hasOption = Array.from(select.options).some((option) => option.value === employeId);
+    if (hasOption) {
+        select.value = employeId;
+    }
+}
+
+// Charger les récupérations
+async function loadRecuperations() {
+    const employe = document.getElementById('filter-employe').value;
+    const statut = document.getElementById('filter-statut').value;
+    const annee = document.getElementById('filter-annee').value;
+
+    const params = new URLSearchParams();
+    if (employe) params.append('employe_id', employe);
+    if (statut) params.append('statut', statut);
+    if (annee) params.append('annee', annee);
+
+    try {
+        const response = await fetch(`{% url 'employees:api_recuperations_list' %}?${params}`);
+        const data = await response.json();
+
+        if (data.success) {
+            recuperations = data.recuperations;
+            displayRecuperations();
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors du chargement des récupérations');
+    }
+}
+
+// Afficher les récupérations
+function displayRecuperations() {
+    const tbody = document.getElementById('table-recuperations');
+
+    if (recuperations.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8">Aucune récupération trouvée</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = recuperations.map(r => {
+        const statutBadge = getStatutBadge(r.statut);
+        const actions = getActions(r);
+
+        return `
+            <tr>
+                <td>
+                    <div class="font-semibold">${r.employe_surnom || r.employe_nom}</div>
+                    <div class="text-sm text-base-content/70">${r.organisation}</div>
+                </td>
+                <td>${formatDate(r.date_travail_exceptionnel)}</td>
+                <td>
+                    <span class="badge badge-sm">${r.motif_acquisition_display}</span>
+                </td>
+                <td>${r.nb_jours_acquis} jour(s)</td>
+                <td>${statutBadge}</td>
+                <td>${r.date_debut_recup ? formatDate(r.date_debut_recup) : '-'}</td>
+                <td>${actions}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Badge statut
+function getStatutBadge(statut) {
+    const badges = {
+        'acquise': '<span class="badge badge-success">Disponible</span>',
+        'demandee': '<span class="badge badge-warning">En attente</span>',
+        'validee_chef': '<span class="badge badge-info">Validée chef</span>',
+        'validee_directeur': '<span class="badge badge-info">Validée directeur</span>',
+        'utilisee': '<span class="badge badge-ghost">Utilisée</span>',
+        'expiree': '<span class="badge badge-error">Expirée</span>',
+        'annulee': '<span class="badge badge-error">Annulée</span>',
+    };
+    return badges[statut] || statut;
+}
+
+// Actions selon statut
+function getActions(recup) {
+    if (recup.statut === 'acquise' && recup.peut_etre_utilisee) {
+        return `<button onclick="openDemandeModal('${recup.id}')" class="btn btn-sm btn-primary">Demander</button>`;
+    }
+    if (recup.statut === 'demandee') {
+        return `<button onclick="validerChef('${recup.id}')" class="btn btn-sm btn-info">Valider (Chef)</button>`;
+    }
+    if (recup.statut === 'validee_chef') {
+        return `<button onclick="validerDirecteur('${recup.id}')" class="btn btn-sm btn-success">Valider (Directeur)</button>`;
+    }
+    return '-';
+}
+
+// Variables pour workflow création
+let datesRecuperables = [];
+let selectedDate = null;
+
+// Ouvrir modal création - Étape 1
+function openCreateModal() {
+    // Reset du modal
+    const initialEmployeId = document.getElementById('filter-employe')?.value || getInitialEmployeIdFromUrl();
+    const initialYear = document.getElementById('filter-annee')?.value || defaultRecuperationYear;
+    const createEmployeSelect = document.getElementById('select-employe');
+    const createYearSelect = document.getElementById('select-annee');
+    if (createEmployeSelect && initialEmployeId) {
+        const hasOption = Array.from(createEmployeSelect.options).some((option) => option.value === initialEmployeId);
+        createEmployeSelect.value = hasOption ? initialEmployeId : '';
+    } else {
+        document.getElementById('select-employe').value = '';
+    }
+    if (createYearSelect) {
+        const hasYearOption = Array.from(createYearSelect.options).some((option) => option.value === initialYear);
+        createYearSelect.value = hasYearOption ? initialYear : defaultRecuperationYear;
+    }
+    document.getElementById('step-1').classList.remove('hidden');
+    document.getElementById('step-2').classList.add('hidden');
+    document.getElementById('loading-dates').classList.add('hidden');
+
+    document.getElementById('modal-create').showModal();
+
+    if (createEmployeSelect && createEmployeSelect.value) {
+        loadDatesRecuperables();
+    }
+}
+
+// Charger les dates récupérables - Étape 1
+async function loadDatesRecuperables() {
+    const employeId = document.getElementById('select-employe').value;
+    const annee = document.getElementById('select-annee').value;
+
+    if (!employeId) return;
+
+    // Afficher le loader
+    document.getElementById('loading-dates').classList.remove('hidden');
+
+    try {
+        const response = await fetch(`/api/recuperations/${employeId}/dates-recuperables/?annee=${annee}`);
+        const data = await response.json();
+
+        if (data.success) {
+            datesRecuperables = data.dates_recuperables;
+
+            if (datesRecuperables.length === 0) {
+                alert('Aucune date récupérable trouvée pour cet employé dans cette période.\n\nLes dates récupérables sont :\n- Les dimanches travaillés\n- Les jours fériés travaillés\n- Qui n\'ont pas encore été enregistrés comme récupération');
+                document.getElementById('loading-dates').classList.add('hidden');
+                return;
+            }
+
+            // Afficher l'étape 2 avec la liste des dates
+            showStep2(employeId);
+        } else {
+            alert('Erreur: ' + data.error);
+            document.getElementById('loading-dates').classList.add('hidden');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors du chargement des dates récupérables');
+        document.getElementById('loading-dates').classList.add('hidden');
+    }
+}
+
+// Afficher l'étape 2 avec la liste des dates
+function showStep2(employeId) {
+    document.getElementById('step-1').classList.add('hidden');
+    document.getElementById('step-2').classList.remove('hidden');
+    document.getElementById('dates-count').textContent = datesRecuperables.length;
+    document.getElementById('hidden-employe-id').value = employeId;
+
+    // Générer la liste des dates
+    const datesList = document.getElementById('dates-list');
+    datesList.innerHTML = datesRecuperables.map((date, index) => `
+        <div class="form-control">
+            <label class="label cursor-pointer border rounded-lg p-4 hover:bg-base-200 transition ${index === 0 ? 'border-primary bg-primary/10' : 'border-base-300'}">
+                <input type="radio" name="date_selected" value="${index}" class="radio radio-primary" ${index === 0 ? 'checked' : ''} onchange="selectDate(${index})">
+                <div class="flex-1 ml-4">
+                    <div class="font-semibold">${formatDate(date.date)} - ${date.motif_display}</div>
+                    <div class="text-sm text-base-content/70">
+                        ${date.activite} ${date.ouvrage ? '@ ' + date.ouvrage : ''}
+                    </div>
+                </div>
+                <span class="badge ${date.motif === 'jour_ferie' ? 'badge-error' : 'badge-warning'}">${date.jour_semaine}</span>
+            </label>
+        </div>
+    `).join('');
+
+    // Sélectionner la première date par défaut
+    if (datesRecuperables.length > 0) {
+        selectDate(0);
+    }
+}
+
+// Sélectionner une date
+function selectDate(index) {
+    selectedDate = datesRecuperables[index];
+    document.getElementById('hidden-planning-id').value = selectedDate.planning_id;
+    document.getElementById('hidden-date-travail').value = selectedDate.date;
+    document.getElementById('hidden-motif').value = selectedDate.motif;
+}
+
+// Reset du modal - Retour à l'étape 1
+function resetCreateModal() {
+    document.getElementById('step-1').classList.remove('hidden');
+    document.getElementById('step-2').classList.add('hidden');
+    document.getElementById('loading-dates').classList.add('hidden');
+    datesRecuperables = [];
+    selectedDate = null;
+}
+
+// Soumettre création
+async function submitCreate(event) {
+    event.preventDefault();
+
+    if (!selectedDate) {
+        alert('Veuillez sélectionner une date');
+        return;
+    }
+
+    const formData = new FormData(event.target);
+    const data = Object.fromEntries(formData);
+
+    try {
+        const response = await fetch(`{% url 'employees:api_creer_recuperation' %}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            alert('Récupération enregistrée avec succès');
+            document.getElementById('modal-create').close();
+            loadRecuperations();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors de la création');
+    }
+}
+
+// Ouvrir modal demande
+function openDemandeModal(recuperationId) {
+    const recup = recuperations.find(r => r.id === recuperationId);
+    if (!recup) return;
+
+    document.getElementById('demande-recuperation-id').value = recuperationId;
+    document.getElementById('demande-info').textContent =
+        `${recup.nb_jours_acquis} jour(s) acquis le ${formatDate(recup.date_travail_exceptionnel)} (${recup.motif_acquisition_display})`;
+
+    document.getElementById('modal-demande').showModal();
+}
+
+// Soumettre demande
+async function submitDemande(event) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    const recuperationId = formData.get('recuperation_id');
+    const data = {
+        date_debut_recup: formData.get('date_debut_recup'),
+        date_fin_recup: formData.get('date_fin_recup'),
+        motif_demande: formData.get('motif_demande')
+    };
+
+    try {
+        const response = await fetch(`/api/recuperations/${recuperationId}/demander/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            alert('Demande enregistrée avec succès');
+            document.getElementById('modal-demande').close();
+            loadRecuperations();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors de la demande');
+    }
+}
+
+// Valider chef
+async function validerChef(recuperationId) {
+    if (!confirm('Valider cette récupération en tant que chef ?')) return;
+
+    try {
+        const response = await fetch(`/api/recuperations/${recuperationId}/valider/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ type: 'chef' })
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            alert('Récupération validée par le chef');
+            loadRecuperations();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors de la validation');
+    }
+}
+
+// Valider directeur
+async function validerDirecteur(recuperationId) {
+    if (!confirm('Valider cette récupération en tant que directeur ?')) return;
+
+    try {
+        const response = await fetch(`/api/recuperations/${recuperationId}/valider/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ type: 'directeur' })
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            alert('Récupération validée par le directeur');
+            loadRecuperations();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors de la validation');
+    }
+}
+
+// Reset filtres
+function resetFilters() {
+    document.getElementById('filter-employe').value = '';
+    document.getElementById('filter-statut').value = '';
+    document.getElementById('filter-annee').value = defaultRecuperationYear;
+    loadRecuperations();
+}
+
+// Helpers
+function formatDate(dateStr) {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('fr-FR');
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Charger au démarrage
+document.addEventListener('DOMContentLoaded', () => {
+    applyInitialEmployeFilterFromUrl();
+    loadRecuperations();
+});
+</script>
+{% endblock %}

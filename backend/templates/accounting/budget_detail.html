@@ -1,0 +1,497 @@
+﻿{% extends "accounting/base.html" %}
+{% load static %}
+
+{% block title %}Budget {{ budget.nom }}{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- En-tête -->
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <div class="breadcrumbs text-sm">
+                <ul>
+                    <li><a href="{% url 'accounting:budgets_list' %}">Budgets</a></li>
+                    <li>{{ budget.nom }}</li>
+                </ul>
+            </div>
+            <h1 class="text-3xl font-bold">
+                <i class="fas fa-file-invoice mr-2 text-primary"></i>
+                {{ budget.nom }}
+            </h1>
+            <p class="text-base-content/70 mt-2">
+                Année {{ budget.annee }} -
+                {% if budget.valide %}
+                    <span class="badge badge-success">Validé</span>
+                {% else %}
+                    <span class="badge badge-warning">Brouillon</span>
+                {% endif %}
+            </p>
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'accounting:budgets_list' %}" class="btn btn-outline">
+                <i class="fas fa-arrow-left mr-2"></i>
+                Retour
+            </a>
+            {% if not budget.valide %}
+            <button id="btn-valider-budget" onclick="validerBudget()" class="btn btn-success">
+                <i class="fas fa-check mr-2"></i>
+                Valider Budget
+            </button>
+            <button onclick="openAddLigneModal()" class="btn btn-primary">
+                <i class="fas fa-plus mr-2"></i>
+                Ajouter Ligne
+            </button>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Informations budget -->
+    <div class="card bg-base-200 shadow-xl mb-6">
+        <div class="card-body">
+            <h2 class="card-title">Informations</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <p class="text-sm text-base-content/70">Description</p>
+                    <p class="font-semibold">{{ budget.description|default:"Aucune description" }}</p>
+                </div>
+                <div>
+                    <p class="text-sm text-base-content/70">Créé par</p>
+                    <p class="font-semibold">{{ budget.cree_par.get_full_name|default:budget.cree_par.username }}</p>
+                </div>
+                <div>
+                    <p class="text-sm text-base-content/70">Date de création</p>
+                    <p class="font-semibold">{{ budget.date_creation|date:"d/m/Y H:i" }}</p>
+                </div>
+                {% if budget.valide %}
+                <div>
+                    <p class="text-sm text-base-content/70">Validé par</p>
+                    <p class="font-semibold">{{ budget.valide_par.get_full_name|default:budget.valide_par.username }}</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistiques -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-list text-3xl"></i>
+            </div>
+            <div class="stat-title">Lignes budgétaires</div>
+            <div class="stat-value text-primary text-2xl" id="stat-lignes">0</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-success">
+                <i class="fas fa-coins text-3xl"></i>
+            </div>
+            <div class="stat-title">Total prévu</div>
+            <div class="stat-value text-success text-2xl" id="stat-total">0 Ar</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-info">
+                <i class="fas fa-chart-line text-3xl"></i>
+            </div>
+            <div class="stat-title">Moyenne mensuelle</div>
+            <div class="stat-value text-info text-2xl" id="stat-moyenne">0 Ar</div>
+        </div>
+    </div>
+
+    <!-- Tableau des lignes -->
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-table mr-2"></i>
+                Lignes Budgétaires
+            </h2>
+
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-xs">
+                    <thead>
+                        <tr>
+                            <th>Compte</th>
+                            <th>Libellé</th>
+                            <th class="text-right">Total annuel</th>
+                            <th class="text-right">Jan</th>
+                            <th class="text-right">Fév</th>
+                            <th class="text-right">Mar</th>
+                            <th class="text-right">Avr</th>
+                            <th class="text-right">Mai</th>
+                            <th class="text-right">Jui</th>
+                            <th class="text-right">Jul</th>
+                            <th class="text-right">Aou</th>
+                            <th class="text-right">Sep</th>
+                            <th class="text-right">Oct</th>
+                            <th class="text-right">Nov</th>
+                            <th class="text-right">Déc</th>
+                            {% if not budget.valide %}
+                            <th>Actions</th>
+                            {% endif %}
+                        </tr>
+                    </thead>
+                    <tbody id="tbody-lignes">
+                        <tr>
+                            <td colspan="16" class="text-center text-base-content/50">
+                                <i class="fas fa-spinner fa-spin mr-2"></i>
+                                Chargement...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Ajout/Modification Ligne -->
+<dialog id="modal-ligne" class="modal">
+    <div class="modal-box max-w-4xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-plus text-primary mr-2"></i>
+            <span id="modal-title">Ajouter une Ligne Budgétaire</span>
+        </h3>
+
+        <form id="form-ligne">
+            <div class="grid grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-bold">Code compte <span class="text-error">*</span></span>
+                    </label>
+                    <input type="text" id="ligne-compte" required class="input input-bordered" placeholder="6211">
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-bold">Libellé <span class="text-error">*</span></span>
+                    </label>
+                    <input type="text" id="ligne-libelle" required class="input input-bordered" placeholder="Salaires">
+                </div>
+            </div>
+
+            <div class="form-control mt-4">
+                <label class="label">
+                    <span class="label-text font-bold">Total annuel <span class="text-error">*</span></span>
+                </label>
+                <input type="number" id="ligne-total" required class="input input-bordered" step="0.01" min="0" placeholder="12000000">
+            </div>
+
+            <div class="divider">Répartition mensuelle (optionnel)</div>
+
+            <div class="grid grid-cols-4 gap-2">
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-xs">Janvier</span></label>
+                    <input type="number" id="ligne-janvier" class="input input-bordered input-sm" step="0.01" min="0" placeholder="0">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-xs">Février</span></label>
+                    <input type="number" id="ligne-fevrier" class="input input-bordered input-sm" step="0.01" min="0" placeholder="0">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-xs">Mars</span></label>
+                    <input type="number" id="ligne-mars" class="input input-bordered input-sm" step="0.01" min="0" placeholder="0">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-xs">Avril</span></label>
+                    <input type="number" id="ligne-avril" class="input input-bordered input-sm" step="0.01" min="0" placeholder="0">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-xs">Mai</span></label>
+                    <input type="number" id="ligne-mai" class="input input-bordered input-sm" step="0.01" min="0" placeholder="0">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-xs">Juin</span></label>
+                    <input type="number" id="ligne-juin" class="input input-bordered input-sm" step="0.01" min="0" placeholder="0">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-xs">Juillet</span></label>
+                    <input type="number" id="ligne-juillet" class="input input-bordered input-sm" step="0.01" min="0" placeholder="0">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-xs">Aout</span></label>
+                    <input type="number" id="ligne-aout" class="input input-bordered input-sm" step="0.01" min="0" placeholder="0">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-xs">Septembre</span></label>
+                    <input type="number" id="ligne-septembre" class="input input-bordered input-sm" step="0.01" min="0" placeholder="0">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-xs">Octobre</span></label>
+                    <input type="number" id="ligne-octobre" class="input input-bordered input-sm" step="0.01" min="0" placeholder="0">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-xs">Novembre</span></label>
+                    <input type="number" id="ligne-novembre" class="input input-bordered input-sm" step="0.01" min="0" placeholder="0">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-xs">Décembre</span></label>
+                    <input type="number" id="ligne-decembre" class="input input-bordered input-sm" step="0.01" min="0" placeholder="0">
+                </div>
+            </div>
+
+            <div class="form-control mt-4">
+                <label class="label">
+                    <span class="label-text">Notes</span>
+                </label>
+                <textarea id="ligne-notes" class="textarea textarea-bordered" rows="2" placeholder="Notes optionnelles..."></textarea>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('modal-ligne').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>
+                    Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>Fermer</button>
+    </form>
+</dialog>
+
+<script>
+const budgetId = '{{ budget.id }}';
+const budgetValide = {{ budget.valide|yesno:"true,false" }};
+let lignes = [];
+
+// Charger les lignes
+async function loadLignes() {
+    try {
+        const response = await fetch(`/comptabilite/budgets/${budgetId}/api/lignes/`);
+        const data = await response.json();
+
+        if (data.success) {
+            lignes = data.lignes;
+            displayLignes();
+            updateStats();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+    }
+}
+
+// Afficher les lignes
+function displayLignes() {
+    const tbody = document.getElementById('tbody-lignes');
+
+    if (lignes.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="16" class="text-center text-base-content/50">
+                    <i class="fas fa-inbox mr-2"></i>
+                    Aucune ligne budgétaire
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = lignes.map(ligne => `
+        <tr>
+            <td class="font-bold">${ligne.compte}</td>
+            <td>${ligne.libelle_compte}</td>
+            <td class="text-right font-mono font-bold">${ligne.montant_prevu.toLocaleString('fr-FR')}</td>
+            <td class="text-right font-mono text-xs">${ligne.janvier.toLocaleString('fr-FR')}</td>
+            <td class="text-right font-mono text-xs">${ligne.fevrier.toLocaleString('fr-FR')}</td>
+            <td class="text-right font-mono text-xs">${ligne.mars.toLocaleString('fr-FR')}</td>
+            <td class="text-right font-mono text-xs">${ligne.avril.toLocaleString('fr-FR')}</td>
+            <td class="text-right font-mono text-xs">${ligne.mai.toLocaleString('fr-FR')}</td>
+            <td class="text-right font-mono text-xs">${ligne.juin.toLocaleString('fr-FR')}</td>
+            <td class="text-right font-mono text-xs">${ligne.juillet.toLocaleString('fr-FR')}</td>
+            <td class="text-right font-mono text-xs">${ligne.aout.toLocaleString('fr-FR')}</td>
+            <td class="text-right font-mono text-xs">${ligne.septembre.toLocaleString('fr-FR')}</td>
+            <td class="text-right font-mono text-xs">${ligne.octobre.toLocaleString('fr-FR')}</td>
+            <td class="text-right font-mono text-xs">${ligne.novembre.toLocaleString('fr-FR')}</td>
+            <td class="text-right font-mono text-xs">${ligne.decembre.toLocaleString('fr-FR')}</td>
+            ${!budgetValide ? `
+            <td>
+                <button onclick="editLigne('${ligne.id}')" class="btn btn-xs btn-ghost">
+                    <i class="fas fa-edit"></i>
+                </button>
+            </td>
+            ` : ''}
+        </tr>
+    `).join('');
+}
+
+// Mettre Ã  jour les statistiques
+function updateStats() {
+    const nbLignes = lignes.length;
+    const total = lignes.reduce((sum, l) => sum + l.montant_prevu, 0);
+    const moyenne = total / 12;
+
+    document.getElementById('stat-lignes').textContent = nbLignes;
+    document.getElementById('stat-total').textContent = total.toLocaleString('fr-FR') + ' Ar';
+    document.getElementById('stat-moyenne').textContent = moyenne.toLocaleString('fr-FR') + ' Ar';
+}
+
+// Ouvrir modal ajout
+function openAddLigneModal() {
+    document.getElementById('form-ligne').reset();
+    document.getElementById('modal-title').textContent = 'Ajouter une Ligne Budgétaire';
+    document.getElementById('modal-ligne').showModal();
+}
+
+// Ouvrir modal edition
+function editLigne(ligneId) {
+    const ligne = lignes.find(l => l.id === ligneId);
+    if (!ligne) {
+        alert('Ligne introuvable');
+        return;
+    }
+
+    document.getElementById('modal-title').textContent = 'Modifier une Ligne Budgetaire';
+
+    const compteInput = document.getElementById('ligne-compte');
+    compteInput.value = ligne.compte || '';
+    // L'API update_or_create utilise le compte comme cle; on le verrouille en edition.
+    compteInput.readOnly = true;
+    compteInput.classList.add('input-disabled');
+
+    document.getElementById('ligne-libelle').value = ligne.libelle_compte || '';
+    document.getElementById('ligne-total').value = ligne.montant_prevu || 0;
+    document.getElementById('ligne-janvier').value = ligne.janvier || 0;
+    document.getElementById('ligne-fevrier').value = ligne.fevrier || 0;
+    document.getElementById('ligne-mars').value = ligne.mars || 0;
+    document.getElementById('ligne-avril').value = ligne.avril || 0;
+    document.getElementById('ligne-mai').value = ligne.mai || 0;
+    document.getElementById('ligne-juin').value = ligne.juin || 0;
+    document.getElementById('ligne-juillet').value = ligne.juillet || 0;
+    document.getElementById('ligne-aout').value = ligne.aout || 0;
+    document.getElementById('ligne-septembre').value = ligne.septembre || 0;
+    document.getElementById('ligne-octobre').value = ligne.octobre || 0;
+    document.getElementById('ligne-novembre').value = ligne.novembre || 0;
+    document.getElementById('ligne-decembre').value = ligne.decembre || 0;
+    document.getElementById('ligne-notes').value = ligne.notes || '';
+
+    document.getElementById('modal-ligne').showModal();
+}
+
+document.getElementById('modal-ligne').addEventListener('close', function() {
+    const compteInput = document.getElementById('ligne-compte');
+    compteInput.readOnly = false;
+    compteInput.classList.remove('input-disabled');
+});
+
+// Enregistrer ligne
+document.getElementById('form-ligne').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const data = {
+        compte: document.getElementById('ligne-compte').value,
+        libelle_compte: document.getElementById('ligne-libelle').value,
+        montant_prevu: parseFloat(document.getElementById('ligne-total').value),
+        janvier: parseFloat(document.getElementById('ligne-janvier').value || 0),
+        fevrier: parseFloat(document.getElementById('ligne-fevrier').value || 0),
+        mars: parseFloat(document.getElementById('ligne-mars').value || 0),
+        avril: parseFloat(document.getElementById('ligne-avril').value || 0),
+        mai: parseFloat(document.getElementById('ligne-mai').value || 0),
+        juin: parseFloat(document.getElementById('ligne-juin').value || 0),
+        juillet: parseFloat(document.getElementById('ligne-juillet').value || 0),
+        aout: parseFloat(document.getElementById('ligne-aout').value || 0),
+        septembre: parseFloat(document.getElementById('ligne-septembre').value || 0),
+        octobre: parseFloat(document.getElementById('ligne-octobre').value || 0),
+        novembre: parseFloat(document.getElementById('ligne-novembre').value || 0),
+        decembre: parseFloat(document.getElementById('ligne-decembre').value || 0),
+        notes: document.getElementById('ligne-notes').value
+    };
+
+    try {
+        const response = await fetch(`/comptabilite/budgets/${budgetId}/api/ligne/save/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            document.getElementById('modal-ligne').close();
+            alert('âœ“ ' + result.message);
+            loadLignes();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+});
+
+async function validerBudget() {
+    if (budgetValide) {
+        alert('Ce budget est déjà validé');
+        return;
+    }
+
+    if (lignes.length === 0) {
+        alert('Ajoutez au moins une ligne budgétaire avant validation');
+        return;
+    }
+
+    if (!confirm('Valider ce budget ?\n\nAprès validation, les lignes seront figées et non modifiables.')) {
+        return;
+    }
+
+    const btn = document.getElementById('btn-valider-budget');
+    if (btn) {
+        btn.disabled = true;
+        btn.classList.add('btn-disabled');
+    }
+
+    try {
+        const response = await fetch(`/comptabilite/budgets/${budgetId}/api/valider/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({})
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            alert('✓ ' + result.message);
+            window.location.reload();
+            return;
+        }
+
+        alert('Erreur: ' + result.error);
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.classList.remove('btn-disabled');
+        }
+    }
+}
+
+// Helper CSRF
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Chargement initial
+loadLignes();
+</script>
+{% endblock %}

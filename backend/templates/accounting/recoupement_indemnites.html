@@ -1,0 +1,345 @@
+{% extends "accounting/base.html" %}
+{% load humanize %}
+{% load employee_grouping %}
+
+{% block title %}Recoupement Indemnités vs Comptabilité{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex flex-wrap justify-between items-center gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">
+                <i class="fas fa-balance-scale mr-2 text-warning"></i>
+                Recoupement Indemnités
+            </h1>
+            <p class="text-base-content/70 mt-1">
+                Vérification des indemnités exportées vs comptabilité DiameX
+            </p>
+        </div>
+        <div class="flex gap-2">
+            <button onclick="recoupementBatch()" class="btn btn-primary">
+                <i class="fas fa-magic mr-2"></i>Recoupement Auto
+            </button>
+        </div>
+    </div>
+
+    <!-- Navigation entre toutes les pages de recoupement -->
+    {% include 'accounting/includes/recoupement_nav.html' with current_page='indemnites' %}
+
+    <!-- Statistiques -->
+    <div class="stats stats-horizontal shadow w-full">
+        <div class="stat">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-layer-group text-3xl"></i>
+            </div>
+            <div class="stat-title">Total Groupes</div>
+            <div class="stat-value text-primary">{{ stats.total_groupes }}</div>
+            <div class="stat-desc">Employé/mois</div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-figure text-success">
+                <i class="fas fa-check-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Concordants</div>
+            <div class="stat-value text-success">{{ stats.montants_concordants }}</div>
+            <div class="stat-desc">Montants identiques</div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-figure text-warning">
+                <i class="fas fa-exclamation-triangle text-3xl"></i>
+            </div>
+            <div class="stat-title">Discordants</div>
+            <div class="stat-value text-warning">{{ stats.montants_discordants }}</div>
+            <div class="stat-desc">Montants différents</div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-figure text-error">
+                <i class="fas fa-times-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Sans correspondance</div>
+            <div class="stat-value text-error">{{ stats.sans_correspondance }}</div>
+            <div class="stat-desc">Non trouvé dans DiameX</div>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <form method="GET" class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mois</span></label>
+                    <select name="mois" class="select select-bordered w-full">
+                        <option value="">Tous les mois</option>
+                        {% for m in mois_disponibles %}
+                            <option value="{{ m|date:'Y-m' }}" {% if filter_mois == m|date:'Y-m' %}selected{% endif %}>
+                                {{ m|date:'F Y' }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Base</span></label>
+                    <select name="base" class="select select-bordered w-full">
+                        <option value="">Toutes les bases</option>
+                        {% for base in bases_list %}
+                            <option value="{{ base.id }}" {% if filter_base == base.id|stringformat:'s' %}selected{% endif %}>
+                                {{ base.nom_base }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Employé</span></label>
+                    <select name="employe" class="select select-bordered w-full">
+                        {% grouped_employee_options employes_list filter_employe "Tous les employés" %}
+                    </select>
+                </div>
+                <div class="form-control justify-end">
+                    <label class="label"><span class="label-text">&nbsp;</span></label>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-filter mr-2"></i>Filtrer
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Légende -->
+    <div class="flex flex-wrap gap-4 text-sm">
+        <div class="flex items-center gap-2">
+            <span class="badge badge-success badge-sm">Concordant</span>
+            <span class="text-base-content/70">Montants identiques Hydria/DiameX</span>
+        </div>
+        <div class="flex items-center gap-2">
+            <span class="badge badge-warning badge-sm">Discordant</span>
+            <span class="text-base-content/70">Montants différents</span>
+        </div>
+        <div class="flex items-center gap-2">
+            <span class="badge badge-error badge-sm">Sans correspondance</span>
+            <span class="text-base-content/70">Non trouvé dans DiameX</span>
+        </div>
+    </div>
+
+    <!-- Tableau des résultats -->
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra">
+                    <thead>
+                        <tr>
+                            <th>Employé</th>
+                            <th>Période</th>
+                            <th>Nb jours</th>
+                            <th class="text-right">Montant Hydria</th>
+                            <th class="text-right">Montant DiameX</th>
+                            <th>Statut</th>
+                            <th>N° DiameX</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for resultat in resultats %}
+                        <tr>
+                            <td>
+                                <div class="font-medium">{{ resultat.employe.nom_affichage }}</div>
+                                <div class="text-xs text-base-content/50">{{ resultat.employe.base.nom_base }}</div>
+                            </td>
+                            <td class="font-mono">{{ resultat.mois }}/{{ resultat.annee }}</td>
+                            <td class="text-center">{{ resultat.nb_jours }}</td>
+                            <td class="text-right font-mono font-bold">{{ resultat.total_hydria|floatformat:0|intcomma }} Ar</td>
+                            <td class="text-right font-mono">
+                                {% if resultat.correspondance_diamex %}
+                                    {{ resultat.correspondance_diamex.montant_out|floatformat:0|intcomma }} Ar
+                                {% else %}
+                                    <span class="text-base-content/30">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if resultat.statut_recoupement == 'concordant' %}
+                                    <span class="badge badge-success">Concordant</span>
+                                {% elif resultat.statut_recoupement == 'discordant' %}
+                                    <span class="badge badge-warning">Discordant</span>
+                                {% else %}
+                                    <span class="badge badge-error">Sans correspondance</span>
+                                {% endif %}
+                            </td>
+                            <td class="font-mono text-xs">
+                                {% if resultat.correspondance_diamex %}
+                                    {{ resultat.correspondance_diamex.id }} / {{ resultat.correspondance_diamex.prog }}
+                                {% elif resultat.indemnites.0.numero_diamex %}
+                                    {{ resultat.indemnites.0.numero_diamex }} / {{ resultat.indemnites.0.base_diamex }}
+                                {% else %}
+                                    <span class="text-base-content/30">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="flex gap-1">
+                                    {% if resultat.correspondance_diamex and not resultat.indemnites.0.numero_diamex %}
+                                        <button onclick="appliquerCorrespondance('{{ resultat.employe.id }}', {{ resultat.annee }}, {{ resultat.mois }}, {{ resultat.correspondance_diamex|safe }})"
+                                                class="btn btn-xs btn-success" title="Appliquer">
+                                            <i class="fas fa-check"></i>
+                                        </button>
+                                    {% endif %}
+                                    <button onclick="rechercherCorrespondance('{{ resultat.employe.id }}', {{ resultat.annee }}, {{ resultat.mois }})"
+                                            class="btn btn-xs btn-info" title="Rechercher">
+                                        <i class="fas fa-search"></i>
+                                    </button>
+                                    <button onclick="voirDetails('{{ resultat.employe.id }}', {{ resultat.annee }}, {{ resultat.mois }})"
+                                            class="btn btn-xs btn-ghost" title="Détails">
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="8" class="text-center py-8 text-base-content/50">
+                                <i class="fas fa-inbox text-4xl mb-2"></i>
+                                <p>Aucune indemnité imprimée/exportée trouvée</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Détails -->
+<dialog id="modalDetails" class="modal">
+    <div class="modal-box max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-info-circle mr-2 text-info"></i>
+            Détails du recoupement
+        </h3>
+        <div id="detailsContent">
+            <!-- Contenu chargé dynamiquement -->
+        </div>
+        <div class="modal-action">
+            <form method="dialog">
+                <button class="btn">Fermer</button>
+            </form>
+        </div>
+    </div>
+</dialog>
+
+<script>
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+async function appliquerCorrespondance(employeId, annee, mois, correspondance) {
+    if (!confirm('Appliquer cette correspondance DiameX ?')) return;
+
+    try {
+        const response = await fetch('{% url "accounting:api_appliquer_diamex_indemnites" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                employe_id: employeId,
+                annee: annee,
+                mois: mois,
+                correspondance: correspondance
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(data.message);
+            location.reload();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau');
+    }
+}
+
+async function rechercherCorrespondance(employeId, annee, mois) {
+    try {
+        const response = await fetch('{% url "accounting:api_rechercher_correspondance_indemnite" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                employe_id: employeId,
+                annee: annee,
+                mois: mois
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            if (data.correspondance) {
+                const msg = `Correspondance trouvée:\n\nDescription: ${data.correspondance.description}\nMontant: ${data.correspondance.montant_out.toLocaleString('fr-FR')} Ar\nN° DiameX: ${data.correspondance.id} / ${data.correspondance.prog}`;
+                if (confirm(msg + '\n\nAppliquer cette correspondance ?')) {
+                    appliquerCorrespondance(employeId, annee, mois, data.correspondance);
+                }
+            } else {
+                alert(`Aucune correspondance trouvée pour ${data.employe.nom_complet} (${annee}/${mois})`);
+            }
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau');
+    }
+}
+
+async function recoupementBatch() {
+    if (!confirm('Lancer le recoupement automatique pour toutes les indemnités sans correspondance DiameX ?')) return;
+
+    try {
+        const response = await fetch('{% url "accounting:api_recoupement_batch_indemnites" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(data.message);
+            location.reload();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau');
+    }
+}
+
+function voirDetails(employeId, annee, mois) {
+    // Pour le moment, afficher un message simple
+    alert(`Détails pour employé ${employeId}, période ${mois}/${annee}`);
+}
+</script>
+{% endblock %}

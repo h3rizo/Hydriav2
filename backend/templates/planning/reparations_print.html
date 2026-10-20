@@ -1,0 +1,969 @@
+{% load humanize i18n %}
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Impression Réparations</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.4.19/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @media print {
+            body {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+                margin: 0 !important; /* Supprime les marges du corps */
+                padding: 0 !important;
+            }
+            .container { 
+            margin: 0 !important; 
+            padding: 0 !important; 
+            max-width: none !important;
+            }
+            .no-print {
+                display: none !important;
+            }
+
+            /* 1. Resserrement des Cartes */
+            .ouvrage-card {
+                margin-bottom: 0.5rem !important; /* Très petit espace entre les cartes */
+                padding: 0 !important; /* Réduire le padding externe */
+                box-shadow: none !important; /* Enlève les ombres inutiles */
+                border: 1px solid #ddd !important; /* Bords fins pour délimiter sans gaspiller */
+            
+                /* CRITIQUE : Empêche la coupure de la carte au milieu */
+                break-inside: avoid;
+                page-break-inside: avoid; 
+            }
+            
+            /* 2. Resserrement du corps de la carte */
+            .ouvrage-card .card-body {
+                padding: 0.75rem !important; /* Resserre fortement le p-4/p-6 habituel */
+            }
+        
+            /* 3. Resserrement des Groupes/Titres */
+            .group-header {
+                margin-top: 1rem !important;
+                margin-bottom: 0.5rem !important;
+                border-bottom: 2px solid #000 !important;
+                break-inside: avoid;
+                page-break-inside: avoid;
+                break-after: avoid;
+                page-break-after: avoid;
+            }
+
+            /* 3.1 Containers district et commune */
+            .district-container {
+                break-inside: avoid-page;
+                page-break-inside: avoid;
+            }
+
+            .group-container {
+                break-inside: avoid;
+                page-break-inside: avoid;
+            }
+        
+            /* 4. Resserrement des Lignes de Table */
+            .table-sm td, .table-sm th { 
+                padding: 0.25rem 0.5rem !important; /* Padding très réduit dans les tableaux */
+                font-size: 0.65rem; /* Optionnel: Réduire la taille de la police dans le tableau */
+            }
+        
+            .card {
+                break-inside: avoid;
+            }
+        }
+
+        .group-banner {
+            background-color: #e5e7eb; /* bg-base-300 */
+            padding: 6px 12px;
+            border-left: 4px solid #3b82f6; /* bordure bleue par défaut */
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+            font-size: 1rem;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .group-banner .count-badge {
+            font-size: 0.75rem;
+            padding: 2px 6px;
+        }
+
+        .ouvrage-card h2 {
+            font-size: 1rem !important;
+        }
+
+        .district-banner {
+            background-color: #dbeafe; /* bleu clair */
+            border-left: 4px solid #1e40af;
+            padding: 6px 10px;
+            margin-top: 20px;
+            margin-bottom: 10px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .commune-banner {
+            background-color: #f0f9ff;
+            border-left: 4px solid #0284c7;
+            padding: 4px 10px;
+            margin-bottom: 10px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+    </style>
+</head>
+<body class="bg-base-100">
+    <div class="container mx-auto p-6">
+        <!-- Bouton Imprimer (masqué à l'impression) -->
+        <div class="no-print mb-6 flex justify-between items-center">
+            <h1 class="text-3xl font-bold">
+                <i class="fas fa-wrench text-warning mr-2"></i>
+                Réparations et Réhabilitations
+            </h1>
+            <button onclick="window.print()" class="btn btn-primary">
+                <i class="fas fa-print mr-2"></i>{% trans "Imprimer" %}
+            </button>
+        </div>
+
+        <!-- Filtre interactif (masqué à l'impression) -->
+        <div class="no-print mb-6">
+            <div class="card bg-base-200">
+                <div class="card-body p-4">
+                    <div class="flex flex-col md:flex-row items-start md:items-center gap-4 mb-4">
+                         
+                        <div class="flex flex-col sm:flex-row gap-4">
+                            <label class="label cursor-pointer gap-2">
+                                <input type="radio" name="view-filter" value="all" class="radio radio-primary" onchange="updateAllFilters()" {% if activities_type == 'all' %}checked{% endif %}>
+                                <span class="label-text font-semibold">Toutes les activités</span>
+                            </label>
+                            <label class="label cursor-pointer gap-3">
+                                <input type="radio" name="view-filter" value="non_terminees" class="radio radio-info radio-sm" onchange="updateAllFilters()" {% if activities_type == 'non_terminees' %}checked{% endif %}>
+                                <span class="label-text font-semibold">Activités non terminées uniquement</span>
+                            </label>
+                        </div>
+
+                        <div class="hidden md:block w-px h-8 bg-base-content/20 mx-2"></div>
+
+                        <div class="flex items-center gap-2 w-full md:w-auto">
+                            <label class="label-text font-semibold whitespace-nowrap">
+                                <i class="fas fa-layer-group mr-1"></i>{% trans "Grouper par" %}:
+                            </label>
+                            <select id="group-select" class="select select-bordered select-sm w-full md:w-auto" onchange="updateAllFilters()">
+                                <option value="none">{% trans "Aucun (Liste simple)" %}</option>
+                                <option value="grading">{% trans "Grading" %}</option>
+                                <option value="region">Région</option>
+                                <option value="district">{% trans "District" %}</option>
+                                <option value="commune" selected>{% trans "Commune" %}</option>
+                            </select>
+                        </div>
+
+                        <div class="flex-1"></div>
+                        <div id="filter-stats" class="text-sm text-base-content/70 font-mono"></div>
+                    </div>
+
+                    <div class="divider my-0"></div>
+
+                    <div class="flex flex-wrap items-center gap-x-6 gap-y-2 no-print">
+                        <span class="font-bold text-sm text-base-content/70">
+                            <i class="fas fa-filter mr-1"></i>{% trans "Filtrer les gradings" %} :
+                        </span>
+
+                        <label class="cursor-pointer label p-0 gap-2">
+                            <input type="checkbox" id="check-all-grades" class="checkbox checkbox-xs checkbox-primary" checked onchange="toggleAllGrades(this)">
+                            <span class="label-text font-semibold">{% trans "Tous" %}</span>
+                        </label>
+
+                        {% for grading_label in grading_stats.keys %}
+                            <label class="cursor-pointer label p-0 gap-2">
+                                <input type="checkbox" name="filter-grading" value="{{ grading_label }}" 
+                                    class="checkbox checkbox-xs checkbox-primary" checked onchange="updateAllFilters()">
+                                <span class="label-text">{{ grading_label }}</span>
+                            </label>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    
+
+        {% if error %}
+            <!-- Message d'erreur -->
+            <div class="alert alert-error">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span>{{ error }}</span>
+            </div>
+        {% else %}
+            <!-- Date d'impression et type d'activités -->
+            <div class="mb-6 flex items-center gap-4">
+                <div class="text-sm text-base-content/70">
+                    Imprimé le {{ date_impression|date:"d/m/Y à H:i" }}
+                </div>
+                <span class="badge badge-info badge-lg" id="print-badge-info">
+                        <i class="fas fa-calendar-plus mr-2"></i> {% trans "Rapport dynamique" %}
+                </span>
+            </div>
+
+            <div class="card bg-base-100 shadow-lg border border-base-300 mb-8">
+                <div class="card-body">
+                    <h3 class="card-title text-lg">
+                        <i class="fas fa-percent text-primary mr-2"></i>
+                        Répartition par Grading
+
+                        <span class="text-sm font-normal text-base-content/70 ml-2">
+                            (Total: <span id="total-grading-header">{{ total_ouvrages|default:0 }}</span>)
+                        </span>
+                    </h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 mt-4">
+                        {% for grading_label, grading_data in grading_stats.items %}
+                            <div class="grading-stat-row" data-grading-target="{{ grading_label }}">
+                                <div class="flex justify-between items-center mb-1">
+                                    <span class="font-semibold">{{ grading_label }}</span>
+                                    <span class="font-bold">
+                                        <span class="text-sm font-normal text-base-content/70 ml-1 stat-count-text">{{ grading_data.count|default:"0" }}</span>
+                                    </span>
+                                </div>
+                                <div class="w-full bg-base-300 rounded-full h-2">
+                                    <div class="stat-bar h-2 rounded-full
+                                        {% if 'A' in grading_label %}bg-info
+                                        {% elif 'B (panne)' in grading_label %}bg-error
+                                        {% elif 'B' in grading_label %}bg-success
+                                        {% elif 'D (panne)' in grading_label %}bg-error
+                                        {% elif 'D' in grading_label %}bg-warning
+                                        {% endif %}"
+                                        style="width: {{ grading_data.percentage }}%">
+                                    </div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+
+            <div id="ouvrages-list">
+                {% for ouvrage_id, ouvrage_data in ouvrages_data.items %}
+                    
+                                    <div class="ouvrage-card card bg-base-100 shadow-lg border border-base-300 mb-6"
+                        data-group-grading="{{ ouvrage_data.grading|default:'Non classé' }}"
+                        data-group-region="{{ ouvrage_data.ouvrage.pointeau_set.all.0.parcelle.village.fokontany.commune.district.region.nom_region|default:'Non défini' }}"
+                        data-group-district="{{ ouvrage_data.ouvrage.pointeau_set.all.0.parcelle.village.fokontany.commune.district.nom_district|default:'Non défini' }}"
+                        data-group-commune="{{ ouvrage_data.ouvrage.pointeau_set.all.0.parcelle.village.fokontany.commune.nom_commune|default:'Non défini' }}">
+                    
+                        <div class="card-body p-4">
+    
+                                                        <div class="flex flex-col md:flex-row items-start md:items-center justify-between mb-3 gap-2 border-b border-base-200 pb-2">
+        
+                            <h2 class="text-xl font-bold flex items-center flex-shrink">
+                                <i class="fas fa-building text-primary mr-2"></i>
+                                {{ ouvrage_data.ouvrage.nom_ouvrage }}
+                                {% if ouvrage_data.ouvrage.code %}
+                                    <span class="badge badge-ghost badge-sm ml-2">{{ ouvrage_data.ouvrage.code }}</span>
+                                {% endif %}
+                            </h2>
+
+                            <div class="flex items-center gap-2 flex-wrap md:flex-nowrap flex-grow-0">
+                            
+                                <span class="badge badge-outline badge-sm font-semibold">
+                                    {{ ouvrage_data.ouvrage.type_ouvrage.nom_type_ouvrage }}
+                                </span>
+
+                                <span class="badge badge-outline badge-sm text-xs">
+                                    <i class="fas fa-map-marker-alt mr-1"></i>
+                                    {{ ouvrage_data.ouvrage.pointeau_set.all.0.parcelle.village.fokontany.commune.nom_commune }}
+                                </span>
+                                
+                                {% if ouvrage_data.grading %}
+                                    <span class="badge badge-sm
+                                        {% if 'A' in ouvrage_data.grading %}badge-info
+                                        {% elif 'B (panne)' in ouvrage_data.grading %}badge-error
+                                        {% elif 'B' in ouvrage_data.grading %}badge-success
+                                        {% elif 'D (panne)' in ouvrage_data.grading %}badge-error
+                                        {% elif 'D' in ouvrage_data.grading %}badge-warning
+                                        {% else %}badge-ghost
+                                        {% endif %}">
+                                        {{ ouvrage_data.grading }}
+                                    </span>
+                                {% endif %}
+
+                                {% if ouvrage_data.ouvrage.saisonnier %}
+                                    <span class="badge badge-error badge-sm font-semibold" title="Ouvrage sujet à la sécheresse saisonnière">
+                                        <i class="fas fa-sun mr-1"></i>
+                                        Saisonnier
+                                    </span>
+                                {% endif %}
+                                </div>
+                        </div>
+
+                            {% if ouvrage_data.reparations %}
+                                <div class="overflow-x-auto">
+                                    <table class="table table-zebra table-sm">
+                                        <thead>
+                                            <tr>
+                                                <th>{% trans "Date" %}</th>
+                                                <th>Activité</th>
+                                                <th>{% trans "Agent" %}</th>
+                                                <th>{% trans "Statut" %}</th>
+                                                <th>{% trans "Remarque" %}</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for reparation in ouvrage_data.reparations %}
+                                                <tr class="reparation-row {% if reparation.necessite_action %}bg-error/10 border-l-4 border-error{% endif %}"
+                                                    data-date-passee="{% if reparation.date_passee %}true{% else %}false{% endif %}"
+                                                    data-terminee="{% if reparation.statut == 'terminee' %}true{% else %}false{% endif %}"
+                                                    data-date="{{ reparation.date|date:'Y-m-d' }}">
+                                                    
+                                                    <td class="font-mono text-sm">
+                                                        <div class="flex items-center gap-2">
+                                                            {{ reparation.date|date:"d/m/Y" }}
+                                                            {% if reparation.necessite_action %}
+                                                                <span class="badge badge-error badge-xs" title="Action requise">!</span>
+                                                            {% endif %}
+                                                        </div>
+                                                        {% if reparation.action_message %}
+                                                            <div class="text-xs text-error mt-1">
+                                                                {{ reparation.action_message }}
+                                                            </div>
+                                                        {% endif %}
+                                                    </td>
+                                                    
+                                                    <td>
+                                                        <div class="font-semibold">{{ reparation.activite }}</div>
+                                                    </td>
+                                                    
+                                                    <td>
+                                                        {% if reparation.employe %}
+                                                            <div class="flex items-center gap-1">
+                                                                <i class="fas fa-user-circle text-base-content/50"></i>
+                                                                <span>{{ reparation.employe.surnom|default:reparation.employe.nom|default:"-" }}</span>
+                                                            </div>
+                                                        {% else %}
+                                                            <span class="text-base-content/50">-</span>
+                                                        {% endif %}
+                                                    </td>
+
+                                                    <td>
+                                                        <span class="badge badge-{{ reparation.statut_color }} badge-sm">
+                                                            {{ reparation.statut_display }}
+                                                        </span>
+                                                    </td>
+                                                    
+                                                    <td class="text-sm max-w-xs truncate" title="{{ reparation.remarque }}">
+                                                        {{ reparation.remarque|default:"-" }}
+                                                    </td>
+                                                </tr>
+                                                
+                                                {% if reparation.bilan or reparation.suiteadonner %}
+                                                    <tr class="reparation-row-detail bg-base-200 text-xs"
+                                                        data-parent-date-passee="{% if reparation.date_passee %}true{% else %}false{% endif %}"
+                                                        data-parent-terminee="{% if reparation.statut == 'terminee' %}true{% else %}false{% endif %}">
+                                                        <td colspan="5" class="p-2">
+                                                            {% if reparation.bilan %}
+                                                                <span class="font-bold mr-2">Bilan:</span>{{ reparation.bilan }}<br>
+                                                            {% endif %}
+                                                            {% if reparation.suiteadonner %}
+                                                                <span class="font-bold mr-2">Suite:</span>{{ reparation.suiteadonner }}
+                                                            {% endif %}
+                                                        </td>
+                                                    </tr>
+                                                {% endif %}
+
+                                                <!-- Section Détails de planning -->
+                                                {% if reparation.details %}
+                                                    <tr class="reparation-row-detail"
+                                                        data-parent-date-passee="{% if reparation.date_passee %}true{% else %}false{% endif %}">
+                                                        <td colspan="4" class="p-3 bg-base-100">
+                                                            <div class="border-t border-base-300 pt-3">
+                                                                <div class="flex items-center gap-2 mb-3">
+                                                                    <i class="fas fa-list-ul text-info"></i>
+                                                                    <h5 class="font-bold text-sm">Détails de planning ({{ reparation.total_details }})</h5>
+                                                                </div>
+
+                                                                <div class="overflow-x-auto">
+                                                                    <table class="table table-xs table-zebra">
+                                                                        <thead>
+                                                                            <tr class="bg-base-300">
+                                                                                <th>Désignation</th>
+                                                                                <th>Type</th>
+                                                                                <th>Qté</th>
+                                                                                <th>P.U.</th>
+                                                                                <th>Montant</th>
+                                                                                <th>Équipement</th>
+                                                                                <th>Point d'eau</th>
+                                                                                <th>Retour</th>
+                                                                            </tr>
+                                                                        </thead>
+                                                                        <tbody>
+                                                                            {% for detail in reparation.details %}
+                                                                                <tr>
+                                                                                    <td class="font-semibold">{{ detail.designation|default:"-" }}</td>
+                                                                                    <td>
+                                                                                        {% if detail.type_designation %}
+                                                                                            <span class="badge badge-sm badge-ghost">{{ detail.type_designation }}</span>
+                                                                                        {% else %}
+                                                                                            -
+                                                                                        {% endif %}
+                                                                                    </td>
+                                                                                    <td class="text-right">{{ detail.quantite|default:0 }}</td>
+                                                                                    <td class="text-right">
+                                                                                        {% if detail.prix_unitaire %}
+                                                                                            {{ detail.prix_unitaire|floatformat:0|intcomma }} Ar
+                                                                                        {% else %}
+                                                                                            -
+                                                                                        {% endif %}
+                                                                                    </td>
+                                                                                    <td class="text-right font-bold">
+                                                                                        {% if detail.montant %}
+                                                                                            {{ detail.montant|floatformat:0|intcomma }} Ar
+                                                                                        {% else %}
+                                                                                            -
+                                                                                        {% endif %}
+                                                                                    </td>
+                                                                                    <td><span class="text-xs">{{ detail.equipement|default:"-" }}</span></td>
+                                                                                    <td><span class="text-xs">{{ detail.point_eau|default:"-" }}</span></td>
+                                                                                    <td class="text-center">
+                                                                                        {% if detail.retour %}
+                                                                                            <span class="badge badge-success badge-xs" title="Retourné le {{ detail.date_retour|date:'d/m/Y'|default:'' }}">
+                                                                                                <i class="fas fa-check"></i>
+                                                                                            </span>
+                                                                                        {% else %}
+                                                                                            <span class="badge badge-warning badge-xs">
+                                                                                                <i class="fas fa-clock"></i>
+                                                                                            </span>
+                                                                                        {% endif %}
+                                                                                    </td>
+                                                                                </tr>
+
+                                                                                <!-- Bons de livraison -->
+                                                                                {% if detail.bons_livraison %}
+                                                                                    <tr>
+                                                                                        <td colspan="8" class="bg-base-100 p-2">
+                                                                                            <div class="ml-4">
+                                                                                                <div class="flex items-center gap-2 mb-2">
+                                                                                                    <i class="fas fa-truck text-success text-xs"></i>
+                                                                                                    <span class="text-xs font-semibold">Bons de livraison ({{ detail.bons_livraison|length }})</span>
+                                                                                                </div>
+                                                                                                <div class="space-y-1">
+                                                                                                    {% for bon in detail.bons_livraison %}
+                                                                                                        <div class="flex gap-3 text-xs bg-base-200 p-2 rounded">
+                                                                                                            <span class="font-mono font-bold">{{ bon.numero }}</span>
+                                                                                                            <span>{{ bon.date_emission|date:"d/m/Y"|default:"-" }}</span>
+                                                                                                            <span class="flex-1">{{ bon.fournisseur|default:"Sans fournisseur" }}</span>
+                                                                                                            <span class="badge badge-{% if bon.statut == 'livre' %}success{% elif bon.statut == 'en_cours' %}warning{% else %}ghost{% endif %} badge-xs">
+                                                                                                                {{ bon.statut|default:"-" }}
+                                                                                                            </span>
+                                                                                                            <span class="font-bold">
+                                                                                                                {% if bon.montant_total %}
+                                                                                                                    {{ bon.montant_total|floatformat:0|intcomma }} Ar
+                                                                                                                {% else %}
+                                                                                                                    -
+                                                                                                                {% endif %}
+                                                                                                            </span>
+                                                                                                        </div>
+                                                                                                    {% endfor %}
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        </td>
+                                                                                    </tr>
+                                                                                {% endif %}
+                                                                            {% endfor %}
+                                                                        </tbody>
+                                                                    </table>
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                {% endif %}
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            {% else %}
+                                <div class="alert alert-ghost text-sm py-2">
+                                    <i class="fas fa-info-circle"></i> Aucune réparation enregistrée.
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+
+            <div class="mt-8 text-center text-sm text-base-content/70">
+                <p>Document généré le {{ date_impression|date:"d/m/Y à H:i" }}</p>
+                <p>Fin du rapport</p>
+            </div>
+        {% endif %}
+    </div>
+
+   <script>
+        // Stocker l'ordre original pour pouvoir annuler le regroupement
+        let originalOrder = [];
+
+        document.addEventListener('DOMContentLoaded', function() {
+            // 1. Sauvegarder les éléments HTML originaux (Cartes)
+            const container = document.getElementById('ouvrages-list');
+            if (container) {
+                originalOrder = Array.from(container.querySelectorAll('.ouvrage-card'));
+            }
+
+            // 👉 Forcer Commune comme regroupement initial
+            document.getElementById('group-select').value = "commune";
+
+            // 2. Initialiser l'affichage (applique le regroupement et les filtres par défaut)
+            updateAllFilters();
+        });
+
+        /**
+         * Gère la case "Tous" pour les grades
+         */
+        function toggleAllGrades(source) {
+            const checkboxes = document.querySelectorAll('input[name="filter-grading"]');
+            checkboxes.forEach(cb => {
+                cb.checked = source.checked;
+            });
+            updateAllFilters();
+        }
+
+        /**
+         * Gère les alias pour compatibilité
+         */
+        function filterActivities(val) { updateAllFilters(); }
+        function applyGrouping(val) { updateAllFilters(); }
+
+
+        /**
+ * FONCTION PRINCIPALE : Gère le Regroupement ET le Filtrage (Date + Grading)
+ */
+function updateAllFilters() {
+    const container = document.getElementById('ouvrages-list');
+    if (!container) return;
+
+    // --- 1. RECUPERATION DES CHOIX UTILISATEUR ---
+    
+    const timeFilter = document.querySelector('input[name="view-filter"]:checked').value;
+    const groupingCriteria = document.getElementById('group-select').value;
+    
+    const checkedGrades = Array.from(document.querySelectorAll('input[name="filter-grading"]:checked'))
+                                     .map(cb => cb.value);
+    
+    // Gestion visuelle de la case "Tous" (conservée)
+    const allGradeCheckboxes = document.querySelectorAll('input[name="filter-grading"]');
+    const checkAllBox = document.getElementById('check-all-grades');
+    if(checkAllBox) {
+        if (checkedGrades.length === allGradeCheckboxes.length) {
+            checkAllBox.checked = true; checkAllBox.indeterminate = false;
+        } else if (checkedGrades.length === 0) {
+            checkAllBox.checked = false; checkAllBox.indeterminate = false;
+        } else {
+            checkAllBox.checked = false; checkAllBox.indeterminate = true;
+        }
+    }
+
+
+    // --- 2. FILTRAGE INITIAL DES CARTES (Grading & Date) ---
+    
+    let visibleCards = [];
+    let districtOuvrageCounts = {};
+    let visibleActivitiesCount = 0; // Compteur des activités visibles
+
+    originalOrder.forEach(card => {
+        const cardGrading = card.getAttribute('data-group-grading');
+        const isGradingVisible = checkedGrades.includes(cardGrading);
+        
+        // Parcourt et filtre les lignes d'activité (Réparations)
+        const rows = card.querySelectorAll('.reparation-row');
+        let hasVisibleRows = false;
+        
+        rows.forEach(row => {
+            const isPassee = row.dataset.datePassee === 'true';
+            const isTerminee = row.dataset.terminee === 'true';
+            let isRowVisible = true;
+
+            if (!isGradingVisible) {
+                isRowVisible = false; // Masque si le grading n'est pas sélectionné
+            } else if (timeFilter === 'non_terminees' && isTerminee) {
+                isRowVisible = false; // Masque les activités terminées
+            }
+
+            row.style.display = isRowVisible ? '' : 'none';
+            if (isRowVisible) {
+                hasVisibleRows = true;
+                visibleActivitiesCount++;
+            }
+        });
+
+        // Masque/Affiche les détails associés aux lignes
+        card.querySelectorAll('.reparation-row-detail').forEach(dRow => {
+            const isPassee = dRow.dataset.parentDatePassee === 'true';
+            const isTerminee = dRow.dataset.parentTerminee === 'true';
+            dRow.style.display = (timeFilter === 'non_terminees' && isTerminee) ? 'none' : '';
+        });
+
+        // Détermine la visibilité finale de la CARTE
+        const isCardVisible = isGradingVisible && (hasVisibleRows || rows.length === 0);
+        
+        if (isCardVisible) {
+            visibleCards.push(card);
+            card.classList.add('visible-card'); // Ajout de la classe de visibilité
+            const districtName = card.getAttribute('data-group-district') || 'District Inconnu';
+            districtOuvrageCounts[districtName] = (districtOuvrageCounts[districtName] || 0) + 1;
+        } else {
+            card.classList.remove('visible-card');
+        }
+        
+        // On masque la carte pour l'instant. Elle sera réinsérée/regroupée plus tard.
+        card.style.display = 'none'; 
+    });
+
+
+    // --- 3. RECONSTRUCTION DU DOM (REGROUPEMENT) ---
+    
+    container.innerHTML = ''; 
+    let finalVisibleCardsCount = 0; // Compte final des cartes insérées
+    
+    // Variables de comptage pour le regroupement par Commune
+    const districtCommuneCounts = {}; 
+    
+    if (groupingCriteria === 'none') {
+        visibleCards.forEach(card => {
+            card.style.display = ''; // Rétablit l'affichage de la carte
+            container.appendChild(card);
+            finalVisibleCardsCount++;
+        });
+    } else {
+        const groups = {};
+        
+        // 🆕 Regroupe UNIQUEMENT les cartes qui ont passé le filtre (visibleCards)
+        visibleCards.forEach(card => {
+            let rawValue = card.getAttribute(`data-group-${groupingCriteria}`);
+            let groupName = rawValue ? rawValue : 'Non défini';
+            if (!groups[groupName]) groups[groupName] = [];
+            groups[groupName].push(card);
+
+            if (groupingCriteria === 'commune') {
+                const districtName = card.getAttribute('data-group-district') || 'District Inconnu';
+                if (!districtCommuneCounts[districtName]) {
+                    districtCommuneCounts[districtName] = new Set();
+                }
+                districtCommuneCounts[districtName].add(groupName); 
+            }
+        });
+
+        const sortedGroupNames = Object.keys(groups).sort();
+        
+        sortedGroupNames.forEach(groupName => {
+            const groupCards = groups[groupName]; 
+            const visibleCount = groupCards.length;
+            finalVisibleCardsCount += visibleCount;
+
+            let icon = 'fa-layer-group';
+            if(groupingCriteria === 'region') icon = 'fa-map';
+            if(groupingCriteria === 'district') icon = 'fa-map-marker-alt';
+            if(groupingCriteria === 'grading') icon = 'fa-chart-bar';
+
+            if (groupingCriteria === 'commune') {
+                const districtName = groupCards[0].getAttribute('data-group-district') || 'District Inconnu';
+                const cleanDistrictId = `group-dist-${districtName.replace(/[^a-zA-Z0-9]/g, '')}`;
+                
+                let districtDiv = document.getElementById(cleanDistrictId);
+                
+                if (!districtDiv) {
+                    districtDiv = document.createElement('div');
+                    districtDiv.id = cleanDistrictId;
+                    districtDiv.className = 'district-container mb-8';
+                    
+                    const distTitle = document.createElement('h2');
+                    distTitle.className = 'district-banner rounded';
+                    
+                    const numCommunes = districtCommuneCounts[districtName] ? districtCommuneCounts[districtName].size : 0;
+                    const districtCounterBadge = `<span class="badge badge-lg ${numCommunes > 0 ? 'badge-primary' : 'badge-ghost'} ml-2 district-count">${numCommunes} commune${numCommunes > 1 ? 's' : ''}</span>`;
+
+                    const nbOuvragesDistrict = districtOuvrageCounts[districtName] || 0;
+
+                    distTitle.innerHTML = `
+                        <i class="fas fa-map-marker-alt text-primary"></i>
+                        ${districtName}
+                        <span class="badge badge-lg badge-primary ml-2 district-count">
+                            ${nbOuvragesDistrict} ouvrage${nbOuvragesDistrict > 1 ? 's' : ''}
+                        </span>
+                    `;
+
+
+                    districtDiv.appendChild(distTitle);
+                    container.appendChild(districtDiv);
+                }
+
+                // Ajout du groupe Commune
+                const groupDiv = document.createElement('div');
+                groupDiv.className = 'group-container ml-6 mb-6 border-l-2 border-base-200 pl-4';
+
+                const title = document.createElement('h3');
+                title.className = 'commune-banner rounded';
+
+                const communeCounterBadge = `<span class="badge badge-sm ${visibleCount > 0 ? 'badge-info' : 'badge-ghost'} ml-2 commune-count">${visibleCount}</span>`;
+
+                title.innerHTML = `<i class="fas fa-city text-base-content/70 mr-2"></i>${groupName} ${communeCounterBadge}`;
+
+                groupDiv.appendChild(title);
+                groupCards.forEach(card => {
+                    card.style.display = ''; // Rétablit l'affichage de la carte
+                    groupDiv.appendChild(card)
+                });
+                districtDiv.appendChild(groupDiv);
+
+            } else {
+                // Logique de regroupement standard (Region, Grading, District, etc.)
+                const groupDiv = document.createElement('div');
+                groupDiv.className = 'group-container mb-8';
+                
+                const title = document.createElement('h3');
+                title.className = 'group-banner rounded';
+
+                let badgeClass = 'badge-ghost';
+                if (groupingCriteria === 'district') badgeClass = 'badge-primary';
+                else if (groupingCriteria === 'region') badgeClass = 'badge-info';
+                else if (groupingCriteria === 'grading') {
+                    if (groupName.includes('A')) badgeClass = 'badge-info';
+                    else if (groupName.includes('B')) badgeClass = 'badge-success';
+                    else if (groupName.includes('D')) badgeClass = 'badge-warning';
+                    if (groupName.includes('(panne)')) badgeClass = 'badge-error';
+                }
+                
+                const counterBadge = `<span class="badge badge-lg ${badgeClass} ml-2">${visibleCount} ouvrage${visibleCount > 1 ? 's' : ''}</span>`;
+                
+                title.innerHTML = `
+                    <i class="fas ${icon} text-primary"></i> 
+                    <span>${groupName} ${counterBadge}</span>
+                    <span class="badge count-badge ${badgeClass}">${visibleCount}</span>`;
+                
+                groupDiv.appendChild(title);
+                groupCards.forEach(card => {
+                    card.style.display = ''; // Rétablit l'affichage de la carte
+                    groupDiv.appendChild(card)
+                });
+                container.appendChild(groupDiv);
+            }
+        });
+    }
+
+
+    // --- 4. NETTOYAGE VISUEL (Groupes vides) ---
+    // Cette étape est maintenant moins critique car nous n'avons regroupé que le contenu visible,
+    // mais elle assure la propreté si l'on changeait de critère.
+    document.querySelectorAll('.group-container, .district-container').forEach(group => {
+        const hasVisibleContent = group.querySelector('.ouvrage-card:not([style*="display: none"])') !== null;
+        group.style.display = hasVisibleContent ? '' : 'none';
+    });
+
+
+    // --- 5. STATS ET COMPTEURS ---
+    
+    const statsDiv = document.getElementById('filter-stats');
+    if (statsDiv) {
+        if (timeFilter === 'non_terminees') {
+            statsDiv.innerHTML = `<i class="fas fa-filter text-info mr-1"></i>${finalVisibleCardsCount} ouvrages | Activités terminées masquées`;
+        } else {
+            statsDiv.innerHTML = `<i class="fas fa-list text-success mr-1"></i>${finalVisibleCardsCount} ouvrages affichés`;
+        }
+    }
+    
+    // Mise à jour des stats globales (Badges)
+    updateGlobalStats();
+    
+    // Mise à jour des stats Grading (Barres)
+    updateGradingStats(); 
+}
+
+/**
+ * Reste de la fonction updateGradingStats() ...
+ * Cette fonction est conservée à l'identique.
+ */
+
+// NOTE: S'assurer que la fonction updateGroupingCounters n'existe plus si vous l'aviez ajoutée.
+
+
+        /**
+         * Recalcule les stats globales (badges colorés en haut)
+         */
+        function updateGlobalStats() {
+            const visibleRows = Array.from(document.querySelectorAll('.ouvrage-card:not([style*="display: none"]) .reparation-row'))
+                                    .filter(row => row.style.display !== 'none');
+
+            let stats = { signalees: 0, planifiees: 0, en_cours: 0, terminees: 0, validees: 0 };
+
+            visibleRows.forEach(row => {
+                const statusBadge = row.querySelector('.badge');
+                if (statusBadge) {
+                    const text = statusBadge.textContent.trim().toLowerCase();
+                    if (text.includes('valid')) stats.validees++;
+                    else if (text.includes('planif')) stats.planifiees++;
+                    else if (text.includes('cours')) stats.en_cours++;
+                    else if (text.includes('termin')) stats.terminees++;
+                    else stats.signalees++;
+                } else {
+                    stats.signalees++;
+                }
+            });
+
+            const setVal = (id, val) => {
+                const el = document.getElementById(id);
+                if(el) el.textContent = val.toLocaleString('fr-FR');
+            };
+
+            setVal('stat-signalees', stats.signalees);
+            setVal('stat-planifiees', stats.planifiees);
+            setVal('stat-encours', stats.en_cours);
+            setVal('stat-terminees', stats.terminees);
+            setVal('stat-validees', stats.validees);
+            
+            // Mise à jour du total global
+            const visibleCards = document.querySelectorAll('.ouvrage-card:not([style*="display: none"])').length;
+            const totalEl = document.getElementById('total-ouvrages-count');
+            if(totalEl) totalEl.textContent = visibleCards;
+        }
+
+        /**
+         * NOUVELLE VERSION : Masque totalement les lignes vides ou non cochées
+         */
+        function updateGradingStats() {
+            // 1. Récupérer quels grades sont cochés par l'utilisateur
+            // On a besoin de savoir ça pour masquer les stats des grades qu'on ne veut pas voir
+            const checkedGrades = Array.from(document.querySelectorAll('input[name="filter-grading"]:checked'))
+                                       .map(cb => cb.value);
+
+            // 2. Compter les occurrences parmi les cartes VISIBLES
+            const visibleCards = document.querySelectorAll('.ouvrage-card.visible-card'); 
+            const totalVisible = visibleCards.length;
+            const counts = {};
+
+            // Initialiser les compteurs
+            document.querySelectorAll('.grading-stat-row').forEach(row => {
+                const grade = row.getAttribute('data-grading-target');
+                counts[grade] = 0;
+            });
+
+            // Compter réellement
+            visibleCards.forEach(card => {
+                const grade = card.getAttribute('data-group-grading');
+                if (counts.hasOwnProperty(grade)) {
+                    counts[grade]++;
+                }
+            });
+
+            // 3. Mettre à jour le DOM
+            document.querySelectorAll('.grading-stat-row').forEach(row => {
+                const grade = row.getAttribute('data-grading-target');
+                const count = counts[grade] || 0;
+                
+                // Est-ce que ce grade est coché dans les filtres ?
+                // Si "Tous" est coché, checkedGrades contient tout, donc c'est bon.
+                // Si le grade est décoché, on le masque totalement des stats aussi.
+                const isSelected = checkedGrades.includes(grade);
+
+                // Condition d'affichage : Il doit y avoir au moins 1 élément ET le grade doit être sélectionné
+                if (count > 0 && isSelected) {
+                    row.style.display = ''; // Afficher
+                    
+                    // Calcul pourcentage pour la BARRE uniquement
+                    const pct = totalVisible > 0 ? ((count / totalVisible) * 100).toFixed(1) : 0;
+                    
+                    // Mise à jour Nombre et Barre
+                    const countText = row.querySelector('.stat-count-text');
+                    const bar = row.querySelector('.stat-bar');
+
+                    if (countText) countText.textContent = `(${count})`;
+                    if (bar) bar.style.width = `${pct}%`;
+                    
+                } else {
+                    // Si 0 éléments ou grade décoché -> On masque totalement
+                    row.style.display = 'none'; 
+                }
+            });
+
+            // 4. Mettre à jour le total dans le titre du grading
+            const headerTotal = document.getElementById('total-grading-header');
+            if (headerTotal) headerTotal.textContent = totalVisible;
+        }
+
+
+        /**
+         * Met à jour les compteurs (Commune et District) après le filtrage
+         */
+        function updateGroupingCounters(groupingCriteria) {
+            if (groupingCriteria !== 'commune') return;
+
+            const visibleCards = document.querySelectorAll('.ouvrage-card.visible-card');
+            const communeCounts = {};
+            const districtCommuneCounts = {};
+            
+            // 1. Compter les cartes visibles par Commune et les Communes par District
+            visibleCards.forEach(card => {
+                const communeName = card.getAttribute('data-group-commune');
+                const districtName = card.getAttribute('data-group-district');
+                
+                if (communeName) {
+                    communeCounts[communeName] = (communeCounts[communeName] || 0) + 1;
+                    
+                    if (districtName) {
+                        // Pour les districts, on compte le nombre de COMMUNES visibles (Set)
+                        if (!districtCommuneCounts[districtName]) {
+                            districtCommuneCounts[districtName] = new Set();
+                        }
+                        districtCommuneCounts[districtName].add(communeName);
+                    }
+                }
+            });
+
+            // 2. Afficher les compteurs de Commune
+            document.querySelectorAll('.commune-count').forEach(span => {
+                const titleElement = span.closest('.commune-title');
+                if (!titleElement) return;
+
+                const groupNameText = titleElement.textContent.replace(span.textContent, '').trim();
+
+                const count = communeCounts[groupNameText] || 0;
+                
+                span.textContent = count;
+                span.classList.toggle('badge-ghost', count === 0);
+                span.classList.toggle('badge-info', count > 0);
+            });
+            
+            // 3. Afficher les compteurs de District (compte le nombre de communes)
+            document.querySelectorAll('.district-title').forEach(h2 => {
+                const districtCountSpan = h2.querySelector('.district-count');
+                
+                if (districtCountSpan) {
+                    const titleText = h2.textContent.trim(); // Extraction complexe mais nécessaire
+                    
+                    let districtName = titleText.replace(/(\s\d+\scommunes?)$/, '').trim();
+
+                    const cleanDistrictId = h2.closest('.district-container').id;
+                    const districtNameFromId = cleanDistrictId.replace('group-dist-', '');
+
+                    let targetDistrictName = Object.keys(districtCommuneCounts).find(name => 
+                        `group-dist-${name.replace(/[^a-zA-Z0-9]/g, '')}` === cleanDistrictId
+                    );
+                    
+                    if (!targetDistrictName) return; // Si on ne trouve pas le district, on arrête.
+                    
+                    const numCommunes = districtCommuneCounts[districtName] ? districtCommuneCounts[districtName].size : 0;
+                    
+                    districtCountSpan.textContent = `${numCommunes} commune${numCommunes > 1 ? 's' : ''}`;
+                    districtCountSpan.classList.toggle('badge-primary', numCommunes > 0);
+                    districtCountSpan.classList.toggle('badge-ghost', numCommunes === 0);
+                }
+            });
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,742 @@
+{% extends "accounting/base.html" %}
+{% load humanize %}
+
+{% block title %}Saisie Documentation Comptable{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- En-tête -->
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold flex items-center gap-2">
+                <i class="fas fa-folder-open text-primary"></i>
+                Saisie Documentation Comptable
+            </h1>
+            <p class="text-sm text-base-content/70 mt-1">
+                Renseigner les documents justificatifs par mois et fichier Access
+            </p>
+        </div>
+        <a href="{% url 'accounting:documentation_rapport' %}" class="btn btn-outline btn-info btn-sm">
+            <i class="fas fa-chart-bar mr-2"></i>
+            Voir le rapport
+        </a>
+    </div>
+
+    <!-- Filtres de sélection -->
+    <div class="card bg-base-100 shadow-xl mb-6">
+        <div class="card-body">
+            <h2 class="card-title text-lg mb-4">
+                <i class="fas fa-filter mr-2 text-info"></i>
+                Sélectionner la période et le fichier
+            </h2>
+
+            <form method="get" class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <!-- Année -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Année *</span>
+                    </label>
+                    <select name="annee" class="select select-bordered" required>
+                        <option value="">Sélectionner...</option>
+                        <option value="2024" {% if annee_filter == "2024" %}selected{% endif %}>2024</option>
+                        <option value="2025" {% if annee_filter == "2025" %}selected{% endif %}>2025</option>
+                        <option value="2026" {% if annee_filter == "2026" %}selected{% endif %}>2026</option>
+                    </select>
+                </div>
+
+                <!-- Mois -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Mois *</span>
+                    </label>
+                    <select name="mois" class="select select-bordered" required>
+                        <option value="">Sélectionner...</option>
+                        <option value="1" {% if mois_filter == "1" %}selected{% endif %}>Janvier</option>
+                        <option value="2" {% if mois_filter == "2" %}selected{% endif %}>Février</option>
+                        <option value="3" {% if mois_filter == "3" %}selected{% endif %}>Mars</option>
+                        <option value="4" {% if mois_filter == "4" %}selected{% endif %}>Avril</option>
+                        <option value="5" {% if mois_filter == "5" %}selected{% endif %}>Mai</option>
+                        <option value="6" {% if mois_filter == "6" %}selected{% endif %}>Juin</option>
+                        <option value="7" {% if mois_filter == "7" %}selected{% endif %}>Juillet</option>
+                        <option value="8" {% if mois_filter == "8" %}selected{% endif %}>Août</option>
+                        <option value="9" {% if mois_filter == "9" %}selected{% endif %}>Septembre</option>
+                        <option value="10" {% if mois_filter == "10" %}selected{% endif %}>Octobre</option>
+                        <option value="11" {% if mois_filter == "11" %}selected{% endif %}>Novembre</option>
+                        <option value="12" {% if mois_filter == "12" %}selected{% endif %}>Décembre</option>
+                    </select>
+                </div>
+
+                <!-- Fichier source -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Fichier Access *</span>
+                    </label>
+                    <select name="fichier" class="select select-bordered" required>
+                        <option value="">Sélectionner...</option>
+                        {% for fichier in fichiers_sources %}
+                            <option value="{{ fichier }}" {% if fichier_filter == fichier %}selected{% endif %}>
+                                {{ fichier }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Bouton -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">&nbsp;</span>
+                    </label>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-search mr-2"></i>
+                        Charger
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {% if documents %}
+    <!-- Bandeau d'information -->
+    <div class="alert alert-info mb-6">
+        <i class="fas fa-info-circle"></i>
+        <div class="text-sm">
+            <strong>Documents attendus pour {{ mois_filter|add:"0"|date:"F" }} {{ annee_filter }} - {{ fichier_filter }}</strong>
+            <p class="mt-1">Renseigner le chemin absolu vers chaque document justificatif (Excel, PDF, etc.)</p>
+        </div>
+    </div>
+
+    <!-- Bouton Vérifier tous les liens -->
+    <div class="flex justify-end mb-4">
+        <button onclick="verifierTousLesLiens()" class="btn btn-outline btn-warning btn-sm">
+            <i class="fas fa-check-circle mr-2"></i>
+            Vérifier tous les liens
+        </button>
+    </div>
+
+    <!-- Sections comparaison_soldes et avances_tiers supprimées - désormais dans les modals "Voir détail" -->
+
+    <!-- Liste des documents -->
+    <div class="space-y-4">
+        {% regroup documents by type_document as documents_par_type %}
+
+        {% for groupe in documents_par_type %}
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h3 class="card-title text-md">
+                    {% if groupe.grouper == 'grand_livre' %}
+                        <i class="fas fa-book text-primary mr-2"></i>
+                        Grands livres par Fin
+                    {% elif groupe.grouper == 'rapprochement_solde' %}
+                        <i class="fas fa-balance-scale text-success mr-2"></i>
+                        Rapprochement de solde
+                    {% elif groupe.grouper == 'recap_tiers' %}
+                        <i class="fas fa-users text-info mr-2"></i>
+                        Récapitulatif compte de tiers
+                    {% elif groupe.grouper == 'comptage_caisse' %}
+                        <i class="fas fa-cash-register text-warning mr-2"></i>
+                        Comptages de caisse
+                    {% elif groupe.grouper == 'releve_bancaire' %}
+                        <i class="fas fa-university text-accent mr-2"></i>
+                        Relevés bancaires
+                    {% elif groupe.grouper == 'suivi_carburant' %}
+                        <i class="fas fa-gas-pump text-error mr-2"></i>
+                        Suivi carburant
+                    {% endif %}
+                    <span class="badge badge-sm badge-ghost">{{ groupe.list|length }} doc(s)</span>
+                </h3>
+
+                <div class="overflow-x-auto">
+                    <table class="table table-sm table-zebra">
+                        <thead class="bg-base-200">
+                            <tr>
+                                <th class="w-32">Statut</th>
+                                {% if groupe.grouper == 'grand_livre' %}
+                                    <th>Valeur Fin</th>
+                                {% elif groupe.grouper == 'comptage_caisse' or groupe.grouper == 'releve_bancaire' %}
+                                    <th>Journal</th>
+                                {% else %}
+                                    <th>Type</th>
+                                {% endif %}
+                                <th>Chemin du document</th>
+                                <th>Notes</th>
+                                <th class="text-center w-20">Ouvrir</th>
+                                <th class="text-center w-32">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for doc in groupe.list %}
+                            <tr id="row-{{ doc.id }}">
+                                <td>
+                                    <span class="badge badge-sm
+                                        {% if doc.statut == 'present' %}badge-success
+                                        {% elif doc.statut == 'lien_mort' %}badge-error
+                                        {% else %}badge-warning{% endif %}
+                                    " id="statut-{{ doc.id }}">
+                                        {% if doc.statut == 'present' %}
+                                            <i class="fas fa-check mr-1"></i>Présent
+                                        {% elif doc.statut == 'lien_mort' %}
+                                            <i class="fas fa-times mr-1"></i>Lien mort
+                                        {% else %}
+                                            <i class="fas fa-exclamation mr-1"></i>Manquant
+                                        {% endif %}
+                                    </span>
+                                </td>
+                                <td class="font-mono text-sm">
+                                    {% if doc.valeur_fin %}
+                                        {{ doc.valeur_fin }}
+                                    {% elif doc.journal_code %}
+                                        {{ doc.journal_code }}
+                                    {% else %}
+                                        <span class="text-base-content/50">(vide)</span>
+                                    {% endif %}
+                                </td>
+                                <td class="font-mono text-xs max-w-md truncate" title="{{ doc.chemin_document }}">
+                                    {% if doc.chemin_document %}
+                                        {{ doc.chemin_document }}
+                                    {% else %}
+                                        <span class="text-base-content/50 italic">Non renseigné</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-xs max-w-xs truncate" title="{{ doc.notes }}">
+                                    {{ doc.notes|default:"—" }}
+                                </td>
+                                <td class="text-center">
+                                    <!-- Bouton Ouvrir le document -->
+                                    {% if doc.chemin_document %}
+                                    <button onclick="openFileViaServer('{{ doc.chemin_document|escapejs }}')"
+                                            class="btn btn-xs btn-success gap-1" title="Ouvrir le document">
+                                        <i class="fas fa-folder-open"></i>
+                                    </button>
+                                    {% else %}
+                                    <span class="text-base-content/30">—</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    <div class="flex gap-1 justify-center">
+                                        <!-- Bouton Voir Grand Livre -->
+                                        {% if groupe.grouper == 'grand_livre' %}
+                                        <button onclick="voirGrandLivre('{{ prog_fichier }}', {{ doc.annee }}, {{ doc.mois }}, '{{ doc.fichier_source }}')"
+                                                class="btn btn-xs btn-info" title="Voir le Grand Livre">
+                                            <i class="fas fa-eye"></i>
+                                        </button>
+                                        {% endif %}
+
+                                        <!-- Bouton Voir Rapprochement de solde -->
+                                        {% if groupe.grouper == 'rapprochement_solde' %}
+                                        <button onclick="voirRapprochementSolde({{ doc.annee }}, {{ doc.mois }}, '{{ doc.fichier_source }}')"
+                                                class="btn btn-xs btn-info" title="Voir le rapprochement de solde">
+                                            <i class="fas fa-eye"></i>
+                                        </button>
+                                        {% endif %}
+
+                                        <!-- Bouton Voir Compte de tiers -->
+                                        {% if groupe.grouper == 'recap_tiers' %}
+                                        <button onclick="voirCompteTiers({{ doc.annee }}, {{ doc.mois }}, '{{ doc.fichier_source }}')"
+                                                class="btn btn-xs btn-info" title="Voir le récapitulatif compte de tiers">
+                                            <i class="fas fa-eye"></i>
+                                        </button>
+                                        {% endif %}
+
+                                        <!-- Bouton Voir Comptage caisse -->
+                                        {% if groupe.grouper == 'comptage_caisse' %}
+                                        <button onclick="voirComptageCaisse({{ doc.annee }}, {{ doc.mois }}, '{{ doc.fichier_source }}', '{{ doc.journal_code }}')"
+                                                class="btn btn-xs btn-info" title="Voir le comptage de caisse">
+                                            <i class="fas fa-eye"></i>
+                                        </button>
+                                        {% endif %}
+
+                                        <!-- Bouton Voir Relevé bancaire -->
+                                        {% if groupe.grouper == 'releve_bancaire' %}
+                                        <button onclick="voirReleveBancaire({{ doc.annee }}, {{ doc.mois }}, '{{ doc.fichier_source }}', '{{ doc.journal_code }}')"
+                                                class="btn btn-xs btn-info" title="Voir le relevé bancaire">
+                                            <i class="fas fa-eye"></i>
+                                        </button>
+                                        {% endif %}
+
+                                        <!-- Bouton Modifier -->
+                                        <button onclick="openEditModal('{{ doc.id }}', '{{ doc.chemin_document|escapejs }}', '{{ doc.notes|escapejs }}')"
+                                                class="btn btn-xs btn-primary" title="Modifier">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+
+<!-- Modal Modifier Document -->
+<dialog id="edit_modal" class="modal">
+    <div class="modal-box w-11/12 max-w-3xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-edit mr-2 text-primary"></i>Modifier le document
+        </h3>
+
+        <form id="edit_form">
+            {% csrf_token %}
+            <input type="hidden" id="doc_id" name="doc_id" />
+
+            <div class="space-y-4">
+                <!-- Chemin du document -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Chemin du document</span>
+                    </label>
+                    <input type="text" id="edit_chemin" name="chemin_document"
+                           class="input input-bordered font-mono text-sm"
+                           placeholder="C:\Comptabilite\Documents\GrandLivre_01_2025.xlsx" />
+                    <label class="label">
+                        <span class="label-text-alt text-info">
+                            <i class="fas fa-lightbulb mr-1"></i>
+                            <strong>Astuce :</strong> Dans l'explorateur Windows, faites <kbd class="kbd kbd-xs">Shift + Clic droit</kbd> sur le fichier → "Copier en tant que chemin d'accès" → Collez ici avec <kbd class="kbd kbd-xs">Ctrl+V</kbd>
+                        </span>
+                    </label>
+                </div>
+
+                <!-- Notes -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Notes (optionnel)</span>
+                    </label>
+                    <textarea id="edit_notes" name="notes" class="textarea textarea-bordered" rows="3"
+                              placeholder="Remarques ou observations..."></textarea>
+                </div>
+            </div>
+
+            <!-- Zone de messages -->
+            <div id="edit_messages" class="hidden mt-4"></div>
+
+            <!-- Actions -->
+            <div class="modal-action">
+                <button type="button" onclick="document.getElementById('edit_modal').close()" class="btn btn-ghost">
+                    Annuler
+                </button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>
+                    Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>Fermer</button>
+    </form>
+</dialog>
+
+<!-- Modal Grand Livre -->
+<dialog id="modal-grand-livre" class="modal">
+    <div class="modal-box w-11/12 max-w-7xl max-h-[90vh] overflow-y-auto">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-book text-primary mr-2"></i>
+            <span id="gl-titre">Grand Livre</span>
+        </h3>
+
+        <!-- Loading -->
+        <div id="gl-loading" class="flex justify-center items-center py-8">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+        </div>
+
+        <!-- Contenu -->
+        <div id="gl-contenu" class="hidden">
+            <!-- En-tête avec soldes -->
+            <div class="stats shadow w-full mb-4">
+                <div class="stat">
+                    <div class="stat-title">Solde de départ</div>
+                    <div class="stat-value text-info text-xl"><span id="gl-solde-depart">0</span> Ar</div>
+                    <div class="stat-desc">Fin mois précédent</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title">Total période</div>
+                    <div class="stat-value text-primary text-xl"><span id="gl-total-periode">0</span> Ar</div>
+                    <div class="stat-desc">Recettes - Dépenses</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title">Solde fin période</div>
+                    <div class="stat-value text-success text-xl"><span id="gl-solde-fin">0</span> Ar</div>
+                    <div class="stat-desc">Solde attendu</div>
+                </div>
+            </div>
+
+            <!-- Tabs pour Dépenses/Recettes/EDF -->
+            <div role="tablist" class="tabs tabs-boxed">
+                <a role="tab" class="tab tab-active" onclick="switchTab('depenses')">
+                    Dépenses <span id="tab-depenses-count" class="badge badge-error ml-1">0</span>
+                </a>
+                <a role="tab" class="tab" onclick="switchTab('recettes')">
+                    Recettes <span id="tab-recettes-count" class="badge badge-success ml-1">0</span>
+                </a>
+                <a role="tab" class="tab" onclick="switchTab('edf')">
+                    EDF <span id="tab-edf-count" class="badge badge-warning ml-1">0</span>
+                </a>
+            </div>
+
+            <!-- Contenu des tabs -->
+            <div id="tab-content-depenses" class="mt-4"></div>
+            <div id="tab-content-recettes" class="mt-4 hidden"></div>
+            <div id="tab-content-edf" class="mt-4 hidden"></div>
+        </div>
+
+        <div class="modal-action">
+            <button type="button" class="btn" onclick="document.getElementById('modal-grand-livre').close()">Fermer</button>
+        </div>
+    </div>
+</dialog>
+
+<script>
+// Fonction pour ouvrir le modal de modification
+function openEditModal(docId, chemin, notes) {
+    document.getElementById('doc_id').value = docId;
+    document.getElementById('edit_chemin').value = chemin || '';
+    document.getElementById('edit_notes').value = notes || '';
+    document.getElementById('edit_messages').classList.add('hidden');
+    document.getElementById('edit_modal').showModal();
+}
+
+// Fonction getCookie pour récupérer le token CSRF
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Soumission du formulaire de modification
+document.getElementById('edit_form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const docId = document.getElementById('doc_id').value;
+    const formData = new FormData(this);
+    const messagesDiv = document.getElementById('edit_messages');
+
+    try {
+        const response = await fetch('{% url "accounting:api_update_document" doc_id="00000000-0000-0000-0000-000000000000" %}'.replace('00000000-0000-0000-0000-000000000000', docId), {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            messagesDiv.innerHTML = `
+                <div class="alert alert-success">
+                    <i class="fas fa-check"></i>
+                    <span>${data.message}</span>
+                </div>
+            `;
+            messagesDiv.classList.remove('hidden');
+
+            // Mettre à jour le statut dans le tableau
+            const statusBadge = document.getElementById('statut-' + docId);
+            if (statusBadge) {
+                statusBadge.className = 'badge badge-sm ';
+                if (data.statut === 'present') {
+                    statusBadge.className += 'badge-success';
+                    statusBadge.innerHTML = '<i class="fas fa-check mr-1"></i>Présent';
+                } else if (data.statut === 'lien_mort') {
+                    statusBadge.className += 'badge-error';
+                    statusBadge.innerHTML = '<i class="fas fa-times mr-1"></i>Lien mort';
+                } else {
+                    statusBadge.className += 'badge-warning';
+                    statusBadge.innerHTML = '<i class="fas fa-exclamation mr-1"></i>Manquant';
+                }
+            }
+
+            // Fermer le modal après 1.5s
+            setTimeout(() => {
+                document.getElementById('edit_modal').close();
+                location.reload();
+            }, 1500);
+        } else {
+            messagesDiv.innerHTML = `
+                <div class="alert alert-error">
+                    <i class="fas fa-times"></i>
+                    <span>Erreur: ${data.error}</span>
+                </div>
+            `;
+            messagesDiv.classList.remove('hidden');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        messagesDiv.innerHTML = `
+            <div class="alert alert-error">
+                <i class="fas fa-times"></i>
+                <span>Erreur réseau: ${error.message}</span>
+            </div>
+        `;
+        messagesDiv.classList.remove('hidden');
+    }
+});
+
+// Fonction pour vérifier tous les liens
+async function verifierTousLesLiens() {
+    if (!confirm('Vérifier l\'existence de tous les documents ?\n\nCela mettra à jour les statuts (présent/lien mort).')) {
+        return;
+    }
+
+    const docIds = [];
+    document.querySelectorAll('[id^="statut-"]').forEach(el => {
+        const docId = el.id.replace('statut-', '');
+        docIds.push(docId);
+    });
+
+    try {
+        const response = await fetch('{% url "accounting:api_verifier_documents" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ doc_ids: docIds })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(`✓ ${data.message}\n\nLa page va se recharger pour afficher les nouveaux statuts.`);
+            location.reload();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+}
+
+// Fonction pour ouvrir un fichier via le serveur
+function openFileViaServer(filePath) {
+    if (!filePath) {
+        alert('Aucun fichier spécifié');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('file_path', filePath);
+
+    fetch('{% url "accounting:open_file_windows" %}', {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-CSRFToken': getCookie('csrftoken')
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            console.log('✅ Fichier ouvert:', filePath);
+        } else {
+            alert('Erreur: ' + (data.error || 'Impossible d\'ouvrir le fichier'));
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    });
+}
+
+// Fonction utilitaire pour récupérer le cookie CSRF
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// ==== GRAND LIVRE ====
+let currentGrandLivre = null;
+
+async function voirGrandLivre(prog, annee, mois, fichier) {
+    const modal = document.getElementById('modal-grand-livre');
+    const loading = document.getElementById('gl-loading');
+    const contenu = document.getElementById('gl-contenu');
+
+    // Ouvrir le modal et afficher le loading
+    modal.showModal();
+    loading.classList.remove('hidden');
+    contenu.classList.add('hidden');
+
+    try {
+        const response = await fetch(`{% url "accounting:api_generer_grand_livre" %}?prog=${encodeURIComponent(prog)}&annee=${annee}&mois=${mois}&fichier=${encodeURIComponent(fichier)}`);
+        const data = await response.json();
+
+        if (data.success) {
+            currentGrandLivre = data.grand_livre;
+
+            // Mettre à jour le titre
+            document.getElementById('gl-titre').textContent = data.grand_livre.titre;
+
+            // Mettre à jour les soldes
+            document.getElementById('gl-solde-depart').textContent = data.grand_livre.solde_depart.toLocaleString('fr-FR');
+            document.getElementById('gl-total-periode').textContent = data.grand_livre.total_periode.toLocaleString('fr-FR');
+            document.getElementById('gl-solde-fin').textContent = data.grand_livre.solde_fin.toLocaleString('fr-FR');
+
+            // Mettre à jour les compteurs
+            const depensesCount = Object.values(data.grand_livre.depenses.par_cat).reduce((sum, trans) => sum + trans.length, 0);
+            const recettesCount = Object.values(data.grand_livre.recettes.par_cat).reduce((sum, trans) => sum + trans.length, 0);
+            const edfCount = Object.values(data.grand_livre.edf.par_cat).reduce((sum, trans) => sum + trans.length, 0);
+
+            document.getElementById('tab-depenses-count').textContent = depensesCount;
+            document.getElementById('tab-recettes-count').textContent = recettesCount;
+            document.getElementById('tab-edf-count').textContent = edfCount;
+
+            // Générer le contenu des tabs
+            genererTabGrandLivre('depenses', data.grand_livre.depenses);
+            genererTabGrandLivre('recettes', data.grand_livre.recettes);
+            genererTabGrandLivre('edf', data.grand_livre.edf);
+
+            // Afficher le contenu
+            loading.classList.add('hidden');
+            contenu.classList.remove('hidden');
+
+        } else {
+            throw new Error(data.error || 'Erreur inconnue');
+        }
+
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors du chargement du Grand Livre: ' + error.message);
+        modal.close();
+    }
+}
+
+function genererTabGrandLivre(type, data) {
+    const container = document.getElementById(`tab-content-${type}`);
+    let html = '';
+
+    if (Object.keys(data.par_cat).length === 0) {
+        html = '<div class="alert alert-info"><i class="fas fa-info-circle mr-2"></i>Aucune transaction dans cette catégorie</div>';
+    } else {
+        // Afficher le total en haut
+        const typeLabels = {
+            'depenses': 'Dépenses',
+            'recettes': 'Recettes',
+            'edf': 'EDF'
+        };
+        html += `
+            <div class="alert alert-success mb-4">
+                <i class="fas fa-calculator mr-2"></i>
+                <span class="font-bold">Total ${typeLabels[type]}: ${data.total.toLocaleString('fr-FR')} Ar</span>
+            </div>
+        `;
+
+        // Grouper par Cat
+        for (const [cat, transactions] of Object.entries(data.par_cat)) {
+            // Calculer le total pour cette catégorie
+            const totalCat = transactions.reduce((sum, trans) => sum + (trans.ccy || 0), 0);
+
+            // Récupérer le libellé du compte (depuis le premier élément de transactions)
+            const catLibelle = transactions.length > 0 && transactions[0].cat_libelle ? transactions[0].cat_libelle : '';
+            const catDisplay = catLibelle ? `${cat} - ${catLibelle}` : cat;
+
+            html += `
+                <div class="collapse collapse-arrow bg-base-200 mb-2">
+                    <input type="checkbox" />
+                    <div class="collapse-title font-semibold flex items-center justify-between">
+                        <div>
+                            <i class="fas fa-tag mr-2"></i>${catDisplay}
+                            <span class="badge badge-neutral ml-2">${transactions.length} opération(s)</span>
+                        </div>
+                        <div class="badge badge-primary badge-lg">
+                            Total: ${totalCat.toLocaleString('fr-FR')} Ar
+                        </div>
+                    </div>
+                    <div class="collapse-content">
+                        <div class="overflow-x-auto mt-2">
+                            <table class="table table-xs table-zebra">
+                                <thead>
+                                    <tr class="bg-base-300">
+                                        <th>Date</th>
+                                        <th>Rec</th>
+                                        <th>Description</th>
+                                        <th>Détail</th>
+                                        <th>Fournisseur</th>
+                                        <th>Activ</th>
+                                        <th class="text-right">CCY (Ar)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+            `;
+
+            transactions.forEach(trans => {
+                const ccyClass = trans.ccy >= 0 ? 'text-success' : 'text-error';
+                html += `
+                    <tr>
+                        <td class="font-mono text-xs">${trans.date}</td>
+                        <td class="font-mono text-xs">${trans.rec}</td>
+                        <td class="text-xs">${trans.description}</td>
+                        <td class="text-xs">${trans.detail}</td>
+                        <td class="text-xs">${trans.fournisseur}</td>
+                        <td class="text-xs">${trans.activ}</td>
+                        <td class="text-right font-mono text-xs ${ccyClass}">${trans.ccy.toLocaleString('fr-FR')}</td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                                </tbody>
+                                <tfoot>
+                                    <tr class="bg-base-300 font-bold">
+                                        <td colspan="6" class="text-right">Sous-total ${cat}:</td>
+                                        <td class="text-right font-mono">${totalCat.toLocaleString('fr-FR')} Ar</td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+    }
+
+    container.innerHTML = html;
+}
+
+function switchTab(tabName) {
+    // Désactiver tous les tabs
+    document.querySelectorAll('[role="tab"]').forEach(tab => {
+        tab.classList.remove('tab-active');
+    });
+
+    // Activer le tab cliqué
+    event.target.classList.add('tab-active');
+
+    // Cacher tous les contenus
+    ['depenses', 'recettes', 'edf'].forEach(type => {
+        document.getElementById(`tab-content-${type}`).classList.add('hidden');
+    });
+
+    // Afficher le contenu sélectionné
+    document.getElementById(`tab-content-${tabName}`).classList.remove('hidden');
+}
+
+</script>
+
+<!-- Inclure les modals et scripts pour les détails -->
+{% include "accounting/includes/modals_details.html" %}
+{% include "accounting/includes/modals_details_scripts.html" %}
+
+{% endblock %}

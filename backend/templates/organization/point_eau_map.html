@@ -1,0 +1,249 @@
+{% extends 'base.html' %}
+
+{% block title %}Carte - Point d'eau{% endblock %}
+
+{% block extra_head %}
+<!-- Leaflet CSS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+     crossorigin=""/>
+<style>
+    #map {
+        height: 80vh;
+        width: 100%;
+        border-radius: 0.5rem;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    }
+    .info-card {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        z-index: 1000;
+        background: white;
+        padding: 15px;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        max-width: 300px;
+    }
+    .map-controls {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 1000;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- En-tête avec informations du point d'eau -->
+    <div class="bg-base-100 shadow rounded-lg p-6 mb-6">
+        <div class="flex items-center justify-between mb-4">
+            <div>
+                <h1 class="text-2xl font-bold flex items-center gap-2">
+                    <i class="fas fa-map-marker-alt text-primary"></i>
+                    Localisation du Point d'eau
+                </h1>
+                <p class="text-base-content/70">{{ point_eau.nomabonne }}</p>
+            </div>
+            <button onclick="window.close()" class="btn btn-ghost btn-sm">
+                <i class="fas fa-times mr-2"></i>Fermer
+            </button>
+        </div>
+
+        <!-- Informations du point d'eau -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            <div>
+                <strong>Type :</strong>
+                {{ point_eau.type_point_eau.nom_type|default:"Non défini" }}
+            </div>
+            <div>
+                <strong>Ouvrage :</strong>
+                {{ point_eau.ouvrage.nom|default:"Non lié" }}
+            </div>
+            <div>
+                <strong>Coordonnées :</strong>
+                {{ point_eau.latitude|floatformat:6 }}, {{ point_eau.longitude|floatformat:6 }}
+            </div>
+        </div>
+    </div>
+
+    <!-- Carte interactive -->
+    <div class="relative">
+        <!-- Carte Leaflet -->
+        <div id="map"></div>
+
+        <!-- Contrôles de la carte -->
+        <div class="map-controls">
+            <button onclick="centerOnPoint()" class="btn btn-primary btn-sm" title="Centrer sur le point">
+                <i class="fas fa-crosshairs"></i>
+            </button>
+            <button onclick="toggleSatellite()" class="btn btn-secondary btn-sm" title="Vue satellite">
+                <i class="fas fa-satellite"></i>
+            </button>
+            <button onclick="openInGoogleMaps()" class="btn btn-info btn-sm" title="Ouvrir dans Google Maps">
+                <i class="fab fa-google"></i>
+            </button>
+        </div>
+
+        <!-- Carte d'informations -->
+        <div class="info-card">
+            <h3 class="font-bold text-sm mb-2">📍 {{ point_eau.nomabonne }}</h3>
+            <div class="space-y-1 text-xs">
+                {% if point_eau.typeabonne %}
+                <div><strong>Type abonné :</strong> {{ point_eau.get_typeabonne_display }}</div>
+                {% endif %}
+                {% if point_eau.nombre_consommateurs %}
+                <div><strong>Consommateurs :</strong> {{ point_eau.nombre_consommateurs }}</div>
+                {% endif %}
+                {% if point_eau.datebranchement %}
+                <div><strong>Branchement :</strong> {{ point_eau.datebranchement|date:"d/m/Y" }}</div>
+                {% endif %}
+                {% if point_eau.estbranchementinstitutionnel %}
+                <div class="badge badge-warning badge-xs">🏛️ Institutionnel</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Navigation -->
+    <div class="mt-6 text-center">
+        {% if point_eau.ouvrage %}
+        <a href="{% url 'organization:points_eau_list_ouvrage' ouvrage_id=point_eau.ouvrage.pk %}" class="btn btn-outline">
+        {% else %}
+        <a href="{% url 'organization:points_eau_list' %}" class="btn btn-outline">
+        {% endif %}
+            <i class="fas fa-arrow-left mr-2"></i>Retour à la liste
+        </a>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
+
+<script>
+// Configuration de la carte
+const pointLat = {{ point_eau.latitude|default:"-18.9041" }};
+const pointLng = {{ point_eau.longitude|default:"47.5216" }};
+const pointName = "{{ point_eau.nomabonne|escapejs }}";
+
+// Initialisation de la carte
+let map = L.map('map').setView([pointLat, pointLng], 15);
+
+// Couches de carte
+let osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+});
+
+let satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: '© Esri, DigitalGlobe, GeoEye, Earthstar Geographics, CNES/Airbus DS, USDA, USGS, AeroGRID, IGN, and the GIS User Community'
+});
+
+// Ajouter la couche par défaut
+osmLayer.addTo(map);
+
+// Marqueur du point d'eau
+let pointMarker = L.marker([pointLat, pointLng])
+    .addTo(map)
+    .bindPopup(`
+        <div class="text-center">
+            <h4 class="font-bold">${pointName}</h4>
+            <p class="text-sm">{{ point_eau.type_point_eau.nom_type|default:"Point d'eau" }}</p>
+            <div class="mt-2">
+                <strong>Coordonnées:</strong><br>
+                ${pointLat.toFixed(6)}, ${pointLng.toFixed(6)}
+            </div>
+            {% if point_eau.ouvrage %}
+            <div class="mt-1">
+                <span class="badge badge-info">{{ point_eau.ouvrage.nom }}</span>
+            </div>
+            {% endif %}
+        </div>
+    `)
+    .openPopup();
+
+// Variables pour les contrôles
+let isSatelliteView = false;
+
+// Fonctions de contrôle
+function centerOnPoint() {
+    map.setView([pointLat, pointLng], 18);
+    pointMarker.openPopup();
+}
+
+function toggleSatellite() {
+    if (isSatelliteView) {
+        map.removeLayer(satelliteLayer);
+        osmLayer.addTo(map);
+        isSatelliteView = false;
+    } else {
+        map.removeLayer(osmLayer);
+        satelliteLayer.addTo(map);
+        isSatelliteView = true;
+    }
+}
+
+function openInGoogleMaps() {
+    const url = `https://www.google.com/maps?q=${pointLat},${pointLng}`;
+    window.open(url, '_blank');
+}
+
+// Afficher les coordonnées au clic
+map.on('click', function(e) {
+    console.log('Coordonnées cliquées:', e.latlng);
+    L.popup()
+        .setLatLng(e.latlng)
+        .setContent(`
+            <div class="text-center">
+                <strong>Coordonnées :</strong><br>
+                ${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}
+            </div>
+        `)
+        .openOn(map);
+});
+
+// Géolocalisation de l'utilisateur (optionnel)
+if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(function(position) {
+        const userLat = position.coords.latitude;
+        const userLng = position.coords.longitude;
+
+        // Ajouter un marqueur pour la position de l'utilisateur
+        L.marker([userLat, userLng], {
+            icon: L.icon({
+                iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iNCIgZmlsbD0iIzAwN2JmZiIvPgo8Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSI4IiBzdHJva2U9IiMwMDdiZmYiIHN0cm9rZS13aWR0aD0iMiIgZmlsbD0ibm9uZSIvPgo8L3N2Zz4K',
+                iconSize: [24, 24],
+                iconAnchor: [12, 12]
+            })
+        })
+        .addTo(map)
+        .bindPopup('📍 Votre position')
+        .openPopup();
+
+        // Calculer et afficher la distance
+        const distance = map.distance([pointLat, pointLng], [userLat, userLng]);
+        console.log(`Distance vers le point d'eau: ${Math.round(distance)}m`);
+
+        // Tracer une ligne entre l'utilisateur et le point d'eau
+        L.polyline([[userLat, userLng], [pointLat, pointLng]], {
+            color: 'red',
+            weight: 2,
+            opacity: 0.7,
+            dashArray: '5, 10'
+        }).addTo(map);
+
+    }, function(error) {
+        console.log('Géolocalisation non disponible:', error);
+    });
+}
+
+console.log('Carte initialisée pour le point d\'eau:', pointName);
+</script>
+{% endblock %}

@@ -1,0 +1,329 @@
+{% extends 'base.html' %}
+
+{% block title %}Tournée de l'agent - Hydria{% endblock %}
+
+{% block content %}
+<div class="mx-auto py-4 sm:py-6">
+    <div class="mb-4">
+        <h1 class="text-3xl font-bold"><i class="fas fa-route mr-2 text-primary"></i>Tournée de l'agent</h1>
+        <p class="text-base-content/70 mt-1">
+            Ordre de visite optimal des lieux du planning du jour, avec le trajet réel par les routes entre chaque étape.
+        </p>
+    </div>
+
+    <!-- Paramètres -->
+    <div class="card bg-base-100 shadow mb-4">
+        <div class="card-body p-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end">
+                <label class="form-control lg:col-span-2">
+                    <span class="label-text text-xs">Agent</span>
+                    <select id="employe" class="select select-bordered select-sm w-full" onchange="charger()">
+                        {% for e in employes %}
+                        <option value="{{ e.id }}"{% if e.id == employe_defaut %} selected{% endif %}>{{ e.nom }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="form-control">
+                    <span class="label-text text-xs">Date</span>
+                    <input id="date" type="date" value="{{ aujourd_hui }}" class="input input-bordered input-sm w-full" onchange="charger()">
+                </label>
+                <label class="form-control lg:col-span-2">
+                    <span class="label-text text-xs">Départ</span>
+                    <select id="depart" class="select select-bordered select-sm w-full" onchange="charger()">
+                        <option value="">Automatique (base de l'agent)</option>
+                    </select>
+                </label>
+                <div class="flex items-center gap-3">
+                    <label class="label cursor-pointer gap-2 p-0">
+                        <input id="retour" type="checkbox" class="checkbox checkbox-sm" checked onchange="charger()">
+                        <span class="label-text text-xs">Retour au départ</span>
+                    </label>
+                    <select id="profil" class="select select-bordered select-sm" onchange="charger()" title="Moyen de déplacement : change les vitesses par type de voie">
+                        {% for code, libelle in profils %}
+                        <option value="{{ code }}"{% if code == profil_defaut %} selected{% endif %}>{{ libelle }}</option>
+                        {% endfor %}
+                    </select>
+                    <select id="critere" class="select select-bordered select-sm" onchange="charger()" title="Optimiser le temps ou la distance">
+                        <option value="temps">Le plus rapide</option>
+                        <option value="distance">Le plus court</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="chargement" class="hidden flex items-center gap-2 mb-4 text-sm">
+        <span class="loading loading-spinner loading-sm"></span> Calcul de la tournée...
+    </div>
+    <div id="message" class="hidden alert mb-4"></div>
+
+    <!-- Résumé -->
+    <div id="resume" class="hidden mb-4">
+        <div class="stats stats-vertical sm:stats-horizontal shadow bg-base-100 w-full">
+            <div class="stat">
+                <div class="stat-title">Étapes</div>
+                <div class="stat-value text-primary" id="r-etapes">0</div>
+                <div class="stat-desc" id="r-plannings"></div>
+            </div>
+            <div class="stat">
+                <div class="stat-title">Distance</div>
+                <div class="stat-value" id="r-distance">0 km</div>
+                <div class="stat-desc" id="r-distance-ref"></div>
+            </div>
+            <div class="stat">
+                <div class="stat-title">Temps de route</div>
+                <div class="stat-value" id="r-duree">0 min</div>
+                <div class="stat-desc" id="r-duree-ref"></div>
+            </div>
+            <div class="stat">
+                <div class="stat-title">Gain d'optimisation</div>
+                <div class="stat-value text-success" id="r-gain">0 min</div>
+                <div class="stat-desc" id="r-gain-desc"></div>
+            </div>
+        </div>
+        <div class="flex flex-wrap gap-2 mt-3">
+            <button class="btn btn-sm btn-outline" onclick="copierResume()"><i class="fas fa-copy mr-1"></i>Copier le résumé</button>
+            <button class="btn btn-sm btn-outline" onclick="window.print()"><i class="fas fa-print mr-1"></i>Imprimer</button>
+        </div>
+    </div>
+
+    <div id="alertes" class="mb-4 flex flex-col gap-2"></div>
+
+    <div id="resultat" class="hidden grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div class="card bg-base-100 shadow lg:col-span-2">
+            <div class="card-body p-3">
+                <div id="carte" class="rounded-lg" style="height: 62vh; min-height: 380px;"></div>
+            </div>
+        </div>
+        <div class="card bg-base-100 shadow lg:col-span-1">
+            <div class="card-body p-4">
+                <h2 class="card-title text-lg">Ordre de visite</h2>
+                <ol id="etapes" class="flex flex-col gap-2 overflow-y-auto" style="max-height: 58vh;"></ol>
+            </div>
+        </div>
+    </div>
+</div>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const URL_API = "{% url 'planning:api_tournee' %}";
+let carte = null, couche = null, derniere = null, marqueurs = {};
+
+const fmtKm = km => (Math.round(km * 10) / 10).toString().replace('.', ',') + ' km';
+function fmtDuree(min) {
+    if (min < 60) return min + ' min';
+    const h = Math.floor(min / 60), m = min % 60;
+    return h + ' h' + (m ? ' ' + String(m).padStart(2, '0') : '');
+}
+const ll = p => [p[1], p[0]];
+function el(tag, classe, texte) {
+    const e = document.createElement(tag);
+    if (classe) e.className = classe;
+    if (texte !== undefined) e.textContent = texte;
+    return e;
+}
+
+function initCarte() {
+    carte = L.map('carte').setView([-18.9, 47.5], 6);
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' });
+    const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        { maxZoom: 21, maxNativeZoom: 17, attribution: 'Imagery &copy; Esri' });
+    osm.addTo(carte);
+    L.control.layers({ 'Plan': osm, 'Satellite': sat }).addTo(carte);
+    couche = L.layerGroup().addTo(carte);
+}
+
+function afficherMessage(texte, type) {
+    const m = document.getElementById('message');
+    m.className = 'alert mb-4 ' + (type === 'erreur' ? 'alert-error' : 'alert-info');
+    m.textContent = texte;
+}
+
+async function charger() {
+    const employe = document.getElementById('employe').value;
+    const date = document.getElementById('date').value;
+    const depart = document.getElementById('depart').value;
+    const params = new URLSearchParams({ employe, date, retour: document.getElementById('retour').checked ? '1' : '0',
+                                         critere: document.getElementById('critere').value,
+                                         profil: document.getElementById('profil').value });
+    if (depart) params.set('depart', depart);
+    history.replaceState(null, '', '?' + new URLSearchParams({ employe, date, profil: document.getElementById('profil').value }).toString());
+
+    document.getElementById('chargement').classList.remove('hidden');
+    document.getElementById('message').classList.add('hidden');
+    try {
+        const r = await fetch(URL_API + '?' + params.toString());
+        const d = await r.json();
+        if (!d.success) { afficherMessage(d.error || 'Erreur', 'erreur'); masquer(); return; }
+        derniere = d;
+        afficher(d);
+    } catch (e) {
+        afficherMessage('Chargement impossible : ' + e.message, 'erreur');
+        masquer();
+    } finally {
+        document.getElementById('chargement').classList.add('hidden');
+    }
+}
+
+function masquer() {
+    document.getElementById('resume').classList.add('hidden');
+    document.getElementById('resultat').classList.add('hidden');
+}
+
+function remplirDeparts(d) {
+    const sel = document.getElementById('depart'), valeur = sel.value;
+    sel.replaceChildren();
+    const auto = el('option', '', "Automatique (base de l'agent)");
+    auto.value = '';
+    sel.appendChild(auto);
+    (d.departs_possibles || []).forEach(v => {
+        const o = el('option', '', v.nom + (v.commune ? ' (' + v.commune + ')' : ''));
+        o.value = v.id;
+        sel.appendChild(o);
+    });
+    sel.value = valeur;
+}
+
+function afficher(d) {
+    const alertes = document.getElementById('alertes');
+    alertes.replaceChildren();
+    if (!d.etapes.length) {
+        masquer();
+        let txt = 'Aucune étape localisée pour ' + d.employe.nom + ' le ' + d.date + '.';
+        if (d.nb_plannings === 0) txt = 'Aucun planning pour ' + d.employe.nom + ' le ' + d.date + '.';
+        else if (!d.depart) txt += " Les plannings n'ont ni point d'eau ni ouvrage localisé.";
+        afficherMessage(txt, 'info');
+        listerSansLieu(d);
+        return;
+    }
+    document.getElementById('resume').classList.remove('hidden');
+    document.getElementById('resultat').classList.remove('hidden');
+    remplirDeparts(d);
+
+    document.getElementById('r-etapes').textContent = d.etapes.length;
+    document.getElementById('r-plannings').textContent = d.nb_plannings + ' planning(s) · départ : ' + d.depart.nom + ' (' + d.depart.origine + ')';
+    document.getElementById('r-distance').textContent = fmtKm(d.distance_km);
+    document.getElementById('r-distance-ref').textContent = 'Ordre du planning : ' + fmtKm(d.reference.distance_km);
+    document.getElementById('r-duree').textContent = fmtDuree(d.duree_min);
+    document.getElementById('r-duree-ref').textContent = 'Ordre du planning : ' + fmtDuree(d.reference.duree_min);
+    document.getElementById('r-gain').textContent = d.gain_duree_min > 0 ? fmtDuree(d.gain_duree_min) : '0 min';
+    document.getElementById('r-gain-desc').textContent = d.gain_distance_km > 0 ? fmtKm(d.gain_distance_km) + ' en moins' : "L'ordre du planning est déjà le meilleur";
+
+    // Alertes : étapes sans route, plannings sans lieu
+    if (d.inaccessibles.length) {
+        const a = el('div', 'alert alert-warning');
+        a.textContent = "Pas de route jusqu'à : " + d.inaccessibles.map(v => v.nom).join(', ') +
+            " (réseau routier coupé ou village non rattaché) — exclus du calcul.";
+        alertes.appendChild(a);
+    }
+    listerSansLieu(d);
+
+    // Liste des étapes
+    const ol = document.getElementById('etapes');
+    ol.replaceChildren();
+    const dep = el('li', 'text-sm');
+    const depTete = el('div', 'flex items-center gap-2');
+    depTete.append(el('span', 'badge badge-success badge-sm', 'D'), el('span', 'font-semibold', d.depart.nom),
+                   el('span', 'text-xs text-base-content/60', 'départ'));
+    dep.appendChild(depTete);
+    (d.depart.plannings || []).forEach(p => dep.appendChild(el('div', 'text-xs mt-1 ml-7', '• ' + (p.activite || 'Activité') +
+        (p.ouvrage ? ' — ' + p.ouvrage : '') + (p.creneaux.length ? ' (' + p.creneaux.join(', ') + ')' : ''))));
+    ol.appendChild(dep);
+    d.etapes.forEach(e => {
+        const li = el('li', 'border border-base-300 rounded-lg p-2 cursor-pointer hover:bg-base-200');
+        li.onclick = () => centrerSur(e.rang);
+        const tete = el('div', 'flex items-center gap-2');
+        tete.append(el('span', 'badge badge-primary', String(e.rang)), el('span', 'font-semibold', e.village.nom),
+                    el('span', 'badge badge-outline badge-sm ml-auto', fmtKm(e.trajet.distance_km) + ' · ' + fmtDuree(e.trajet.duree_min)));
+        li.appendChild(tete);
+        if (e.village.commune) li.appendChild(el('div', 'text-xs text-base-content/60', e.village.commune));
+        e.plannings.forEach(p => {
+            const l = el('div', 'text-xs mt-1');
+            l.textContent = '• ' + (p.activite || 'Activité') + (p.ouvrage ? ' — ' + p.ouvrage : '') + (p.creneaux.length ? ' (' + p.creneaux.join(', ') + ')' : '');
+            li.appendChild(l);
+        });
+        ol.appendChild(li);
+    });
+    if (d.retour) {
+        const fin = el('li', 'flex items-center gap-2 text-sm');
+        const dernierLeg = d.legs[d.legs.length - 1];
+        fin.append(el('span', 'badge badge-success badge-sm', 'D'), el('span', '', 'Retour à ' + d.depart.nom),
+                   el('span', 'badge badge-outline badge-sm ml-auto', fmtKm(dernierLeg.distance_km) + ' · ' + fmtDuree(dernierLeg.duree_min)));
+        ol.appendChild(fin);
+    }
+    dessiner(d);
+}
+
+function listerSansLieu(d) {
+    if (!d.sans_lieu || !d.sans_lieu.length) return;
+    const a = el('div', 'alert alert-info');
+    a.textContent = d.sans_lieu.length + ' planning(s) sans lieu connu (pas de point d\'eau ni d\'ouvrage localisé) : ' +
+        d.sans_lieu.map(p => p.activite || 'Activité').join(', ') + '.';
+    document.getElementById('alertes').appendChild(a);
+}
+
+function numero(texte, fond) {
+    return L.divIcon({ className: '', iconSize: [28, 28], iconAnchor: [14, 14],
+        html: '<div style="width:28px;height:28px;border-radius:50%;background:' + fond + ';color:#fff;font-weight:700;font-size:13px;' +
+              'display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 0 4px rgba(0,0,0,.6)">' + texte + '</div>' });
+}
+
+function dessiner(d) {
+    couche.clearLayers();
+    marqueurs = {};
+    const bornes = [];
+    d.legs.forEach((leg, i) => {
+        const teinte = Math.round(210 - 150 * (i / Math.max(1, d.legs.length - 1)));   // bleu -> orange le long de la tournée
+        const ligne = L.geoJSON(leg.geometrie, { style: { color: 'hsl(' + teinte + ',80%,48%)', weight: 5, opacity: 0.9 } }).addTo(couche);
+        ligne.bindTooltip(leg.de + ' → ' + leg.vers + ' · ' + fmtKm(leg.distance_km) + ' · ' + fmtDuree(leg.duree_min), { sticky: true });
+        ligne.eachLayer(l => bornes.push(...l.getLatLngs()));
+    });
+    L.marker(ll([d.depart.lon, d.depart.lat]), { icon: numero('D', '#16a34a') }).bindTooltip('Départ : ' + d.depart.nom).addTo(couche);
+    bornes.push(ll([d.depart.lon, d.depart.lat]));
+    d.etapes.forEach(e => {
+        const m = L.marker(ll([e.village.lon, e.village.lat]), { icon: numero(e.rang, '#2563eb') })
+            .bindPopup('<b>' + e.rang + '. ' + e.village.nom.replace(/</g, '&lt;') + '</b><br>' + fmtKm(e.trajet.distance_km) + ' · ' + fmtDuree(e.trajet.duree_min)).addTo(couche);
+        marqueurs[e.rang] = m;
+    });
+    carte.invalidateSize();
+    if (bornes.length) carte.fitBounds(L.latLngBounds(bornes).pad(0.12));
+}
+
+function centrerSur(rang) {
+    const m = marqueurs[rang];
+    if (!m) return;
+    carte.flyTo(m.getLatLng(), Math.max(carte.getZoom(), 13));
+    m.openPopup();
+    if (window.innerWidth < 1024) document.getElementById('carte').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function copierResume() {
+    if (!derniere || !derniere.etapes.length) return;
+    const d = derniere;
+    const lignes = ['Tournée de ' + d.employe.nom + ' — ' + d.date.split('-').reverse().join('/'),
+                    'Départ : ' + d.depart.nom];
+    d.etapes.forEach(e => lignes.push(e.rang + '. ' + e.village.nom + ' (' + fmtKm(e.trajet.distance_km) + ', ' + fmtDuree(e.trajet.duree_min) + ')' +
+        (e.plannings.length ? ' — ' + e.plannings.map(p => p.activite).filter(Boolean).join(', ') : '')));
+    (d.depart.plannings || []).forEach(p => lignes.splice(2, 0, '   Au départ : ' + (p.activite || 'Activité')));
+    lignes.push('Moyen : ' + document.getElementById('profil').selectedOptions[0].textContent + '.');
+    lignes.push((d.retour ? 'Retour au départ. ' : '') + 'Total : ' + fmtKm(d.distance_km) + ', ' + fmtDuree(d.duree_min) + ' de route.');
+    try {
+        await navigator.clipboard.writeText(lignes.join('\n'));
+        afficherMessage('Résumé copié : tu peux le coller dans un message.', 'info');
+    } catch (e) {
+        afficherMessage('Copie impossible depuis ce navigateur.', 'erreur');
+    }
+    document.getElementById('message').classList.remove('hidden');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const q = new URLSearchParams(location.search);
+    if (q.get('employe')) document.getElementById('employe').value = q.get('employe');
+    if (q.get('date')) document.getElementById('date').value = q.get('date');
+    if (q.get('profil')) document.getElementById('profil').value = q.get('profil');
+    initCarte();
+    charger();
+});
+</script>
+{% endblock %}

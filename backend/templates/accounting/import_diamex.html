@@ -1,0 +1,1636 @@
+{% extends "accounting/base.html" %}
+{% load diamex_import %}
+{% load humanize %}
+
+{% block title %}Import Comptabilité DiameX{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <div class="flex justify-between items-center mb-6">
+        <div>
+        <h1 class="text-3xl font-bold">
+            <i class="fas fa-file-import mr-3 text-primary"></i>Import Comptabilité DiameX
+        </h1>
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'accounting:entries_list' %}" class="btn btn-info">
+                <i class="fas fa-list mr-2"></i>Consulter les données
+            </a>
+            <button onclick="openImportModal()" class="btn btn-primary">
+                <i class="fas fa-plus mr-2"></i>Importer depuis VPS
+            </button>
+            <button type="button" id="openLocalImportInfoBtn" class="btn btn-success">
+                <i class="fas fa-desktop mr-2"></i>Importer depuis Windows
+            </button>
+            <button onclick="clearAllData()" class="btn btn-error btn-outline">
+                <i class="fas fa-trash mr-2"></i>Effacer toutes les données
+            </button>
+        </div>
+    </div>
+
+    <!-- Statistiques -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div class="card bg-gradient-to-br from-primary to-primary-focus text-primary-content shadow-lg">
+            <div class="card-body">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm opacity-80">Total entrées</p>
+                        <h3 class="text-3xl font-bold">{{ stats.total_entries|default:0|intcomma }}</h3>
+                    </div>
+                    <i class="fas fa-database text-5xl opacity-20"></i>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bg-gradient-to-br from-success to-success-focus text-success-content shadow-lg">
+            <div class="card-body">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm opacity-80">Fichiers importés</p>
+                        <h3 class="text-3xl font-bold">{{ stats.fichiers_importes|default:0|intcomma }}</h3>
+                    </div>
+                    <i class="fas fa-file-excel text-5xl opacity-20"></i>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bg-gradient-to-br from-info to-info-focus text-info-content shadow-lg">
+            <div class="card-body">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm opacity-80">Dernier import</p>
+                        <h3 class="text-lg font-bold">
+                            {% if stats.last_import %}
+                                {{ stats.last_import.date_import|date:"d/m/Y H:i" }}
+                            {% else %}
+                                Jamais
+                            {% endif %}
+                        </h3>
+                    </div>
+                    <i class="fas fa-clock text-5xl opacity-20"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Détails par fichier -->
+    {% if fichiers_stats %}
+    <div class="card bg-base-100 shadow-md mb-6">
+        <div class="card-body">
+            <h2 class="card-title"><i class="fas fa-chart-bar mr-2"></i>Répartition par fichier</h2>
+            <div class="overflow-x-auto">
+                <table class="table table-zebra">
+                    <thead>
+                        <tr>
+                            <th>Fichier source</th>
+                            <th>Nombre d'entrées</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for fichier, count in fichiers_stats.items %}
+                        <tr>
+                            <td><i class="fas fa-file-excel mr-2 text-success"></i>{{ fichier }}</td>
+                            <td><span class="badge badge-primary">{{ count|intcomma }}</span></td>
+                            <td>
+                                <button type="button"
+                                        data-fichier="{{ fichier|escape }}"
+                                        class="btn btn-xs btn-error btn-outline js-delete-file-btn"
+                                        >
+                                    <i class="fas fa-trash mr-1"></i>Supprimer
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Instructions -->
+    <div class="alert alert-info">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+        <div>
+            <h3 class="font-bold">Comment importer ?</h3>
+            <div class="text-sm">
+                <ol class="list-decimal list-inside mt-2">
+                    <li>Cliquez sur "Importer depuis Access"</li>
+                    <li>Sélectionnez <strong>1, 2 ou 3 fichiers</strong> Access (.mdb ou .accdb)</li>
+                    <li>Donnez un nom à chaque fichier pour l'identifier</li>
+                    <li>Cliquez sur "Lancer l'import"</li>
+                </ol>
+                <p class="mt-2"><strong>Note:</strong> Vous pouvez importer un seul fichier, deux fichiers ou trois fichiers selon vos besoins. Seul le premier fichier est obligatoire.</p>
+                <p class="mt-1"><strong>Mise à jour:</strong> Si vous réimportez les mêmes fichiers (même nom), les données existantes seront automatiquement mises à jour.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal d'import -->
+<dialog id="importModal" class="modal">
+    <div class="modal-box w-11/12 max-w-3xl">
+        <h3 class="font-bold text-lg mb-4"><i class="fas fa-file-import mr-2"></i>Importer depuis Access</h3>
+
+        {% if not bases_employe %}
+        <!-- Aucune base assignée -->
+        <div class="alert alert-warning">
+            <i class="fas fa-exclamation-triangle"></i>
+            <div>
+                <h3 class="font-bold">Aucune base DiameX assignée</h3>
+                <p class="text-sm">Vous devez d'abord avoir des bases DiameX assignées dans votre profil employé.</p>
+                <p class="text-sm">Contactez l'administrateur pour configurer vos bases DiameX.</p>
+            </div>
+        </div>
+        {% else %}
+        <!-- Bases de l'employé -->
+        <div class="alert alert-info mb-4">
+            <i class="fas fa-info-circle"></i>
+            <div class="text-sm">
+                <p><strong>Vos bases DiameX :</strong> Cochez les bases que vous souhaitez importer.</p>
+                <p>Les chemins sont pré-configurés dans votre profil.</p>
+            </div>
+        </div>
+
+        <form id="importForm" class="space-y-4">
+            {% for base in bases_employe %}
+            <div class="card bg-base-200">
+                <div class="card-body">
+                    <div class="form-control">
+                        <label class="cursor-pointer label justify-start gap-4">
+                            <input type="checkbox" name="base_ids" value="{{ base.id }}" class="checkbox checkbox-primary" />
+                            <div class="flex-1">
+                                <h4 class="font-semibold"><i class="fas fa-database mr-2 text-primary"></i>{{ base.base_diamex }}</h4>
+                                <p class="text-xs text-gray-500 mt-1">Dossier: {{ base.chemin_base_diamex }}</p>
+                                <p class="text-xs text-gray-600 font-mono">→ {{ base.chemin_complet }}</p>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+
+            <div class="card bg-base-100 border border-base-300">
+                <div class="card-body">
+                    <div class="text-sm font-semibold mb-2">Mois a importer</div>
+                    <p class="text-xs text-base-content/70 mb-3">Laissez vide pour tout importer. Ajoutez un ou plusieurs mois pour un import partiel.</p>
+                    <div class="flex flex-wrap gap-2 items-end">
+                        <label class="form-control w-full max-w-xs">
+                            <span class="label-text text-xs">Ajouter un mois</span>
+                            <input type="month" id="serverMonthPicker" class="input input-bordered input-sm" />
+                        </label>
+                        <button type="button" class="btn btn-sm btn-outline" onclick="addMonthSelection('server')">
+                            <i class="fas fa-plus mr-1"></i>Ajouter
+                        </button>
+                        <button type="button" class="btn btn-sm btn-ghost" onclick="clearMonthSelections('server')">Vider</button>
+                    </div>
+                    <div id="serverSelectedMonths" class="mt-3 flex flex-wrap gap-2"></div>
+                </div>
+            </div>
+
+            <!-- Barre de progression -->
+            <div id="progressContainer" class="hidden">
+                <progress id="importProgress" class="progress progress-primary w-full" value="0" max="100"></progress>
+                <p id="progressText" class="text-sm text-center mt-2">Préparation...</p>
+            </div>
+
+            <!-- Logs de progression en temps réel -->
+            <div id="logsContainer" class="hidden mt-4">
+                <div class="card bg-base-200">
+                    <div class="card-body p-4">
+                        <h4 class="font-semibold text-sm mb-2">
+                            <i class="fas fa-list mr-2"></i>Progression de l'import
+                        </h4>
+                        <div id="logsContent" class="text-xs font-mono max-h-60 overflow-y-auto bg-base-300 p-3 rounded space-y-1">
+                            <!-- Les logs seront ajoutés ici dynamiquement -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Résultats -->
+            <div id="resultsContainer" class="hidden alert"></div>
+        </form>
+        {% endif %}
+
+        <div class="modal-action">
+            {% if bases_employe %}
+            <button type="button" onclick="startImport()" class="btn btn-primary" id="importBtn">
+                <i class="fas fa-upload mr-2"></i>Lancer l'import
+            </button>
+            {% endif %}
+            <button type="button" onclick="closeImportModal()" class="btn">Fermer</button>
+        </div>
+    </div>
+</dialog>
+
+<!-- Modal Import LOCAL depuis Windows -->
+<dialog id="localImportModal" class="modal">
+    <div class="modal-box max-w-5xl max-h-[90vh] overflow-y-auto">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-desktop text-success mr-2"></i>Import depuis Windows - Package Portable
+        </h3>
+
+        <div class="alert alert-info mb-4">
+            <i class="fas fa-info-circle"></i>
+            <div>
+                <h4 class="font-bold">Mode d'import LOCAL (Portable)</h4>
+                <p class="text-sm">Cette méthode lit les fichiers Access directement depuis votre ordinateur Windows et envoie les données vers le serveur. Le package portable peut être utilisé sur n'importe quel ordinateur.</p>
+            </div>
+        </div>
+
+        <!-- Téléchargement du package -->
+        <div class="alert alert-success mb-4">
+            <i class="fas fa-download"></i>
+            <div class="flex-1">
+                <h4 class="font-bold">📦 Télécharger le Package Portable</h4>
+                <p class="text-sm mb-3">Téléchargez le fichier ZIP contenant tous les fichiers nécessaires :</p>
+                <a href="{% url 'accounting:telecharger_package_portable' %}" class="btn btn-success btn-sm">
+                    <i class="fas fa-download mr-2"></i>Télécharger Package_Import_DiameX_Portable.zip
+                </a>
+                <p class="text-sm mt-3"><strong>Le package contient :</strong></p>
+                <ul class="list-disc list-inside text-sm space-y-1 mt-1">
+                    <li><code class="bg-primary bg-opacity-20 text-primary-content px-2 py-1 rounded">INSTALLER_IMPORT_DIAMEX.bat</code> - Installation automatique</li>
+                    <li><code class="bg-primary bg-opacity-20 text-primary-content px-2 py-1 rounded">LANCER_IMPORT.bat</code> - Lancement de l'import</li>
+                    <li><code class="bg-primary bg-opacity-20 text-primary-content px-2 py-1 rounded">LANCER_AGENT_DIAMEX.bat</code> - Lancement de l'agent local</li>
+                    <li><code class="bg-primary bg-opacity-20 text-primary-content px-2 py-1 rounded">import_diamex_portable.py</code> - Script Python</li>
+                    <li><code class="bg-primary bg-opacity-20 text-primary-content px-2 py-1 rounded">diamex_local_agent.py</code> - Agent local (serveur)</li>
+                    <li><code class="bg-primary bg-opacity-20 text-primary-content px-2 py-1 rounded">config_import.ini</code> - Configuration</li>
+                    <li><code class="bg-primary bg-opacity-20 text-primary-content px-2 py-1 rounded">README_IMPORT_DIAMEX.txt</code> - Documentation complète</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Import via agent local -->
+        <div class="card bg-base-200 mb-4">
+            <div class="card-body p-4 space-y-3">
+                <div>
+                    <h4 class="font-bold text-sm">
+                        <i class="fas fa-plug text-success mr-2"></i>Import via agent local (boutons web)
+                    </h4>
+                    <p class="text-xs text-base-content/70 mt-1">
+                        1) Lancez <code class="bg-base-300 px-1">LANCER_AGENT_DIAMEX.bat</code> sur le PC<br>
+                        2) Cliquez sur "Tester connexion" puis "Importer via agent local"<br>
+                        3) Les scans <code class="bg-base-300 px-1">.tif/.tiff</code> seront convertis en PDF pour un affichage web plus lisible
+                    </p>
+                </div>
+
+                {% if bases_employe %}
+                <div class="space-y-2">
+                    {% for base in bases_employe %}
+                    <label class="flex items-start gap-3 text-sm">
+                        <input type="checkbox"
+                               class="checkbox checkbox-sm checkbox-success local-base-checkbox"
+                               data-path="{{ base.chemin_complet }}"
+                               data-nom="{{ base.base_diamex }}">
+                        <span>
+                            <span class="font-semibold">{{ base.base_diamex }}</span><br>
+                            <span class="text-xs text-base-content/60">{{ base.chemin_complet }}</span>
+                        </span>
+                    </label>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="text-xs text-warning">
+                    Aucune base DiameX configuree pour cet employe.
+                </div>
+                {% endif %}
+
+                <div class="rounded-lg bg-base-100 px-3 py-3 space-y-2">
+                    <div class="text-sm font-semibold">Que faut-il importer ?</div>
+                    <label class="label cursor-pointer justify-start gap-3 py-1">
+                        <input type="radio" name="local_import_mode" value="lines_only" class="radio radio-sm radio-primary" checked />
+                        <span class="label-text text-sm">
+                            Lignes de compta seulement
+                            <span class="block text-xs text-warning">Aucun scan ne sera copie sur le serveur.</span>
+                            <span class="block text-xs text-base-content/60">La colonne "Scan web" restera "Local seul".</span>
+                        </span>
+                    </label>
+                    <label class="label cursor-pointer justify-start gap-3 py-1">
+                        <input type="radio" name="local_import_mode" value="lines_and_scans" class="radio radio-sm radio-primary" />
+                        <span class="label-text text-sm">
+                            Lignes de compta + scans
+                            <span class="block text-xs text-success">Copie aussi les scans sur le serveur pour consultation web.</span>
+                            <span class="block text-xs text-base-content/60">Les scans deja presents sur le serveur ne seront pas renvoyes.</span>
+                        </span>
+                    </label>
+                </div>
+
+                <div class="rounded-lg bg-base-100 px-3 py-3 space-y-2">
+                    <div class="text-sm font-semibold">Mois a importer</div>
+                    <p class="text-xs text-base-content/70">Laissez vide pour tout importer. Ajoutez un ou plusieurs mois pour limiter la compta et les scans.</p>
+                    <div class="flex flex-wrap gap-2 items-end">
+                        <label class="form-control w-full max-w-xs">
+                            <span class="label-text text-xs">Ajouter un mois</span>
+                            <input type="month" id="localMonthPicker" class="input input-bordered input-sm" />
+                        </label>
+                        <button type="button" class="btn btn-sm btn-outline" onclick="addMonthSelection('local')">
+                            <i class="fas fa-plus mr-1"></i>Ajouter
+                        </button>
+                        <button type="button" class="btn btn-sm btn-ghost" onclick="clearMonthSelections('local')">Vider</button>
+                    </div>
+                    <div id="localSelectedMonths" class="flex flex-wrap gap-2"></div>
+                </div>
+
+                <div class="rounded-lg bg-base-100 px-3 py-3 space-y-2">
+                    <label for="localScanBatchSize" class="text-sm font-semibold block">Taille du lot scans</label>
+                    <select id="localScanBatchSize" class="select select-bordered select-sm w-full max-w-xs">
+                        <option value="2">2 scans par lot</option>
+                        <option value="5" selected>5 scans par lot</option>
+                        <option value="10">10 scans par lot</option>
+                    </select>
+                    <p class="text-xs text-base-content/70">
+                        Si l'import coupe au milieu, utilisez 2 ou 5. Les scans deja copies seront ignores a la relance.
+                    </p>
+                </div>
+
+                <div class="flex gap-2 flex-wrap">
+                    <button type="button" onclick="testLocalAgent()" class="btn btn-sm btn-outline">
+                        <i class="fas fa-plug mr-1"></i>Tester connexion agent
+                    </button>
+                    <button type="button" onclick="startLocalAgentImport()" class="btn btn-sm btn-success" id="localImportBtn">
+                        <i class="fas fa-upload mr-1"></i>Importer via agent local
+                    </button>
+                </div>
+
+                <div id="localAgentStatus" class="text-xs text-base-content/70"></div>
+                <div id="localAgentProgressPanel" class="hidden rounded-lg border border-base-300 bg-base-100 px-3 py-3 space-y-2">
+                    <div class="flex items-center justify-between gap-3">
+                        <div class="text-xs font-semibold">Suivi en temps reel</div>
+                        <div id="localAgentProgressText" class="text-xs text-base-content/70"></div>
+                    </div>
+                    <progress id="localAgentProgressBar" class="progress progress-success w-full" value="0" max="100"></progress>
+                    <div id="localAgentResults" class="max-h-72 overflow-auto rounded-lg bg-base-200 px-3 py-2 text-xs font-mono space-y-1"></div>
+                    <div id="localAgentSummary" class="text-xs space-y-1"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="space-y-4">
+            <!-- Installation (Première fois uniquement) -->
+            <div class="collapse collapse-arrow bg-base-200">
+                <input type="checkbox" checked />
+                <div class="collapse-title font-medium">
+                    <i class="fas fa-download text-primary mr-2"></i>📥 INSTALLATION (Première fois uniquement)
+                </div>
+                <div class="collapse-content">
+                    <div class="space-y-3">
+                        <div class="card bg-base-100">
+                            <div class="card-body p-4">
+                                <h5 class="font-bold text-sm"><i class="fas fa-1 mr-2"></i>Étape 1 : Créer un dossier</h5>
+                                <p class="text-sm">Créer un nouveau dossier sur l'ordinateur, par exemple :</p>
+                                <div class="mockup-code text-xs mt-2">
+                                    <pre><code>C:\ImportDiameX</code></pre>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card bg-base-100">
+                            <div class="card-body p-4">
+                                <h5 class="font-bold text-sm"><i class="fas fa-2 mr-2"></i>Étape 2 : Copier les 5 fichiers</h5>
+                                <p class="text-sm">Copier les 5 fichiers du package dans ce nouveau dossier.</p>
+                            </div>
+                        </div>
+
+                        <div class="card bg-base-100">
+                            <div class="card-body p-4">
+                                <h5 class="font-bold text-sm"><i class="fas fa-3 mr-2"></i>Étape 3 : Exécuter l'installation</h5>
+                                <p class="text-sm">Double-cliquer sur <code class="bg-base-300 px-1">INSTALLER_IMPORT_DIAMEX.bat</code></p>
+                                <p class="text-sm mt-2">Le script va automatiquement :</p>
+                                <ul class="list-disc list-inside text-sm space-y-1 mt-1 ml-4">
+                                    <li>Vérifier que Python est installé</li>
+                                    <li>Installer les dépendances (pyodbc, requests, pillow)</li>
+                                    <li>Vérifier le driver Microsoft Access</li>
+                                </ul>
+                                <div class="alert alert-info mt-2">
+                                    <i class="fas fa-info-circle"></i>
+                                    <span class="text-xs">Si Python n'est pas installé, télécharger depuis <a href="https://www.python.org/downloads/" target="_blank" rel="noopener" class="link">python.org</a> et cocher "Add Python to PATH"</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card bg-base-100">
+                            <div class="card-body p-4">
+                                <h5 class="font-bold text-sm"><i class="fas fa-4 mr-2"></i>Étape 4 : Vérifier la configuration</h5>
+                                <p class="text-sm">Ouvrir <code class="bg-base-300 px-1">config_import.ini</code> avec le Bloc-notes et vérifier :</p>
+                                <div class="mockup-code text-xs mt-2">
+                                    <pre><code>DJANGO_URL = https://compta.hydria.mg</code></pre>
+                                </div>
+                                <p class="text-sm mt-2">Cette URL doit pointer vers le serveur Django.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Utilisation quotidienne -->
+            <div class="collapse collapse-arrow bg-success bg-opacity-10">
+                <input type="checkbox" checked />
+                <div class="collapse-title font-medium">
+                    <i class="fas fa-play text-success mr-2"></i>🚀 UTILISATION QUOTIDIENNE
+                </div>
+                <div class="collapse-content">
+                    <div class="card bg-base-100">
+                        <div class="card-body p-4">
+                            <h5 class="font-bold text-sm">Pour importer les données :</h5>
+                            <p class="text-xs text-base-content/70 mt-2">Option boutons web: lancer LANCER_AGENT_DIAMEX.bat puis utiliser Importer via agent local.</p>
+                            <ol class="list-decimal list-inside text-sm space-y-2 mt-2">
+                                <li>Double-cliquer sur <code class="bg-base-300 px-1">LANCER_IMPORT.bat</code></li>
+                                <li>Le script se connecte automatiquement à l'API Django</li>
+                                <li>Il récupère la liste des fichiers Access configurés</li>
+                                <li>Il importe chaque fichier automatiquement</li>
+                            </ol>
+
+                            <div class="divider text-sm">Messages attendus</div>
+
+                            <div class="mockup-code text-xs">
+                                <pre><code>[API] Récupération de la liste des fichiers depuis Django...</code></pre>
+                                <pre class="text-success"><code>[OK] 2 fichier(s) récupéré(s) depuis l'API</code></pre>
+                                <pre><code>   1. DiameX v3.16.1 - Base 1.accde</code></pre>
+                                <pre><code>   2. DiameX v3.16.1 - Base 2.accde</code></pre>
+                                <pre><code></code></pre>
+                                <pre><code>[READ] Lecture du fichier Access...</code></pre>
+                                <pre class="text-success"><code>[OK] 1234 lignes DATA lues</code></pre>
+                                <pre class="text-success"><code>[OK] 567 lignes SoldesReels lues</code></pre>
+                                <pre><code></code></pre>
+                                <pre><code>[SEND] Envoi vers Django...</code></pre>
+                                <pre class="text-success"><code>[SUCCESS] Import réussi</code></pre>
+                                <pre class="text-success"><code>[✓] Import réussi pour DiameX v3.16.1 - Base 1.accde</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Configuration des fichiers DiameX -->
+            <div class="collapse collapse-arrow bg-base-200">
+                <input type="checkbox" />
+                <div class="collapse-title font-medium">
+                    <i class="fas fa-cog mr-2"></i>⚙️ CONFIGURATION DES FICHIERS DIAMEX
+                </div>
+                <div class="collapse-content">
+                    <p class="text-sm mb-2">Les chemins des fichiers Access sont configurés dans Django. Pour chaque employé :</p>
+                    <ol class="list-decimal list-inside text-sm space-y-2">
+                        <li>Accéder à l'administration Django</li>
+                        <li>Aller dans Employees > Employe base diame x</li>
+                        <li>Renseigner pour chaque employé :
+                            <ul class="list-disc list-inside ml-6 mt-1">
+                                <li><strong>Employé</strong> : Sélectionner l'employé</li>
+                                <li><strong>Chemin dossier DiameX</strong> : Ex: <code class="bg-base-300 px-1">G:\Mon Drive\Compta\</code></li>
+                                <li><strong>Nom fichier Base DiameX</strong> : Ex: <code class="bg-base-300 px-1">DiameX v3.16.1 - Base 1.accde</code></li>
+                            </ul>
+                        </li>
+                    </ol>
+
+                    <div class="divider text-sm">Fichiers configurés actuellement</div>
+
+                    <ul class="list-disc list-inside text-sm mt-2">
+                        {% if bases_employe %}
+                            {% for base in bases_employe %}
+                                <li><strong>{{ base.nom_base }}</strong> : {{ base.chemin_base_diamex }}</li>
+                            {% endfor %}
+                        {% else %}
+                            <li class="text-warning">⚠️ Aucune base DiameX configurée</li>
+                        {% endif %}
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Dépannage -->
+            <div class="collapse collapse-arrow bg-error bg-opacity-10">
+                <input type="checkbox" />
+                <div class="collapse-title font-medium">
+                    <i class="fas fa-wrench text-error mr-2"></i>🔧 DÉPANNAGE
+                </div>
+                <div class="collapse-content">
+                    <div class="space-y-3">
+                        <div>
+                            <h5 class="font-bold text-sm">❌ "Python n'est pas installé"</h5>
+                            <p class="text-sm">→ Télécharger Python depuis <a href="https://www.python.org/downloads/" target="_blank" rel="noopener" class="link">python.org</a></p>
+                            <p class="text-sm">→ IMPORTANT : Cocher "Add Python to PATH" lors de l'installation</p>
+                        </div>
+
+                        <div>
+                            <h5 class="font-bold text-sm">❌ "Driver Microsoft Access non détecté"</h5>
+                            <p class="text-sm">→ Si Microsoft Office installé : Le driver devrait être présent</p>
+                            <p class="text-sm">→ Sinon, télécharger "Access Database Engine 2016 Redistributable"</p>
+                            <p class="text-sm">→ Choisir 32-bit ou 64-bit selon votre version d'Office</p>
+                        </div>
+
+                        <div>
+                            <h5 class="font-bold text-sm">❌ "Fichier introuvable"</h5>
+                            <p class="text-sm">→ Vérifier le chemin configuré dans Django</p>
+                            <p class="text-sm">→ Vérifier que le fichier .accde existe à cet emplacement</p>
+                        </div>
+
+                        <div>
+                            <h5 class="font-bold text-sm">❌ "Erreur réseau"</h5>
+                            <p class="text-sm">→ Vérifier la connexion internet</p>
+                            <p class="text-sm">→ Vérifier que https://compta.hydria.mg est accessible</p>
+                            <p class="text-sm">→ Augmenter le TIMEOUT dans config_import.ini</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="divider">Documentation et Actions</div>
+
+            <div class="flex gap-2 justify-center flex-wrap">
+                <a href="{% url 'accounting:entries_list' %}" class="btn btn-sm btn-info">
+                    <i class="fas fa-list mr-1"></i>Voir les données importées
+                </a>
+                <button onclick="window.open('/static/docs/IMPORT_DIAMEX_LOCAL.md', '_blank')" class="btn btn-sm btn-outline">
+                    <i class="fas fa-book mr-1"></i>Documentation complète
+                </button>
+                <button onclick="window.print()" class="btn btn-sm btn-outline">
+                    <i class="fas fa-print mr-1"></i>Imprimer ces instructions
+                </button>
+            </div>
+        </div>
+
+        <div class="modal-action">
+            <button type="button" id="closeLocalImportModalBtn" class="btn">Fermer</button>
+        </div>
+    </div>
+</dialog>
+
+<script>
+function openFileBrowser(fileNumber) {
+    // Déclenche le clic sur l'input file caché
+    document.getElementById('file' + fileNumber + '_input').click();
+}
+
+function handleFileSelect(fileNumber) {
+    const fileInput = document.getElementById('file' + fileNumber + '_input');
+    const pathInput = document.getElementById('fichier' + fileNumber + '_path');
+    const nomInput = document.querySelector('input[name="fichier' + fileNumber + '_nom"]');
+
+    if (fileInput.files.length > 0) {
+        const file = fileInput.files[0];
+        // Dans un navigateur, on ne peut pas obtenir le chemin complet pour des raisons de sécurité
+        // On utilise un objet fakepath, mais on affiche le nom du fichier
+        const fakePath = fileInput.value;
+
+        // Afficher le chemin (même si c'est un fakepath)
+        pathInput.value = fakePath;
+
+        // Auto-remplir le nom si vide
+        if (!nomInput.value) {
+            // Extraire le nom du fichier sans extension
+            const fileName = file.name.replace(/\.(mdb|accdb)$/i, '');
+            nomInput.value = fileName;
+        }
+
+        // Note importante pour l'utilisateur
+        if (fakePath.includes('fakepath')) {
+            alert('Note: Pour des raisons de sécurité du navigateur, le chemin complet ne peut pas être détecté automatiquement.\n\nVeuillez copier-coller le chemin complet du fichier depuis l\'explorateur Windows.\n\nExemple: C:\\Comptabilite\\' + file.name);
+            pathInput.value = '';
+            pathInput.focus();
+        }
+    }
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+function openImportModal() {
+    document.getElementById('importModal').showModal();
+}
+
+function closeImportModal() {
+    document.getElementById('importModal').close();
+}
+
+let pollingInterval = null;
+let currentSessionId = null;
+
+async function startImport() {
+    const form = document.getElementById('importForm');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressBar = document.getElementById('importProgress');
+    const progressText = document.getElementById('progressText');
+    const resultsContainer = document.getElementById('resultsContainer');
+    const importBtn = document.getElementById('importBtn');
+    const logsContainer = document.getElementById('logsContainer');
+    const logsContent = document.getElementById('logsContent');
+
+    // Collecter les bases cochées
+    const baseIds = Array.from(document.querySelectorAll('input[name="base_ids"]:checked'))
+        .map(cb => cb.value);
+
+    if (baseIds.length === 0) {
+        alert('Veuillez sélectionner au moins une base à importer');
+        return;
+    }
+
+    // Afficher la progression et les logs
+    progressContainer.classList.remove('hidden');
+    logsContainer.classList.remove('hidden');
+    resultsContainer.classList.add('hidden');
+    importBtn.disabled = true;
+    logsContent.innerHTML = '';  // Vider les logs précédents
+
+    const csrftoken = getCookie('csrftoken');
+    const selectedMonths = getSelectedMonths('server');
+    let totalImported = 0;
+    let totalUpdated = 0;
+    let allErrors = [];
+
+    // Importer toutes les bases cochées
+    progressBar.value = 0;
+    progressText.textContent = `${getImportScopeLabel(selectedMonths)} en cours...`;
+
+    try {
+        const response = await fetch('/comptabilite/import/from-bases/', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': csrftoken,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                base_ids: baseIds,
+                selected_months: selectedMonths
+            })
+        });
+
+        const result = await response.json();
+
+        // Démarrer le polling des logs si on a un session_id
+        if (result.session_id) {
+            currentSessionId = result.session_id;
+            startPollingLogs(result.session_id);
+        }
+        progressBar.value = 100;
+
+        if (result.success) {
+            totalImported = result.imported || 0;
+            totalUpdated = result.updated || 0;
+
+            // Stocker les statistiques SoldesReels
+            const soldesImported = result.soldes_imported || 0;
+            const soldesUpdated = result.soldes_updated || 0;
+            const soldesErrors = result.soldes_errors || [];
+
+            if (result.errors && result.errors.length > 0) {
+                allErrors = result.errors;
+            }
+
+            // Ajouter les erreurs SoldesReels
+            if (soldesErrors.length > 0) {
+                allErrors = allErrors.concat(soldesErrors);
+            }
+
+            // Stocker pour affichage plus tard
+            window.importResult = {
+                totalImported,
+                totalUpdated,
+                soldesImported,
+                soldesUpdated,
+                selectedMonths
+            };
+        } else {
+            allErrors.push(result.error || 'Erreur inconnue');
+        }
+    } catch (error) {
+        allErrors.push('Erreur réseau - ' + error.message);
+    }
+
+    // Arrêter le polling des logs
+    stopPollingLogs();
+
+    // Afficher les résultats
+    progressContainer.classList.add('hidden');
+    resultsContainer.classList.remove('hidden');
+
+    if (allErrors.length === 0) {
+        resultsContainer.className = 'alert alert-success';
+        const soldesImported = window.importResult?.soldesImported || 0;
+        const soldesUpdated = window.importResult?.soldesUpdated || 0;
+
+        let successHtml = '<svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg><div><h3 class="font-bold">Import réussi !</h3><div class="text-sm">';
+        successHtml += '<p><strong>Périmètre:</strong> ' + getImportScopeLabel(window.importResult?.selectedMonths || selectedMonths) + '</p>';
+        successHtml += '<p><strong>Table DATA:</strong> ' + totalImported + ' nouvelle(s) entrée(s), ' + totalUpdated + ' mise(s) à jour</p>';
+
+        if (soldesImported > 0 || soldesUpdated > 0) {
+            successHtml += '<p><strong>Table SoldesReels:</strong> ' + soldesImported + ' nouvelle(s) entrée(s), ' + soldesUpdated + ' mise(s) à jour</p>';
+        }
+
+        successHtml += '</div></div>';
+        resultsContainer.innerHTML = successHtml;
+
+        // Recharger la page après 2 secondes
+        setTimeout(() => {
+            location.reload();
+        }, 2000);
+    } else {
+        resultsContainer.className = 'alert alert-warning';
+        const soldesImported = window.importResult?.soldesImported || 0;
+        const soldesUpdated = window.importResult?.soldesUpdated || 0;
+
+        let errorsHtml = allErrors.slice(0, 10).map(err => '<li>' + err + '</li>').join('');
+        if (allErrors.length > 10) {
+            errorsHtml += '<li>... et ' + (allErrors.length - 10) + ' autres erreurs</li>';
+        }
+
+        let warningHtml = '<svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg><div><h3 class="font-bold">Import terminé avec des avertissements</h3><div class="text-sm">';
+        warningHtml += '<p><strong>Périmètre:</strong> ' + getImportScopeLabel(window.importResult?.selectedMonths || selectedMonths) + '</p>';
+        warningHtml += '<p><strong>Table DATA:</strong> ' + totalImported + ' nouvelle(s), ' + totalUpdated + ' mise(s) à jour</p>';
+
+        if (soldesImported > 0 || soldesUpdated > 0) {
+            warningHtml += '<p><strong>Table SoldesReels:</strong> ' + soldesImported + ' nouvelle(s), ' + soldesUpdated + ' mise(s) à jour</p>';
+        }
+
+        warningHtml += '<p class="text-error mt-2">' + allErrors.length + ' erreur(s):</p><ul class="list-disc list-inside max-h-32 overflow-y-auto">' + errorsHtml + '</ul></div></div>';
+        resultsContainer.innerHTML = warningHtml;
+    }
+
+    importBtn.disabled = false;
+}
+
+// ✅ Fonctions de polling des logs en temps réel
+function startPollingLogs(sessionId) {
+    const logsContent = document.getElementById('logsContent');
+    let lastLogCount = 0;
+
+    // Fonction pour récupérer les logs
+    async function fetchLogs() {
+        try {
+            const response = await fetch(`/comptabilite/import/progress/${sessionId}/`);
+            const data = await response.json();
+
+            if (data.success && data.logs) {
+                // Afficher uniquement les nouveaux logs
+                if (data.logs.length > lastLogCount) {
+                    for (let i = lastLogCount; i < data.logs.length; i++) {
+                        const log = data.logs[i];
+                        addLogEntry(log);
+                    }
+                    lastLogCount = data.logs.length;
+
+                    // Auto-scroll vers le bas
+                    logsContent.scrollTop = logsContent.scrollHeight;
+                }
+            }
+        } catch (error) {
+            console.error('Erreur polling logs:', error);
+        }
+    }
+
+    // Premier appel immédiat
+    fetchLogs();
+
+    // Polling toutes les 500ms
+    pollingInterval = setInterval(fetchLogs, 500);
+}
+
+function stopPollingLogs() {
+    if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+    }
+}
+
+function addLogEntry(log) {
+    const logsContent = document.getElementById('logsContent');
+    const logDiv = document.createElement('div');
+    logDiv.className = 'text-xs';
+
+    // Extraire l'icône du message si elle existe
+    let icon = '';
+    let message = log.message;
+
+    if (message.includes('🔌')) icon = '🔌';
+    else if (message.includes('📖')) icon = '📖';
+    else if (message.includes('✅')) icon = '✅';
+    else if (message.includes('💾')) icon = '💾';
+    else if (message.includes('⏳')) icon = '⏳';
+    else if (message.includes('🔍')) icon = '🔍';
+    else if (message.includes('ℹ️')) icon = 'ℹ️';
+    else if (message.includes('⚠️')) icon = '⚠️';
+    else if (message.includes('❌')) icon = '❌';
+
+    // Déterminer la couleur selon l'icône
+    let textColor = 'text-base-content';
+    if (icon === '✅') textColor = 'text-success';
+    else if (icon === '⚠️') textColor = 'text-warning';
+    else if (icon === '❌') textColor = 'text-error';
+    else if (icon === '⏳') textColor = 'text-info';
+
+    // Extraire l'heure du timestamp
+    const timestamp = new Date(log.timestamp);
+    const timeStr = timestamp.toLocaleTimeString('fr-FR');
+
+    logDiv.innerHTML = `<span class="text-base-content/50">[${timeStr}]</span> <span class="${textColor}">${message}</span>`;
+
+    logsContent.appendChild(logDiv);
+}
+
+async function clearAllData() {
+    if (!confirm('Etes-vous sur de vouloir supprimer vos donnees DiameX importees ? Cette action est irreversible.')) {
+        return;
+    }
+
+    const csrftoken = getCookie('csrftoken');
+
+    try {
+        const response = await fetch('/comptabilite/import/clear/', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': csrftoken,
+            }
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert(result.deleted + ' entrees supprimees avec succes');
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        alert('Erreur reseau: ' + error.message);
+    }
+}
+
+async function deleteFileData(fichierSource) {
+    if (!fichierSource) {
+        alert('Nom de fichier invalide.');
+        return;
+    }
+
+    if (!confirm('Etes-vous sur de vouloir supprimer les donnees importees du fichier "' + fichierSource + '" ?')) {
+        return;
+    }
+
+    const csrftoken = getCookie('csrftoken');
+
+    try {
+        const response = await fetch('/comptabilite/import/delete-file/', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': csrftoken,
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({
+                fichier_source: fichierSource
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert(result.message);
+            location.reload();
+        } else {
+            alert('Erreur: ' + (result.error || 'Suppression impossible'));
+        }
+    } catch (error) {
+        alert('Erreur reseau: ' + error.message);
+    }
+}
+const LOCAL_AGENT_URL = 'http://127.0.0.1:8765';
+const LOCAL_AGENT_ACTIVE_JOB_KEY = 'hydria_local_import_active_job_v1';
+const LOCAL_EMPLOYE_SURNOM = "{{ employe.surnom|default_if_none:''|escapejs }}";
+const LOCAL_EMPLOYE_NOM = "{{ employe.nom|default_if_none:''|escapejs }}";
+let localAgentStatusPolling = null;
+const monthSelections = {
+    server: [],
+    local: []
+};
+
+function monthLabel(value) {
+    if (!value || value.length !== 7) {
+        return value;
+    }
+    const [year, month] = value.split('-');
+    return `${month}/${year}`;
+}
+
+function renderMonthSelections(scope) {
+    const container = document.getElementById(scope === 'server' ? 'serverSelectedMonths' : 'localSelectedMonths');
+    if (!container) {
+        return;
+    }
+    const values = monthSelections[scope] || [];
+    if (!values.length) {
+        container.innerHTML = '<span class="text-xs text-base-content/50">Tous les mois seront importes.</span>';
+        return;
+    }
+    container.innerHTML = values.map(value =>
+        `<span class="badge badge-primary gap-2">${monthLabel(value)}<button type="button" class="ml-1" onclick="removeMonthSelection('${scope}', '${value}')">x</button></span>`
+    ).join('');
+}
+
+function addMonthSelection(scope) {
+    const picker = document.getElementById(scope === 'server' ? 'serverMonthPicker' : 'localMonthPicker');
+    if (!picker || !picker.value) {
+        return;
+    }
+    if (!monthSelections[scope].includes(picker.value)) {
+        monthSelections[scope].push(picker.value);
+        monthSelections[scope].sort();
+    }
+    picker.value = '';
+    renderMonthSelections(scope);
+}
+
+function removeMonthSelection(scope, value) {
+    monthSelections[scope] = (monthSelections[scope] || []).filter(item => item !== value);
+    renderMonthSelections(scope);
+}
+
+function clearMonthSelections(scope) {
+    monthSelections[scope] = [];
+    renderMonthSelections(scope);
+}
+
+function getSelectedMonths(scope) {
+    return [...(monthSelections[scope] || [])];
+}
+
+function getImportScopeLabel(months) {
+    const values = Array.isArray(months) ? months.filter(Boolean) : [];
+    if (!values.length) {
+        return 'Import complet';
+    }
+    return `Import partiel: ${values.join(', ')}`;
+}
+
+function getLocalSelectedBases() {
+    return Array.from(document.querySelectorAll('.local-base-checkbox:checked')).map(cb => ({
+        path: cb.dataset.path,
+        nom: cb.dataset.nom || cb.dataset.path
+    }));
+}
+
+function escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function getLocalAgentUi() {
+    return {
+        panel: document.getElementById('localAgentProgressPanel'),
+        progressBar: document.getElementById('localAgentProgressBar'),
+        progressText: document.getElementById('localAgentProgressText'),
+        results: document.getElementById('localAgentResults'),
+        summary: document.getElementById('localAgentSummary')
+    };
+}
+
+function resetLocalAgentUi() {
+    const ui = getLocalAgentUi();
+    ui.panel.classList.remove('hidden');
+    ui.progressBar.value = 0;
+    ui.progressText.textContent = '';
+    ui.results.innerHTML = '';
+    ui.summary.innerHTML = '';
+    return ui;
+}
+
+function appendLocalAgentLog(message, toneClass = 'text-base-content/70') {
+    const ui = getLocalAgentUi();
+    const line = document.createElement('div');
+    line.className = toneClass;
+    line.textContent = message;
+    ui.results.appendChild(line);
+    ui.results.scrollTop = ui.results.scrollHeight;
+}
+
+function updateLocalAgentProgress(state, detailText) {
+    const ui = getLocalAgentUi();
+    let currentProgress = 0;
+
+    if (state.currentScanTotal > 0) {
+        currentProgress = state.currentScanUploaded / state.currentScanTotal;
+    } else if (state.currentFileImported) {
+        currentProgress = 1;
+    }
+
+    const totalPercent = state.totalFiles
+        ? Math.min(100, Math.round(((state.completedFiles + currentProgress) / state.totalFiles) * 100))
+        : 0;
+
+    ui.progressBar.value = totalPercent;
+    ui.progressText.textContent = detailText || `${totalPercent}%`;
+}
+
+function stopLocalAgentStatusPolling() {
+    if (localAgentStatusPolling) {
+        clearInterval(localAgentStatusPolling);
+        localAgentStatusPolling = null;
+    }
+}
+
+function renderLocalAgentSummary(data, importScans) {
+    const ui = getLocalAgentUi();
+    const months = data.selected_months || [];
+    const lines = (data.results || []).map(r => {
+        const scanUpload = r.scan_upload || null;
+        const ok = r.success ? 'OK' : 'ERREUR';
+        const cls = r.success ? 'text-success' : 'text-error';
+        const firstScanError = scanUpload && scanUpload.errors && scanUpload.errors.length ? scanUpload.errors[0] : '';
+        const detail = r.error ? ` - ${escapeHtml(r.error)}` : (firstScanError ? ` - ${escapeHtml(firstScanError)}` : '');
+        let scanLine = '';
+        if (scanUpload) {
+            scanLine = ` <span class="text-base-content/70">| scans web: ${scanUpload.uploaded || 0}`;
+            if (scanUpload.skipped_existing) {
+                scanLine += `, deja sur VPS: ${scanUpload.skipped_existing}`;
+            }
+            if (scanUpload.missing_files) {
+                scanLine += `, introuvables: ${scanUpload.missing_files}`;
+            }
+            if (scanUpload.converted) {
+                scanLine += `, convertis: ${scanUpload.converted}`;
+            }
+            scanLine += '</span>';
+        } else if (!importScans) {
+            scanLine = ' <span class="text-warning">| scans web: desactives</span>';
+        } else {
+            scanLine = ' <span class="text-warning">| scans web: aucun retour agent</span>';
+        }
+        return `<div class="${cls}">[${ok}] ${escapeHtml(r.nom)}${detail}${scanLine}</div>`;
+    });
+
+    if (!lines.length) {
+        ui.summary.innerHTML = '';
+        return;
+    }
+
+    ui.summary.innerHTML = `
+        <div class="divider my-1 text-[11px]">Resume final</div>
+        <div class="text-info">${escapeHtml(getImportScopeLabel(months))}</div>
+        <div class="space-y-1">${lines.join('')}</div>
+    `;
+}
+
+function createLocalAgentStreamState(totalFiles, importScans) {
+    return {
+        totalFiles,
+        importScans,
+        completedFiles: 0,
+        currentFileIndex: 0,
+        currentFileName: '',
+        currentFileImported: false,
+        currentScanTotal: 0,
+        currentScanUploaded: 0
+    };
+}
+
+function getLocalAgentEventError(event) {
+    const raw = event && (event.error || event.message || '');
+    return String(raw || '').replace(/\s+/g, ' ').trim();
+}
+
+function handleLocalAgentStreamEvent(event, state, statusEl) {
+    const filePrefix = event.file_index && event.total_files
+        ? `[${event.file_index}/${event.total_files}] `
+        : '';
+
+    switch (event.type) {
+        case 'start':
+            state.totalFiles = event.total_files || state.totalFiles;
+            statusEl.textContent = event.import_scans
+                ? 'Import via agent local en cours (compta + scans)...'
+                : 'Import via agent local en cours (compta seulement)...';
+            const monthsText = (event.selected_months || []).length
+                ? ` Mois: ${(event.selected_months || []).join(', ')}.`
+                : ' Tous les mois.';
+            appendLocalAgentLog(
+                `Demarrage import local: ${state.totalFiles} base(s), scans ${event.import_scans ? 'actifs' : 'desactives'}.${monthsText}`,
+                'text-info'
+            );
+            updateLocalAgentProgress(state, 'Preparation...');
+            break;
+        case 'file_start':
+            state.currentFileIndex = event.file_index || 0;
+            state.currentFileName = event.nom || '';
+            state.currentFileImported = false;
+            state.currentScanTotal = 0;
+            state.currentScanUploaded = 0;
+            statusEl.textContent = `${filePrefix}Lecture de ${event.nom}...`;
+            appendLocalAgentLog(`${filePrefix}Lecture de ${event.nom}...`, 'text-base-content');
+            updateLocalAgentProgress(state, `${state.completedFiles}/${state.totalFiles} base(s) terminee(s)`);
+            break;
+        case 'file_reading':
+            statusEl.textContent = `${filePrefix}Lecture Access en cours pour ${event.nom}...`;
+            break;
+        case 'file_read':
+            statusEl.textContent = `${filePrefix}Compta lue pour ${event.nom}, envoi au serveur...`;
+            appendLocalAgentLog(
+                `${filePrefix}${event.data_rows || 0} lignes DATA, ${event.soldes_rows || 0} lignes SoldesReels lues.`,
+                'text-base-content/70'
+            );
+            break;
+        case 'file_imported':
+            if (event.success) {
+                statusEl.textContent = `${filePrefix}Compta importee pour ${event.nom}.`;
+                appendLocalAgentLog(`${filePrefix}Compta envoyee au serveur.`, 'text-success');
+                if (!state.importScans) {
+                    state.currentFileImported = true;
+                }
+            } else {
+                const importError = getLocalAgentEventError(event) || 'Erreur import compta';
+                statusEl.textContent = `${filePrefix}Erreur import compta pour ${event.nom}.`;
+                appendLocalAgentLog(`${filePrefix}ERREUR compta: ${importError}`, 'text-error');
+            }
+            updateLocalAgentProgress(state, `${state.completedFiles}/${state.totalFiles} base(s) terminee(s)`);
+            break;
+        case 'scan_resolved':
+            statusEl.textContent = `${filePrefix}Scans detectes pour ${event.nom}: ${event.found_scans || 0}.`;
+            appendLocalAgentLog(
+                `${filePrefix}Scans detectes: ${event.found_scans || 0}, introuvables: ${event.missing_files || 0}.`,
+                'text-base-content/70'
+            );
+            break;
+        case 'scan_check_existing':
+            statusEl.textContent =
+                `${filePrefix}Verification scans deja sur VPS pour ${event.nom}: ` +
+                `${event.checked || 0}/${event.total_candidates || 0}`;
+            break;
+        case 'scan_plan':
+            state.currentScanTotal = event.total_to_upload || 0;
+            state.currentScanUploaded = 0;
+            if (!state.currentScanTotal) {
+                state.currentFileImported = true;
+            }
+            statusEl.textContent =
+                `${filePrefix}Scans ${event.nom}: ${event.total_to_upload || 0} a copier, ` +
+                `${event.skipped_existing || 0} deja sur VPS, ${event.missing_files || 0} introuvables.`;
+            appendLocalAgentLog(
+                `${filePrefix}Plan scans: a copier ${event.total_to_upload || 0}, ` +
+                `deja sur VPS ${event.skipped_existing || 0}, introuvables ${event.missing_files || 0}.`,
+                'text-info'
+            );
+            updateLocalAgentProgress(
+                state,
+                state.currentScanTotal
+                    ? `0/${state.currentScanTotal} scan(s) copies`
+                    : `${state.completedFiles}/${state.totalFiles} base(s) terminee(s)`
+            );
+            break;
+        case 'scan_upload_progress':
+            state.currentScanTotal = event.total_to_upload || state.currentScanTotal;
+            state.currentScanUploaded = event.uploaded_so_far || 0;
+            if (event.stage === 'retry') {
+                statusEl.textContent =
+                    `${filePrefix}Nouvel essai lot scans ${event.batch_index || 0}/${event.batch_count || 0} ` +
+                    `(${event.attempt || 1}/${event.max_attempts || 1})...`;
+                appendLocalAgentLog(
+                    `${filePrefix}Relance lot scans ${event.batch_index || 0}/${event.batch_count || 0} ` +
+                    `(${event.attempt || 1}/${event.max_attempts || 1})${event.error ? ` - ${event.error}` : ''}.`,
+                    'text-warning'
+                );
+            } else {
+                statusEl.textContent =
+                    `${filePrefix}Copie scans ${event.nom}: ${state.currentScanUploaded}/${state.currentScanTotal} copies, ` +
+                    `${event.remaining || 0} restants.`;
+            }
+            if (event.stage === 'uploaded' || event.stage === 'error') {
+                appendLocalAgentLog(
+                    `${filePrefix}Batch ${event.batch_index || 0}/${event.batch_count || 0}: ` +
+                    `${state.currentScanUploaded}/${state.currentScanTotal} copies, ` +
+                    `${event.remaining || 0} restants, erreurs ${event.errors_count || 0}.`,
+                    event.stage === 'error' ? 'text-error' : 'text-success'
+                );
+            }
+            updateLocalAgentProgress(
+                state,
+                state.currentScanTotal
+                    ? `${state.currentScanUploaded}/${state.currentScanTotal} scan(s) copies`
+                    : `${state.completedFiles}/${state.totalFiles} base(s) terminee(s)`
+            );
+            break;
+        case 'scan_done':
+            state.currentScanTotal = event.total_to_upload || state.currentScanTotal;
+            state.currentScanUploaded = event.uploaded || state.currentScanUploaded;
+            state.currentFileImported = true;
+            statusEl.textContent =
+                `${filePrefix}Scans termines pour ${event.nom}: ${event.uploaded || 0} copies, ` +
+                `${event.skipped_existing || 0} deja sur VPS, ${event.missing_files || 0} introuvables.`;
+            appendLocalAgentLog(
+                `${filePrefix}Scans termines: copies ${event.uploaded || 0}, deja sur VPS ${event.skipped_existing || 0}, ` +
+                `introuvables ${event.missing_files || 0}, convertis ${event.converted || 0}, erreurs ${event.errors_count || 0}.`,
+                event.success ? 'text-success' : 'text-error'
+            );
+            updateLocalAgentProgress(
+                state,
+                state.currentScanTotal
+                    ? `${state.currentScanUploaded}/${state.currentScanTotal} scan(s) copies`
+                    : `${state.completedFiles}/${state.totalFiles} base(s) terminee(s)`
+            );
+            break;
+        case 'scan_skipped':
+            state.currentFileImported = true;
+            if (event.reason === 'disabled') {
+                appendLocalAgentLog(`${filePrefix}Upload scans desactive pour ${event.nom}.`, 'text-warning');
+            } else {
+                appendLocalAgentLog(`${filePrefix}Upload scans ignore pour ${event.nom} car la compta est en erreur.`, 'text-warning');
+            }
+            updateLocalAgentProgress(state, `${state.completedFiles}/${state.totalFiles} base(s) terminee(s)`);
+            break;
+        case 'file_done':
+            state.completedFiles = Math.max(state.completedFiles, event.file_index || 0);
+            state.currentFileImported = false;
+            state.currentScanTotal = 0;
+            state.currentScanUploaded = 0;
+            appendLocalAgentLog(
+                `${filePrefix}${event.success ? 'OK' : 'ERREUR'} ${event.nom}${event.error ? ` - ${getLocalAgentEventError(event)}` : ''}`,
+                event.success ? 'text-success' : 'text-error'
+            );
+            updateLocalAgentProgress(state, `${state.completedFiles}/${state.totalFiles} base(s) terminee(s)`);
+            break;
+        case 'done':
+            updateLocalAgentProgress({ ...state, completedFiles: state.totalFiles, currentFileImported: false, currentScanTotal: 0, currentScanUploaded: 0 }, '100%');
+            if (event.error) {
+                appendLocalAgentLog(`ERREUR flux agent: ${getLocalAgentEventError(event)}`, 'text-error');
+            }
+            renderLocalAgentSummary(event, state.importScans);
+            statusEl.textContent = event.success ? 'Import termine avec succes.' : 'Import termine avec erreurs.';
+            break;
+        default:
+            break;
+    }
+}
+
+async function testLocalAgent() {
+    const statusEl = document.getElementById('localAgentStatus');
+    statusEl.textContent = 'Test de connexion en cours...';
+
+    try {
+        const response = await fetch(`${LOCAL_AGENT_URL}/health`, { method: 'GET' });
+        const data = await response.json();
+        if (data.ok) {
+            statusEl.textContent = 'Agent local connecte. Serveur: ' + (data.server_url || 'N/A');
+            return true;
+        }
+        statusEl.textContent = 'Agent local non disponible.';
+        return false;
+    } catch (error) {
+        statusEl.textContent = 'Agent local non lance.';
+        return false;
+    }
+}
+
+function saveActiveLocalImportJob(payload) {
+    try {
+        localStorage.setItem(LOCAL_AGENT_ACTIVE_JOB_KEY, JSON.stringify(payload));
+    } catch (error) {
+        console.warn('Impossible de memoriser la tache import locale:', error);
+    }
+}
+
+function loadActiveLocalImportJob() {
+    try {
+        const raw = localStorage.getItem(LOCAL_AGENT_ACTIVE_JOB_KEY);
+        const payload = raw ? JSON.parse(raw) : null;
+        return payload && payload.job_id ? payload : null;
+    } catch (error) {
+        localStorage.removeItem(LOCAL_AGENT_ACTIVE_JOB_KEY);
+        return null;
+    }
+}
+
+function clearActiveLocalImportJob(jobId = '') {
+    const activeJob = loadActiveLocalImportJob();
+    if (!jobId || !activeJob || activeJob.job_id === jobId) {
+        localStorage.removeItem(LOCAL_AGENT_ACTIVE_JOB_KEY);
+    }
+}
+
+function waitLocalAgentRetry(delayMs) {
+    return new Promise(resolve => setTimeout(resolve, delayMs));
+}
+
+async function startLocalAgentImportFallback(payload, importScans, statusEl, resumeOnly = false) {
+    const state = createLocalAgentStreamState((payload.files || []).length, importScans);
+    let nextEventIndex = 0;
+    let consecutiveConnectionErrors = 0;
+    let missingJobAttempts = 0;
+    let startRequestFailed = false;
+
+    if (!resumeOnly) {
+        saveActiveLocalImportJob(payload);
+        // Le traitement tourne dans l'agent et le navigateur suit le job separement.
+        // Une mise en veille peut couper cette requete sans perdre l'identifiant du job.
+        fetch(`${LOCAL_AGENT_URL}/import`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }).catch(error => {
+            startRequestFailed = true;
+            console.warn('Connexion de lancement import interrompue:', error);
+        });
+    } else {
+        appendLocalAgentLog(
+            `Reprise de la tache ${payload.job_id}. Les scans deja envoyes ne seront pas recopies.`,
+            'text-info'
+        );
+    }
+
+    while (true) {
+        try {
+            const response = await fetch(`${LOCAL_AGENT_URL}/import-status/${encodeURIComponent(payload.job_id)}?after=${nextEventIndex}`);
+            if (response.status === 404) {
+                missingJobAttempts += 1;
+                if (resumeOnly && missingJobAttempts >= 3) {
+                    throw new Error('saved_job_not_found');
+                }
+                if (startRequestFailed && missingJobAttempts >= 5) {
+                    throw new Error('agent_unavailable');
+                }
+                await waitLocalAgentRetry(1000);
+                continue;
+            }
+
+            const data = await response.json();
+            if (!response.ok || !data.ok) {
+                throw new Error(data.error || 'agent_status_error');
+            }
+
+            consecutiveConnectionErrors = 0;
+            missingJobAttempts = 0;
+
+            const events = data.events || [];
+            events.forEach(event => {
+                handleLocalAgentStreamEvent(event, state, statusEl);
+            });
+            nextEventIndex = data.next_index || nextEventIndex + events.length;
+
+            if (data.done) {
+                clearActiveLocalImportJob(payload.job_id);
+                if (!events.some(event => event.type === 'done')) {
+                    if (data.result) {
+                        renderLocalAgentSummary(data.result, importScans);
+                        statusEl.textContent = data.result.success ? 'Import termine avec succes.' : 'Import termine avec erreurs.';
+                        updateLocalAgentProgress({ ...state, completedFiles: state.totalFiles, currentFileImported: false, currentScanTotal: 0, currentScanUploaded: 0 }, '100%');
+                    } else if (data.error) {
+                        appendLocalAgentLog(`ERREUR import local: ${data.error}`, 'text-error');
+                        statusEl.textContent = 'Import termine avec erreurs.';
+                    }
+                }
+                return data.result || data;
+            }
+        } catch (error) {
+            if (error.message === 'saved_job_not_found' || error.message === 'agent_unavailable') {
+                throw error;
+            }
+
+            consecutiveConnectionErrors += 1;
+            statusEl.textContent = 'Connexion interrompue. Reprise automatique des que l ordinateur est actif...';
+            if (consecutiveConnectionErrors === 1) {
+                appendLocalAgentLog(
+                    'Connexion avec l agent interrompue. La tache est conservee et sera reprise automatiquement.',
+                    'text-warning'
+                );
+            }
+        }
+
+        await waitLocalAgentRetry(consecutiveConnectionErrors ? 2000 : 700);
+    }
+}
+
+async function startLocalAgentImportStream(payload, importScans, statusEl) {
+    const state = createLocalAgentStreamState((payload.files || []).length, importScans);
+    const response = await fetch(`${LOCAL_AGENT_URL}/import-stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok || !response.body) {
+        throw new Error('stream_unavailable');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let sawDoneEvent = false;
+    let receivedAnyEvent = false;
+
+    while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+            break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        let newlineIndex = buffer.indexOf('\n');
+
+        while (newlineIndex !== -1) {
+            const rawLine = buffer.slice(0, newlineIndex).trim();
+            buffer = buffer.slice(newlineIndex + 1);
+
+            if (rawLine) {
+                const event = JSON.parse(rawLine);
+                receivedAnyEvent = true;
+                handleLocalAgentStreamEvent(event, state, statusEl);
+                if (event.type === 'done') {
+                    sawDoneEvent = true;
+                }
+            }
+
+            newlineIndex = buffer.indexOf('\n');
+        }
+    }
+
+    buffer += decoder.decode();
+    const lastLine = buffer.trim();
+    if (lastLine) {
+        const event = JSON.parse(lastLine);
+        receivedAnyEvent = true;
+        handleLocalAgentStreamEvent(event, state, statusEl);
+        if (event.type === 'done') {
+            sawDoneEvent = true;
+        }
+    }
+
+    if (!sawDoneEvent) {
+        throw new Error(receivedAnyEvent ? 'stream_interrupted' : 'stream_unavailable');
+    }
+}
+
+async function startLocalAgentImport() {
+    const btn = document.getElementById('localImportBtn');
+    const statusEl = document.getElementById('localAgentStatus');
+
+    const activeJob = loadActiveLocalImportJob();
+    if (activeJob) {
+        btn.disabled = true;
+        resetLocalAgentUi();
+        statusEl.textContent = 'Recherche de l import interrompu...';
+        try {
+            await startLocalAgentImportFallback(
+                activeJob,
+                Boolean(activeJob.import_scans),
+                statusEl,
+                true
+            );
+            return;
+        } catch (resumeError) {
+            if (resumeError.message !== 'saved_job_not_found') {
+                statusEl.textContent = 'Impossible de reprendre la tache pour le moment.';
+                appendLocalAgentLog(resumeError.message || 'Agent local inaccessible.', 'text-error');
+                return;
+            }
+            clearActiveLocalImportJob(activeJob.job_id);
+            appendLocalAgentLog(
+                'L ancienne tache n existe plus dans l agent. Le nouvel import verifiera le VPS et ignorera les scans deja presents.',
+                'text-warning'
+            );
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    const selectedMode = document.querySelector('input[name="local_import_mode"]:checked');
+    const importMode = selectedMode ? selectedMode.value : 'lines_only';
+    const importScans = importMode === 'lines_and_scans';
+    const batchSizeEl = document.getElementById('localScanBatchSize');
+    const scanBatchSize = batchSizeEl ? parseInt(batchSizeEl.value || '5', 10) : 5;
+    const selectedMonths = getSelectedMonths('local');
+
+    const files = getLocalSelectedBases();
+    if (!files.length) {
+        alert('Veuillez selectionner au moins une base DiameX.');
+        return;
+    }
+
+    if (!importScans) {
+        const confirmed = confirm(
+            "Le mode selectionne importe seulement les lignes comptables.\n\n" +
+            "Aucun scan ne sera copie sur le serveur et la colonne 'Scan web' restera 'Local seul'.\n\n" +
+            "Continuer quand meme ?"
+        );
+        if (!confirmed) {
+            return;
+        }
+    }
+
+    let employe = LOCAL_EMPLOYE_SURNOM || LOCAL_EMPLOYE_NOM;
+    if (!employe) {
+        employe = prompt('Entrez votre surnom employe (ex: HERIZO):');
+        if (!employe) {
+            return;
+        }
+    }
+
+    btn.disabled = true;
+    resetLocalAgentUi();
+    statusEl.textContent = importScans
+        ? `Import via agent local en cours (compta + scans) - ${getImportScopeLabel(selectedMonths)}...`
+        : `Import via agent local en cours (compta seulement) - ${getImportScopeLabel(selectedMonths)}...`;
+
+    try {
+        const payload = {
+            files,
+            employe_surnom: employe,
+            import_scans: importScans,
+            selected_months: selectedMonths,
+            scan_batch_size: scanBatchSize,
+            job_id: `job_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+        };
+
+        await startLocalAgentImportFallback(payload, importScans, statusEl);
+    } catch (error) {
+        stopLocalAgentStatusPolling();
+        statusEl.textContent = 'Agent local non lance ou inaccessible. La tache reste disponible pour une reprise.';
+        appendLocalAgentLog(error.message || 'Erreur de connexion agent local.', 'text-error');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+// ========== Fonctions pour Import LOCAL depuis Windows ==========
+
+function openLocalImportInfo() {
+    document.getElementById('localImportModal').showModal();
+}
+
+function closeLocalImportModal() {
+    document.getElementById('localImportModal').close();
+}
+
+// Garder ces fonctions accessibles aux anciennes versions HTML encore en cache.
+window.openLocalImportInfo = openLocalImportInfo;
+window.closeLocalImportModal = closeLocalImportModal;
+
+renderMonthSelections('server');
+renderMonthSelections('local');
+
+function copyToClipboard(text) {
+    // Créer un élément textarea temporaire
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+
+    // Sélectionner et copier
+    textarea.select();
+    textarea.setSelectionRange(0, 99999); // Pour mobile
+
+    try {
+        document.execCommand('copy');
+
+        // Notification visuelle
+        const btn = event.target.closest('button');
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<i class="fas fa-check mr-1"></i>Copié !';
+        btn.classList.add('btn-success');
+
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+            btn.classList.remove('btn-success');
+        }, 2000);
+    } catch (err) {
+        alert('Erreur de copie. Veuillez copier manuellement.');
+    }
+
+    // Nettoyer
+    document.body.removeChild(textarea);
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    const openLocalImportInfoBtn = document.getElementById('openLocalImportInfoBtn');
+    const closeLocalImportModalBtn = document.getElementById('closeLocalImportModalBtn');
+
+    if (openLocalImportInfoBtn) {
+        openLocalImportInfoBtn.addEventListener('click', openLocalImportInfo);
+    }
+    if (closeLocalImportModalBtn) {
+        closeLocalImportModalBtn.addEventListener('click', closeLocalImportModal);
+    }
+
+    const deleteButtons = document.querySelectorAll('.js-delete-file-btn');
+    deleteButtons.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            const fichier = btn.getAttribute('data-fichier') || '';
+            deleteFileData(fichier);
+        });
+    });
+});
+
+// Fallback pour compatibilité avec anciens handlers inline/cache navigateur
+window.deleteFileData = deleteFileData;
+</script>
+{% endblock %}
+

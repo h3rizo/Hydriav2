@@ -1,0 +1,1028 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% load static %}
+
+{% block title %}Facturation des Relevés{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/workflow_facturation.js' %}"></script>
+<script src="{% static 'js/print_all_tickets.js' %}?v=2026073002"></script>
+<script src="{% static 'js/print_factures_a4.js' %}?v=2026081501"></script>
+{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- Header -->
+    <div class="flex flex-col gap-3 lg:flex-row lg:justify-between lg:items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">{{ title }}</h1>
+            <p class="text-sm text-gray-500 mt-1">Calcul et impression des factures volumétriques</p>
+        </div>
+        <div class="flex flex-col sm:flex-row gap-2">
+            <a href="{% url 'billing:frais_mvola_list' %}" class="btn btn-outline btn-success btn-sm w-full sm:w-auto">
+                <i class="fas fa-money-bill-transfer mr-2"></i>Frais de transfert MVola
+            </a>
+            <a href="{% url 'billing:releves' %}" class="btn btn-outline btn-sm w-full sm:w-auto">
+                <i class="fas fa-arrow-left mr-2"></i>Retour aux relevés
+            </a>
+        </div>
+    </div>
+
+    <!-- Étape 1: Sélection ouvrage et mois -->
+    <div class="card bg-base-100 shadow-md mb-6">
+        <div class="card-body">
+            <h2 class="card-title mb-4">
+                <i class="fas fa-calendar-check mr-2"></i>Sélection de la période
+            </h2>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- Ouvrage -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Ouvrage *</span>
+                    </label>
+                    <select id="ouvrage-select" class="select select-bordered">
+                        <option value="">Sélectionner un ouvrage</option>
+                        {% for ouvrage in ouvrages %}
+                        <option value="{{ ouvrage.id }}">{{ ouvrage.nom_ouvrage }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Mois de facture -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Mois de facture *</span>
+                    </label>
+                    <input type="month"
+                           id="mois-facture"
+                           class="input input-bordered"
+                           value="{{ mois_actuel }}">
+                    <label class="label">
+                        <span class="label-text-alt">Les relevés du mois précédent seront facturés</span>
+                    </label>
+                </div>
+
+                <!-- Bouton calculer -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">&nbsp;</span></label>
+                    <button onclick="calculerFactures()"
+                            class="btn btn-primary"
+                            id="btn-calculer">
+                        <i class="fas fa-calculator mr-2"></i>Calculer les montants
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Zone de chargement -->
+    <div id="loading-zone" class="hidden">
+        <div class="flex items-center justify-center gap-3 p-6">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+            <span class="text-lg">Calcul en cours...</span>
+        </div>
+    </div>
+
+    <!-- Zone de résultats -->
+    <div id="results-zone" class="hidden">
+        <!-- Stats -->
+        <div class="stats stats-vertical md:stats-horizontal shadow w-full mb-6">
+            <div class="stat">
+                <div class="stat-figure text-primary">
+                    <i class="fas fa-file-invoice fa-2x"></i>
+                </div>
+                <div class="stat-title">Relevés à facturer</div>
+                <div class="stat-value text-primary" id="stat-nb-releves">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-figure text-success">
+                    <i class="fas fa-check-circle fa-2x"></i>
+                </div>
+                <div class="stat-title">Calculés</div>
+                <div class="stat-value text-success" id="stat-nb-success">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-figure text-error">
+                    <i class="fas fa-times-circle fa-2x"></i>
+                </div>
+                <div class="stat-title">Erreurs</div>
+                <div class="stat-value text-error" id="stat-nb-errors">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-figure text-info">
+                    <i class="fas fa-coins fa-2x"></i>
+                </div>
+                <div class="stat-title">Montant total</div>
+                <div class="stat-value text-info" id="stat-montant-total">0 Ar</div>
+            </div>
+        </div>
+
+        <!-- Tableau des relevés -->
+        <div class="card bg-base-100 shadow-md mb-6">
+            <div class="card-body">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="card-title">
+                        <i class="fas fa-list mr-2"></i>Relevés calculés
+                    </h2>
+                    <button onclick="validerFactures()"
+                            class="btn btn-success"
+                            id="btn-valider">
+                        <i class="fas fa-save mr-2"></i>Enregistrer les montants
+                    </button>
+                </div>
+
+                <!-- Filtres -->
+                <div class="flex flex-wrap gap-4 mb-4 items-end">
+                    <div class="form-control w-full max-w-xs">
+                        <label class="label">
+                            <span class="label-text text-xs">Rechercher un abonné</span>
+                        </label>
+                        <div class="join">
+                            <input type="text" id="search-abonne" placeholder="Nom..." class="input input-bordered input-sm join-item w-full" onkeyup="filtrerTableau()">
+                            <button class="btn btn-sm join-item"><i class="fas fa-search"></i></button>
+                        </div>
+                    </div>
+                    <div class="form-control w-full max-w-xs">
+                        <label class="label">
+                            <span class="label-text text-xs">Filtrer par Parcelle</span>
+                        </label>
+                        <select id="filter-parcelle" class="select select-bordered select-sm w-full" onchange="filtrerTableau()">
+                            <option value="">Toutes les parcelles</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="table table-zebra table-sm">
+                        <thead>
+                            <tr>
+                                <th>IDXls</th>
+                                <th>Abonné</th>
+                                <th>Type</th>
+                                <th>Volume facturé (m³)</th>
+                                <th>Abonnement</th>
+                                <th>Conso carte sociale (m³)</th>
+                                <th>Volume non facturé (m³)</th>
+                                <th>Total à payer</th>
+                                <th>Détails</th>
+                            </tr>
+                        </thead>
+                        <tbody id="releves-tbody">
+                            <!-- Rempli par JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="card bg-base-100 shadow-md">
+            <div class="card-body">
+                <h2 class="card-title mb-4">
+                    <i class="fas fa-print mr-2"></i>Impression des factures
+                </h2>
+                <div class="flex flex-wrap gap-4">
+                    <button onclick="imprimerFactures()"
+                            class="btn btn-primary"
+                            id="btn-imprimer"
+                            disabled>
+                        <i class="fas fa-receipt mr-2"></i>Imprimer factures A4
+                    </button>
+                    <button onclick="imprimerRecapSeul()"
+                            class="btn btn-secondary"
+                            id="btn-imprimer-recap"
+                            disabled>
+                        <i class="fas fa-file-invoice mr-2"></i>Imprimer Récap A4
+                    </button>
+                    <button onclick="imprimerRecapMensuel()"
+                            class="btn btn-accent"
+                            id="btn-recap-mensuel">
+                        <i class="fas fa-calendar-alt mr-2"></i>Récap Mensuel
+                    </button>
+                    <button onclick="imprimerGrilleSuiviPaiements()"
+                            class="btn btn-outline btn-success"
+                            id="btn-grille-suivi">
+                        <i class="fas fa-th mr-2"></i>Grille de suivi des paiements
+                    </button>
+                </div>
+                <div id="monthly-recap-status" class="mt-3"></div>
+                <div class="text-sm text-base-content/70 mt-2">
+                    <p><i class="fas fa-info-circle mr-1 text-info"></i>
+                        <strong>Factures A4 :</strong> Deux exemplaires par facture, jusqu a 4 slips par page, sans QR code ni arriéré
+                    </p>
+                    <p><i class="fas fa-info-circle mr-1 text-success"></i>
+                        <strong>Récap A4 :</strong> Tableau récapitulatif des factures calculées (imprimante laser)
+                    </p>
+                    <p><i class="fas fa-info-circle mr-1 text-accent"></i>
+                        <strong>Récap Mensuel :</strong> Toutes les factures du mois/ouvrage sélectionné (avec historique)
+                    </p>
+                    <p><i class="fas fa-info-circle mr-1 text-success"></i>
+                        <strong>Grille de suivi :</strong> Une case par IDXls (dernier chiffre en colonne), avec montant et espace pour pointer « payé » + date
+                    </p>
+                </div>
+                <div class="alert alert-info mt-4">
+                    <i class="fas fa-lightbulb"></i>
+                    <div class="text-sm">
+                        <strong>Astuce :</strong> Vous pouvez voir toutes les factures (nouvelles et déjà imprimées) en recalculant.
+                        Les badges <span class="badge badge-success badge-xs mx-1">Imprimé</span>
+                        <span class="badge badge-warning badge-xs mx-1">Enregistré</span>
+                        <span class="badge badge-ghost badge-xs mx-1">Nouveau</span> vous indiquent le statut de chaque facture.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Zone d'erreurs -->
+    <div id="errors-zone" class="hidden mt-6">
+        <div class="alert alert-error">
+            <i class="fas fa-exclamation-triangle"></i>
+            <div>
+                <h3 class="font-bold">Erreurs de calcul</h3>
+                <div id="errors-list" class="text-sm mt-2"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de détails de calcul -->
+<dialog id="modal-detail-calcul" class="modal">
+    <div class="modal-box max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-calculator mr-2"></i>Détail du calcul
+        </h3>
+
+        <div id="detail-calcul-content">
+            <!-- Rempli par JavaScript -->
+        </div>
+
+        <div class="modal-action">
+            <form method="dialog">
+                <button class="btn">Fermer</button>
+            </form>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<script>
+// Données des relevés calculés
+let relevesCalcules = [];
+
+// Calculer les factures
+async function calculerFactures() {
+    const ouvrageId = document.getElementById('ouvrage-select').value;
+    const moisFacture = document.getElementById('mois-facture').value;
+
+    if (!ouvrageId || !moisFacture) {
+        alert('Veuillez sélectionner un ouvrage et un mois de facture');
+        return;
+    }
+
+    // Afficher le chargement
+    document.getElementById('loading-zone').classList.remove('hidden');
+    document.getElementById('results-zone').classList.add('hidden');
+    document.getElementById('errors-zone').classList.add('hidden');
+    document.getElementById('btn-calculer').disabled = true;
+
+    try {
+        const response = await fetch('{% url "billing:api_calculer_factures" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                ouvrage_id: ouvrageId,
+                mois_facture: moisFacture
+            })
+        });
+
+        const data = await response.json();
+
+        console.log('Response data:', data); // Debug
+
+        if (data.success) {
+            relevesCalcules = data.releves || [];
+            const errors = data.errors || [];
+
+            // Mettre à jour les stats
+            document.getElementById('stat-nb-releves').textContent = data.nb_releves || 0;
+            document.getElementById('stat-nb-success').textContent = relevesCalcules.length;
+            document.getElementById('stat-nb-errors').textContent = errors.length;
+
+            const montantTotal = relevesCalcules.reduce((sum, r) => sum + (r.montant_calcule || 0), 0);
+            document.getElementById('stat-montant-total').textContent = montantTotal.toLocaleString('fr-FR') + ' Ar';
+
+            // Afficher le tableau
+            if (relevesCalcules.length > 0) {
+                populateParcelleFilter(relevesCalcules);
+                afficherReleves(relevesCalcules);
+                // Activer les boutons d'impression dès qu'il y a des relevés
+                document.getElementById('btn-imprimer').disabled = false;
+                document.getElementById('btn-imprimer-recap').disabled = false;
+            }
+
+            // Afficher les erreurs si présentes
+            if (errors.length > 0) {
+                afficherErreurs(errors);
+            }
+
+            // Afficher les résultats
+            document.getElementById('results-zone').classList.remove('hidden');
+
+        } else {
+            alert('Erreur: ' + (data.error || 'Erreur inconnue'));
+        }
+
+    } catch (error) {
+        console.error('Erreur complète:', error);
+        alert('Erreur réseau: ' + error.message);
+    } finally {
+        document.getElementById('loading-zone').classList.add('hidden');
+        document.getElementById('btn-calculer').disabled = false;
+    }
+}
+
+// Fonction pour générer l'icône du type de point d'eau
+function getPointEauIcon(typeNom) {
+    if (!typeNom) return '<i class="fas fa-tint text-base-content/50 text-lg mr-1"></i>';
+
+    const typeUpper = typeNom.toUpperCase();
+
+    if (typeUpper.includes('KIOSQUE')) {
+        return '<i class="fas fa-store text-info text-lg mr-1" title="' + typeNom + '"></i>';
+    } else if (typeUpper.includes('BI') || typeUpper.includes('BORNE')) {
+        return '<i class="fas fa-faucet text-primary text-lg mr-1" title="' + typeNom + '"></i>';
+    } else if (typeUpper.includes('BP') || typeUpper.includes('BRANCHEMENT') || typeUpper.includes('PRIVÉ') || typeUpper.includes('PRIVE')) {
+        return '<i class="fas fa-home text-success text-lg mr-1" title="' + typeNom + '"></i>';
+    } else {
+        return '<i class="fas fa-tint text-base-content/50 text-lg mr-1" title="' + typeNom + '"></i>';
+    }
+}
+
+// Remplir le filtre par parcelle
+function populateParcelleFilter(releves) {
+    const filter = document.getElementById('filter-parcelle');
+    const parcellesSet = new Set();
+    releves.forEach(r => {
+        if (r.parcelle) parcellesSet.add(r.parcelle);
+    });
+
+    // Garder la première option "Toutes les parcelles"
+    filter.innerHTML = '<option value="">Toutes les parcelles</option>';
+
+    // Trier les parcelles par nom
+    Array.from(parcellesSet).sort().forEach(p => {
+        const option = document.createElement('option');
+        option.value = p;
+        option.textContent = p;
+        filter.appendChild(option);
+    });
+}
+
+// Filtrer le tableau (Recherche et Parcelle)
+function filtrerTableau() {
+    const searchVal = document.getElementById('search-abonne').value.toLowerCase();
+    const parcelleVal = document.getElementById('filter-parcelle').value;
+
+    const filtered = relevesCalcules.filter(r => {
+        const matchSearch = r.abonne.toLowerCase().includes(searchVal);
+        const matchParcelle = !parcelleVal || r.parcelle === parcelleVal;
+        return matchSearch && matchParcelle;
+    });
+
+    afficherReleves(filtered);
+}
+
+// Afficher les relevés dans le tableau
+function getSortedReleves(releves) {
+    return [...releves].sort((a, b) => {
+        const parcelleA = (a.parcelle || '').toString();
+        const parcelleB = (b.parcelle || '').toString();
+        const parcelleCompare = parcelleA.localeCompare(parcelleB, 'fr', { numeric: true, sensitivity: 'base' });
+        if (parcelleCompare !== 0) return parcelleCompare;
+
+        const idxA = (a.idxls || '').toString();
+        const idxB = (b.idxls || '').toString();
+        const idxCompare = idxA.localeCompare(idxB, 'fr', { numeric: true, sensitivity: 'base' });
+        if (idxCompare !== 0) return idxCompare;
+
+        return (a.abonne || '').localeCompare((b.abonne || ''), 'fr', { sensitivity: 'base' });
+    });
+}
+
+// Ordre d'impression : numerique par IDXLS, independamment de la parcelle
+// (plus simple pour les agents qui distribuent les factures). Sans IDXLS en dernier.
+function getRelevesOrdreImpression(releves) {
+    const num = (r) => {
+        const v = parseInt((r.idxls ?? '').toString().trim(), 10);
+        return Number.isNaN(v) ? Number.MAX_SAFE_INTEGER : v;
+    };
+    return [...releves].sort((a, b) =>
+        (num(a) - num(b))
+        || (a.abonne || '').toString().localeCompare((b.abonne || '').toString(), 'fr', { sensitivity: 'base' })
+    );
+}
+
+function afficherReleves(releves) {
+    const tbody = document.getElementById('releves-tbody');
+    tbody.innerHTML = '';
+
+    // Tri par IDXls (numérique)
+    const relevesTries = getSortedReleves(releves);
+
+    let currentParcelle = null;
+
+    relevesTries.forEach(releve => {
+        // Groupement par Parcelle
+        if (releve.parcelle !== currentParcelle) {
+            currentParcelle = releve.parcelle;
+            const groupRow = tbody.insertRow();
+            groupRow.className = "bg-base-200 font-bold border-y-2 border-base-300";
+            groupRow.innerHTML = `<td colspan="9" class="py-2 px-4 text-primary text-sm">
+                <i class="fas fa-map-marker-alt mr-2"></i>Parcelle: <span class="badge badge-primary badge-outline">${currentParcelle}</span>
+            </td>`;
+        }
+
+        const detail = releve.detail_calcul;
+        const row = tbody.insertRow();
+
+        // Vérifier si le relevé est déjà enregistré
+        const dejaEnregistre = releve.montant_enregistre && releve.montant_enregistre > 0;
+        const dejaImprime = releve.facture_imprimee || false;
+
+        // Style de la ligne selon le statut
+        if (dejaImprime) {
+            row.className = 'bg-success/10 hover:bg-success/20 transition-colors';
+        } else if (dejaEnregistre) {
+            row.className = 'bg-warning/10 hover:bg-warning/20 transition-colors';
+        } else {
+            row.className = 'hover:bg-base-200 transition-colors';
+        }
+
+        // Générer l'icône du type de point d'eau
+        const typeIcon = getPointEauIcon(releve.type_point_eau);
+
+        // Badge de statut
+        let statutBadge = '';
+        if (dejaImprime) {
+            statutBadge = '<span class="badge badge-success badge-xs">Imprimé</span>';
+        } else if (dejaEnregistre) {
+            statutBadge = '<span class="badge badge-warning badge-xs">Enregistré</span>';
+        } else {
+            statutBadge = '<span class="badge badge-ghost badge-xs">Nouveau</span>';
+        }
+
+        row.innerHTML = `
+            <td class="text-xs font-mono font-bold text-base-content/70">${releve.idxls || '-'}</td>
+            <td class="text-xs">
+                ${releve.abonne}
+                ${statutBadge}
+            </td>
+            <td class="text-xs">
+                ${typeIcon}
+                <span class="text-xs">${releve.type_point_eau || 'N/A'}</span>${releve.est_institutionnel ? ' <span class="badge badge-info badge-xs" title="Branchement institutionnel">Inst.</span>' : ''}
+            </td>
+            <td class="text-center font-mono">${releve.volume_facture.toFixed(2)}</td>
+            <td class="text-right font-mono">${detail.abonnement.toLocaleString('fr-FR')} Ar</td>
+            <td class="text-center font-mono text-success">${detail.volume_carte_sociale === 0 ? '' : `${detail.volume_carte_sociale.toFixed(2)} m³`}</td>
+            <td class="text-center font-mono text-warning">${detail.volume_non_facture === 0 ? '' : `${detail.volume_non_facture.toFixed(2)} m³`}</td>
+            <td class="text-right font-bold font-mono text-primary">${releve.montant_calcule.toLocaleString('fr-FR')} Ar</td>
+            <td>
+                <button onclick='afficherDetail(${JSON.stringify(releve).replace(/'/g, "\\'")})'
+                        class="btn btn-ghost btn-xs text-info">
+                    <i class="fas fa-eye"></i>
+                </button>
+            </td>
+        `;
+    });
+}
+
+// Afficher les erreurs
+function afficherErreurs(errors) {
+    const errorsList = document.getElementById('errors-list');
+    errorsList.innerHTML = '<ul class="list-disc list-inside">';
+    errors.forEach(error => {
+        errorsList.innerHTML += `<li>${error.point_eau}: ${error.error}</li>`;
+    });
+    errorsList.innerHTML += '</ul>';
+    document.getElementById('errors-zone').classList.remove('hidden');
+}
+
+// Afficher le détail de calcul
+function afficherDetail(releve) {
+    const detail = releve.detail_calcul;
+    const content = document.getElementById('detail-calcul-content');
+
+    let tranchesHtml = '';
+    detail.tranches.forEach(tranche => {
+        tranchesHtml += `
+            <tr>
+                <td>${tranche.tranche}</td>
+                <td class="text-right">${tranche.volume.toFixed(2)} m³</td>
+                <td class="text-right">${tranche.tarif_unitaire.toLocaleString('fr-FR')} Ar/m³</td>
+                <td class="text-right font-bold">${tranche.montant.toLocaleString('fr-FR')} Ar</td>
+            </tr>
+        `;
+    });
+
+    // Générer l'icône du type de point d'eau
+    const typeIcon = getPointEauIcon(releve.type_point_eau);
+
+    content.innerHTML = `
+        <div class="space-y-4">
+            <div class="alert alert-info">
+                <i class="fas fa-user mr-2"></i>
+                <span><strong>Point d'eau:</strong> ${releve.point_eau} - ${releve.abonne}</span>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <tbody>
+                        <tr>
+                            <td class="font-semibold">Type de point d'eau</td>
+                            <td class="text-right">
+                                ${typeIcon}
+                                <span class="text-sm">${releve.type_point_eau || 'N/A'}</span>${releve.est_institutionnel ? ' <span class="badge badge-info badge-xs" title="Branchement institutionnel">Inst.</span>' : ''}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="font-semibold">Prix d'abonnement</td>
+                            <td class="text-right font-mono">${detail.abonnement.toLocaleString('fr-FR')} Ar</td>
+                        </tr>
+                        <tr>
+                            <td class="font-semibold">Index départ</td>
+                            <td class="text-right font-mono">${releve.ancienindex !== null ? releve.ancienindex.toFixed(2) : 'N/A'}</td>
+                        </tr>
+                        <tr>
+                            <td class="font-semibold">Index arrivé</td>
+                            <td class="text-right font-mono">${releve.nouvelindex !== null ? releve.nouvelindex.toFixed(2) : 'N/A'}</td>
+                        </tr>
+                        <tr class="bg-base-200">
+                            <td class="font-semibold">Volume consommé</td>
+                            <td class="text-right font-mono">${detail.volume_consomme.toFixed(2)} m³</td>
+                        </tr>
+                        <tr>
+                            <td class="font-semibold">
+                                <i class="fas fa-id-card text-success mr-1"></i>
+                                - Volume carte sociale
+                            </td>
+                            <td class="text-right font-mono text-success">- ${detail.volume_carte_sociale.toFixed(2)} m³</td>
+                        </tr>
+                        <tr>
+                            <td class="font-semibold">
+                                <i class="fas fa-times-circle text-warning mr-1"></i>
+                                - Volume non facturé
+                            </td>
+                            <td class="text-right font-mono text-warning">- ${detail.volume_non_facture.toFixed(2)} m³</td>
+                        </tr>
+                        <tr class="bg-info text-info-content">
+                            <td class="font-semibold">= Volume facturé</td>
+                            <td class="text-right font-mono font-bold">${detail.volume_facture.toFixed(2)} m³</td>
+                        </tr>
+                        <tr>
+                            <td class="font-semibold">Volume minimum</td>
+                            <td class="text-right font-mono">${detail.volume_minimum.toFixed(2)} m³</td>
+                        </tr>
+                        <tr class="bg-base-200">
+                            <td class="font-semibold">Volume calculé (max des 2)</td>
+                            <td class="text-right font-mono font-bold">${detail.volume_calcule.toFixed(2)} m³</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h4 class="font-bold text-lg mt-4">Calcul par tranches</h4>
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm">
+                    <thead>
+                        <tr>
+                            <th>Tranche</th>
+                            <th class="text-right">Volume</th>
+                            <th class="text-right">Tarif</th>
+                            <th class="text-right">Montant</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${tranchesHtml}
+                        <tr class="font-bold">
+                            <td colspan="3">Total volume</td>
+                            <td class="text-right">${detail.montant_volume.toLocaleString('fr-FR')} Ar</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <tbody>
+                        <tr class="bg-base-200">
+                            <td class="font-semibold">Montant HT (abonnement + volume)</td>
+                            <td class="text-right font-mono font-bold">${detail.montant_ht.toLocaleString('fr-FR')} Ar</td>
+                        </tr>
+                        <tr>
+                            <td class="font-semibold">Montant arrondi (100 Ar près)</td>
+                            <td class="text-right font-mono font-bold">${detail.montant_arrondi.toLocaleString('fr-FR')} Ar</td>
+                        </tr>
+                        <tr>
+                            <td class="font-semibold">
+                                <i class="fas fa-info-circle text-info mr-1"></i>
+                                Taxe communale 7% (indicatif)
+                            </td>
+                            <td class="text-right font-mono text-base-content/70">${detail.taxe_communale.toLocaleString('fr-FR')} Ar</td>
+                        </tr>
+                        <tr class="bg-primary text-primary-content">
+                            <td class="font-bold text-lg">MONTANT À PAYER</td>
+                            <td class="text-right font-mono font-bold text-xl">${detail.montant_ttc.toLocaleString('fr-FR')} Ar</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="alert alert-info mt-4">
+                <i class="fas fa-info-circle"></i>
+                <span class="text-sm">
+                    <strong>Note:</strong> La taxe communale de 7% est affichée à titre indicatif uniquement.
+                    Le montant à payer est arrondi à 100 Ar près (arrondi supérieur).
+                </span>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('modal-detail-calcul').showModal();
+}
+
+// Valider et enregistrer les factures
+async function validerFactures() {
+    // Filtrer uniquement les relevés non encore enregistrés
+    const relevesNonEnregistres = relevesCalcules.filter(r => !r.montant_enregistre || r.montant_enregistre === 0);
+
+    if (relevesNonEnregistres.length === 0) {
+        alert('Tous les relevés sont déjà enregistrés. Aucun nouveau relevé à traiter.');
+        return;
+    }
+
+    if (!confirm(`Enregistrer les montants pour ${relevesNonEnregistres.length} nouveau(x) relevé(s) ?\n\n(${relevesCalcules.length - relevesNonEnregistres.length} déjà enregistré(s) seront ignorés)`)) {
+        return;
+    }
+
+    document.getElementById('btn-valider').disabled = true;
+
+    try {
+        const response = await fetch('{% url "billing:api_valider_factures" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                releves: relevesNonEnregistres
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(`✓ ${data.nb_success} factures enregistrées avec succès !\n\nVous pouvez maintenant les imprimer.`);
+            // Le bouton d'impression est déjà activé après le calcul
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    } finally {
+        document.getElementById('btn-valider').disabled = false;
+    }
+}
+
+// Imprimer les factures
+function getSelectedOuvrageNom() {
+    const ouvrageSelect = document.getElementById('ouvrage-select');
+    if (!ouvrageSelect) return '';
+    const option = ouvrageSelect.options[ouvrageSelect.selectedIndex];
+    return option ? (option.text || '').trim() : '';
+}
+
+async function imprimerFactures() {
+    if (relevesCalcules.length === 0) {
+        alert('Aucune facture à imprimer');
+        return;
+    }
+
+    // Filtrer les relevés non imprimés
+    const relevesNonImprimes = relevesCalcules.filter(r => !r.facture_imprimee);
+    const dejaImprimes = relevesCalcules.length - relevesNonImprimes.length;
+
+    let message = '';
+    if (relevesNonImprimes.length === 0) {
+        message = `Toutes les ${relevesCalcules.length} factures sont déjà imprimées.\n\nVoulez-vous les réimprimer ?`;
+    } else if (dejaImprimes > 0) {
+        message = `${relevesNonImprimes.length} nouvelle(s) facture(s) + ${dejaImprimes} déjà imprimée(s) = ${relevesCalcules.length} au total\n\n⚠️ Les ${relevesNonImprimes.length} nouvelles seront marquées comme imprimées après cette action.`;
+    } else {
+        message = `Imprimer ${relevesNonImprimes.length} facture(s) ?\n\nLes montants seront enregistrés automatiquement à l'impression.\n⚠️ ATTENTION: Une fois imprimées, ces factures ne pourront plus être recalculées.`;
+    }
+
+    if (!confirm(message)) {
+        return;
+    }
+
+    document.getElementById('btn-imprimer').disabled = true;
+
+    // Afficher un message de chargement
+    const loadingDiv = document.createElement('div');
+    loadingDiv.id = 'loading-ticket';
+    loadingDiv.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: white;
+        padding: 30px;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        z-index: 9999;
+        text-align: center;
+    `;
+    loadingDiv.innerHTML = `
+        <div style="font-size: 48px; margin-bottom: 20px;">🖨️</div>
+        <p style="font-size: 18px; margin: 0; font-weight: bold;">Impression des factures en cours...</p>
+        <p style="font-size: 14px; margin: 10px 0 0 0; color: #666;">Préparation de la mise en page A4</p>
+    `;
+    document.body.appendChild(loadingDiv);
+
+    try {
+        // Récupérer le nom de l'ouvrage sélectionné
+        const ouvrageNom = getSelectedOuvrageNom();
+
+        // Données de l'organisation
+        const organisationData = {
+            nom: '{{ organisation_nom|default:"HYDRIA"|escapejs }}',
+            logo_url: '{{ organisation_logo_url|default:""|escapejs }}',
+            nif: '{{ organisation_nif|default:""|escapejs }}',
+            stat: '{{ organisation_stat|default:""|escapejs }}',
+            base: '{{ user.employe.base.nom_base|default:"" }}',
+            base_telephone: '{{ user.employe.base.telephone|default:""|escapejs }}',
+            adresse: '{{ organisation_adresse|default:""|escapejs }}',
+            directeur_telephone: '{{ directeur_telephone|default:""|escapejs }}'
+        };
+
+        // Ouvrir la fenêtre d'impression A4 avant de marquer les factures
+        imprimerFacturesCompactesA4(getRelevesOrdreImpression(relevesCalcules), ouvrageNom, organisationData);
+
+        // L'impression enregistre aussi les montants (côté serveur). On envoie les
+        // factures non imprimées, plus celles imprimées dont le montant manque.
+        const relevesAEnregistrer = relevesCalcules.filter(
+            r => !r.facture_imprimee || !r.montant_enregistre
+        );
+        if (relevesAEnregistrer.length > 0) {
+            const releves_ids = relevesAEnregistrer.map(r => r.releve_id);
+
+            const response = await fetch('{% url "billing:api_marquer_factures_imprimees" %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                body: JSON.stringify({
+                    releves_ids: releves_ids
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                loadingDiv.remove();
+                alert(`✓ ${data.nb_updated} facture(s) marquée(s) imprimée(s), ${data.nb_montants} montant(s) enregistré(s) automatiquement.\n\nUne fenêtre d'impression A4 a été ouverte avec deux exemplaires par facture.`);
+            } else {
+                loadingDiv.remove();
+                alert('Avertissement: Impression réussie mais marquage échoué.\n\n' + data.error);
+            }
+        } else {
+            // Toutes les factures sont déjà imprimées - réimpression sans marquage
+            loadingDiv.remove();
+            alert(`✓ Réimpression de ${relevesCalcules.length} facture(s) déjà imprimée(s).\n\nUne fenêtre d'impression A4 a été ouverte avec deux exemplaires par facture.\n\nAucune facture n'a été marquée car toutes sont déjà imprimées.`);
+        }
+
+        // Réinitialiser la page après 3 secondes
+        setTimeout(() => {
+            location.reload();
+        }, 3000);
+
+    } catch (error) {
+        console.error('Erreur:', error);
+        loadingDiv.remove();
+        alert('Erreur réseau: ' + error.message);
+        document.getElementById('btn-imprimer').disabled = false;
+    }
+}
+
+// Imprimer SEULEMENT le récap A4 (pas les tickets)
+function imprimerRecapSeul() {
+    if (relevesCalcules.length === 0) {
+        alert('Veuillez d\'abord calculer les factures');
+        return;
+    }
+
+    const ouvrageNom = getSelectedOuvrageNom();
+
+    const organisationData = {
+        nom: '{{ organisation_nom|default:"HYDRIA"|escapejs }}',
+        logo_url: '{{ organisation_logo_url|default:""|escapejs }}',
+        nif: '{{ organisation_nif|default:""|escapejs }}',
+        stat: '{{ organisation_stat|default:""|escapejs }}',
+        base: '{{ user.employe.base.nom_base|default:"" }}',
+        base_telephone: '{{ user.employe.base.telephone|default:""|escapejs }}',
+        adresse: '{{ organisation_adresse|default:""|escapejs }}',
+        directeur_telephone: '{{ directeur_telephone|default:""|escapejs }}'
+    };
+
+    // Imprimer seulement le récap A4
+    imprimerRecapA4(getSortedReleves(relevesCalcules), ouvrageNom, organisationData);
+}
+
+// Imprimer récap mensuel complet (tous les relevés du mois/ouvrage)
+async function imprimerRecapMensuel() {
+    const ouvrageId = document.getElementById('ouvrage-select').value;
+    const moisFacture = document.getElementById('mois-facture').value;
+
+    if (!ouvrageId || !moisFacture) {
+        alert('Veuillez sélectionner un ouvrage et un mois');
+        return;
+    }
+
+    const ouvrageNom = getSelectedOuvrageNom();
+    const recapButton = document.getElementById('btn-recap-mensuel');
+    const statusZone = document.getElementById('monthly-recap-status') || recapButton.parentElement;
+
+    // Afficher message de chargement
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'alert alert-info mt-4';
+    loadingDiv.innerHTML = '<span class="loading loading-spinner"></span> Chargement des données du mois...';
+    statusZone.replaceChildren(loadingDiv);
+    recapButton.disabled = true;
+
+    try {
+        // Récupérer TOUS les relevés du mois (pas seulement les calculés)
+        const response = await fetch('{% url "billing:api_calculer_factures" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                ouvrage_id: ouvrageId,
+                mois_facture: moisFacture
+            })
+        });
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Erreur lors de la récupération des données');
+        }
+
+        if (!data.releves || data.releves.length === 0) {
+            alert('Aucun relevé trouvé pour ce mois/ouvrage');
+            return;
+        }
+
+        // Préparer les données organisation
+        const organisationData = {
+            nom: '{{ organisation_nom|default:"HYDRIA"|escapejs }}',
+            logo_url: '{{ organisation_logo_url|default:""|escapejs }}',
+            nif: '{{ organisation_nif|default:""|escapejs }}',
+            stat: '{{ organisation_stat|default:""|escapejs }}',
+            base: '{{ user.employe.base.nom_base|default:"" }}',
+            base_telephone: '{{ user.employe.base.telephone|default:""|escapejs }}',
+            adresse: '{{ organisation_adresse|default:""|escapejs }}',
+            directeur_telephone: '{{ directeur_telephone|default:""|escapejs }}'
+        };
+
+        // Imprimer le récap mensuel complet
+        imprimerRecapA4(getSortedReleves(data.releves), ouvrageNom, organisationData);
+
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    } finally {
+        loadingDiv.remove();
+        recapButton.disabled = false;
+    }
+}
+
+// Grille de suivi des paiements : colonne = dernier chiffre de l'IDXls,
+// ligne = le reste (même convention que la grille du récap d'encaissement).
+// Chaque case : IDXls, montant, et un espace pour pointer « payé » + date.
+function imprimerGrilleSuiviPaiements() {
+    if (relevesCalcules.length === 0) {
+        alert('Veuillez d\'abord calculer les factures');
+        return;
+    }
+
+    const fmt = n => Math.round(n || 0).toLocaleString('fr-FR');
+    const cellules = {};      // "ligne_col" -> [releve, ...]
+    const horsGrille = [];    // IDXls non numériques
+    let maxLigne = 0;
+    let total = 0;
+
+    relevesCalcules.forEach(r => {
+        const montant = (r.facture_imprimee && r.montant_enregistre) ? r.montant_enregistre : r.montant_calcule;
+        const item = { idxls: String(r.idxls || '').trim(), montant: montant || 0, paye: !!r.paye };
+        total += item.montant;
+        if (!/^\d+$/.test(item.idxls)) { horsGrille.push(item); return; }
+        const n = Number(item.idxls);
+        const ligne = Math.floor(n / 10), col = n % 10;
+        maxLigne = Math.max(maxLigne, ligne);
+        (cellules[`${ligne}_${col}`] = cellules[`${ligne}_${col}`] || []).push(item);
+    });
+
+    const bord = 'border:1px solid #6b7280;';
+    const zonePointage = '<div style="margin-top:2px;font-size:8px;color:#374151;">&#9744; Payé le ....../......</div>';
+    const caseHtml = items => items.map(it => it.paye
+        ? `<div><b>${it.idxls}</b> &middot; ${fmt(it.montant)} Ar<div style="font-size:8px;color:#15803d;">&#10003; Payé (DiameX)</div></div>`
+        : `<div><b style="font-size:12px;">${it.idxls}</b> &middot; ${fmt(it.montant)} Ar${zonePointage}</div>`
+    ).join('<hr style="margin:2px 0;border:0;border-top:1px dashed #9ca3af;">');
+
+    let thead = `<th style="${bord}background:#e5e7eb;width:28px;"></th>`;
+    for (let c = 0; c <= 9; c++) thead += `<th style="${bord}background:#e5e7eb;padding:3px;">${c}</th>`;
+
+    let body = '';
+    for (let l = 0; l <= maxLigne; l++) {
+        let tds = `<td style="${bord}background:#f3f4f6;text-align:center;font-weight:bold;">${l}</td>`;
+        for (let c = 0; c <= 9; c++) {
+            const items = cellules[`${l}_${c}`];
+            tds += items
+                ? `<td style="${bord}padding:3px 4px;vertical-align:top;">${caseHtml(items)}</td>`
+                : `<td style="${bord}background:#f9fafb;"></td>`;
+        }
+        body += `<tr style="page-break-inside:avoid;height:15mm;">${tds}</tr>`;
+    }
+
+    let autres = '';
+    if (horsGrille.length) {
+        autres = `<h3 style="font-size:12px;margin:10px 0 4px;">Hors grille (IDXls non numérique)</h3>
+            <table style="border-collapse:collapse;font-size:10px;">${horsGrille.map(it =>
+                `<tr><td style="${bord}padding:3px 6px;"><b>${it.idxls || '-'}</b></td><td style="${bord}padding:3px 6px;text-align:right;">${fmt(it.montant)} Ar</td><td style="${bord}padding:3px 6px;">&#9744; Payé le ....../......</td></tr>`).join('')}</table>`;
+    }
+
+    const ouvrageNom = getSelectedOuvrageNom();
+    const moisFacture = document.getElementById('mois-facture').value;
+    const w = window.open('', '_blank', 'width=1100,height=760');
+    if (!w) { alert("Impossible d'ouvrir la fenêtre d'impression."); return; }
+    w.document.open();
+    w.document.write(`<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">
+        <title>Suivi des paiements</title>
+        <style>
+            @page { size: A4 landscape; margin: 8mm; }
+            body { font-family: Arial, sans-serif; margin: 0; }
+            table.grille { border-collapse: collapse; width: 100%; table-layout: fixed; font-size: 10px; }
+            table.grille thead { display: table-header-group; }
+        </style></head><body>
+        <h1 style="font-size:15px;margin:0 0 2px;">Suivi des paiements des factures</h1>
+        <div style="font-size:11px;margin-bottom:6px;">
+            <b>Ouvrage :</b> ${ouvrageNom} &nbsp; <b>Mois de facture :</b> ${moisFacture} &nbsp;
+            <b>Factures :</b> ${relevesCalcules.length} &nbsp; <b>Total :</b> ${fmt(total)} Ar
+        </div>
+        <div style="font-size:9px;color:#4b5563;margin-bottom:6px;">
+            Colonne = dernier chiffre de l'IDXls, ligne = le reste (ex. IDXls 47 : ligne 4, colonne 7).
+            Cocher « Payé » et noter la date au moment du paiement.
+        </div>
+        <table class="grille"><thead><tr>${thead}</tr></thead><tbody>${body}</tbody></table>
+        ${autres}
+        <script>window.onload = function () { window.print(); };<\/script>
+        </body></html>`);
+    w.document.close();
+}
+
+// Fonction utilitaire pour récupérer le CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Initialiser le mois actuel par défaut
+document.addEventListener('DOMContentLoaded', function() {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    document.getElementById('mois-facture').value = `${year}-${month}`;
+});
+</script>
+
+{% endblock %}

@@ -1,0 +1,1520 @@
+{% extends "accounting/base.html" %}
+{% load humanize %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    {% include 'accounting/includes/verification_nav.html' with current_page=verification_nav_key %}
+    <!-- En-tête -->
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold mb-2">
+            <i class="fas fa-{% if necessite_ouvrage %}building{% else %}file-invoice{% endif %} text-primary mr-3"></i>
+            {{ title }}
+        </h1>
+        <p class="text-base-content/70">
+            {% if necessite_ouvrage %}
+                Vérification des comptes nécessitant l'identification d'un ouvrage dans la description
+            {% else %}
+                Vérification des comptes ne nécessitant pas d'ouvrage (opérations générales)
+            {% endif %}
+        </p>
+        <div class="flex gap-4 mt-3 text-sm">
+            <p class="text-info">
+                <i class="fas fa-info-circle mr-1"></i>
+                {{ comptes_count }} compte(s) configuré(s) avec "Nécessite ouvrage = {% if necessite_ouvrage %}Oui{% else %}Non{% endif %}"
+            </p>
+        </div>
+    </div>
+
+    <!-- Statistiques -->
+    <div id="stats-container" class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
+        <!-- Total -->
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-title">Total</div>
+            <div class="stat-value text-primary" id="stat-total">0</div>
+            <div class="stat-desc">Transactions</div>
+        </div>
+
+        <!-- Entrées -->
+        <div class="stat bg-success/10 rounded-lg shadow">
+            <div class="stat-title">Entrées (Inn)</div>
+            <div class="stat-value text-success text-2xl" id="stat-entrees">0</div>
+            <div class="stat-desc" id="desc-entrees">0 Ar</div>
+        </div>
+
+        <!-- Sorties -->
+        <div class="stat bg-error/10 rounded-lg shadow">
+            <div class="stat-title">Sorties (Out)</div>
+            <div class="stat-value text-error text-2xl" id="stat-sorties">0</div>
+            <div class="stat-desc" id="desc-sorties">0 Ar</div>
+        </div>
+
+        <!-- Conformes -->
+        <div class="stat bg-success/10 rounded-lg shadow">
+            <div class="stat-figure">
+                <div class="radial-progress text-success" style="--value:0; --size:4rem; --thickness:4px;" role="progressbar" id="radial-conformite">
+                    0%
+                </div>
+            </div>
+            <div class="stat-title">Conformes</div>
+            <div class="stat-value text-success text-2xl" id="stat-conformes">0</div>
+            <div class="stat-desc" id="desc-conformes">0% du total</div>
+        </div>
+
+        <!-- Non Conformes -->
+        <div class="stat bg-error/10 rounded-lg shadow">
+            <div class="stat-title">Non Conformes</div>
+            <div class="stat-value text-error text-2xl" id="stat-non-conformes">0</div>
+            <div class="stat-desc" id="desc-non-conformes">-</div>
+        </div>
+    </div>
+
+    <!-- Statistiques extraction ouvrages (masquées pour page sans ouvrage) -->
+    {% if necessite_ouvrage %}
+    <div id="stats-ouvrages-container" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+        <!-- Sans ouvrage extrait -->
+        <div class="stat bg-base-300 rounded-lg shadow cursor-pointer hover:shadow-lg transition-shadow" onclick="filtrerParOuvrage('sans_ouvrage')">
+            <div class="stat-figure">
+                <i class="fas fa-question-circle text-base-content/50 text-3xl"></i>
+            </div>
+            <div class="stat-title">Sans ouvrage extrait</div>
+            <div class="stat-value text-base-content text-2xl" id="stat-sans-ouvrage">0</div>
+            <div class="stat-desc">Aucun nom d'ouvrage détecté</div>
+        </div>
+
+        <!-- Ouvrage non trouvé en base -->
+        <div class="stat bg-warning/10 rounded-lg shadow cursor-pointer hover:shadow-lg transition-shadow" onclick="filtrerParOuvrage('non_trouve')">
+            <div class="stat-figure">
+                <i class="fas fa-exclamation-triangle text-warning text-3xl"></i>
+            </div>
+            <div class="stat-title">Ouvrage non trouvé</div>
+            <div class="stat-value text-warning text-2xl" id="stat-ouvrage-non-trouve">0</div>
+            <div class="stat-desc">Nom extrait mais pas en base</div>
+        </div>
+
+        <!-- Ouvrage trouvé en base -->
+        <div class="stat bg-success/10 rounded-lg shadow cursor-pointer hover:shadow-lg transition-shadow" onclick="filtrerParOuvrage('trouve')">
+            <div class="stat-figure">
+                <i class="fas fa-check-circle text-success text-3xl"></i>
+            </div>
+            <div class="stat-title">Ouvrage trouvé</div>
+            <div class="stat-value text-success text-2xl" id="stat-ouvrage-trouve">0</div>
+            <div class="stat-desc">Match avec table Ouvrages</div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow-xl mb-6">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-filter mr-2"></i>
+                Filtres
+            </h2>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-4">
+                <!-- Prog -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Programme</span>
+                    </label>
+                    <select id="filter-prog" class="select select-bordered select-sm">
+                        <option value="all">Tous</option>
+                    </select>
+                </div>
+
+                <!-- Compte -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Compte Cat</span>
+                    </label>
+                    <select id="filter-compte" class="select select-bordered select-sm">
+                        <option value="all">Tous</option>
+                        {% for compte in comptes %}
+                        <option value="{{ compte.compte }}">{{ compte.compte }} - {{ compte.nom_compte|truncatechars:30 }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Source -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Source</span>
+                    </label>
+                    <select id="filter-source" class="select select-bordered select-sm">
+                        <option value="all">Toutes</option>
+                    </select>
+                </div>
+
+                <!-- Type -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Type</span>
+                    </label>
+                    <select id="filter-type" class="select select-bordered select-sm">
+                        <option value="all">Tous</option>
+                        <option value="entree">Entrées (Inn)</option>
+                        <option value="sortie">Sorties (Out)</option>
+                    </select>
+                </div>
+
+                <!-- Conformité -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Conformité</span>
+                    </label>
+                    <select id="filter-conformite" class="select select-bordered select-sm">
+                        <option value="all">Tous</option>
+                        <option value="conforme">Conforme</option>
+                        <option value="non_conforme" selected>Non conforme</option>
+                    </select>
+                </div>
+
+                <!-- Statut Ouvrage (masqué pour page sans ouvrage) -->
+                {% if necessite_ouvrage %}
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Statut Ouvrage</span>
+                    </label>
+                    <select id="filter-ouvrage" class="select select-bordered select-sm">
+                        <option value="all">Tous</option>
+                        <option value="sans_ouvrage">Sans ouvrage</option>
+                        <option value="non_trouve">Non trouvé en base</option>
+                        <option value="trouve">Trouvé en base</option>
+                    </select>
+                </div>
+                {% endif %}
+
+                <!-- Mois -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Mois</span>
+                    </label>
+                    <input type="month" id="filter-mois" class="input input-bordered input-sm">
+                </div>
+
+                <!-- Recherche -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Recherche</span>
+                    </label>
+                    <input type="text" id="filter-search" placeholder="Description, pers, detail..." class="input input-bordered input-sm">
+                </div>
+
+            </div>
+
+            <div class="card-actions justify-end mt-4">
+                {% if necessite_ouvrage %}
+                <button id="btn-peupler-noms" class="btn btn-success btn-sm" onclick="peuplerNomsAbonnes()">
+                    <i class="fas fa-users-cog mr-2"></i>
+                    Peupler les noms d'abonnés
+                </button>
+                {% endif %}
+                <button class="btn btn-primary btn-sm" onclick="chargerVerifications()">
+                    <i class="fas fa-sync mr-2"></i>
+                    Appliquer les filtres
+                </button>
+                <button class="btn btn-ghost btn-sm" onclick="resetFilters()">
+                    <i class="fas fa-redo mr-2"></i>
+                    Réinitialiser
+                </button>
+                <button class="btn btn-accent btn-sm" onclick="ouvrirVersionImprimable()">
+                    <i class="fas fa-print mr-2"></i>
+                    Version imprimable
+                </button>
+            </div>
+
+            {% if necessite_ouvrage %}
+            <div id="population-stream-panel" class="hidden mt-4 rounded-box border border-success/30 bg-success/5 p-4">
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <div class="font-semibold flex items-center gap-2">
+                        <span id="population-stream-spinner" class="loading loading-spinner loading-sm text-success"></span>
+                        <span id="population-stream-status">Préparation…</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span id="population-stream-batch" class="badge badge-outline">Lot 1</span>
+                        <span id="population-stream-percent" class="badge badge-success">0 %</span>
+                    </div>
+                </div>
+                <progress id="population-stream-progress" class="progress progress-success w-full" value="0" max="100"></progress>
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-2 mt-3 text-xs">
+                    <div class="stat bg-base-100 rounded-box p-2"><div class="stat-title text-xs">Analysées</div><div id="population-stat-analysed" class="stat-value text-lg">0</div></div>
+                    <div class="stat bg-base-100 rounded-box p-2"><div class="stat-title text-xs">Noms vides</div><div id="population-stat-empty" class="stat-value text-lg text-success">0</div></div>
+                    <div class="stat bg-base-100 rounded-box p-2"><div class="stat-title text-xs">Numériques</div><div id="population-stat-numeric" class="stat-value text-lg text-info">0</div></div>
+                    <div class="stat bg-base-100 rounded-box p-2"><div class="stat-title text-xs">Conflits</div><div id="population-stat-conflicts" class="stat-value text-lg text-warning">0</div></div>
+                    <div class="stat bg-base-100 rounded-box p-2"><div class="stat-title text-xs">Déjà corrects</div><div id="population-stat-unchanged" class="stat-value text-lg">0</div></div>
+                </div>
+                <div class="mt-3">
+                    <div class="text-xs font-semibold mb-1">Modifications en cours</div>
+                    <div id="population-stream-log" class="max-h-52 overflow-y-auto rounded-box bg-base-100 border border-base-300 p-2 space-y-1 text-xs" aria-live="polite"></div>
+                </div>
+                <div class="flex justify-end mt-3">
+                    <button id="population-stream-next" type="button" class="btn btn-sm btn-success hidden"
+                            data-offset="0"
+                            onclick="peuplerNomsAbonnes(false, Number(this.dataset.offset || 0))">
+                        <i class="fas fa-forward mr-1"></i>
+                        <span id="population-stream-next-label">Traiter les 5 000 lignes suivantes</span>
+                    </button>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Tableau des résultats -->
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title mb-4">
+                <i class="fas fa-list mr-2"></i>
+                Résultats de vérification
+                <span class="badge badge-primary ml-2" id="badge-total">0</span>
+            </h2>
+
+            <!-- Loading -->
+            <div id="loading" class="flex justify-center items-center py-12 hidden">
+                <span class="loading loading-spinner loading-lg text-primary"></span>
+            </div>
+
+            <!-- Tableau -->
+            <div id="results-container" class="overflow-x-auto">
+                <table class="table table-zebra table-sm">
+                    <thead>
+                        <tr>
+                            <th class="w-28">Date</th>
+                            <th class="w-20">Rec</th>
+                            <th class="w-20">Type</th>
+                            <th class="w-24">Conformité</th>
+                            <th class="min-w-96">Description</th>
+                            {% if necessite_ouvrage %}
+                            <th class="w-40">Ouvrage</th>
+                            <th class="w-44">Nom de l'abonné</th>
+                            <th class="w-20">IDXLS</th>
+                            <th class="w-20">Mois</th>
+                            {% endif %}
+                            <th class="w-20">Pers</th>
+                            <th class="w-32">Detail</th>
+                            <th class="w-28 text-right">Entrée (Inn)</th>
+                            <th class="w-28 text-right">Sortie (Out)</th>
+                            <th class="w-24">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="results-tbody">
+                        <!-- Rempli par JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            <div id="pagination-container" class="flex justify-center mt-6">
+                <!-- Rempli par JavaScript -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de détails -->
+<dialog id="modal-details" class="modal">
+    <div class="modal-box w-11/12 max-w-4xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-info-circle text-info mr-2"></i>
+            Détails de la transaction
+        </h3>
+
+        <div id="modal-content">
+            <!-- Rempli dynamiquement -->
+        </div>
+
+        <div class="modal-action">
+            <form method="dialog">
+                <button class="btn">Fermer</button>
+            </form>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Modal d'édition -->
+<dialog id="modal-edit" class="modal">
+    <div class="modal-box w-11/12 max-w-3xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-edit text-warning mr-2"></i>
+            Modifier l'entrée
+        </h3>
+
+        <div class="alert alert-info mb-4">
+            <i class="fas fa-info-circle"></i>
+            <div>
+                <p class="font-bold">Fichier qui sera modifié :</p>
+                <p class="text-sm font-mono" id="edit-fichier-source">-</p>
+                <p class="text-xs mt-1">La modification sera enregistrée dans PostgreSQL et dans le fichier Access source</p>
+            </div>
+        </div>
+
+        <div class="form-control mb-4">
+            <label class="label">
+                <span class="label-text font-bold">Champ à modifier</span>
+            </label>
+            <select id="edit-champ" class="select select-bordered">
+                <option value="description">Description</option>
+                <option value="pers">Pers</option>
+                <option value="detail">Detail</option>
+                <option value="cat">Compte Cat</option>
+            </select>
+        </div>
+
+        <div class="form-control mb-4">
+            <label class="label">
+                <span class="label-text font-bold">Valeur actuelle</span>
+            </label>
+            <input type="text" id="edit-valeur-current" class="input input-bordered" readonly>
+        </div>
+
+        <div class="form-control mb-4">
+            <label class="label">
+                <span class="label-text font-bold">Nouvelle valeur</span>
+            </label>
+            <input type="text" id="edit-valeur-new" class="input input-bordered input-primary" placeholder="Nouvelle valeur">
+        </div>
+
+        <input type="hidden" id="edit-entry-id">
+
+        <div class="modal-action">
+            <button class="btn btn-primary" onclick="saveEdit()">
+                <i class="fas fa-save mr-2"></i>
+                Sauvegarder
+            </button>
+            <form method="dialog">
+                <button class="btn">Annuler</button>
+            </form>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Modal de résultat de modification -->
+<dialog id="modal-resultat" class="modal">
+    <div class="modal-box w-11/12 max-w-2xl">
+        <h3 class="font-bold text-lg mb-4" id="resultat-titre">
+            <i class="fas fa-info-circle mr-2"></i>
+            Résultat de la modification
+        </h3>
+
+        <div id="resultat-contenu" class="space-y-3">
+            <!-- Rempli dynamiquement -->
+        </div>
+
+        <div class="modal-action">
+            <form method="dialog">
+                <button class="btn btn-primary">OK</button>
+            </form>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<script>
+function escapeHtml(value) {
+    const element = document.createElement('div');
+    element.textContent = String(value ?? '');
+    return element.innerHTML;
+}
+
+let currentPage = 1;
+let totalPages = 1;
+let currentData = [];
+
+// Fonction CSRF
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+async function integrerNomAbonne(button, force = false) {
+    const pointEauId = button.dataset.pointEauId;
+    const nomAbonne = button.dataset.nomAbonne;
+    if (!pointEauId || !nomAbonne) return;
+
+    button.disabled = true;
+    try {
+        const response = await fetch('{% url "accounting:api_integrer_nom_abonne_point_eau" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify({
+                point_eau_id: pointEauId,
+                nom_abonne: nomAbonne,
+                force: force,
+            }),
+        });
+        const data = await response.json();
+
+        if (response.status === 409 && data.confirmation_required) {
+            const confirmed = confirm(
+                `Le nom actuel est « ${data.nom_actuel} ».\n\n` +
+                `Voulez-vous le remplacer par « ${data.nom_extrait} » ?`
+            );
+            if (confirmed) await integrerNomAbonne(button, true);
+            return;
+        }
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || `Erreur HTTP ${response.status}`);
+        }
+
+        alert(data.message);
+        chargerVerifications(currentPage);
+    } catch (error) {
+        alert(`Impossible d'intégrer le nom : ${error.message}`);
+    } finally {
+        button.disabled = false;
+    }
+}
+
+const populationProcessedPointIds = new Set();
+
+function resetPopulationStreamPanel(offset = 0) {
+    const panel = document.getElementById('population-stream-panel');
+    if (!panel) return;
+    panel.classList.remove('hidden');
+    document.getElementById('population-stream-status').textContent = 'Préparation…';
+    document.getElementById('population-stream-percent').textContent = '0 %';
+    document.getElementById('population-stream-progress').value = 0;
+    document.getElementById('population-stream-spinner').classList.remove('hidden');
+    document.getElementById('population-stream-batch').textContent = `Lot ${Math.floor(offset / 5000) + 1}`;
+    const nextButton = document.getElementById('population-stream-next');
+    nextButton.classList.add('hidden');
+    nextButton.dataset.offset = '0';
+    document.getElementById('population-stream-log').replaceChildren();
+    ['analysed', 'empty', 'numeric', 'conflicts', 'unchanged'].forEach(key => {
+        document.getElementById(`population-stat-${key}`).textContent = '0';
+    });
+}
+
+function updatePopulationStats(stats = {}) {
+    document.getElementById('population-stat-analysed').textContent = stats.analysed || 0;
+    document.getElementById('population-stat-empty').textContent = stats.updated_empty || 0;
+    document.getElementById('population-stat-numeric').textContent = stats.updated_numeric || 0;
+    document.getElementById('population-stat-conflicts').textContent = stats.conflicts || 0;
+    document.getElementById('population-stat-unchanged').textContent = stats.unchanged || 0;
+}
+
+function addPopulationLog(message, cssClass = '') {
+    const log = document.getElementById('population-stream-log');
+    if (!log) return;
+    const line = document.createElement('div');
+    line.className = `py-1 border-b border-base-200 last:border-0 ${cssClass}`;
+    line.textContent = message;
+    log.appendChild(line);
+    while (log.children.length > 150) log.firstElementChild.remove();
+    log.scrollTop = log.scrollHeight;
+}
+
+function handlePopulationStreamEvent(event) {
+    const status = document.getElementById('population-stream-status');
+    const progress = document.getElementById('population-stream-progress');
+    const badge = document.getElementById('population-stream-percent');
+    if (event.stats) updatePopulationStats(event.stats);
+
+    if (event.type === 'start' || event.type === 'phase') status.textContent = event.message || 'Traitement en cours…';
+    if (event.type === 'start' && event.batch_number) {
+        document.getElementById('population-stream-batch').textContent = `Lot ${event.batch_number}`;
+    }
+    if (event.type === 'progress' && event.phase === 'analysis') {
+        const percent = Math.round((event.total ? event.current / event.total : 0) * 50);
+        progress.value = percent;
+        badge.textContent = `${percent} %`;
+        status.textContent = `Analyse : ${event.current}/${event.total} lignes · ${event.candidates_found || 0} candidat(s)`;
+    }
+    if (event.type === 'phase' && event.phase === 'update') {
+        progress.value = 50;
+        badge.textContent = '50 %';
+    }
+    if (event.type === 'change') {
+        const percent = Math.round(50 + (event.total ? event.current / event.total : 1) * 50);
+        progress.value = percent;
+        badge.textContent = `${percent} %`;
+        status.textContent = `Mise à jour : ${event.current}/${event.total} points d’eau`;
+        const idxls = event.idxls || '-';
+        if (event.action === 'updated_empty') addPopulationLog(`IDXls ${idxls} : nom vide → « ${event.nom_extrait} »`, 'text-success');
+        if (event.action === 'updated_numeric') addPopulationLog(`IDXls ${idxls} : « ${event.nom_actuel} » → « ${event.nom_extrait} »`, 'text-info');
+        if (event.action === 'updated_conflict') addPopulationLog(`IDXls ${idxls} : conflit remplacé par « ${event.nom_extrait} »`, 'text-success');
+        if (event.action === 'conflict') addPopulationLog(`IDXls ${idxls} : conflit « ${event.nom_actuel} » / « ${event.nom_extrait} »`, 'text-warning');
+    }
+    if (event.type === 'complete') {
+        progress.value = 100;
+        badge.textContent = '100 %';
+        status.textContent = event.message || 'Traitement terminé.';
+        document.getElementById('population-stream-spinner').classList.add('hidden');
+        addPopulationLog('Traitement terminé.', 'font-semibold text-success');
+        const nextButton = document.getElementById('population-stream-next');
+        const analysed = Number((event.stats || {}).analysed || 0);
+        if (analysed > 0) {
+            const limit = Number(event.limit || 5000);
+            const nextOffset = Number.isFinite(Number(event.next_offset))
+                ? Number(event.next_offset)
+                : Number(event.offset || 0) + limit;
+            nextButton.dataset.offset = String(nextOffset);
+            nextButton.classList.remove('hidden');
+            document.getElementById('population-stream-next-label').textContent = event.has_more
+                ? `Traiter le lot ${(event.batch_number || 1) + 1}`
+                : `Vérifier le lot ${(event.batch_number || 1) + 1}`;
+        } else {
+            nextButton.classList.add('hidden');
+            addPopulationLog('Toutes les lignes disponibles ont été parcourues.', 'font-semibold');
+        }
+    }
+}
+
+async function peuplerNomsAbonnes(replaceConflicts = false, offset = 0) {
+    const button = document.getElementById('btn-peupler-noms');
+    if (!replaceConflicts && offset === 0) populationProcessedPointIds.clear();
+    if (!replaceConflicts) {
+        const confirmed = confirm(
+            `Analyser le lot ${Math.floor(offset / 5000) + 1}, lignes ${offset + 1} à ${offset + 5000} ?\n\n` +
+            'Les noms vides ou purement numériques seront remplacés automatiquement. ' +
+            'Les autres différences seront présentées avant tout remplacement.'
+        );
+        if (!confirmed) return;
+    }
+
+    resetPopulationStreamPanel(offset);
+    if (button) {
+        button.disabled = true;
+        button.classList.add('loading');
+    }
+    try {
+        const response = await fetch('{% url "accounting:api_peupler_noms_abonnes_stream" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify({
+                limit: 5000,
+                offset: offset,
+                replace_conflicts: replaceConflicts,
+                excluded_point_ids: Array.from(populationProcessedPointIds),
+            }),
+        });
+        if (!response.ok) throw new Error(`Erreur HTTP ${response.status}`);
+        if (!response.body) throw new Error('Le streaming n’est pas pris en charge par ce navigateur.');
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        let completed = null;
+        let streamError = null;
+        while (true) {
+            const { value, done } = await reader.read();
+            buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                const event = JSON.parse(line);
+                handlePopulationStreamEvent(event);
+                if (event.type === 'complete') completed = event;
+                if (event.type === 'error') streamError = event.error || 'Erreur inconnue';
+            }
+            if (done) break;
+        }
+        if (buffer.trim()) {
+            const event = JSON.parse(buffer);
+            handlePopulationStreamEvent(event);
+            if (event.type === 'complete') completed = event;
+            if (event.type === 'error') streamError = event.error || 'Erreur inconnue';
+        }
+        if (streamError) throw new Error(streamError);
+        if (!completed) throw new Error('Le flux s’est terminé sans résultat final.');
+
+        const stats = completed.stats || {};
+        if (!replaceConflicts && stats.conflicts > 0) {
+            const preview = (completed.conflicts || []).slice(0, 10).map(item =>
+                `• IDXls ${item.idxls || '-'} : « ${item.nom_actuel} » → « ${item.nom_extrait} »`
+            ).join('\n');
+            const suffix = stats.conflicts > 10 ? `\n… et ${stats.conflicts - 10} autre(s)` : '';
+            const replace = confirm(
+                `${stats.updated_empty || 0} nom(s) vide(s) et ${stats.updated_numeric || 0} nom(s) numérique(s) ont été corrigés.\n\n` +
+                `${stats.conflicts} conflit(s) nécessitent votre accord :\n${preview}${suffix}\n\n` +
+                'Voulez-vous remplacer tous ces noms existants par les noms extraits les plus récents ?'
+            );
+            if (replace) await peuplerNomsAbonnes(true, offset);
+            else {
+                (completed.candidate_point_ids || []).forEach(id => populationProcessedPointIds.add(id));
+                addPopulationLog('Les conflits ont été conservés.', 'text-warning');
+                chargerVerifications(currentPage);
+            }
+            return;
+        }
+
+        (completed.candidate_point_ids || []).forEach(id => populationProcessedPointIds.add(id));
+        addPopulationLog(
+            `${stats.updated_empty || 0} vide(s), ${stats.updated_numeric || 0} numérique(s) et ${stats.updated_conflicts || 0} conflit(s) mis à jour.`,
+            'font-semibold'
+        );
+        chargerVerifications(currentPage);
+    } catch (error) {
+        document.getElementById('population-stream-status').textContent = `Erreur : ${error.message}`;
+        document.getElementById('population-stream-spinner').classList.add('hidden');
+        addPopulationLog(`Erreur : ${error.message}`, 'text-error');
+        alert(`Impossible de peupler les noms : ${error.message}`);
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.classList.remove('loading');
+        }
+    }
+}
+
+async function peuplerNomsAbonnesLegacy(replaceConflicts = false) {
+    const button = document.getElementById('btn-peupler-noms');
+    if (!replaceConflicts) {
+        const confirmed = confirm(
+            'Analyser les 5 000 dernières lignes DiameX ?\n\n' +
+            'Les noms vides ou purement numériques seront remplacés automatiquement. ' +
+            'Les autres différences seront présentées avant tout remplacement.'
+        );
+        if (!confirmed) return;
+    }
+
+    if (button) {
+        button.disabled = true;
+        button.classList.add('loading');
+    }
+    try {
+        const response = await fetch('{% url "accounting:api_peupler_noms_abonnes" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify({ limit: 5000, replace_conflicts: replaceConflicts }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || `Erreur HTTP ${response.status}`);
+        }
+
+        const stats = data.stats || {};
+        if (!replaceConflicts && stats.conflicts > 0) {
+            const preview = (data.conflicts || []).slice(0, 10).map(item =>
+                `• IDXLS ${item.idxls || '-'} : « ${item.nom_actuel} » → « ${item.nom_extrait} »`
+            ).join('\n');
+            const suffix = stats.conflicts > 10 ? `\n… et ${stats.conflicts - 10} autre(s)` : '';
+            const replace = confirm(
+                `${stats.updated_empty || 0} nom(s) vide(s) et ${stats.updated_numeric || 0} nom(s) numérique(s) ont été corrigés.\n\n` +
+                `${stats.conflicts} conflit(s) nécessitent votre accord :\n${preview}${suffix}\n\n` +
+                'Voulez-vous remplacer tous ces noms existants par les noms extraits les plus récents ?'
+            );
+            if (replace) await peuplerNomsAbonnes(true);
+            else {
+                alert('Les conflits ont été conservés sans modification.');
+                chargerVerifications(currentPage);
+            }
+            return;
+        }
+
+        alert(
+            `Traitement terminé.\n` +
+            `Lignes analysées : ${stats.analysed || 0}\n` +
+            `Noms vides renseignés : ${stats.updated_empty || 0}\n` +
+            `Noms numériques remplacés : ${stats.updated_numeric || 0}\n` +
+            `Conflits remplacés : ${stats.updated_conflicts || 0}\n` +
+            `Déjà corrects : ${stats.unchanged || 0}`
+        );
+        chargerVerifications(currentPage);
+    } catch (error) {
+        alert(`Impossible de peupler les noms : ${error.message}`);
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.classList.remove('loading');
+        }
+    }
+}
+
+async function renseignerTelephone(button, force = false, telephoneChoisi = null) {
+    const pointEauId = button.dataset.pointEauId;
+    const telephoneActuel = button.dataset.telephone || '';
+    const telephone = telephoneChoisi ?? prompt(
+        'Saisissez le numéro de téléphone lu sur le scan :',
+        telephoneActuel
+    );
+    if (telephone === null || !telephone.trim()) return;
+
+    button.disabled = true;
+    try {
+        const response = await fetch('{% url "accounting:api_renseigner_telephone_point_eau" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify({
+                point_eau_id: pointEauId,
+                telephone: telephone.trim(),
+                force: force,
+            }),
+        });
+        const data = await response.json();
+        if (response.status === 409 && data.confirmation_required) {
+            const confirmed = confirm(
+                `Le numéro actuel est « ${data.telephone_actuel} ».\n\n` +
+                `Voulez-vous le remplacer par « ${data.telephone_nouveau} » ?`
+            );
+            if (confirmed) await renseignerTelephone(button, true, telephone.trim());
+            return;
+        }
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || `Erreur HTTP ${response.status}`);
+        }
+        button.dataset.telephone = data.telephone;
+        alert(data.message);
+        chargerVerifications(currentPage);
+    } catch (error) {
+        alert(`Impossible d'enregistrer le téléphone : ${error.message}`);
+    } finally {
+        button.disabled = false;
+    }
+}
+
+// Filtrer par statut d'ouvrage (appelé au clic sur les cartes stats)
+function filtrerParOuvrage(statut) {
+    const filterOuvrage = document.getElementById('filter-ouvrage');
+    if (filterOuvrage) {
+        filterOuvrage.value = statut;
+        chargerVerifications(1);
+    }
+}
+
+// Charger les vérifications
+async function chargerVerifications(page = 1) {
+    const loading = document.getElementById('loading');
+    const resultsContainer = document.getElementById('results-container');
+
+    loading.classList.remove('hidden');
+    resultsContainer.classList.add('hidden');
+
+    const filterOuvrage = document.getElementById('filter-ouvrage');
+    const params = new URLSearchParams({
+        page: page,
+        per_page: 50,
+        prog: document.getElementById('filter-prog').value,
+        compte: document.getElementById('filter-compte').value,
+        source: document.getElementById('filter-source').value,
+        type: document.getElementById('filter-type').value,
+        conformite: document.getElementById('filter-conformite').value,
+        mois: document.getElementById('filter-mois').value,
+        ouvrage: filterOuvrage ? filterOuvrage.value : 'all',
+        search: document.getElementById('filter-search').value
+    });
+
+    try {
+        // Ajouter le paramètre necessite_ouvrage à l'API
+        params.append('necessite_ouvrage', '{{ necessite_ouvrage|lower }}');
+        const response = await fetch(`{% url 'accounting:api_verification_ouvrage' %}?${params}`);
+        const data = await response.json();
+
+        currentData = data.entries;
+        currentPage = data.page;
+        totalPages = data.total_pages;
+
+        afficherResultats(data.entries);
+        afficherStats(data.stats);
+        afficherPagination(data.page, data.total_pages);
+
+        // Peupler les filtres dynamiquement
+        peuplerFiltresDepuisData(data.entries);
+
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors du chargement des données');
+    } finally {
+        loading.classList.add('hidden');
+        resultsContainer.classList.remove('hidden');
+    }
+}
+
+// Afficher les résultats avec regroupement hiérarchique Prog → Compte
+function afficherResultats(entries) {
+    const tbody = document.getElementById('results-tbody');
+    tbody.innerHTML = '';
+
+    if (entries.length === 0) {
+        const colspan = {{ necessite_ouvrage|yesno:"14,10" }};
+        tbody.innerHTML = `<tr><td colspan="${colspan}" class="text-center py-8 text-base-content/50">Aucune transaction trouvée</td></tr>`;
+        return;
+    }
+
+    // Regroupement hiérarchique : Prog → Compte
+    const groupesParProg = {};
+    entries.forEach(entry => {
+        const prog = entry.prog || 'Sans Prog';
+        if (!groupesParProg[prog]) {
+            groupesParProg[prog] = {};
+        }
+
+        const compte = entry.compte_code ? `${entry.compte_code} - ${entry.cat_libelle || ''}` : 'Sans Compte';
+        if (!groupesParProg[prog][compte]) {
+            groupesParProg[prog][compte] = [];
+        }
+
+        groupesParProg[prog][compte].push(entry);
+    });
+
+    // Construire le HTML avec regroupement à 2 niveaux
+    let html = '';
+    Object.keys(groupesParProg).sort().forEach(prog => {
+        const comptesGroupe = groupesParProg[prog];
+        const progId = 'prog-' + prog.replace(/[^a-zA-Z0-9]/g, '-');
+
+        // Calculer stats totales du Prog
+        let totalProg = 0;
+        let entreesProg = 0;
+        let sortiesProg = 0;
+        let conformesProg = 0;
+        let nonConformesProg = 0;
+        let montantEntreesProg = 0;
+        let montantSortiesProg = 0;
+
+        Object.values(comptesGroupe).forEach(lignes => {
+            totalProg += lignes.length;
+            entreesProg += lignes.filter(e => e.entry_type === 'Entrée').length;
+            sortiesProg += lignes.filter(e => e.entry_type === 'Sortie').length;
+            conformesProg += lignes.filter(e => e.charte_conforme === true).length;
+            nonConformesProg += lignes.filter(e => e.charte_conforme === false).length;
+            montantEntreesProg += lignes.reduce((sum, e) => sum + (e.montant_in || 0), 0);
+            montantSortiesProg += lignes.reduce((sum, e) => sum + (e.montant_out || 0), 0);
+        });
+
+        // Ligne de titre du Prog (Niveau 1)
+        const colspanProg = {{ necessite_ouvrage|yesno:"14,10" }};
+        html += `
+            <tr class="bg-primary/10 hover:bg-primary/20 cursor-pointer border-l-4 border-primary" onclick="toggleGroupe('${progId}')">
+                <td colspan="${colspanProg}" class="font-bold">
+                    <div class="flex items-center gap-3">
+                        <i class="fas fa-chevron-down transition-transform" id="${progId}-icon"></i>
+                        <i class="fas fa-folder text-primary"></i>
+                        <span class="text-primary text-lg">Prog: ${prog}</span>
+                        <span class="badge badge-primary badge-md">${totalProg} entrée(s)</span>
+                        ${entreesProg > 0 ? `<span class="badge badge-success badge-md gap-1"><i class="fas fa-arrow-down"></i> ${entreesProg} (${montantEntreesProg.toLocaleString('fr-FR')} Ar)</span>` : ''}
+                        ${sortiesProg > 0 ? `<span class="badge badge-error badge-md gap-1"><i class="fas fa-arrow-up"></i> ${sortiesProg} (${montantSortiesProg.toLocaleString('fr-FR')} Ar)</span>` : ''}
+                        ${conformesProg > 0 ? `<span class="badge badge-info badge-md gap-1"><i class="fas fa-check"></i> ${conformesProg}</span>` : ''}
+                        ${nonConformesProg > 0 ? `<span class="badge badge-warning badge-md gap-1"><i class="fas fa-times"></i> ${nonConformesProg}</span>` : ''}
+                    </div>
+                </td>
+            </tr>
+        `;
+
+        // Pour chaque Compte dans ce Prog (Niveau 2)
+        Object.keys(comptesGroupe).sort().forEach(compte => {
+            const lignes = comptesGroupe[compte];
+            const compteId = progId + '-compte-' + compte.replace(/[^a-zA-Z0-9]/g, '-');
+
+            // Stats du compte
+            const nbEntrees = lignes.filter(e => e.entry_type === 'Entrée').length;
+            const nbSorties = lignes.filter(e => e.entry_type === 'Sortie').length;
+            const nbConformes = lignes.filter(e => e.charte_conforme === true).length;
+            const nbNonConformes = lignes.filter(e => e.charte_conforme === false).length;
+            const montantEntrees = lignes.reduce((sum, e) => sum + (e.montant_in || 0), 0);
+            const montantSorties = lignes.reduce((sum, e) => sum + (e.montant_out || 0), 0);
+
+            // Ligne de titre du Compte (Niveau 2)
+            const colspanCompte = {{ necessite_ouvrage|yesno:"14,10" }};
+            html += `
+                <tr class="bg-base-200 hover:bg-base-300 cursor-pointer ${progId}" data-group="${progId}" onclick="toggleGroupe('${compteId}')">
+                    <td colspan="${colspanCompte}" class="font-semibold pl-8">
+                        <div class="flex items-center gap-3">
+                            <i class="fas fa-chevron-down transition-transform" id="${compteId}-icon"></i>
+                            <i class="fas fa-receipt text-info"></i>
+                            <span class="text-info">Compte: ${compte}</span>
+                            <span class="badge badge-neutral badge-sm">${lignes.length} entrée(s)</span>
+                            ${nbEntrees > 0 ? `<span class="badge badge-success badge-sm gap-1"><i class="fas fa-arrow-down"></i> ${nbEntrees} (${montantEntrees.toLocaleString('fr-FR')} Ar)</span>` : ''}
+                            ${nbSorties > 0 ? `<span class="badge badge-error badge-sm gap-1"><i class="fas fa-arrow-up"></i> ${nbSorties} (${montantSorties.toLocaleString('fr-FR')} Ar)</span>` : ''}
+                            ${nbConformes > 0 ? `<span class="badge badge-info badge-sm gap-1"><i class="fas fa-check"></i> ${nbConformes}</span>` : ''}
+                            ${nbNonConformes > 0 ? `<span class="badge badge-warning badge-sm gap-1"><i class="fas fa-times"></i> ${nbNonConformes}</span>` : ''}
+                        </div>
+                    </td>
+                </tr>
+            `;
+
+            // Lignes de détail pour ce Compte
+            lignes.forEach(entry => {
+            // Badge type
+            const typeBadge = entry.entry_type === 'Entrée'
+                ? '<span class="badge badge-success badge-sm">Entrée</span>'
+                : entry.entry_type === 'Sortie'
+                ? '<span class="badge badge-error badge-sm">Sortie</span>'
+                : '<span class="badge badge-ghost badge-sm">?</span>';
+
+            // Badge conformité charte
+            let charteBadge = '-';
+            if (entry.charte_type) {
+                if (entry.charte_conforme === true) {
+                    charteBadge = '<span class="badge badge-success badge-sm gap-1" title="Conforme à la charte"><i class="fas fa-check"></i> OK</span>';
+                } else if (entry.charte_conforme === false) {
+                    const erreursText = (entry.charte_erreurs || []).join(' | ');
+                    charteBadge = `<button class="badge badge-error badge-sm gap-1 cursor-pointer" onclick="voirErreursCharte(${entry.id})" title="${erreursText}"><i class="fas fa-times"></i> Non conforme</button>`;
+                }
+            }
+
+            // Badge ligne segmentée (pour les paiements multi-segments)
+            const segmentBadge = entry.is_segment === true
+                ? `<span class="badge badge-warning badge-sm gap-1 ml-2" title="Ligne divisée depuis un paiement multi-segments. Segment ${entry.segment_index + 1}"><i class="fas fa-scissors"></i> Segment ${entry.segment_index + 1}</span>`
+                : '';
+
+            // Ouvrage extrait
+            let ouvrageCell = '-';
+            if (entry.ouvrage_extrait_nom) {
+                // Ouvrage extrait de la description
+                if (entry.ouvrage_extrait_id) {
+                    // Lien vers l'ouvrage si trouvé en base
+                    ouvrageCell = `<a href="/recherche/details/ouvrage/${entry.ouvrage_extrait_id}/" class="link link-primary text-xs" title="Voir l'ouvrage">${entry.ouvrage_extrait_nom}</a>`;
+                } else {
+                    // Nom extrait mais pas trouvé en base
+                    ouvrageCell = `<span class="text-xs text-warning" title="Non trouvé en base"><i class="fas fa-exclamation-triangle"></i> ${entry.ouvrage_extrait_nom}</span>`;
+                }
+            }
+
+            // Nom de l'abonne et IDXLS dans deux colonnes distinctes
+            let abonneCell = '-';
+            let idxlsCell = entry.point_eau_extrait_idxls
+                ? `<span class="font-mono text-xs">${escapeHtml(entry.point_eau_extrait_idxls)}</span>`
+                : '-';
+            if (entry.point_eau_extrait_id) {
+                const nomExtrait = String(entry.point_eau_extrait_nom || '').trim();
+                const nomEnBase = String(entry.point_eau_nom_en_base || '').trim();
+                const integrationRequise = nomExtrait && nomExtrait.toLocaleLowerCase('fr') !== nomEnBase.toLocaleLowerCase('fr');
+                const integrationButton = integrationRequise
+                    ? `<button type="button" class="btn btn-success btn-xs mt-1" data-point-eau-id="${escapeHtml(entry.point_eau_extrait_id)}" data-nom-abonne="${escapeHtml(nomExtrait)}" onclick="integrerNomAbonne(this)" title="Enregistrer ce nom dans la fiche du point d'eau"><i class="fas fa-save"></i> Intégrer</button>`
+                    : '';
+                abonneCell = `<div class="flex flex-col items-start"><a href="/recherche/details/point_eau/${entry.point_eau_extrait_id}/" class="link link-info text-xs" title="Voir le point d'eau">${escapeHtml(nomExtrait || nomEnBase || 'Point d\'eau')}</a>${integrationButton}</div>`;
+            } else if (entry.point_eau_extrait_nom) {
+                abonneCell = `<span class="text-xs text-warning" title="Nom d'abonné extrait, point d'eau non trouvé"><i class="fas fa-user"></i> ${escapeHtml(entry.point_eau_extrait_nom)}</span>`;
+            }
+            if (entry.point_eau_extrait_idxls && !entry.point_eau_extrait_id) {
+                idxlsCell = `<span class="font-mono text-xs text-warning" title="IDXLS extrait, point d'eau non trouvé"><i class="fas fa-exclamation-triangle"></i> ${escapeHtml(entry.point_eau_extrait_idxls)}</span>`;
+            }
+
+            // Mois extrait
+            let moisCell = '-';
+            if (entry.mois_extrait && entry.annee_extrait) {
+                const moisNoms = ['', 'Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
+                moisCell = `<span class="text-xs font-mono">${moisNoms[entry.mois_extrait]} ${entry.annee_extrait}</span>`;
+            } else if (entry.date_extrait) {
+                moisCell = `<span class="text-xs font-mono">${entry.date_extrait}</span>`;
+            }
+
+                const necessiteOuvrage = {{ necessite_ouvrage|yesno:"true,false" }};
+                html += `
+                    <tr class="${compteId}" data-group="${compteId}" data-parent-group="${progId}">
+                        <td class="whitespace-nowrap pl-12">${entry.date_m || '-'}</td>
+                        <td class="font-mono text-xs">${entry.rec ?? '-'}</td>
+                        <td>${typeBadge}</td>
+                        <td class="text-center">${charteBadge}</td>
+                        <td class="max-w-md whitespace-normal break-words">
+                            <div class="flex flex-col gap-1">
+                                <span>${entry.description || '-'}</span>
+                                ${segmentBadge}
+                            </div>
+                        </td>
+                        ${necessiteOuvrage ? `<td class="max-w-xs whitespace-normal break-words">${ouvrageCell}</td>` : ''}
+                        ${necessiteOuvrage ? `<td class="max-w-xs whitespace-normal break-words">${abonneCell}</td>` : ''}
+                        ${necessiteOuvrage ? `<td class="text-center">${idxlsCell}</td>` : ''}
+                        ${necessiteOuvrage ? `<td class="text-center">${moisCell}</td>` : ''}
+                        <td class="font-mono text-xs">${entry.pers || '-'}</td>
+                        <td class="max-w-xs whitespace-normal break-words">${entry.detail || '-'}</td>
+                        <td class="text-right font-mono ${entry.montant_in > 0 ? 'text-success font-bold' : ''}">${entry.montant_in > 0 ? entry.montant_in.toLocaleString('fr-FR') : '-'}</td>
+                        <td class="text-right font-mono ${entry.montant_out > 0 ? 'text-error font-bold' : ''}">${entry.montant_out > 0 ? entry.montant_out.toLocaleString('fr-FR') : '-'}</td>
+                        <td class="whitespace-nowrap">
+                            ${entry.scan_disponible ? `<button class="btn btn-success btn-xs" onclick="window.open('/comptabilite/scan/${entry.original_id || entry.id}/', '_blank')" title="Ouvrir le scan"><i class="fas fa-file-image"></i></button>` : ''}
+                            ${entry.point_eau_extrait_id ? `<button class="btn btn-info btn-xs" data-point-eau-id="${escapeHtml(entry.point_eau_extrait_id)}" data-telephone="${escapeHtml(entry.point_eau_telephone || '')}" onclick="renseignerTelephone(this)" title="Renseigner le téléphone depuis le scan"><i class="fas fa-phone"></i></button>` : ''}
+                            <button class="btn btn-ghost btn-xs" onclick="voirDetails(${entry.id})" title="Voir détails">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                            <button class="btn btn-ghost btn-xs" onclick="editerEntry(${entry.id})" title="Modifier">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            });
+        });
+    });
+
+    tbody.innerHTML = html;
+}
+
+// Fonction pour plier/déplier un groupe (supporte les 2 niveaux hiérarchiques)
+function toggleGroupe(groupId) {
+    // Déterminer si c'est un groupe Prog (niveau 1) ou Compte (niveau 2)
+    const isProgLevel = groupId.startsWith('prog-') && !groupId.includes('-compte-');
+
+    if (isProgLevel) {
+        // Niveau 1 : Plier/déplier tous les sous-groupes Compte de ce Prog
+        const childRows = document.querySelectorAll(`tr[data-group="${groupId}"]`);
+        const icon = document.getElementById(`${groupId}-icon`);
+
+        childRows.forEach(row => {
+            if (row.style.display === 'none') {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+
+                // Si on plie le Prog, replier aussi tous les sous-groupes Compte
+                const compteRows = document.querySelectorAll(`tr[data-parent-group="${groupId}"]`);
+                compteRows.forEach(cptRow => cptRow.style.display = 'none');
+            }
+        });
+
+        if (icon) {
+            icon.classList.toggle('rotate-[-90deg]');
+        }
+    } else {
+        // Niveau 2 : Plier/déplier les lignes de détail d'un Compte
+        const detailRows = document.querySelectorAll(`tr[data-group="${groupId}"]`);
+        const icon = document.getElementById(`${groupId}-icon`);
+
+        detailRows.forEach(row => {
+            if (row.style.display === 'none') {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        });
+
+        if (icon) {
+            icon.classList.toggle('rotate-[-90deg]');
+        }
+    }
+}
+
+// Afficher les stats
+function afficherStats(stats) {
+    // Calculer le taux de conformité
+    const tauxConformite = stats.total > 0 ? Math.round((stats.conformes / stats.total) * 100) : 0;
+
+    document.getElementById('stat-total').textContent = stats.total.toLocaleString();
+    document.getElementById('stat-entrees').textContent = stats.entrees.toLocaleString();
+    document.getElementById('stat-sorties').textContent = stats.sorties.toLocaleString();
+
+    document.getElementById('stat-conformes').textContent = stats.conformes.toLocaleString();
+    document.getElementById('stat-non-conformes').textContent = stats.non_conformes.toLocaleString();
+
+    document.getElementById('desc-entrees').textContent = stats.montant_entrees.toLocaleString('fr-FR') + ' Ar';
+    document.getElementById('desc-sorties').textContent = stats.montant_sorties.toLocaleString('fr-FR') + ' Ar';
+    document.getElementById('desc-conformes').textContent = tauxConformite + '% du total';
+
+    // Anneaux de progression
+    const radialConformite = document.getElementById('radial-conformite');
+    radialConformite.style.setProperty('--value', tauxConformite);
+    radialConformite.textContent = tauxConformite + '%';
+
+    document.getElementById('badge-total').textContent = stats.total;
+
+    // Stats ouvrages (seulement si necessite_ouvrage = true)
+    const statSansOuvrage = document.getElementById('stat-sans-ouvrage');
+    const statOuvrageNonTrouve = document.getElementById('stat-ouvrage-non-trouve');
+    const statOuvrageTrouve = document.getElementById('stat-ouvrage-trouve');
+
+    if (statSansOuvrage) statSansOuvrage.textContent = stats.sans_ouvrage.toLocaleString();
+    if (statOuvrageNonTrouve) statOuvrageNonTrouve.textContent = stats.ouvrage_non_trouve.toLocaleString();
+    if (statOuvrageTrouve) statOuvrageTrouve.textContent = stats.ouvrage_trouve.toLocaleString();
+}
+
+// Afficher pagination
+function afficherPagination(page, totalPages) {
+    const container = document.getElementById('pagination-container');
+    if (totalPages <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+
+    let html = '<div class="join">';
+
+    // Bouton précédent
+    html += `<button class="join-item btn btn-sm ${page === 1 ? 'btn-disabled' : ''}" onclick="chargerVerifications(${page - 1})">«</button>`;
+
+    // Pages
+    for (let i = Math.max(1, page - 2); i <= Math.min(totalPages, page + 2); i++) {
+        html += `<button class="join-item btn btn-sm ${i === page ? 'btn-active' : ''}" onclick="chargerVerifications(${i})">${i}</button>`;
+    }
+
+    // Bouton suivant
+    html += `<button class="join-item btn btn-sm ${page === totalPages ? 'btn-disabled' : ''}" onclick="chargerVerifications(${page + 1})">»</button>`;
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+// Peupler les filtres
+function peuplerFiltresDepuisData(entries) {
+    // Prog
+    const progs = [...new Set(entries.map(e => e.prog).filter(p => p))];
+    const progSelect = document.getElementById('filter-prog');
+    const currentProg = progSelect.value;
+    progSelect.innerHTML = '<option value="all">Tous</option>';
+    progs.sort().forEach(prog => {
+        const option = document.createElement('option');
+        option.value = prog;
+        option.textContent = prog;
+        if (prog === currentProg) option.selected = true;
+        progSelect.appendChild(option);
+    });
+
+    // Source
+    const sources = [...new Set(entries.map(e => e.fichier_source).filter(s => s))];
+    const sourceSelect = document.getElementById('filter-source');
+    const currentSource = sourceSelect.value;
+    sourceSelect.innerHTML = '<option value="all">Toutes</option>';
+    sources.sort().forEach(source => {
+        const option = document.createElement('option');
+        option.value = source;
+        option.textContent = source;
+        if (source === currentSource) option.selected = true;
+        sourceSelect.appendChild(option);
+    });
+}
+
+// Voir détails
+function voirDetails(entryId) {
+    const entry = currentData.find(e => e.id === entryId);
+    if (!entry) return;
+
+    const modalContent = document.getElementById('modal-content');
+
+    // Section charte
+    let charteSection = '';
+    if (entry.charte_type) {
+        let charteStatus = '';
+        if (entry.charte_conforme === true) {
+            charteStatus = '<div class="alert alert-success"><i class="fas fa-check-circle mr-2"></i>La description respecte la charte comptable</div>';
+        } else if (entry.charte_conforme === false) {
+            const erreursHtml = entry.charte_erreurs.map(err => `<li>${err}</li>`).join('');
+            charteStatus = `
+                <div class="alert alert-error">
+                    <i class="fas fa-times-circle mr-2"></i>
+                    <div>
+                        <p class="font-bold">Description non conforme à la charte</p>
+                        <ul class="list-disc list-inside mt-2">${erreursHtml}</ul>
+                    </div>
+                </div>
+            `;
+        }
+
+        charteSection = `
+            <div class="col-span-2 mt-4 border-t pt-4">
+                <p class="font-bold mb-2">
+                    <i class="fas fa-book text-info mr-2"></i>
+                    Charte comptable : ${entry.charte_type}
+                </p>
+                ${charteStatus}
+            </div>
+        `;
+    }
+
+    let html = `
+        <div class="space-y-4">
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <p class="font-bold">Date</p>
+                    <p>${entry.date_m || '-'}</p>
+                </div>
+                <div>
+                    <p class="font-bold">Rec</p>
+                    <p class="font-mono text-sm">${entry.rec ?? '-'}</p>
+                </div>
+                <div>
+                    <p class="font-bold">Type</p>
+                    <p>${entry.type}</p>
+                </div>
+                <div>
+                    <p class="font-bold">Programme</p>
+                    <p class="font-mono text-sm">${entry.prog || '-'}</p>
+                </div>
+                <div>
+                    <p class="font-bold">Compte Cat</p>
+                    <p class="font-mono text-sm">${entry.cat || '-'}</p>
+                </div>
+                ${entry.cat_libelle ? `
+                <div class="col-span-2">
+                    <p class="font-bold">Libellé compte</p>
+                    <p>${entry.cat_libelle}</p>
+                </div>
+                ` : ''}
+                <div class="col-span-2">
+                    <p class="font-bold">Description</p>
+                    <p class="font-mono text-sm bg-base-200 p-2 rounded">${entry.description || '-'}</p>
+                </div>
+                <div class="col-span-2">
+                    <p class="font-bold">Pers</p>
+                    <p class="font-mono text-sm bg-base-200 p-2 rounded">${entry.pers || '-'}</p>
+                </div>
+                <div class="col-span-2">
+                    <p class="font-bold">Detail</p>
+                    <p class="font-mono text-sm bg-base-200 p-2 rounded">${entry.detail || '-'}</p>
+                </div>
+                <div>
+                    <p class="font-bold">Entrée (Inn)</p>
+                    <p class="text-lg ${entry.montant_in > 0 ? 'text-success font-bold' : ''}">${entry.montant_in > 0 ? entry.montant_in.toLocaleString('fr-FR') + ' Ar' : '-'}</p>
+                </div>
+                <div>
+                    <p class="font-bold">Sortie (Out)</p>
+                    <p class="text-lg ${entry.montant_out > 0 ? 'text-error font-bold' : ''}">${entry.montant_out > 0 ? entry.montant_out.toLocaleString('fr-FR') + ' Ar' : '-'}</p>
+                </div>
+                <div class="col-span-2">
+                    <p class="font-bold">Source</p>
+                    <p class="text-sm">${entry.fichier_source || '-'}</p>
+                </div>
+                ${charteSection}
+            </div>
+        </div>
+    `;
+
+    modalContent.innerHTML = html;
+    document.getElementById('modal-details').showModal();
+}
+
+// Voir erreurs charte
+function voirErreursCharte(entryId) {
+    voirDetails(entryId);
+}
+
+// Éditer entry
+function editerEntry(entryId) {
+    const entry = currentData.find(e => e.id === entryId);
+    if (!entry) return;
+
+    document.getElementById('edit-entry-id').value = entryId;
+    document.getElementById('edit-champ').value = 'description';
+    document.getElementById('edit-valeur-current').value = entry.description || '';
+    document.getElementById('edit-valeur-new').value = '';
+
+    // Afficher le fichier source
+    const fichierSource = entry.fichier_nom || entry.fichier_source || 'Non défini';
+    document.getElementById('edit-fichier-source').textContent = fichierSource;
+
+    // Event listener pour changer la valeur actuelle
+    document.getElementById('edit-champ').addEventListener('change', function() {
+        const champ = this.value;
+        document.getElementById('edit-valeur-current').value = entry[champ] || '';
+    });
+
+    document.getElementById('modal-edit').showModal();
+}
+
+async function tryLocalAccessUpdateFallback(data) {
+    if (!data || !data.success || data.access_success || data.access_updated || !data.access_payload) {
+        return data;
+    }
+    try {
+        const response = await fetch('http://127.0.0.1:8765/update-entry-access', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data.access_payload)
+        });
+        const result = await response.json();
+        if (response.ok && result.success) {
+            data.access_success = true;
+            data.access_updated = true;
+            data.partial = false;
+            data.message = 'Modification enregistree dans Django et Access (agent local)';
+            data.access_message = 'Mise a jour effectuee via agent local';
+            data.access_error = null;
+        } else {
+            data.access_error = result.error || data.access_error || 'Echec mise a jour Access locale';
+        }
+    } catch (e) {
+        data.access_error = data.access_error || ('Erreur agent local: ' + e.message);
+    }
+    return data;
+}
+
+// Sauvegarder édition
+async function saveEdit() {
+    const entryId = document.getElementById('edit-entry-id').value;
+    const champ = document.getElementById('edit-champ').value;
+    const nouvelleValeur = document.getElementById('edit-valeur-new').value.trim();
+
+    if (!nouvelleValeur) {
+        alert('La valeur ne peut pas être vide');
+        return;
+    }
+
+    try {
+        const response = await fetch('{% url "accounting:api_modifier_entry_autre" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                entry_id: parseInt(entryId),
+                champ: champ,
+                nouvelle_valeur: nouvelleValeur
+            })
+        });
+
+        let data = await response.json();
+        data = await tryLocalAccessUpdateFallback(data);
+
+        if (data.success) {
+            let titre = '';
+            let contenu = '';
+
+            if (data.access_success) {
+                // Succès complet (Django + Access)
+                titre = '<i class="fas fa-check-circle text-success mr-2"></i>Modification réussie';
+                contenu = `
+                    <div class="alert alert-success">
+                        <i class="fas fa-check-circle"></i>
+                        <div>
+                            <p class="font-bold">${data.message}</p>
+                            <p class="text-sm mt-1">Les deux bases de données ont été mises à jour</p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3 mt-3">
+                        <div class="stat bg-success/10 rounded-lg p-3">
+                            <div class="stat-title text-xs">PostgreSQL</div>
+                            <div class="stat-value text-success text-sm">✓ Mis à jour</div>
+                        </div>
+                        <div class="stat bg-success/10 rounded-lg p-3">
+                            <div class="stat-title text-xs">Access</div>
+                            <div class="stat-value text-success text-sm">✓ ${data.access_message}</div>
+                        </div>
+                    </div>
+                `;
+            } else if (data.partial) {
+                // Succ?s partiel ou synchronisation Access indisponible
+                const accessDriverUnavailable = data.access_status === 'driver_unavailable';
+                titre = accessDriverUnavailable
+                    ? '<i class="fas fa-info-circle text-info mr-2"></i>Modification enregistr?e'
+                    : '<i class="fas fa-exclamation-triangle text-warning mr-2"></i>Modification partielle';
+                contenu = `
+                    <div class="alert ${accessDriverUnavailable ? 'alert-info' : 'alert-warning'}">
+                        <i class="fas ${accessDriverUnavailable ? 'fa-info-circle' : 'fa-exclamation-triangle'}"></i>
+                        <div>
+                            <p class="font-bold">${data.message}</p>
+                            <p class="text-sm mt-1">${accessDriverUnavailable ? "PostgreSQL mis a jour. La synchronisation Access n'est pas disponible sur ce serveur." : "PostgreSQL mis a jour mais probleme avec Access"}</p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3 mt-3">
+                        <div class="stat bg-success/10 rounded-lg p-3">
+                            <div class="stat-title text-xs">PostgreSQL</div>
+                            <div class="stat-value text-success text-sm">? Mis ? jour</div>
+                        </div>
+                        <div class="stat ${accessDriverUnavailable ? 'bg-info/10' : 'bg-error/10'} rounded-lg p-3">
+                            <div class="stat-title text-xs">Access</div>
+                            <div class="stat-value ${accessDriverUnavailable ? 'text-info' : 'text-error'} text-xs">${accessDriverUnavailable ? 'i' : '?'} ${data.access_message}</div>
+                        </div>
+                    </div>
+                    <div class="alert alert-info mt-3">
+                        <i class="fas fa-info-circle"></i>
+                        <div>
+                            <p class="font-bold text-sm">Note importante</p>
+                            <p class="text-xs">La modification a bien ?t? enregistr?e dans PostgreSQL (base principale).</p>
+                            <p class="text-xs mt-1">${accessDriverUnavailable ? "Aucune action n'est requise tant que vous n'utilisez pas de synchronisation Access sur ce serveur." : "L'erreur Access peut etre ignoree si vous n'utilisez pas la base Access."}</p>
+                        </div>
+                    </div>
+                `;
+            } else {
+                // Succès Django uniquement
+                titre = '<i class="fas fa-check-circle text-success mr-2"></i>Modification réussie';
+                contenu = `
+                    <div class="alert alert-success">
+                        <i class="fas fa-check-circle"></i>
+                        <div>
+                            <p class="font-bold">${data.message}</p>
+                        </div>
+                    </div>
+                `;
+                if (data.access_message) {
+                    contenu += `
+                        <div class="alert alert-info mt-3">
+                            <i class="fas fa-info-circle"></i>
+                            <div>
+                                <p class="text-sm">Access: ${data.access_message}</p>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+
+            // Afficher le modal de résultat
+            document.getElementById('resultat-titre').innerHTML = titre;
+            document.getElementById('resultat-contenu').innerHTML = contenu;
+            document.getElementById('modal-edit').close();
+            document.getElementById('modal-resultat').showModal();
+
+            // Mise à jour locale des données sans rechargement
+            const entryIndex = currentData.findIndex(e => e.id === parseInt(entryId));
+            if (entryIndex !== -1) {
+                currentData[entryIndex][champ] = nouvelleValeur;
+                // Réafficher avec les nouvelles données
+                afficherResultats(currentData);
+            }
+        } else {
+            alert('❌ Erreur: ' + data.message);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('❌ Erreur réseau: ' + error.message);
+    }
+}
+
+// Reset filtres
+function resetFilters() {
+    document.getElementById('filter-prog').value = 'all';
+    document.getElementById('filter-compte').value = 'all';
+    document.getElementById('filter-source').value = 'all';
+    document.getElementById('filter-type').value = 'all';
+    document.getElementById('filter-conformite').value = 'non_conforme';
+    const filterOuvrage = document.getElementById('filter-ouvrage');
+    if (filterOuvrage) filterOuvrage.value = 'all';
+    document.getElementById('filter-mois').value = '';
+    document.getElementById('filter-search').value = '';
+    chargerVerifications(1);
+}
+
+// Ouvrir version imprimable (mêmes filtres que l'écran, vue dédiée aux pages ouvrage)
+function ouvrirVersionImprimable() {
+    const params = new URLSearchParams();
+    ['prog', 'compte', 'source', 'type', 'conformite', 'ouvrage'].forEach(function(k) {
+        const el = document.getElementById('filter-' + k);
+        if (el && el.value && el.value !== 'all') params.append(k, el.value);
+    });
+    const mois = document.getElementById('filter-mois').value;   // "AAAA-MM" ou vide
+    if (mois) params.append('mois', mois);
+    const search = document.getElementById('filter-search').value.trim();
+    if (search) params.append('search', search);
+    params.append('necessite_ouvrage', '{{ necessite_ouvrage|lower }}');
+
+    const url = '{% url "accounting:verification_ouvrage_print" %}?' + params.toString();
+    window.open(url, '_blank', 'width=1200,height=800');
+}
+
+// Charger au démarrage
+document.addEventListener('DOMContentLoaded', function() {
+    chargerVerifications(1);
+});
+</script>
+
+{% endblock %}

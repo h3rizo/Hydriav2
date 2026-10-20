@@ -1,0 +1,1268 @@
+{% extends accounting_shell_base_template %}
+{% load humanize %}
+{% load accounting_filters %}
+{% load employee_grouping %}
+
+{% block title %}Calendrier Recouvrement Forfaitaire{% endblock %}
+
+{% block extra_css %}
+<style>
+    .calendar-grid {
+        display: grid;
+        grid-template-columns: repeat(7, minmax(0, 1fr));
+        gap: 0.75rem;
+    }
+
+    .calendar-day {
+        min-height: 15rem;
+    }
+
+    .calendar-day.outside-month {
+        opacity: 0.45;
+    }
+
+    .calendar-drop-active {
+        border-color: oklch(var(--p));
+        background-color: color-mix(in srgb, oklch(var(--p)) 10%, white);
+    }
+
+    .calendar-card-draggable {
+        cursor: grab;
+    }
+
+    .calendar-card {
+        position: relative;
+    }
+
+    .calendar-card:focus-visible {
+        outline: 3px solid oklch(var(--p));
+        outline-offset: 2px;
+    }
+
+    .calendar-card-actions {
+        border-top: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+    }
+
+    .calendar-card-primary-action {
+        background: color-mix(in srgb, oklch(var(--p)) 12%, transparent);
+        border: 1px solid color-mix(in srgb, oklch(var(--p)) 28%, transparent);
+    }
+
+    .calendar-drag-handle {
+        cursor: grab;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+    }
+
+    .calendar-drag-handle:active {
+        cursor: grabbing;
+    }
+
+    .checklist-row[data-pointed="true"] {
+        opacity: 0.78;
+    }
+
+    .commune-card {
+        background: var(--commune-bg, rgba(255, 255, 255, 0.04));
+        border-color: var(--commune-border, rgba(255, 255, 255, 0.18));
+        color: var(--commune-text, rgb(248, 250, 252));
+    }
+
+    .commune-card .commune-subtext {
+        color: var(--commune-subtext, rgba(248, 250, 252, 0.75));
+    }
+
+    .commune-card .commune-badge {
+        background: var(--commune-badge-bg, rgba(255, 255, 255, 0.1));
+        color: var(--commune-badge-text, rgb(248, 250, 252));
+        border-color: transparent;
+    }
+
+    [data-theme="hydria_glass"] .commune-card,
+    [data-theme="light"] .commune-card {
+        color: #111827 !important;
+    }
+
+    [data-theme="hydria_glass"] .commune-card .commune-subtext,
+    [data-theme="light"] .commune-card .commune-subtext {
+        color: rgba(17, 24, 39, 0.72) !important;
+    }
+
+    [data-theme="hydria_glass"] .commune-card .commune-badge,
+    [data-theme="light"] .commune-card .commune-badge {
+        color: #111827 !important;
+    }
+
+    [data-theme="light"] .commune-card *,
+    [data-theme="light"] .commune-card .badge,
+    [data-theme="light"] .commune-card .text-primary,
+    [data-theme="light"] .commune-card .text-warning,
+    [data-theme="light"] .commune-card .text-success,
+    [data-theme="light"] .commune-card .text-info,
+    [data-theme="light"] .commune-card .text-base-content\/50,
+    [data-theme="light"] .commune-card .text-base-content\/60,
+    [data-theme="light"] .commune-card .text-base-content\/70 {
+        color: #111827 !important;
+    }
+
+    @media (max-width: 767px) {
+        .calendar-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .calendar-day {
+            min-height: 0;
+            padding: 0.875rem;
+        }
+
+        .calendar-day.outside-month {
+            display: none;
+        }
+
+        .calendar-card {
+            width: 100%;
+        }
+
+        .calendar-card-actions .btn {
+            min-height: 2.5rem;
+        }
+
+        #calendar-view {
+            padding: 0.75rem;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-4 md:py-6">
+    <div class="bg-base-100 shadow-lg rounded-lg p-4 mb-6">
+        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-4">
+            <div>
+                <h1 class="text-xl font-bold text-primary">
+                    <i class="fas fa-calendar-days mr-2"></i>
+                    Calendrier de recouvrement forfaitaire
+                </h1>
+                <p class="text-sm text-base-content/70">
+                    Meme base de factures, memes statuts pointee / non pointee, detail par ouvrage au clic.
+                </p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <div class="join" aria-label="Mode d'affichage">
+                    <button type="button" id="view-calendar-btn" class="btn btn-primary btn-sm join-item" onclick="setDisplayMode('calendar')">
+                        <i class="fas fa-calendar-days mr-1"></i>Calendrier
+                    </button>
+                    <button type="button" id="view-checklist-btn" class="btn btn-outline btn-sm join-item" onclick="setDisplayMode('checklist')">
+                        <i class="fas fa-list-check mr-1"></i>Check-list
+                    </button>
+                </div>
+                <a href="{% url 'accounting:dashboard_paiements_forfaitaire' %}?annee={{ annee }}&organisation={{ filter_organisation }}&region={{ filter_region }}&district={{ filter_district }}&commune={{ filter_commune }}"
+                   class="btn btn-outline btn-sm">
+                    <i class="fas fa-table mr-2"></i>
+                    Retour tableau
+                </a>
+                <a href="{% url 'accounting:dashboard_paiements_forfaitaire_calendrier_impression' %}?annee={{ annee }}&organisation={{ filter_organisation }}&region={{ filter_region }}&district={{ filter_district }}&commune={{ filter_commune }}&employe={{ filter_employe }}&vue={{ vue }}&date={{ selected_date|date:'Y-m-d' }}"
+                   target="_blank"
+                   class="btn btn-outline btn-sm">
+                    <i class="fas fa-print mr-2"></i>
+                    Version imprimable
+                </a>
+            </div>
+        </div>
+
+        <form method="get" id="calendar-filters" class="space-y-3">
+            <div class="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-8 gap-3">
+                <div class="form-control">
+                    <label class="label py-0 pb-1"><span class="label-text text-xs">Annee</span></label>
+                    <select name="annee" class="select select-bordered select-sm">
+                        <option value="2024" {% if annee == 2024 %}selected{% endif %}>2024</option>
+                        <option value="2025" {% if annee == 2025 %}selected{% endif %}>2025</option>
+                        <option value="2026" {% if annee == 2026 %}selected{% endif %}>2026</option>
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label py-0 pb-1"><span class="label-text text-xs">Organisation</span></label>
+                    <select name="organisation" class="select select-bordered select-sm">
+                        <option value="">Toutes</option>
+                        {% for organisation in organisations %}
+                        <option value="{{ organisation.id }}" {% if filter_organisation == organisation.id|stringformat:"s" %}selected{% endif %}>
+                            {{ organisation.nom_organisation }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label py-0 pb-1"><span class="label-text text-xs">Region</span></label>
+                    <select name="region" id="filter-region" class="select select-bordered select-sm">
+                        <option value="">Toutes</option>
+                        {% for region in regions %}
+                        <option value="{{ region.id }}" {% if filter_region == region.id|stringformat:"s" %}selected{% endif %}>{{ region.nom_region }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label py-0 pb-1"><span class="label-text text-xs">District</span></label>
+                    <select name="district" id="filter-district" class="select select-bordered select-sm">
+                        <option value="">Tous</option>
+                        {% for district in districts_all %}
+                        <option value="{{ district.id }}" data-region-id="{{ district.region_id }}" {% if filter_district == district.id|stringformat:"s" %}selected{% endif %}>{{ district.nom_district }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label py-0 pb-1"><span class="label-text text-xs">Commune</span></label>
+                    <select name="commune" id="filter-commune" class="select select-bordered select-sm">
+                        <option value="">Toutes</option>
+                        {% for commune in communes_all %}
+                        <option value="{{ commune.id }}" data-region-id="{{ commune.district.region_id }}" data-district-id="{{ commune.district_id }}" {% if filter_commune == commune.id|stringformat:"s" %}selected{% endif %}>{{ commune.nom_commune }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label py-0 pb-1"><span class="label-text text-xs">Employe</span></label>
+                    <select name="employe" class="select select-bordered select-sm">
+                        {% grouped_employee_options employes filter_employe "Tous" %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label py-0 pb-1"><span class="label-text text-xs">Vue</span></label>
+                    <select name="vue" class="select select-bordered select-sm">
+                        <option value="mois" {% if vue == 'mois' %}selected{% endif %}>Mois</option>
+                        <option value="semaine" {% if vue == 'semaine' %}selected{% endif %}>Semaine</option>
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label py-0 pb-1"><span class="label-text text-xs">Date d'ancrage</span></label>
+                    <input type="date" name="date" value="{{ selected_date|date:'Y-m-d' }}" class="input input-bordered input-sm">
+                </div>
+            </div>
+
+            <div class="flex flex-wrap gap-2">
+                <button type="submit" class="btn btn-primary btn-sm">
+                    <i class="fas fa-filter mr-2"></i>
+                    Appliquer
+                </button>
+                <a href="{% url 'accounting:dashboard_paiements_forfaitaire_calendrier' %}" class="btn btn-ghost btn-sm">
+                    <i class="fas fa-rotate-left mr-2"></i>
+                    Reset
+                </a>
+            </div>
+        </form>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+        <div class="stat bg-base-100 shadow rounded-lg">
+            <div class="stat-title">Factures</div>
+            <div class="stat-value text-primary">{{ totals.factures|intcomma }}</div>
+            <div class="stat-desc">{{ calendar_title }}</div>
+        </div>
+        <div class="stat bg-success/10 shadow rounded-lg">
+            <div class="stat-title text-success">Pointees</div>
+            <div class="stat-value text-success">{{ totals.factures_pointees|intcomma }}</div>
+            <div class="stat-desc">{{ totals.montant_pointe|floatformat:0|intcomma }} Ar</div>
+        </div>
+        <div class="stat bg-warning/10 shadow rounded-lg">
+            <div class="stat-title text-warning">Non pointees</div>
+            <div class="stat-value text-warning">{{ totals.factures_non_pointees|intcomma }}</div>
+            <div class="stat-desc">{{ totals.montant_non_pointe|floatformat:0|intcomma }} Ar</div>
+        </div>
+        <div class="stat bg-info/10 shadow rounded-lg">
+            <div class="stat-title text-info">Montant total</div>
+            <div class="stat-value text-info">{{ totals.montant_total|floatformat:0|intcomma }}</div>
+            <div class="stat-desc">Ar</div>
+        </div>
+    </div>
+
+    <div id="calendar-view" class="bg-base-100 shadow-xl rounded-lg p-4">
+        <div class="flex items-center justify-between gap-3 mb-4">
+            <h2 class="text-lg font-semibold">{{ calendar_title }}</h2>
+            <div class="text-sm text-base-content/60">
+                Periode: {{ period_start|date:"d/m/Y" }} - {{ period_end|date:"d/m/Y" }}
+            </div>
+        </div>
+
+        <div class="calendar-grid">
+            {% for day in calendar_days %}
+            <section class="calendar-day rounded-xl border border-base-300 bg-base-100 p-3 {% if vue == 'mois' and day.month != selected_date.month %}outside-month{% endif %}"
+                     data-drop-date="{{ day|date:'Y-m-d' }}">
+                <div class="flex items-center justify-between mb-3">
+                    <div>
+                        <div class="text-xs uppercase tracking-wide text-base-content/50">{{ day|date:"D" }}</div>
+                        <div class="text-lg font-semibold"><span class="md:hidden">{{ day|date:"d F Y" }}</span><span class="hidden md:inline">{{ day|date:"d" }}</span></div>
+                    </div>
+                    {% with day_key=day|date:'Y-m-d' %}
+                    {% if events_by_day|get_item:day_key %}
+                    <span class="badge badge-primary badge-outline md:hidden">
+                        {{ events_by_day|get_item:day_key|length }} card{{ events_by_day|get_item:day_key|length|pluralize }}
+                    </span>
+                    {% endif %}
+                    {% endwith %}
+                </div>
+
+                {% with day_key=day|date:'Y-m-d' %}
+                {% if events_by_day|get_item:day_key %}
+                <div class="space-y-2">
+                    {% for item in events_by_day|get_item:day_key %}
+                    <article class="w-full text-left rounded-lg border px-3 py-2 commune-card calendar-card {% if item.can_drag %}calendar-card-draggable{% endif %}"
+                            style="{{ item.screen_style }}"
+                            data-payment-ids="{{ item.payment_ids_json|escape }}"
+                            data-ouvrage-id="{{ item.ouvrage_id }}"
+                            data-ouvrage-nom="{{ item.ouvrage_nom|escapejs }}"
+                            data-current-date="{{ day|date:'Y-m-d' }}"
+                            {% if item.can_drag %}draggable="true"{% endif %}
+                            role="button"
+                            tabindex="0"
+                            onclick="openForfaitaireDetails('{{ item.ouvrage_id }}', '{{ item.ouvrage_nom|escapejs }}')"
+                            onkeydown="openCalendarCardFromKeyboard(event, '{{ item.ouvrage_id }}', '{{ item.ouvrage_nom|escapejs }}')">
+                        <div class="flex items-start justify-between gap-2">
+                            <div class="min-w-0">
+                                <div class="font-semibold truncate">{{ item.ouvrage_nom }}</div>
+                                <div class="text-xs commune-subtext">{{ item.communes }}</div>
+                                <div class="text-xs commune-subtext truncate">{{ item.employes }}</div>
+                            </div>
+                            <span class="badge badge-sm commune-badge">
+                                {{ item.factures }}
+                            </span>
+                        </div>
+                        <div class="mt-2 flex flex-wrap gap-1 text-xs">
+                            {% if item.factures_pointees > 0 %}
+                            <span class="badge badge-sm badge-success">{{ item.factures_pointees }} pointee{{ item.factures_pointees|pluralize }}</span>
+                            {% endif %}
+                            {% if item.factures_non_pointees > 0 %}
+                            <span class="badge badge-sm badge-warning">{{ item.factures_non_pointees }} non pointee{{ item.factures_non_pointees|pluralize }}</span>
+                            {% endif %}
+                        </div>
+                        <div class="mt-2 text-xs">
+                            <div>Total: {{ item.montant_total|floatformat:0|intcomma }} Ar</div>
+                            {% if item.montant_non_pointe > 0 %}
+                            <div class="text-warning">Non pointe: {{ item.montant_non_pointe|floatformat:0|intcomma }} Ar</div>
+                            {% endif %}
+                            {% if item.factures_pointees > 0 %}
+                            <div class="text-base-content/50 mt-1">Deplacement bloque car pointe</div>
+                            {% endif %}
+                        </div>
+                        <div class="calendar-card-primary-action mt-3 rounded-lg px-3 py-2 flex items-center justify-between gap-2 text-sm font-semibold text-primary">
+                            <span>
+                                <i class="fas fa-eye mr-1"></i>
+                                <span class="md:hidden">Appuyer pour voir le pointage</span>
+                                <span class="hidden md:inline">Voir les détails et le pointage</span>
+                            </span>
+                            <i class="fas fa-chevron-right text-xs" aria-hidden="true"></i>
+                        </div>
+                        {% if item.can_drag %}
+                        <div class="calendar-card-actions mt-3 pt-2 flex flex-wrap items-center gap-2">
+                            <button type="button"
+                                    class="btn btn-primary btn-outline btn-sm flex-1 md:flex-none"
+                                    title="Choisir une nouvelle date"
+                                    aria-label="Modifier la date de {{ item.ouvrage_nom }}"
+                                    onclick="openCalendarDatePicker(event, this.closest('[data-payment-ids]'))">
+                                <i class="fas fa-calendar-days mr-1"></i>Modifier la date
+                            </button>
+                            <button type="button"
+                                    class="btn btn-ghost btn-sm btn-square calendar-drag-handle"
+                                    title="Maintenir puis glisser pour déplacer"
+                                    aria-label="Glisser la card vers une autre date"
+                                    onclick="event.stopPropagation()">
+                                <i class="fas fa-grip-vertical"></i>
+                            </button>
+                        </div>
+                        {% endif %}
+                    </article>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="h-24 rounded-lg border border-dashed border-base-300 flex items-center justify-center text-sm text-base-content/40">
+                    Aucun recouvrement
+                </div>
+                {% endif %}
+                {% endwith %}
+            </section>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div id="checklist-view" class="bg-base-100 shadow-xl rounded-lg p-4 hidden">
+        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-4">
+            <div>
+                <h2 class="text-lg font-semibold"><i class="fas fa-list-check mr-2 text-primary"></i>Check-list de pointage</h2>
+                <p class="text-sm text-base-content/60">Les lignes à pointer sont affichées en premier. Cliquez sur une ligne pour ouvrir le modal de pointage.</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <button type="button" class="btn btn-warning btn-sm checklist-filter-btn" data-filter="unpointed" onclick="filterChecklist('unpointed')">
+                    À pointer ({{ totals.factures_non_pointees|intcomma }})
+                </button>
+                <button type="button" class="btn btn-outline btn-success btn-sm checklist-filter-btn" data-filter="pointed" onclick="filterChecklist('pointed')">
+                    Pointées ({{ totals.factures_pointees|intcomma }})
+                </button>
+                <button type="button" class="btn btn-outline btn-sm checklist-filter-btn" data-filter="all" onclick="filterChecklist('all')">Toutes</button>
+            </div>
+        </div>
+        <div class="overflow-x-auto border border-base-300 rounded-xl">
+            <table class="table table-sm table-zebra w-full">
+                <thead class="bg-base-200">
+                    <tr>
+                        <th class="w-12">État</th>
+                        <th>Date</th>
+                        <th>Point d'eau</th>
+                        <th>IDXls</th>
+                        <th class="text-right">Montant</th>
+                        <th>Référence</th>
+                        <th class="text-right">Action</th>
+                    </tr>
+                </thead>
+                <tbody id="checklist-body">
+                    {% for employee_group in checklist_groups %}
+                    <tr class="checklist-employee-header bg-secondary/20" data-employee-key="e{{ forloop.counter }}">
+                        <td colspan="7" class="py-4 font-bold text-secondary">
+                            <i class="fas fa-user-check mr-2"></i>Employé : {{ employee_group.nom }}
+                            <span class="badge badge-outline badge-sm ml-2">{{ employee_group.nb_lignes }} ligne{{ employee_group.nb_lignes|pluralize }}</span>
+                            <span class="badge badge-warning badge-sm ml-1">{{ employee_group.nb_non_pointees }} non pointée{{ employee_group.nb_non_pointees|pluralize }}</span>
+                            <span class="badge badge-warning badge-outline badge-sm ml-1">{{ employee_group.montant_non_pointe|floatformat:0|intcomma }} Ar non pointés</span>
+                        </td>
+                    </tr>
+                    {% for commune_group in employee_group.communes %}
+                    <tr class="checklist-commune-header bg-primary/15" data-employee-key="e{{ forloop.parentloop.counter }}" data-commune-key="e{{ forloop.parentloop.counter }}-c{{ forloop.counter }}">
+                        <td colspan="7" class="py-3 pl-6 font-bold text-primary">
+                            <i class="fas fa-map-location-dot mr-2"></i>Commune : {{ commune_group.nom }}
+                            <span class="badge badge-outline badge-sm ml-2">{{ commune_group.nb_lignes }} ligne{{ commune_group.nb_lignes|pluralize }}</span>
+                            <span class="badge badge-warning badge-sm ml-1">{{ commune_group.nb_non_pointees }} non pointée{{ commune_group.nb_non_pointees|pluralize }}</span>
+                            <span class="badge badge-warning badge-outline badge-sm ml-1">{{ commune_group.montant_non_pointe|floatformat:0|intcomma }} Ar non pointés</span>
+                        </td>
+                    </tr>
+                    {% for ouvrage_group in commune_group.ouvrages %}
+                    <tr class="checklist-ouvrage-header bg-base-200"
+                        data-employee-key="e{{ forloop.parentloop.parentloop.counter }}"
+                        data-commune-key="e{{ forloop.parentloop.parentloop.counter }}-c{{ forloop.parentloop.counter }}"
+                        data-group-key="e{{ forloop.parentloop.parentloop.counter }}-c{{ forloop.parentloop.counter }}-o{{ forloop.counter }}">
+                        <td colspan="7" class="py-2 pl-12 font-semibold">
+                            <i class="fas fa-building-circle-check mr-2 text-secondary"></i>Ouvrage : {{ ouvrage_group.nom }}
+                            <span class="badge badge-outline badge-sm ml-2">{{ ouvrage_group.nb_lignes }} ligne{{ ouvrage_group.nb_lignes|pluralize }}</span>
+                            <span class="badge badge-warning badge-sm ml-1">{{ ouvrage_group.nb_non_pointees }} non pointée{{ ouvrage_group.nb_non_pointees|pluralize }}</span>
+                            <span class="badge badge-warning badge-outline badge-sm ml-1">{{ ouvrage_group.montant_non_pointe|floatformat:0|intcomma }} Ar non pointés</span>
+                        </td>
+                    </tr>
+                    {% for row in ouvrage_group.rows %}
+                    <tr class="checklist-row cursor-pointer hover"
+                        data-employee-key="e{{ forloop.parentloop.parentloop.parentloop.counter }}"
+                        data-commune-key="e{{ forloop.parentloop.parentloop.parentloop.counter }}-c{{ forloop.parentloop.parentloop.counter }}"
+                        data-group-key="e{{ forloop.parentloop.parentloop.parentloop.counter }}-c{{ forloop.parentloop.parentloop.counter }}-o{{ forloop.parentloop.counter }}"
+                        data-pointed="{% if row.est_pointe %}true{% else %}false{% endif %}"
+                        onclick="openForfaitaireDetails('{{ row.ouvrage_id }}', '{{ row.ouvrage_nom|escapejs }}')">
+                        <td>
+                            {% if row.est_pointe %}<i class="fas fa-circle-check text-success text-lg" title="Pointée"></i>
+                            {% else %}<i class="far fa-circle text-warning text-lg" title="À pointer"></i>{% endif %}
+                        </td>
+                        <td class="whitespace-nowrap">{{ row.date_facture|date:"d/m/Y" }}</td>
+                        <td>{{ row.point_eau_nom }}</td>
+                        <td class="font-mono text-xs">{{ row.point_eau_idxls|default:"-" }}</td>
+                        <td class="text-right font-mono whitespace-nowrap">{{ row.montant|floatformat:0|intcomma }} Ar</td>
+                        <td class="text-xs">
+                            {% if row.est_pointe %}
+                            <span class="badge badge-success badge-sm">{{ row.numero_diamex }}</span>
+                            <span class="badge badge-info badge-sm">{{ row.base_diamex }}</span>
+                            {% elif row.pointage_possible %}
+                            <span class="badge badge-success badge-sm"><i class="fas fa-link mr-1"></i>Pointage possible</span>
+                            <div class="mt-1 text-[11px] text-success">Les deux contreparties existent</div>
+                            {% else %}
+                            <span class="badge badge-warning badge-sm"><i class="fas fa-link-slash mr-1"></i>Contrepartie manquante</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-right">
+                            <button type="button" class="btn btn-xs {% if row.est_pointe %}btn-outline{% elif row.pointage_possible %}btn-success{% else %}btn-warning btn-outline{% endif %}">
+                                {% if row.est_pointe %}<i class="fas fa-eye mr-1"></i>Voir
+                                {% elif row.pointage_possible %}<i class="fas fa-link mr-1"></i>Pointer
+                                {% else %}<i class="fas fa-magnifying-glass mr-1"></i>Vérifier{% endif %}
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% endfor %}
+                    {% endfor %}
+                    {% empty %}
+                    <tr><td colspan="7" class="text-center py-10 text-base-content/50">Aucune facture sur cette période.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<dialog id="modalDetails" class="modal">
+    <div class="modal-box w-[96vw] max-w-6xl">
+        <div class="flex items-center justify-between gap-3 mb-4">
+            <div>
+                <h3 id="modal-title" class="font-bold text-lg">Details ouvrage</h3>
+                <p class="text-sm text-base-content/60">Meme source que le dashboard forfaitaire</p>
+            </div>
+            <form method="dialog">
+                <button class="btn btn-sm btn-circle btn-ghost">x</button>
+            </form>
+        </div>
+        <div id="modal-loading" class="py-10 text-center hidden">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+        </div>
+        <div id="modal-error" class="alert alert-error hidden mb-4"></div>
+        <div id="modal-content" class="space-y-5">
+            <div class="stats stats-vertical lg:stats-horizontal shadow w-full">
+                <div class="stat">
+                    <div class="stat-title">Points d'eau</div>
+                    <div id="modal-stat-points" class="stat-value text-primary">0</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title">Paiement forfaitaire</div>
+                    <div id="modal-stat-prevu" class="stat-value text-info">0</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title">Collecte compta</div>
+                    <div id="modal-stat-collecte" class="stat-value text-success">0</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title">Taux</div>
+                    <div id="modal-stat-taux" class="stat-value text-warning">0%</div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <div class="card bg-base-200">
+                    <div class="card-body p-4">
+                        <h4 class="card-title text-base">Points d'eau</h4>
+                        <div class="overflow-x-auto max-h-80">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Code</th>
+                                        <th>Nom</th>
+                                        <th>Tarif</th>
+                                        <th>Statut</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="modal-points-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card bg-base-200">
+                    <div class="card-body p-4">
+                        <h4 class="card-title text-base">Recouvrement mensuel</h4>
+                        <div class="overflow-x-auto max-h-80">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Mois</th>
+                                        <th class="text-right">Prevu</th>
+                                        <th class="text-right">Collecte</th>
+                                        <th class="text-right">Taux</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="modal-recouvrement-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="border border-info/30 bg-info/10 rounded-lg p-3">
+                <div class="flex flex-wrap items-center gap-2">
+                    <div class="badge badge-outline">Sélection : <span id="modal-pointage-count" class="ml-1 font-bold">0</span></div>
+                    <div class="badge badge-outline">Total forfaitaire : <span id="modal-pointage-total" class="ml-1 font-bold">0 Ar</span></div>
+                    <div class="badge badge-outline">DiameX : <span id="modal-pointage-diamex" class="ml-1 font-bold">0 Ar</span></div>
+                    <div class="badge badge-outline">Écart : <span id="modal-pointage-ecart" class="ml-1 font-bold">0 Ar</span></div>
+                    <button id="modal-pointage-apply" type="button" class="btn btn-info btn-xs" onclick="applyPointageFromCalendarModal()" disabled>
+                        <i class="fas fa-link mr-1"></i>Pointer
+                    </button>
+                    <button id="modal-auto-pointage-apply" type="button" class="btn btn-outline btn-primary btn-xs" onclick="applyAutoPointageFromCalendarModal()" disabled>
+                        <i class="fas fa-wand-magic-sparkles mr-1"></i>Auto-pointer
+                    </button>
+                    <button type="button" class="btn btn-ghost btn-xs" onclick="resetModalPointage()">Réinitialiser</button>
+                    <button type="button" class="btn btn-outline btn-success btn-xs" onclick="selectAllModalPayments()">Tout cocher</button>
+                </div>
+                <div id="modal-auto-summary" class="text-xs mt-2 opacity-70">Aucune suggestion automatique.</div>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <div class="card bg-base-200">
+                    <div class="card-body p-4">
+                        <h4 class="card-title text-base">Factures forfaitaires à rapprocher</h4>
+                        <div class="overflow-x-auto max-h-96">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Sel.</th>
+                                        <th>Date</th>
+                                        <th>Point d'eau</th>
+                                        <th class="text-right">Montant</th>
+                                        <th>Statut</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="modal-factures-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card bg-base-200">
+                    <div class="card-body p-4">
+                        <h4 class="card-title text-base">Lignes DiameX 748411</h4>
+                        <div class="overflow-x-auto max-h-96">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Sel.</th>
+                                        <th>Date</th>
+                                        <th>Description</th>
+                                        <th class="text-right">Montant</th>
+                                        <th>Statut</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="modal-diamex-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<dialog id="modalCalendarDatePicker" class="modal">
+    <div class="modal-box max-w-md">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" aria-label="Fermer">×</button>
+        </form>
+        <h3 class="font-bold text-lg mb-2">
+            <i class="fas fa-calendar-days text-primary mr-2"></i>Modifier la date
+        </h3>
+        <p id="calendar-reschedule-summary" class="text-sm text-base-content/70 mb-4"></p>
+        <div class="form-control">
+            <label class="label" for="calendar-reschedule-date">
+                <span class="label-text font-medium">Nouvelle date</span>
+            </label>
+            <input id="calendar-reschedule-date" type="date" class="input input-bordered input-lg w-full">
+            <div class="label">
+                <span class="label-text-alt">La card et toutes ses factures forfaitaires seront déplacées ensemble.</span>
+            </div>
+        </div>
+        <div class="modal-action grid grid-cols-2 gap-2">
+            <form method="dialog"><button class="btn btn-ghost w-full">Annuler</button></form>
+            <button type="button" id="calendar-reschedule-save" class="btn btn-primary w-full" onclick="submitCalendarDateChange()">
+                <i class="fas fa-check mr-1"></i>Confirmer
+            </button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<dialog id="modalEditCalendarPayment" class="modal">
+    <div class="modal-box max-w-xl">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">×</button>
+        </form>
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-pen-to-square text-primary mr-2"></i>Modifier la ligne forfaitaire
+        </h3>
+        <input type="hidden" id="calendar-edit-payment-id">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div class="form-control">
+                <label class="label py-1"><span class="label-text">Date</span></label>
+                <input id="calendar-edit-date" type="date" class="input input-bordered w-full">
+            </div>
+            <div class="form-control">
+                <label class="label py-1"><span class="label-text">Quantité</span></label>
+                <input id="calendar-edit-quantity" type="number" min="0" step="1" class="input input-bordered w-full" oninput="updateCalendarEditPreview()">
+            </div>
+            <div class="form-control md:col-span-2">
+                <label class="label py-1"><span class="label-text">Employé</span></label>
+                <select id="calendar-edit-employee" class="select select-bordered w-full"></select>
+            </div>
+            <div class="form-control md:col-span-2">
+                <label class="label py-1"><span class="label-text">Montant recalculé</span></label>
+                <input id="calendar-edit-amount" type="text" class="input input-bordered bg-base-200 w-full" readonly>
+            </div>
+        </div>
+        <div id="calendar-edit-meta" class="text-xs text-base-content/60 mt-3"></div>
+        <div class="modal-action">
+            <form method="dialog"><button class="btn btn-ghost">Annuler</button></form>
+            <button type="button" id="calendar-edit-save" class="btn btn-primary" onclick="saveCalendarPaymentEdit()">
+                <i class="fas fa-floppy-disk mr-1"></i>Enregistrer
+            </button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+    let draggedCalendarCard = null;
+    let currentModalData = null;
+    let selectedModalPaymentIds = new Set();
+    let selectedModalDiamex = null;
+    let calendarEditPayment = null;
+    let calendarCardToReschedule = null;
+    let touchDragState = null;
+
+    function escapeHtml(value) {
+        const div = document.createElement('div');
+        div.textContent = String(value ?? '');
+        return div.innerHTML;
+    }
+
+    function fmtNumber(value) {
+        return new Intl.NumberFormat('fr-FR').format(Number(value || 0));
+    }
+
+    function openCalendarCardFromKeyboard(event, ouvrageId, ouvrageNom) {
+        if (event.target.closest('button')) return;
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            openForfaitaireDetails(ouvrageId, ouvrageNom);
+        }
+    }
+
+    function openCalendarDatePicker(event, card) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!card) return;
+
+        calendarCardToReschedule = card;
+        const paymentIds = readCalendarPaymentIds(card);
+        const currentDate = card.dataset.currentDate || '';
+        const ouvrageNom = card.dataset.ouvrageNom || 'cet ouvrage';
+        document.getElementById('calendar-reschedule-date').value = currentDate;
+        document.getElementById('calendar-reschedule-summary').textContent =
+            `${ouvrageNom} · ${paymentIds.length} facture(s) · date actuelle : ${formatCalendarDate(currentDate)}`;
+        document.getElementById('modalCalendarDatePicker').showModal();
+    }
+
+    function formatCalendarDate(isoDate) {
+        if (!isoDate) return '-';
+        const [year, month, day] = isoDate.split('-').map(Number);
+        return new Intl.DateTimeFormat('fr-FR', {dateStyle: 'long'}).format(new Date(year, month - 1, day));
+    }
+
+    function readCalendarPaymentIds(card) {
+        let paymentIds = [];
+        try {
+            paymentIds = JSON.parse(card?.dataset.paymentIds || '[]');
+        } catch (error) {
+            throw new Error('Impossible de lire les paiements à déplacer.');
+        }
+        if (!Array.isArray(paymentIds) || paymentIds.length === 0) {
+            throw new Error('Aucun paiement à déplacer.');
+        }
+        return paymentIds;
+    }
+
+    async function submitCalendarDateChange() {
+        const dateInput = document.getElementById('calendar-reschedule-date');
+        const targetDate = dateInput.value;
+        if (!calendarCardToReschedule || !targetDate) {
+            dateInput.focus();
+            return;
+        }
+        if (targetDate === calendarCardToReschedule.dataset.currentDate) {
+            document.getElementById('modalCalendarDatePicker').close();
+            return;
+        }
+
+        const saveButton = document.getElementById('calendar-reschedule-save');
+        saveButton.disabled = true;
+        saveButton.classList.add('loading');
+        try {
+            await moveCalendarPayments(calendarCardToReschedule, targetDate, false);
+        } catch (error) {
+            alert(error.message || 'Erreur lors du déplacement');
+        } finally {
+            saveButton.disabled = false;
+            saveButton.classList.remove('loading');
+        }
+    }
+
+    function setDisplayMode(mode) {
+        const checklist = mode === 'checklist';
+        document.getElementById('calendar-view').classList.toggle('hidden', checklist);
+        document.getElementById('checklist-view').classList.toggle('hidden', !checklist);
+        document.getElementById('view-calendar-btn').className = `btn btn-sm join-item ${checklist ? 'btn-outline' : 'btn-primary'}`;
+        document.getElementById('view-checklist-btn').className = `btn btn-sm join-item ${checklist ? 'btn-primary' : 'btn-outline'}`;
+        localStorage.setItem('forfaitaire-calendar-display', mode);
+        if (checklist) filterChecklist(localStorage.getItem('forfaitaire-checklist-filter') || 'unpointed');
+    }
+
+    function filterChecklist(filter) {
+        document.querySelectorAll('.checklist-row').forEach((row) => {
+            const pointed = row.dataset.pointed === 'true';
+            row.classList.toggle('hidden', filter === 'pointed' ? !pointed : (filter === 'unpointed' ? pointed : false));
+        });
+        document.querySelectorAll('.checklist-ouvrage-header').forEach((header) => {
+            const key = header.dataset.groupKey;
+            const hasVisibleRow = Array.from(document.querySelectorAll(`.checklist-row[data-group-key="${key}"]`))
+                .some((row) => !row.classList.contains('hidden'));
+            header.classList.toggle('hidden', !hasVisibleRow);
+        });
+        document.querySelectorAll('.checklist-commune-header').forEach((header) => {
+            const key = header.dataset.communeKey;
+            const hasVisibleRow = Array.from(document.querySelectorAll(`.checklist-row[data-commune-key="${key}"]`))
+                .some((row) => !row.classList.contains('hidden'));
+            header.classList.toggle('hidden', !hasVisibleRow);
+        });
+        document.querySelectorAll('.checklist-employee-header').forEach((header) => {
+            const key = header.dataset.employeeKey;
+            const hasVisibleRow = Array.from(document.querySelectorAll(`.checklist-row[data-employee-key="${key}"]`))
+                .some((row) => !row.classList.contains('hidden'));
+            header.classList.toggle('hidden', !hasVisibleRow);
+        });
+        document.querySelectorAll('.checklist-filter-btn').forEach((button) => {
+            const active = button.dataset.filter === filter;
+            button.classList.toggle('btn-outline', !active);
+        });
+        localStorage.setItem('forfaitaire-checklist-filter', filter);
+    }
+
+    function getSelectedModalMonth() {
+        const months = new Set((currentModalData?.paiements_forfaitaires || [])
+            .filter((item) => selectedModalPaymentIds.has(String(item.id)))
+            .map((item) => Number(item.mois || 0))
+            .filter(Boolean));
+        return months.size === 1 ? [...months][0] : null;
+    }
+
+    function resetModalPointage() {
+        selectedModalPaymentIds = new Set();
+        selectedModalDiamex = null;
+        document.querySelectorAll('.calendar-payment-checkbox, .calendar-diamex-radio').forEach((input) => { input.checked = false; });
+        updateModalPointageSummary();
+    }
+
+    function toggleModalPayment(id, checked) {
+        const item = (currentModalData?.paiements_forfaitaires || []).find((row) => String(row.id) === String(id));
+        const selectedMonth = getSelectedModalMonth();
+        if (checked && selectedMonth && item?.mois && Number(item.mois) !== selectedMonth) {
+            document.querySelector(`.calendar-payment-checkbox[data-id="${id}"]`).checked = false;
+            alert('Le pointage forfaitaire doit rester sur un seul mois.');
+            return;
+        }
+        checked ? selectedModalPaymentIds.add(String(id)) : selectedModalPaymentIds.delete(String(id));
+        updateModalPointageSummary();
+    }
+
+    function selectAllModalPayments() {
+        const firstAvailable = (currentModalData?.paiements_forfaitaires || []).find((item) => !item.est_pointe);
+        const targetMonth = Number(selectedModalDiamex?.mois || firstAvailable?.mois || 0) || null;
+        (currentModalData?.paiements_forfaitaires || []).forEach((item) => {
+            if (!item.est_pointe && (!targetMonth || !item.mois || Number(item.mois) === targetMonth)) selectedModalPaymentIds.add(String(item.id));
+        });
+        document.querySelectorAll('.calendar-payment-checkbox:not(:disabled)').forEach((input) => {
+            const item = (currentModalData?.paiements_forfaitaires || []).find((row) => String(row.id) === input.dataset.id);
+            input.checked = !targetMonth || !item?.mois || Number(item.mois) === targetMonth;
+        });
+        updateModalPointageSummary();
+    }
+
+    function selectModalDiamex(id) {
+        selectedModalDiamex = (currentModalData?.transactions_diamex || []).find((row) => String(row.entry_id || row.id) === String(id)) || null;
+        const paymentMonth = getSelectedModalMonth();
+        if (paymentMonth && selectedModalDiamex?.mois && Number(selectedModalDiamex.mois) !== paymentMonth) {
+            selectedModalDiamex = null;
+            document.querySelectorAll('.calendar-diamex-radio').forEach((input) => { input.checked = false; });
+            alert('La ligne DiameX doit être du même mois que les factures sélectionnées.');
+        }
+        updateModalPointageSummary();
+    }
+
+    function updateModalPointageSummary() {
+        const total = (currentModalData?.paiements_forfaitaires || []).reduce((sum, item) =>
+            selectedModalPaymentIds.has(String(item.id)) ? sum + Number(item.montant || 0) : sum, 0);
+        const diamex = Number(selectedModalDiamex?.montant_in || 0);
+        const difference = total - diamex;
+        document.getElementById('modal-pointage-count').textContent = selectedModalPaymentIds.size;
+        document.getElementById('modal-pointage-total').textContent = `${fmtNumber(total)} Ar`;
+        document.getElementById('modal-pointage-diamex').textContent = `${fmtNumber(diamex)} Ar`;
+        document.getElementById('modal-pointage-ecart').textContent = `${fmtNumber(difference)} Ar`;
+        const sameMonth = !getSelectedModalMonth() || !selectedModalDiamex?.mois || getSelectedModalMonth() === Number(selectedModalDiamex.mois);
+        document.getElementById('modal-pointage-apply').disabled = !(selectedModalPaymentIds.size && selectedModalDiamex && sameMonth && Math.abs(difference) <= 0.01);
+    }
+
+    async function applyPointageFromCalendarModal(payloadOverride = null, reloadAfter = true) {
+        const payload = payloadOverride || {
+            paiement_ids: [...selectedModalPaymentIds],
+            diamex_entry_id: selectedModalDiamex?.entry_id || selectedModalDiamex?.id,
+            montant_diamex_selection: selectedModalDiamex?.montant_in || 0,
+            annee: '{{ annee }}'
+        };
+        const response = await fetch('{% url "accounting:api_pointage_paiements_forfaitaires" %}', {
+            method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken')}, body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            if (reloadAfter) alert(data.error || 'Pointage impossible.');
+            return false;
+        }
+        if (reloadAfter) {
+            alert(data.message || 'Pointage effectué.');
+            window.location.reload();
+        }
+        return true;
+    }
+
+    async function applyAutoPointageFromCalendarModal() {
+        const suggestions = currentModalData?.auto_pointage?.auto_applicable || [];
+        if (!suggestions.length) return;
+        let applied = 0;
+        for (const item of suggestions) {
+            const success = await applyPointageFromCalendarModal({paiement_ids: item.paiement_ids || [], diamex_entry_id: item.diamex_entry_id, montant_diamex_selection: item.diamex_montant || 0, annee: '{{ annee }}'}, false);
+            if (success) applied += 1;
+        }
+        alert(`${applied} suggestion(s) appliquée(s).`);
+        if (applied) window.location.reload();
+    }
+
+    async function cancelModalPointage(numero, base) {
+        if (!confirm(`Annuler le pointage ${numero} / ${base} ?`)) return;
+        const response = await fetch('{% url "accounting:api_annuler_pointage_paiements_forfaitaires" %}', {
+            method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+            body: JSON.stringify({numero_diamex: numero, base_diamex: base, annee: '{{ annee }}'})
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) return alert(data.error || 'Annulation impossible.');
+        alert(data.message || 'Pointage annulé.');
+        window.location.reload();
+    }
+
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    function updateCalendarEditPreview() {
+        const quantity = Number(document.getElementById('calendar-edit-quantity')?.value || 0);
+        const unitPrice = Number(calendarEditPayment?.prix_unitaire || 0);
+        document.getElementById('calendar-edit-amount').value = `${fmtNumber(quantity * unitPrice)} Ar`;
+    }
+
+    async function openCalendarPaymentEdit(paymentId) {
+        calendarEditPayment = (currentModalData?.paiements_forfaitaires || []).find((item) => String(item.id) === String(paymentId));
+        if (!calendarEditPayment) return alert('Ligne forfaitaire introuvable.');
+        if (calendarEditPayment.est_pointe) return alert('Une ligne déjà pointée est verrouillée.');
+
+        const employeeSelect = document.getElementById('calendar-edit-employee');
+        employeeSelect.innerHTML = '<option value="">Chargement...</option>';
+        try {
+            const ouvrageId = currentModalData?.ouvrage?.id;
+            const response = await fetch(`/facturation/api/paiements-forfaitaires/ouvrage/${ouvrageId}/?annee={{ annee }}`, {credentials: 'same-origin'});
+            const data = await response.json();
+            if (!response.ok || !data.success) throw new Error(data.error || 'Employés indisponibles.');
+            const detailedPayment = (data.paiements || []).find((item) => String(item.id) === String(paymentId)) || {};
+            employeeSelect.innerHTML = (data.planning_employes || []).map((employee) =>
+                `<option value="${escapeHtml(employee.id)}">${escapeHtml(employee.label || employee.nom || employee.id)}</option>`
+            ).join('');
+            const selectedEmployeeId = detailedPayment.planning_employe_id || '';
+            if (selectedEmployeeId && !Array.from(employeeSelect.options).some((option) => option.value === selectedEmployeeId)) {
+                employeeSelect.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(selectedEmployeeId)}">${escapeHtml(detailedPayment.planning_employe_label || 'Employé actuel')}</option>`);
+            }
+            employeeSelect.value = selectedEmployeeId;
+            document.getElementById('calendar-edit-date').value = calendarEditPayment.date_facture_iso || detailedPayment.date_facture || '';
+            document.getElementById('calendar-edit-quantity').value = Number(calendarEditPayment.quantite || 0);
+            document.getElementById('calendar-edit-payment-id').value = String(paymentId);
+            document.getElementById('calendar-edit-meta').textContent = `Point d'eau : ${calendarEditPayment.point_eau || '-'} · Prix unitaire : ${fmtNumber(calendarEditPayment.prix_unitaire || 0)} Ar`;
+            updateCalendarEditPreview();
+            document.getElementById('modalEditCalendarPayment').showModal();
+        } catch (error) {
+            alert(error.message || 'Impossible de préparer la modification.');
+        }
+    }
+
+    async function saveCalendarPaymentEdit() {
+        const paymentId = document.getElementById('calendar-edit-payment-id').value;
+        const dateValue = document.getElementById('calendar-edit-date').value;
+        const quantity = Number(document.getElementById('calendar-edit-quantity').value || 0);
+        const employeeId = document.getElementById('calendar-edit-employee').value;
+        if (!dateValue) return alert('La date est obligatoire.');
+        if (!Number.isFinite(quantity) || quantity < 0) return alert('La quantité est invalide.');
+        if (!employeeId) return alert('Veuillez sélectionner un employé.');
+
+        const saveButton = document.getElementById('calendar-edit-save');
+        saveButton.disabled = true;
+        try {
+            const response = await fetch(`/facturation/api/paiement-forfaitaire/${paymentId}/update/`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+                body: JSON.stringify({
+                    date_facture: dateValue,
+                    planning_date: dateValue,
+                    quantite: quantity,
+                    planning_employe_id: employeeId
+                })
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) throw new Error(data.error || 'Mise à jour impossible.');
+            document.getElementById('modalEditCalendarPayment').close();
+            alert(data.message || 'Ligne mise à jour.');
+            window.location.reload();
+        } catch (error) {
+            alert(error.message || 'Erreur pendant la mise à jour.');
+        } finally {
+            saveButton.disabled = false;
+        }
+    }
+
+    function syncGeoFilters() {
+        const region = document.getElementById('filter-region');
+        const district = document.getElementById('filter-district');
+        const commune = document.getElementById('filter-commune');
+        const regionValue = region ? region.value : '';
+        const districtValue = district ? district.value : '';
+
+        if (district) {
+            Array.from(district.options).forEach((option, index) => {
+                option.hidden = index !== 0 && !!(regionValue && option.dataset.regionId !== regionValue);
+            });
+        }
+
+        if (commune) {
+            Array.from(commune.options).forEach((option, index) => {
+                if (index === 0) {
+                    option.hidden = false;
+                    return;
+                }
+                const matchRegion = !regionValue || option.dataset.regionId === regionValue;
+                const matchDistrict = !districtValue || option.dataset.districtId === districtValue;
+                option.hidden = !(matchRegion && matchDistrict);
+            });
+        }
+    }
+
+    async function openForfaitaireDetails(ouvrageId, ouvrageNom) {
+        const modal = document.getElementById('modalDetails');
+        document.getElementById('modal-title').textContent = `Details - ${ouvrageNom}`;
+        document.getElementById('modal-loading').classList.remove('hidden');
+        document.getElementById('modal-error').classList.add('hidden');
+        modal.showModal();
+
+        try {
+            const annee = new URLSearchParams(window.location.search).get('annee') || '{{ annee }}';
+            const response = await fetch(`/comptabilite/api/forfaitaire/details/${ouvrageId}/?annee=${annee}`, {
+                credentials: 'same-origin'
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'Chargement impossible');
+            }
+
+            currentModalData = data;
+            selectedModalPaymentIds = new Set();
+            selectedModalDiamex = null;
+            const safeSuggestions = data.auto_pointage?.auto_applicable || [];
+            document.getElementById('modal-auto-summary').textContent = safeSuggestions.length
+                ? `${safeSuggestions.length} suggestion(s) sûre(s) disponible(s).`
+                : 'Aucune suggestion automatique sûre.';
+            document.getElementById('modal-auto-pointage-apply').disabled = safeSuggestions.length === 0;
+
+            document.getElementById('modal-stat-points').textContent = fmtNumber(data.ouvrage?.nb_points_eau || (data.points_eau || []).length);
+            document.getElementById('modal-stat-prevu').textContent = `${fmtNumber(data.ouvrage?.montant_a_collecter || 0)} Ar`;
+            document.getElementById('modal-stat-collecte').textContent = `${fmtNumber(data.ouvrage?.montant_collecte || 0)} Ar`;
+            document.getElementById('modal-stat-taux').textContent = `${data.ouvrage?.taux || 0}%`;
+
+            document.getElementById('modal-points-body').innerHTML = (data.points_eau || []).map((item) => `
+                <tr>
+                    <td>${item.code || '-'}</td>
+                    <td>${item.nom || '-'}</td>
+                    <td class="text-right">${fmtNumber(item.tarif_trimestriel || 0)} Ar</td>
+                    <td>${item.est_coupe_actuellement ? '<span class="badge badge-error badge-sm">Coupe</span>' : '<span class="badge badge-success badge-sm">Actif</span>'}</td>
+                </tr>
+            `).join('') || '<tr><td colspan="4" class="text-center text-base-content/50">Aucune donnee</td></tr>';
+
+            document.getElementById('modal-recouvrement-body').innerHTML = (data.recouvrement_mensuel || []).map((item) => `
+                <tr>
+                    <td>${item.mois_nom || '-'}</td>
+                    <td class="text-right">${fmtNumber(item.prevu || 0)} Ar</td>
+                    <td class="text-right">${fmtNumber(item.collecte || 0)} Ar</td>
+                    <td class="text-right">${item.taux || 0}%</td>
+                </tr>
+            `).join('') || '<tr><td colspan="4" class="text-center text-base-content/50">Aucune donnee</td></tr>';
+
+            document.getElementById('modal-factures-body').innerHTML = (data.paiements_forfaitaires || []).map((item) => `
+                <tr class="${item.est_pointe ? 'bg-success/10' : ''}">
+                    <td><input type="checkbox" class="checkbox checkbox-xs calendar-payment-checkbox" data-id="${item.id}" ${item.est_pointe ? 'disabled' : ''} onchange="toggleModalPayment('${item.id}', this.checked)"></td>
+                    <td>${escapeHtml(item.date_facture || '-')}</td>
+                    <td>${escapeHtml(item.point_eau || '-')}</td>
+                    <td class="text-right">${fmtNumber(item.montant || 0)} Ar</td>
+                    <td>${item.est_pointe ? '<span class="badge badge-success badge-sm">Pointee</span>' : '<span class="badge badge-warning badge-sm">Non pointee</span>'}</td>
+                    <td>
+                        <div class="flex flex-wrap gap-1">
+                            ${item.est_pointe ? `<button type="button" class="btn btn-warning btn-outline btn-xs" data-numero="${escapeHtml(item.numeroDiameX || '')}" data-base="${escapeHtml(item.baseDiameX || '')}" onclick="cancelModalPointage(this.dataset.numero, this.dataset.base)"><i class="fas fa-rotate-left mr-1"></i>Annuler</button>` : ''}
+                            ${(!item.est_pointe && data.can_manage_forfaitaire_factures) ? `<button type="button" class="btn btn-primary btn-outline btn-xs" onclick="openCalendarPaymentEdit('${item.id}')"><i class="fas fa-pen mr-1"></i>Modifier</button>` : ''}
+                            ${(!item.est_pointe && !data.can_manage_forfaitaire_factures) ? '<span class="text-xs opacity-50">Lecture seule</span>' : ''}
+                        </div>
+                    </td>
+                </tr>
+            `).join('') || '<tr><td colspan="6" class="text-center text-base-content/50">Aucune donnee</td></tr>';
+
+            document.getElementById('modal-diamex-body').innerHTML = (data.transactions_diamex || []).map((item) => `
+                <tr class="${item.already_pointed ? 'bg-success/10' : ''}">
+                    <td><input type="radio" name="calendar-diamex" class="radio radio-xs calendar-diamex-radio" ${item.already_pointed ? 'disabled' : ''} onchange="selectModalDiamex('${item.entry_id || item.id}')"></td>
+                    <td>${escapeHtml(item.date_rec || item.date || '-')}</td>
+                    <td>${escapeHtml(item.description || '-')}</td>
+                    <td class="text-right">${fmtNumber(item.montant_in || 0)} Ar</td>
+                    <td>${item.already_pointed ? '<span class="badge badge-success badge-sm">Pointee</span>' : '<span class="badge badge-warning badge-sm">Non pointee</span>'}</td>
+                </tr>
+            `).join('') || '<tr><td colspan="5" class="text-center text-base-content/50">Aucune donnee</td></tr>';
+            updateModalPointageSummary();
+        } catch (error) {
+            const err = document.getElementById('modal-error');
+            err.textContent = error.message || 'Erreur reseau';
+            err.classList.remove('hidden');
+        } finally {
+            document.getElementById('modal-loading').classList.add('hidden');
+        }
+    }
+
+    async function moveCalendarPayments(card, targetDate, askConfirmation = true) {
+        const paymentIds = readCalendarPaymentIds(card);
+
+        const ouvrageNom = card.dataset.ouvrageNom || 'cet ouvrage';
+        if (askConfirmation && !confirm(`Déplacer ${paymentIds.length} facture(s) de ${ouvrageNom} vers le ${formatCalendarDate(targetDate)} ?`)) {
+            return false;
+        }
+
+        const response = await fetch('{% url "accounting:api_deplacer_paiements_forfaitaires_calendrier" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                paiement_ids: paymentIds,
+                target_date: targetDate
+            })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Déplacement impossible');
+        }
+        window.location.reload();
+        return true;
+    }
+
+    function initCalendarDragAndDrop() {
+        document.querySelectorAll('[draggable="true"][data-payment-ids]').forEach((card) => {
+            card.addEventListener('dragstart', (event) => {
+                draggedCalendarCard = card;
+                card.classList.add('opacity-60');
+                if (event.dataTransfer) {
+                    event.dataTransfer.effectAllowed = 'move';
+                    event.dataTransfer.setData('text/plain', card.dataset.ouvrageId || 'forfaitaire');
+                }
+            });
+            card.addEventListener('dragend', () => {
+                card.classList.remove('opacity-60');
+                draggedCalendarCard = null;
+                document.querySelectorAll('[data-drop-date]').forEach((zone) => zone.classList.remove('calendar-drop-active'));
+            });
+        });
+
+        document.querySelectorAll('[data-drop-date]').forEach((zone) => {
+            zone.addEventListener('dragover', (event) => {
+                if (!draggedCalendarCard) return;
+                event.preventDefault();
+                zone.classList.add('calendar-drop-active');
+            });
+            zone.addEventListener('dragleave', () => {
+                zone.classList.remove('calendar-drop-active');
+            });
+            zone.addEventListener('drop', async (event) => {
+                if (!draggedCalendarCard) return;
+                event.preventDefault();
+                zone.classList.remove('calendar-drop-active');
+                try {
+                    await moveCalendarPayments(draggedCalendarCard, zone.dataset.dropDate);
+                } catch (error) {
+                    alert(error.message || 'Erreur lors du deplacement');
+                }
+            });
+        });
+
+        document.querySelectorAll('.calendar-drag-handle').forEach((handle) => {
+            handle.addEventListener('touchstart', (event) => {
+                const touch = event.touches[0];
+                const card = handle.closest('[data-payment-ids]');
+                if (!touch || !card) return;
+                event.stopPropagation();
+                touchDragState = {
+                    card,
+                    startX: touch.clientX,
+                    startY: touch.clientY,
+                    moved: false,
+                    dropZone: null
+                };
+                card.classList.add('opacity-60');
+            }, {passive: true});
+
+            handle.addEventListener('touchmove', (event) => {
+                if (!touchDragState) return;
+                const touch = event.touches[0];
+                if (!touch) return;
+                const distance = Math.hypot(touch.clientX - touchDragState.startX, touch.clientY - touchDragState.startY);
+                if (distance < 10) return;
+                touchDragState.moved = true;
+                event.preventDefault();
+                event.stopPropagation();
+
+                document.querySelectorAll('[data-drop-date]').forEach((zone) => zone.classList.remove('calendar-drop-active'));
+                const element = document.elementFromPoint(touch.clientX, touch.clientY);
+                const dropZone = element?.closest('[data-drop-date]') || null;
+                touchDragState.dropZone = dropZone;
+                dropZone?.classList.add('calendar-drop-active');
+            }, {passive: false});
+
+            handle.addEventListener('touchend', async (event) => {
+                if (!touchDragState) return;
+                event.preventDefault();
+                event.stopPropagation();
+                const {card, moved, dropZone} = touchDragState;
+                touchDragState = null;
+                card.classList.remove('opacity-60');
+                document.querySelectorAll('[data-drop-date]').forEach((zone) => zone.classList.remove('calendar-drop-active'));
+                if (!moved || !dropZone || dropZone.dataset.dropDate === card.dataset.currentDate) return;
+                try {
+                    await moveCalendarPayments(card, dropZone.dataset.dropDate);
+                } catch (error) {
+                    alert(error.message || 'Erreur lors du déplacement');
+                }
+            }, {passive: false});
+
+            handle.addEventListener('touchcancel', () => {
+                touchDragState?.card.classList.remove('opacity-60');
+                touchDragState = null;
+                document.querySelectorAll('[data-drop-date]').forEach((zone) => zone.classList.remove('calendar-drop-active'));
+            });
+        });
+    }
+
+    document.getElementById('filter-region')?.addEventListener('change', syncGeoFilters);
+    document.getElementById('filter-district')?.addEventListener('change', syncGeoFilters);
+    syncGeoFilters();
+    initCalendarDragAndDrop();
+    setDisplayMode(localStorage.getItem('forfaitaire-calendar-display') || 'calendar');
+</script>
+{% endblock %}

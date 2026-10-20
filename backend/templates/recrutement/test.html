@@ -1,0 +1,365 @@
+{% extends recrutement_shell_base_template %}
+{% load static %}
+
+{% block title %}Test de Recrutement - Hydria{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8 max-w-6xl">
+    <div id="warning-banner" class="alert alert-warning shadow-lg mb-4 hidden">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span>Il vous reste moins de 5 minutes. Pensez à déposer votre test avant la fin du délai.</span>
+    </div>
+
+    <div id="expired-banner" class="alert alert-error shadow-lg mb-4 {% if not test_expire %}hidden{% endif %}">
+        <i class="fas fa-clock"></i>
+        <span>Le temps du test est terminé. Vous ne pouvez plus modifier vos réponses. Déposez maintenant votre test.</span>
+    </div>
+
+    <!-- Header avec timer -->
+    <div class="sticky top-0 z-50 bg-base-100 shadow-lg rounded-lg p-4 mb-6">
+        <div class="flex justify-between items-center">
+            <div>
+                <h2 class="text-2xl font-bold">
+                    <i class="fas fa-clipboard-list mr-2 text-primary"></i>
+                    Test de Recrutement
+                </h2>
+                <p class="text-sm text-base-content/70 mt-1">{{ reponses|length }} question(s)</p>
+            </div>
+
+            <div class="text-right">
+                <div class="text-sm text-base-content/70 mb-1">Temps restant</div>
+                <div id="timer" class="text-3xl font-mono font-bold text-primary">
+                    <span id="minutes">30</span>:<span id="seconds">00</span>
+                </div>
+            </div>
+        </div>
+
+        <progress class="progress progress-primary mt-4" id="progress-bar" value="0" max="{{ reponses|length }}"></progress>
+    </div>
+
+    <!-- Questions -->
+    <div class="space-y-6" id="questions-container">
+        {% for reponse in reponses %}
+        <div class="card bg-base-100 shadow-xl question-card" data-question-id="{{ reponse.id }}">
+            <div class="card-body">
+                <div class="flex items-start gap-4">
+                    <div class="badge badge-primary badge-lg">{{ forloop.counter }}</div>
+                    <div class="flex-1">
+                        <h3 class="font-bold text-lg mb-4">{{ reponse.question.texte_question }}</h3>
+
+                        {% if reponse.question.type_question == 'qcm' %}
+                            <div class="space-y-2">
+                                {% for option in reponse.options_list %}
+                                <label class="flex items-center gap-3 p-3 border rounded-lg hover:bg-base-200 cursor-pointer">
+                                    <input type="radio"
+                                           name="question_{{ reponse.id }}"
+                                           value="{{ option }}"
+                                           class="radio radio-primary reponse-input"
+                                           data-reponse-id="{{ reponse.id }}">
+                                    <span>{{ option }}</span>
+                                </label>
+                                {% endfor %}
+                            </div>
+
+                        {% elif reponse.question.type_question == 'oui_non' %}
+                            <div class="flex gap-4">
+                                <label class="flex items-center gap-3 p-4 border rounded-lg hover:bg-base-200 cursor-pointer flex-1">
+                                    <input type="radio"
+                                           name="question_{{ reponse.id }}"
+                                           value="oui"
+                                           class="radio radio-primary reponse-input"
+                                           data-reponse-id="{{ reponse.id }}">
+                                    <span class="font-bold text-success">Oui</span>
+                                </label>
+                                <label class="flex items-center gap-3 p-4 border rounded-lg hover:bg-base-200 cursor-pointer flex-1">
+                                    <input type="radio"
+                                           name="question_{{ reponse.id }}"
+                                           value="non"
+                                           class="radio radio-primary reponse-input"
+                                           data-reponse-id="{{ reponse.id }}">
+                                    <span class="font-bold text-error">Non</span>
+                                </label>
+                            </div>
+
+                        {% elif reponse.question.type_question == 'chiffres' %}
+                            <div class="form-control">
+                                <input type="number"
+                                       name="question_{{ reponse.id }}"
+                                       step="any"
+                                       class="input input-bordered w-full reponse-input"
+                                       data-reponse-id="{{ reponse.id }}"
+                                       placeholder="Entrez un nombre">
+                            </div>
+
+                        {% else %}
+                            <textarea class="textarea textarea-bordered w-full h-32 reponse-input"
+                                      data-reponse-id="{{ reponse.id }}"
+                                      placeholder="Écrivez votre réponse ici..."></textarea>
+                        {% endif %}
+
+                        <div class="text-right mt-2">
+                            <span class="badge badge-outline">{{ reponse.question.points }} point(s)</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Bouton de soumission -->
+    <div class="card bg-base-100 shadow-xl mt-6 sticky bottom-4">
+        <div class="card-body">
+            <div class="flex justify-between items-center">
+                <div>
+                    <p class="text-sm text-base-content/70">Questions répondues</p>
+                    <p class="text-2xl font-bold">
+                        <span id="answered-count">0</span> / {{ reponses|length }}
+                    </p>
+                </div>
+                <button id="btn-soumettre" class="btn btn-primary btn-lg">
+                    <i class="fas fa-check-circle mr-2"></i>
+                    Déposer le test
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let tempsRestant = {{ temps_restant }};
+const sessionId = '{{ session.id }}';
+const testExpireInitial = {{ test_expire|yesno:"true,false" }};
+let testExpired = false;
+let warningShown = false;
+let isSubmitting = false;
+
+function setInputsDisabled(disabled) {
+    document.querySelectorAll('.reponse-input').forEach((input) => {
+        input.disabled = disabled;
+    });
+}
+
+function showWarningBanner() {
+    document.getElementById('warning-banner').classList.remove('hidden');
+}
+
+function markTestExpired() {
+    testExpired = true;
+    clearInterval(timerInterval);
+    tempsRestant = 0;
+    document.getElementById('minutes').textContent = '00';
+    document.getElementById('seconds').textContent = '00';
+    document.getElementById('expired-banner').classList.remove('hidden');
+    const timerEl = document.getElementById('timer');
+    timerEl.classList.remove('text-primary', 'text-warning');
+    timerEl.classList.add('text-error');
+    setInputsDisabled(true);
+}
+
+function updateTimer() {
+    if (testExpired) {
+        return;
+    }
+
+    const minutes = Math.floor(tempsRestant / 60);
+    const seconds = tempsRestant % 60;
+
+    document.getElementById('minutes').textContent = String(minutes).padStart(2, '0');
+    document.getElementById('seconds').textContent = String(seconds).padStart(2, '0');
+
+    const timerEl = document.getElementById('timer');
+    if (tempsRestant <= 300) {
+        timerEl.classList.remove('text-primary');
+        timerEl.classList.add('text-warning');
+        if (!warningShown) {
+            warningShown = true;
+            showWarningBanner();
+            alert('Il reste 5 minutes. Pensez à déposer votre test avant la fin du délai.');
+        }
+    }
+    if (tempsRestant <= 60) {
+        timerEl.classList.remove('text-warning');
+        timerEl.classList.add('text-error');
+    }
+
+    if (tempsRestant <= 0) {
+        alert('Le temps du test est terminé. Vous ne pouvez plus modifier vos réponses. Déposez maintenant votre test.');
+        markTestExpired();
+    } else {
+        tempsRestant--;
+    }
+}
+
+const timerInterval = setInterval(updateTimer, 1000);
+
+let saveTimeout;
+document.querySelectorAll('.reponse-input').forEach((input) => {
+    input.addEventListener('change', function() {
+        if (testExpired) {
+            return;
+        }
+
+        const reponseId = this.dataset.reponseId;
+        const reponse = this.value;
+
+        clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(() => {
+            sauvegarderReponse(reponseId, reponse);
+        }, 1000);
+
+        updateAnsweredCount();
+    });
+
+    input.addEventListener('input', function() {
+        if (this.type === 'radio' || testExpired) {
+            return;
+        }
+
+        const reponseId = this.dataset.reponseId;
+        clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(() => {
+            sauvegarderReponse(reponseId, this.value);
+        }, 1000);
+    });
+});
+
+async function sauvegarderReponse(reponseId, reponse) {
+    if (testExpired) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/recrutement/test/${sessionId}/reponse/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                reponse_id: reponseId,
+                reponse: reponse
+            })
+        });
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            if (data && data.session_missing && data.redirect_url) {
+                alert(data.error || 'La session de test n existe plus.');
+                window.location.href = data.redirect_url;
+                return;
+            }
+            if (data && data.expired) {
+                markTestExpired();
+            }
+            console.error('Erreur lors de la sauvegarde');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+    }
+}
+
+function updateAnsweredCount() {
+    let count = 0;
+
+    const radioGroups = {};
+    document.querySelectorAll('input[type="radio"]:checked').forEach((radio) => {
+        radioGroups[radio.name] = true;
+    });
+    count += Object.keys(radioGroups).length;
+
+    document.querySelectorAll('textarea.reponse-input').forEach((textarea) => {
+        if (textarea.value.trim()) {
+            count++;
+        }
+    });
+
+    document.querySelectorAll('input[type="number"].reponse-input').forEach((input) => {
+        if (input.value !== '') {
+            count++;
+        }
+    });
+
+    document.getElementById('answered-count').textContent = count;
+    document.getElementById('progress-bar').value = count;
+}
+
+async function soumettreTest() {
+    if (isSubmitting) {
+        return;
+    }
+
+    const confirmationMessage = testExpired
+        ? 'Le délai est terminé. Voulez-vous déposer maintenant votre test ?'
+        : 'Êtes-vous sûr de vouloir déposer votre test ? Vous ne pourrez plus le modifier.';
+
+    if (!confirm(confirmationMessage)) {
+        return;
+    }
+
+    isSubmitting = true;
+    clearInterval(timerInterval);
+
+    try {
+        const response = await fetch(`/recrutement/test/${sessionId}/soumettre/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            window.location.href = data.redirect_url;
+        } else {
+            if (data.session_missing && data.redirect_url) {
+                alert(data.error || 'La session de test n existe plus.');
+                window.location.href = data.redirect_url;
+                return;
+            }
+            isSubmitting = false;
+            alert(data.error || 'Erreur lors de la soumission');
+        }
+    } catch (error) {
+        isSubmitting = false;
+        console.error('Erreur:', error);
+        alert('Une erreur est survenue');
+    }
+}
+
+document.getElementById('btn-soumettre').addEventListener('click', soumettreTest);
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+updateAnsweredCount();
+
+if (testExpireInitial) {
+    markTestExpired();
+} else {
+    if (tempsRestant <= 300) {
+        warningShown = true;
+        showWarningBanner();
+    }
+    updateTimer();
+}
+
+window.addEventListener('beforeunload', function(e) {
+    e.preventDefault();
+    e.returnValue = '';
+});
+</script>
+{% endblock %}

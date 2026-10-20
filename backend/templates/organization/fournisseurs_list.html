@@ -1,0 +1,558 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center mb-8">
+        <div>
+            <h1 class="text-3xl font-bold">Fournisseurs - {{ title }}</h1>
+            <p class="text-base-content/70 mt-2">Gestion des fournisseurs, fusion des doublons et suivi des corrections DiameX.</p>
+        </div>
+        <div class="flex flex-wrap gap-2 justify-end items-center">
+            <a href="{% url 'organization:ouvrage_list' %}" class="btn btn-ghost btn-sm">
+                <i class="fas fa-arrow-left mr-2"></i>Retour
+            </a>
+            {% if request.user.is_authenticated %}
+            <form method="post" action="{% url 'logout' %}" class="m-0">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-outline btn-sm">
+                    <i class="fas fa-sign-out-alt mr-2"></i>Deconnexion
+                </button>
+            </form>
+            {% endif %}
+            <button class="btn btn-primary btn-sm" onclick="showCreateModal()">
+                <i class="fas fa-plus mr-2"></i>Nouveau fournisseur
+            </button>
+            {% if request.user.is_authenticated %}
+            <button class="btn btn-secondary btn-sm" onclick="showMergeModal()">
+                <i class="fas fa-code-branch mr-2"></i>Fusionner
+            </button>
+            <a href="{% url 'organization:export_excel' 'fournisseurs' %}" class="btn btn-success btn-sm">
+                <i class="fas fa-file-excel mr-2"></i>Exporter Excel
+            </a>
+            <button class="btn btn-info btn-sm" onclick="document.getElementById('importModal').showModal()">
+                <i class="fas fa-file-upload mr-2"></i>Importer Excel
+            </button>
+            <button class="btn btn-warning btn-sm" onclick="document.getElementById('importUpdateIdxlsModal').showModal()">
+                <i class="fas fa-edit mr-2"></i>Mettre a jour IDxls
+            </button>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if request.user.is_authenticated %}
+    <div class="grid gap-6 xl:grid-cols-[1.2fr_1fr] mb-8">
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <div class="flex items-center justify-between gap-3">
+                    <h2 class="card-title">Doublons suggeres</h2>
+                    <span class="badge badge-outline">{{ duplicate_groups|length }} groupe{{ duplicate_groups|length|pluralize }}</span>
+                </div>
+                {% if duplicate_groups %}
+                <div class="space-y-3">
+                    {% for group in duplicate_groups %}
+                    <div class="border border-base-300 rounded-xl p-4">
+                        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                            <div>
+                                <p class="font-semibold">{{ group.label }}</p>
+                                <p class="text-sm text-base-content/70">{{ group.items|length }} fiches a verifier</p>
+                            </div>
+                            <button
+                                type="button"
+                                class="btn btn-outline btn-xs"
+                                onclick="showMergeModal('{{ group.items.0.id }}')"
+                            >
+                                Fusionner ce groupe
+                            </button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>IDxls</th>
+                                        <th>Nom</th>
+                                        <th>Telephone</th>
+                                        <th>Email</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for fournisseur in group.items %}
+                                    <tr>
+                                        <td><span class="badge badge-neutral badge-sm">{{ fournisseur.idxls|default:"-" }}</span></td>
+                                        <td>{{ fournisseur.nom_fournisseur }}</td>
+                                        <td>{{ fournisseur.telephone|default:"-" }}</td>
+                                        <td>{{ fournisseur.email|default:"-" }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="alert">
+                    <i class="fas fa-check-circle"></i>
+                    <span>Aucun doublon evident detecte sur le nom normalise des fournisseurs.</span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <div class="flex items-center justify-between gap-3">
+                    <h2 class="card-title">Instructions DiameX</h2>
+                    <span class="badge badge-outline">{{ merge_instructions|length }}</span>
+                </div>
+                <p class="text-sm text-base-content/70">
+                    Quand un doublon fusionne change l'IDxls, l'outil cree ici l'instruction pour corriger les lignes comptables dans les bases DiameX.
+                </p>
+                {% if merge_instructions %}
+                <div class="space-y-3 max-h-[28rem] overflow-y-auto pr-1">
+                    {% for instruction in merge_instructions %}
+                    <div class="border border-base-300 rounded-xl p-4">
+                        <div class="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                                <p class="font-semibold">{{ instruction.source_fournisseur.nom_fournisseur }} -> {{ instruction.target_fournisseur.nom_fournisseur }}</p>
+                                <p class="text-sm text-base-content/70">
+                                    Ancien code: <strong>{{ instruction.ancien_idxls|default:"-" }}</strong>
+                                    |
+                                    Nouveau code: <strong>{{ instruction.nouvel_idxls|default:"-" }}</strong>
+                                </p>
+                            </div>
+                            <span class="badge {% if instruction.statut == 'done' %}badge-success{% else %}badge-warning{% endif %}">
+                                {{ instruction.get_statut_display }}
+                            </span>
+                        </div>
+                        <p class="text-sm mt-3">{{ instruction.note }}</p>
+                        <p class="text-xs text-base-content/60 mt-2">
+                            Lignes Hydria reperees: {{ instruction.lignes_diamex_a_corriger }} |
+                            Cree le {{ instruction.created_at|date:"d/m/Y H:i" }}
+                            {% if instruction.done_at %}
+                            | Corrige le {{ instruction.done_at|date:"d/m/Y H:i" }}
+                            {% endif %}
+                        </p>
+                        <div class="mt-3">
+                            <label class="label px-0 pb-1">
+                                <span class="label-text">Commentaire admin</span>
+                            </label>
+                            <textarea
+                                id="instruction-comment-{{ instruction.id }}"
+                                class="textarea textarea-bordered w-full"
+                                rows="2"
+                                placeholder="Ex: base 1 corrigee, base 2 en attente"
+                            >{{ instruction.commentaire_admin }}</textarea>
+                        </div>
+                        <div class="mt-3 flex flex-wrap gap-2">
+                            <button class="btn btn-success btn-xs" onclick="updateInstruction('{{ instruction.id }}', 'done')">
+                                Marquer corrige
+                            </button>
+                            <button class="btn btn-outline btn-xs" onclick="updateInstruction('{{ instruction.id }}', 'pending')">
+                                Remettre en attente
+                            </button>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="alert">
+                    <i class="fas fa-info-circle"></i>
+                    <span>Aucune instruction de correction DiameX pour le moment.</span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title">Liste des fournisseurs</h2>
+            {% if fournisseurs %}
+            <div class="overflow-x-auto">
+                <table class="table table-zebra w-full">
+                    <thead>
+                        <tr>
+                            <th>IDxls</th>
+                            <th>Nom</th>
+                            <th>Telephone</th>
+                            <th>Email</th>
+                            <th>Type</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for fournisseur in fournisseurs %}
+                        <tr class="hover">
+                            <td><span class="badge badge-neutral badge-sm">{{ fournisseur.idxls|default:"-" }}</span></td>
+                            <td class="font-semibold">{{ fournisseur.nom_fournisseur|default:"N/A" }}</td>
+                            <td>{{ fournisseur.telephone|default:"N/A" }}</td>
+                            <td>{{ fournisseur.email|default:"N/A" }}</td>
+                            <td>{{ fournisseur.get_type_fournisseur_display|default:"-" }}</td>
+                            <td>
+                                <div class="flex flex-wrap gap-1">
+                                    <button class="btn btn-ghost btn-xs" onclick="showEditModal('{{ fournisseur.id }}')"><i class="fas fa-edit"></i></button>
+                                    {% if request.user.is_authenticated %}
+                                    <button class="btn btn-ghost btn-xs" onclick="showMergeModal('{{ fournisseur.id }}')"><i class="fas fa-code-branch"></i></button>
+                                    <button class="btn btn-ghost btn-xs text-error" onclick="showDeleteModal('{{ fournisseur.id }}', '{{ fournisseur.nom_fournisseur|escapejs }}')"><i class="fas fa-trash"></i></button>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-8">
+                <i class="fas fa-inbox text-6xl text-base-content/20 mb-4"></i>
+                <p class="text-base-content/70">Aucun fournisseur trouve.</p>
+                <button class="btn btn-primary mt-4" onclick="showCreateModal()">
+                    <i class="fas fa-plus mr-2"></i>Creer le premier fournisseur
+                </button>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<dialog id="fournisseurModal" class="modal">
+    <div class="modal-box w-full max-w-3xl sm:max-w-4xl">
+        <h3 class="font-bold text-lg mb-4" id="modalTitle">Nouveau fournisseur</h3>
+        <form id="fournisseurForm">
+            {% csrf_token %}
+            <input type="hidden" id="fournisseurId">
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">IDxls</span></label>
+                    <input type="number" name="idxls" id="idxls" class="input input-bordered" placeholder="Identifiant pour import Excel">
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Nom du fournisseur *</span></label>
+                    <input type="text" name="nom_fournisseur" id="nom_fournisseur" class="input input-bordered" required>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Telephone</span></label>
+                    <input type="tel" name="telephone" id="telephone" class="input input-bordered">
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Email</span></label>
+                    <input type="email" name="email" id="email" class="input input-bordered">
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Type de fournisseur</span></label>
+                    <select name="type_fournisseur" id="type_fournisseur" class="select select-bordered">
+                        <option value="equipement">Equipement</option>
+                        <option value="service">Service</option>
+                        <option value="maintenance">Maintenance</option>
+                        <option value="construction">Construction</option>
+                        <option value="mecanicien">Mecanicien</option>
+                        <option value="autre">Autre</option>
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Numero NIF</span></label>
+                    <input type="text" name="numero_nif" id="numero_nif" class="input input-bordered">
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Numero STAT</span></label>
+                    <input type="text" name="numero_stat" id="numero_stat" class="input input-bordered">
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Statut</span></label>
+                    <select name="actif" id="actif" class="select select-bordered">
+                        <option value="true">Actif</option>
+                        <option value="false">Inactif</option>
+                    </select>
+                </div>
+
+                <div class="form-control md:col-span-2">
+                    <label class="label"><span class="label-text">Adresse</span></label>
+                    <textarea name="adresse" id="adresse" class="textarea textarea-bordered" rows="2"></textarea>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="closeModal()">Annuler</button>
+                <button type="submit" class="btn btn-primary">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<dialog id="mergeModal" class="modal">
+    <div class="modal-box w-full max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">Fusionner des fournisseurs</h3>
+        <form id="mergeForm">
+            {% csrf_token %}
+            <div class="grid md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Fournisseur a fusionner</span></label>
+                    <select id="mergeSourceId" name="source_fournisseur_id" class="select select-bordered" required>
+                        <option value="">Choisir la fiche a supprimer</option>
+                        {% for fournisseur in fournisseurs %}
+                        <option value="{{ fournisseur.id }}">
+                            {{ fournisseur.nom_fournisseur }}{% if fournisseur.idxls %} [{{ fournisseur.idxls }}]{% endif %}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Fournisseur a conserver</span></label>
+                    <select id="mergeTargetId" name="target_fournisseur_id" class="select select-bordered" required>
+                        <option value="">Choisir la fiche a garder</option>
+                        {% for fournisseur in fournisseurs %}
+                        <option value="{{ fournisseur.id }}">
+                            {{ fournisseur.nom_fournisseur }}{% if fournisseur.idxls %} [{{ fournisseur.idxls }}]{% endif %}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="alert alert-warning mt-4">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span>
+                    La fiche source sera supprimee apres reaffectation des achats, planning details, depenses de service et autres relations.
+                    Si les IDxls sont differents, une instruction DiameX sera creee.
+                </span>
+            </div>
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('mergeModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-secondary">Fusionner</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<dialog id="deleteModal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">Confirmer la suppression</h3>
+        <p>Etes-vous sur de vouloir supprimer le fournisseur <strong id="deleteItemName"></strong> ?</p>
+        <input type="hidden" id="deleteItemId">
+        <div class="modal-action">
+            <button type="button" class="btn" onclick="document.getElementById('deleteModal').close()">Annuler</button>
+            <button type="button" class="btn btn-error" onclick="deleteFournisseur()">Supprimer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<dialog id="importModal" class="modal">
+    <div class="modal-box w-full max-w-lg sm:max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">Importer des fournisseurs depuis Excel</h3>
+        <form method="post" action="{% url 'organization:import_excel' 'fournisseurs' %}" enctype="multipart/form-data">
+            {% csrf_token %}
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text">Fichier Excel (.xlsx)</span>
+                </label>
+                <input type="file" name="excel_file" accept=".xlsx,.xls" class="file-input file-input-bordered w-full" required>
+            </div>
+            <div class="alert alert-info mt-4">
+                <i class="fas fa-info-circle"></i>
+                <span class="text-sm">Le fichier doit contenir les colonnes : Nom Fournisseur, Contact Fournisseur, Type Fournisseur, Telephone, Email</span>
+            </div>
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('importModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary">Importer</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<dialog id="importUpdateIdxlsModal" class="modal">
+    <div class="modal-box w-full max-w-lg sm:max-w-2xl">
+        <h3 class="font-bold text-lg mb-4 text-warning">
+            <i class="fas fa-edit mr-2"></i>Mettre a jour IDxls uniquement
+        </h3>
+        <form method="post" action="{% url 'organization:import_update_fournisseur_idxls' %}" enctype="multipart/form-data">
+            {% csrf_token %}
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text">Fichier Excel (.xlsx)</span>
+                </label>
+                <input type="file" name="excel_file" accept=".xlsx,.xls" class="file-input file-input-bordered w-full" required>
+            </div>
+            <div class="alert alert-warning mt-4">
+                <i class="fas fa-exclamation-triangle"></i>
+                <div class="text-sm">
+                    <p class="font-semibold mb-2">Import de mise a jour seulement</p>
+                    <p>Ce fichier doit contenir :</p>
+                    <ul class="list-disc ml-5 mt-1">
+                        <li><strong>Colonne ID</strong> : UUID du fournisseur</li>
+                        <li><strong>Colonne IDxls</strong> : Nouvelle valeur IDxls</li>
+                    </ul>
+                    <p class="mt-2">Exporter d'abord vos fournisseurs pour recuperer les IDs.</p>
+                </div>
+            </div>
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('importUpdateIdxlsModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-warning">Mettre a jour</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+function csrfToken() {
+    return '{{ csrf_token }}';
+}
+
+function showCreateModal() {
+    document.getElementById('modalTitle').textContent = 'Nouveau fournisseur';
+    document.getElementById('fournisseurForm').reset();
+    document.getElementById('fournisseurId').value = '';
+    document.getElementById('fournisseurModal').showModal();
+}
+
+function showEditModal(fournisseurId) {
+    document.getElementById('modalTitle').textContent = 'Modifier le fournisseur';
+
+    fetch(`/organisations/fournisseurs/edit/${fournisseurId}/`)
+        .then(response => response.json())
+        .then(result => {
+            if (!result.success) {
+                alert('Erreur: ' + result.message);
+                return;
+            }
+
+            const data = result.data;
+            document.getElementById('fournisseurId').value = data.id;
+            document.getElementById('idxls').value = data.idxls || '';
+            document.getElementById('nom_fournisseur').value = data.nom_fournisseur;
+            document.getElementById('telephone').value = data.telephone;
+            document.getElementById('email').value = data.email;
+            document.getElementById('type_fournisseur').value = data.type_fournisseur;
+            document.getElementById('numero_nif').value = data.numero_nif;
+            document.getElementById('numero_stat').value = data.numero_stat;
+            document.getElementById('actif').value = data.actif ? 'true' : 'false';
+            document.getElementById('adresse').value = data.adresse;
+            document.getElementById('fournisseurModal').showModal();
+        });
+}
+
+function showMergeModal(sourceId = '', targetId = '') {
+    document.getElementById('mergeForm').reset();
+    document.getElementById('mergeSourceId').value = sourceId || '';
+    document.getElementById('mergeTargetId').value = targetId || '';
+    document.getElementById('mergeModal').showModal();
+}
+
+function showDeleteModal(fournisseurId, fournisseurNom) {
+    document.getElementById('deleteItemId').value = fournisseurId;
+    document.getElementById('deleteItemName').textContent = fournisseurNom;
+    document.getElementById('deleteModal').showModal();
+}
+
+function closeModal() {
+    document.getElementById('fournisseurModal').close();
+}
+
+document.getElementById('fournisseurForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    const formData = new FormData(this);
+    const fournisseurId = document.getElementById('fournisseurId').value;
+    const url = fournisseurId
+        ? `/organisations/fournisseurs/edit/${fournisseurId}/`
+        : `/organisations/fournisseurs/create/`;
+
+    fetch(url, {
+        method: 'POST',
+        body: formData,
+        headers: {'X-CSRFToken': csrfToken()}
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            window.location.href = result.redirect;
+            return;
+        }
+        alert('Erreur: ' + result.message);
+    });
+});
+
+document.getElementById('mergeForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    const sourceId = document.getElementById('mergeSourceId').value;
+    const targetId = document.getElementById('mergeTargetId').value;
+
+    if (!sourceId || !targetId) {
+        alert('Selectionnez les deux fournisseurs.');
+        return;
+    }
+    if (sourceId === targetId) {
+        alert('Le fournisseur source et le fournisseur conserve doivent etre differents.');
+        return;
+    }
+    if (!confirm('La fiche source sera supprimee apres fusion. Continuer ?')) {
+        return;
+    }
+
+    const formData = new FormData(this);
+    fetch(`/organisations/fournisseurs/merge/`, {
+        method: 'POST',
+        body: formData,
+        headers: {'X-CSRFToken': csrfToken()}
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            window.location.href = result.redirect;
+            return;
+        }
+        alert('Erreur: ' + result.message);
+    });
+});
+
+function updateInstruction(instructionId, statut) {
+    const commentaire = document.getElementById(`instruction-comment-${instructionId}`).value;
+    const formData = new FormData();
+    formData.append('statut', statut);
+    formData.append('commentaire_admin', commentaire);
+
+    fetch(`/organisations/fournisseurs/instructions/${instructionId}/update/`, {
+        method: 'POST',
+        body: formData,
+        headers: {'X-CSRFToken': csrfToken()}
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            window.location.href = result.redirect;
+            return;
+        }
+        alert('Erreur: ' + result.message);
+    });
+}
+
+function deleteFournisseur() {
+    const fournisseurId = document.getElementById('deleteItemId').value;
+
+    fetch(`/organisations/fournisseurs/delete/${fournisseurId}/`, {
+        method: 'POST',
+        headers: {'X-CSRFToken': csrfToken()}
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            window.location.href = result.redirect;
+            return;
+        }
+        alert('Erreur: ' + result.message);
+    });
+}
+</script>
+{% endblock %}

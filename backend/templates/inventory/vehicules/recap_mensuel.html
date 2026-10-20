@@ -1,0 +1,404 @@
+{% extends logistics_shell_base_template|default:"base.html" %}
+{% load humanize %}
+
+{% block title %}Rapport Mensuel Consommation Carburant - {{ mois_nom }}{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">Rapport Mensuel Consommation Carburant</h1>
+            <p class="text-base-content/70 mt-1">Par base, vehicule et utilisateur - {{ mois_nom }}</p>
+        </div>
+        <div class="flex flex-wrap gap-2 no-print">
+            {% if cloture_mois %}
+                <span class="badge badge-success">Mois cloture</span>
+            {% elif can_cloturer %}
+                <button onclick="cloturerMois()" class="btn btn-warning btn-sm">
+                    <i class="fas fa-lock mr-2"></i>Cloturer le mois
+                </button>
+            {% endif %}
+            <a href="{% url 'inventory:vehicules_carburant_extraction_controle' %}?annee={{ annee }}&mois={{ mois }}&base={{ selected_base_id }}" class="btn btn-outline btn-sm">
+                <i class="fas fa-vial mr-2"></i>Controle extraction
+            </a>
+            <button onclick="window.print()" class="btn btn-primary btn-sm">
+                <i class="fas fa-print mr-2"></i>Imprimer
+            </button>
+            <a href="{% url 'inventory:gestion_vehicules' %}" class="btn btn-ghost btn-sm">
+                <i class="fas fa-arrow-left mr-2"></i>Retour
+            </a>
+        </div>
+    </div>
+
+    {% if blocked_message %}
+    <div class="alert alert-error shadow mb-4">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span>{{ blocked_message }}</span>
+    </div>
+    {% endif %}
+
+    {% if unlinked_count %}
+    <div class="alert alert-warning shadow mb-4">
+        <i class="fas fa-link-slash"></i>
+        <span>{{ unlinked_count }} achats carburant non relies a la compta pour ce mois.</span>
+    </div>
+    {% endif %}
+
+    <div class="card bg-base-100 shadow-xl mb-6 no-print">
+        <div class="card-body">
+            <h2 class="card-title text-sm"><i class="fas fa-filter mr-2"></i>Filtres rapport</h2>
+            <form method="GET" class="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Base</span></label>
+                    <select name="base" class="select select-bordered select-sm">
+                        {% for base in bases %}
+                        <option value="{{ base.id }}" {% if selected_base_id == base.id|stringformat:"s" %}selected{% endif %}>
+                            {{ base.nom_base }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mois</span></label>
+                    <select name="mois" class="select select-bordered select-sm">
+                        {% for m, label in month_choices %}
+                        <option value="{{ m }}" {% if m == mois %}selected{% endif %}>{{ m|stringformat:"02d" }} - {{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Annee</span></label>
+                    <select name="annee" class="select select-bordered select-sm">
+                        {% for y in years_available %}
+                        <option value="{{ y }}" {% if y == annee %}selected{% endif %}>{{ y }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control md:col-span-2">
+                    <button type="submit" class="btn btn-primary btn-sm mt-6">
+                        <i class="fas fa-search mr-2"></i>Afficher le rapport
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-xl mb-6">
+        <div class="card-body">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="card-title">
+                    Tableau de suivi - {{ selected_base.nom_base|default:"Base non selectionnee" }}
+                </h2>
+                <span class="badge badge-outline">{{ recap_data|length }} vehicule{{ recap_data|length|pluralize }}</span>
+            </div>
+
+            {% if recap_data %}
+            <form method="POST" class="no-print mb-4">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="save_remarques">
+                <input type="hidden" name="base" value="{{ selected_base_id }}">
+                <input type="hidden" name="annee" value="{{ annee }}">
+                <input type="hidden" name="mois" value="{{ mois }}">
+                <div class="overflow-x-auto">
+                    <table class="table table-zebra w-full text-sm">
+                        <thead>
+                            <tr class="bg-base-200">
+                                <th>Vehicule</th>
+                                <th>Utilisateur</th>
+                                <th class="text-right">Index fin mois prec.</th>
+                                <th class="text-right">Index fin mois</th>
+                                <th class="text-right">Distance (km)</th>
+                                <th class="text-right">Achats compta (L)</th>
+                                <th class="text-right">Magasin/BL (L)</th>
+                                <th class="text-right">Total (L)</th>
+                                <th class="text-right">L/100km</th>
+                                <th>Analyse</th>
+                                <th>Remarque</th>
+                                <th class="print-only">Signature</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in recap_data %}
+                            <tr>
+                                <td>
+                                    <div class="font-mono font-bold">{{ row.vehicule.immatriculation }}</div>
+                                    <div class="text-xs text-base-content/60">{{ row.vehicule.marque }} {{ row.vehicule.modele }}</div>
+                                    {% if row.compta_fallback_used %}
+                                    <div class="text-[11px] text-warning">Source achats: fallback compta</div>
+                                    {% endif %}
+                                </td>
+                                <td>{{ row.employe.nom_complet|default:"-" }}</td>
+                                <td class="text-right font-mono">
+                                    {% if row.index_prev is not None %}{{ row.index_prev|floatformat:0|intcomma }}{% else %}-{% endif %}
+                                </td>
+                                <td class="text-right font-mono">
+                                    {% if row.index_curr is not None %}{{ row.index_curr|floatformat:0|intcomma }}{% else %}-{% endif %}
+                                </td>
+                                <td class="text-right">{{ row.distance|floatformat:0|intcomma }}</td>
+                                <td class="text-right">{{ row.achat_litres|floatformat:2 }}</td>
+                                <td class="text-right">{{ row.stock_litres|floatformat:2 }}</td>
+                                <td class="text-right font-semibold">{{ row.carburant_litres|floatformat:2 }}</td>
+                                <td class="text-right font-bold {% if row.analyse_level == 'critical' %}text-error{% elif row.analyse_level == 'warning' %}text-warning{% elif row.analyse_level == 'ok' %}text-success{% else %}text-base-content/50{% endif %}">
+                                    {% if row.distance > 0 %}
+                                        {{ row.consommation_100km|floatformat:1 }}
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <span class="badge
+                                        {% if row.analyse_level == 'critical' %}badge-error
+                                        {% elif row.analyse_level == 'warning' %}badge-warning
+                                        {% elif row.analyse_level == 'ok' %}badge-success
+                                        {% else %}badge-ghost{% endif %}">
+                                        {{ row.analyse_message }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <textarea name="remark__{{ row.vehicule.id }}" class="textarea textarea-bordered textarea-xs w-52" rows="2" placeholder="Remarque utilisateur...">{{ row.remark }}</textarea>
+                                </td>
+                                <td class="print-only">
+                                    <div class="signature-line"></div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                        <tfoot class="bg-base-200 font-bold">
+                            <tr>
+                                <td colspan="4" class="text-right">Totaux</td>
+                                <td class="text-right">{{ total_distance|floatformat:0|intcomma }}</td>
+                                <td class="text-right">{{ total_achats|floatformat:2 }}</td>
+                                <td class="text-right">{{ total_stock|floatformat:2 }}</td>
+                                <td class="text-right">{{ total_carburant|floatformat:2 }}</td>
+                                <td colspan="4"></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+                <div class="mt-4 flex justify-end">
+                    <button type="submit" class="btn btn-accent btn-sm">
+                        <i class="fas fa-save mr-2"></i>Enregistrer les remarques
+                    </button>
+                </div>
+            </form>
+
+            <div class="overflow-x-auto print-only">
+                <table class="table w-full text-xs">
+                    <thead>
+                        <tr>
+                            <th>Vehicule</th>
+                            <th>Utilisateur</th>
+                            <th>Index fin mois prec.</th>
+                            <th>Index fin mois</th>
+                            <th>Distance</th>
+                            <th>Achats (L)</th>
+                            <th>Magasin (L)</th>
+                            <th>Total (L)</th>
+                            <th>L/100km</th>
+                            <th>Analyse</th>
+                            <th>Remarque</th>
+                            <th>Signature</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in recap_data %}
+                        <tr>
+                            <td>{{ row.vehicule.immatriculation }}</td>
+                            <td>{{ row.employe.nom_complet|default:"-" }}</td>
+                            <td>{% if row.index_prev is not None %}{{ row.index_prev|floatformat:0 }}{% else %}-{% endif %}</td>
+                            <td>{% if row.index_curr is not None %}{{ row.index_curr|floatformat:0 }}{% else %}-{% endif %}</td>
+                            <td>{{ row.distance|floatformat:0 }}</td>
+                            <td>{{ row.achat_litres|floatformat:2 }}</td>
+                            <td>{{ row.stock_litres|floatformat:2 }}</td>
+                            <td>{{ row.carburant_litres|floatformat:2 }}</td>
+                            <td>{% if row.distance > 0 %}{{ row.consommation_100km|floatformat:1 }}{% else %}-{% endif %}</td>
+                            <td>{{ row.analyse_message }}</td>
+                            <td>{{ row.remark|default:"" }}</td>
+                            <td><div class="signature-line"></div></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6 no-print">
+                <div class="stat bg-primary text-primary-content rounded-lg">
+                    <div class="stat-title text-primary-content/70">Vehicules</div>
+                    <div class="stat-value text-2xl">{{ recap_data|length }}</div>
+                </div>
+                <div class="stat bg-success text-success-content rounded-lg">
+                    <div class="stat-title text-success-content/70">Distance totale</div>
+                    <div class="stat-value text-2xl">{{ total_distance|floatformat:0|intcomma }}</div>
+                    <div class="stat-desc text-success-content/70">km</div>
+                </div>
+                <div class="stat bg-info text-info-content rounded-lg">
+                    <div class="stat-title text-info-content/70">Carburant total</div>
+                    <div class="stat-value text-2xl">{{ total_carburant|floatformat:1|intcomma }}</div>
+                    <div class="stat-desc text-info-content/70">litres</div>
+                </div>
+                <div class="stat bg-warning text-warning-content rounded-lg">
+                    <div class="stat-title text-warning-content/70">Anomalies</div>
+                    <div class="stat-value text-2xl">{{ anomalies|length }}</div>
+                    <div class="stat-desc text-warning-content/70">a verifier</div>
+                </div>
+            </div>
+
+            {% if anomalies %}
+            <div class="mt-5 space-y-2 no-print">
+                {% for row in anomalies %}
+                <div class="alert {% if row.analyse_level == 'critical' %}alert-error{% else %}alert-warning{% endif %}">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span><strong>{{ row.vehicule.immatriculation }}</strong> - {{ row.analyse_message }}</span>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% else %}
+            <div class="text-center py-12 text-base-content/50">
+                <i class="fas fa-inbox text-5xl mb-3 opacity-30"></i>
+                <p>Aucun vehicule trouve pour cette base et cette periode.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-xl no-print">
+        <div class="card-body">
+            <h2 class="card-title mb-3"><i class="fas fa-file-upload mr-2"></i>Scan du rapport signe</h2>
+            <form method="POST" enctype="multipart/form-data" class="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="upload_rapport_scan">
+                <input type="hidden" name="base" value="{{ selected_base_id }}">
+                <input type="hidden" name="annee" value="{{ annee }}">
+                <input type="hidden" name="mois" value="{{ mois }}">
+                <div class="form-control md:col-span-2">
+                    <label class="label"><span class="label-text">Fichier scan (PDF/JPG)</span></label>
+                    <input type="file" name="rapport_scan" class="file-input file-input-bordered file-input-sm w-full">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Commentaire</span></label>
+                    <input type="text" name="commentaire_scan" class="input input-bordered input-sm" value="{{ scan_current.commentaire|default:'' }}" placeholder="Optionnel">
+                </div>
+                <div class="form-control">
+                    <button type="submit" class="btn btn-secondary btn-sm mt-6">
+                        <i class="fas fa-save mr-2"></i>Enregistrer scan
+                    </button>
+                </div>
+            </form>
+
+            {% if scan_current %}
+            <div class="alert alert-success mt-4">
+                <i class="fas fa-check-circle"></i>
+                <span>Scan courant: <a href="{{ scan_current.fichier_scan.url }}" target="_blank" class="link link-primary">Ouvrir le fichier</a> (maj: {{ scan_current.updated_at|date:"d/m/Y H:i" }})</span>
+            </div>
+            {% endif %}
+
+            {% if scans_year %}
+            <div class="mt-4 overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Mois</th>
+                            <th>Fichier</th>
+                            <th>Charge par</th>
+                            <th>Maj</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for scan in scans_year %}
+                        <tr>
+                            <td>{{ scan.mois|stringformat:"02d" }}/{{ scan.annee }}</td>
+                            <td><a href="{{ scan.fichier_scan.url }}" target="_blank" class="link link-primary">Voir scan</a></td>
+                            <td>{{ scan.uploaded_by.username|default:"-" }}</td>
+                            <td>{{ scan.updated_at|date:"d/m/Y H:i" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="print-only mt-8 text-center text-sm">
+        <p>Document genere le {% now "d/m/Y H:i" %}</p>
+        <p class="font-semibold mt-1">HydrIA - Rapport suivi consommation carburant</p>
+    </div>
+</div>
+
+<script>
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return '';
+}
+
+async function cloturerMois() {
+    const unlinked = {{ unlinked_count|default:0 }};
+    let override = false;
+    if (unlinked > 0) {
+        const ok = confirm(
+            `Il reste ${unlinked} achats carburant non relies. ` +
+            'Voulez-vous cloturer quand meme ? (Directeur uniquement)'
+        );
+        if (!ok) return;
+        override = true;
+    }
+
+    const res = await fetch('/stocks/vehicules/api/carburant/cloturer/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken'),
+        },
+        body: JSON.stringify({
+            mois: {{ mois }},
+            annee: {{ annee }},
+            override: override,
+        })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+        alert(data.error || 'Erreur lors de la cloture');
+        return;
+    }
+    window.location.reload();
+}
+</script>
+
+<style>
+.signature-line {
+    min-width: 140px;
+    height: 22px;
+    border-bottom: 1px solid #555;
+}
+
+@media print {
+    .no-print {
+        display: none !important;
+    }
+    .print-only {
+        display: block !important;
+    }
+    body {
+        font-size: 9.5pt;
+    }
+    table {
+        font-size: 8.5pt;
+    }
+    .textarea {
+        border: none !important;
+        min-height: 40px !important;
+        padding: 0 !important;
+    }
+}
+
+@media screen {
+    .print-only {
+        display: none !important;
+    }
+}
+</style>
+{% endblock %}

@@ -1,0 +1,501 @@
+{% extends analyses_shell_base_template %}
+{% load static %}
+{% load number_filters %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <h1 class="text-3xl font-bold mb-8">
+        <i class="fas fa-map-marked-alt mr-3"></i>{{ title }}
+    </h1>
+
+    <!-- Filtres -->
+    <div class="bg-base-200 rounded-lg p-6 mb-8">
+        <form method="GET" id="filter-form">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Région</span></label>
+                    <select name="region" id="region-filter" class="select select-bordered" onchange="onRegionChange()">
+                        <option value="">Toutes</option>
+                        {% for region in regions %}
+                        <option value="{{ region.id }}" {% if region.id|stringformat:"s" == selected_region %}selected{% endif %}>{{ region.nom_region }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">District</span></label>
+                    <select name="district" id="district-filter" class="select select-bordered" onchange="onDistrictChange()">
+                        <option value="">Tous</option>
+                        {% for district in districts %}
+                        <option value="{{ district.id }}">{{ district.nom_district }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Commune</span></label>
+                    <select name="commune" id="commune-filter" class="select select-bordered" onchange="onCommuneChange()">
+                        <option value="">Toutes</option>
+                        {% for commune in communes %}
+                        <option value="{{ commune.id }}">{{ commune.nom_commune }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control flex justify-end items-end">
+                    <button type="submit" class="btn btn-primary"><i class="fas fa-search mr-2"></i>Filtrer</button>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <!-- Statistiques cliquables -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div class="stat bg-base-100 rounded-lg shadow p-6 cursor-pointer hover:shadow-xl transition-shadow hover:scale-105 transform duration-200" onclick="showModal('districts')">
+            <div class="stat-title">Districts</div>
+            <div class="stat-value text-secondary">{{ total_districts|intcomma }}</div>
+            <div class="stat-desc text-xs mt-2"><i class="fas fa-mouse-pointer mr-1"></i>Cliquer pour voir la liste</div>
+        </div>
+        <div class="stat bg-base-100 rounded-lg shadow p-6 cursor-pointer hover:shadow-xl transition-shadow hover:scale-105 transform duration-200" onclick="showModal('communes')">
+            <div class="stat-title">Communes</div>
+            <div class="stat-value text-accent">{{ total_communes|intcomma }}</div>
+            <div class="stat-desc text-xs mt-2"><i class="fas fa-mouse-pointer mr-1"></i>Cliquer pour voir la liste</div>
+        </div>
+        <div class="stat bg-base-100 rounded-lg shadow p-6 cursor-pointer hover:shadow-xl transition-shadow hover:scale-105 transform duration-200" onclick="showModal('fokontanys')">
+            <div class="stat-title">Fokontanys</div>
+            <div class="stat-value text-info">{{ total_fokontanys|intcomma }}</div>
+            <div class="stat-desc text-xs mt-2"><i class="fas fa-mouse-pointer mr-1"></i>Cliquer pour voir la liste</div>
+        </div>
+        <div class="stat bg-base-100 rounded-lg shadow p-6 cursor-pointer hover:shadow-xl transition-shadow hover:scale-105 transform duration-200" onclick="showModal('villages')">
+            <div class="stat-title">Villages</div>
+            <div class="stat-value text-success">{{ total_villages|intcomma }}</div>
+            <div class="stat-desc text-xs mt-2"><i class="fas fa-mouse-pointer mr-1"></i>Cliquer pour voir la liste</div>
+        </div>
+        <div class="stat bg-base-100 rounded-lg shadow p-6 cursor-pointer hover:shadow-xl transition-shadow hover:scale-105 transform duration-200" onclick="showModal('parcelles')">
+            <div class="stat-title">Parcelles</div>
+            <div class="stat-value text-warning">{{ total_parcelles|intcomma }}</div>
+            <div class="stat-desc text-xs mt-2"><i class="fas fa-mouse-pointer mr-1"></i>Cliquer pour voir la liste</div>
+        </div>
+        <div class="stat bg-base-100 rounded-lg shadow p-6">
+            <div class="stat-title">Population</div>
+            <div class="stat-value text-info">{{ total_habitants|default:"0"|intcomma }}</div>
+            <div class="stat-desc">{{ total_menages|default:"0"|intcomma }} ménages</div>
+        </div>
+        <div class="stat bg-base-100 rounded-lg shadow p-6">
+            <div class="stat-title">Avec données</div>
+            <div class="stat-value text-success">{{ parcelles_avec_population|intcomma }}</div>
+        </div>
+        <div class="stat bg-base-100 rounded-lg shadow p-6">
+            <div class="stat-title">Sans données</div>
+            <div class="stat-value text-error">{{ parcelles_sans_population|intcomma }}</div>
+        </div>
+    </div>
+
+    <!-- Modal pour afficher les listes -->
+    <dialog id="detailModal" class="modal">
+        <div class="modal-box max-w-4xl">
+            <form method="dialog">
+                <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+            </form>
+            <h3 class="font-bold text-lg mb-4" id="modalTitle"></h3>
+            <div id="modalContent" class="overflow-x-auto max-h-96"></div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+
+    <!-- Graphiques -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <div class="bg-base-100 rounded-lg shadow p-6">
+            <h3 class="text-lg font-semibold mb-4">Parcelles par village</h3>
+            <canvas id="chart1"></canvas>
+        </div>
+        <div class="bg-base-100 rounded-lg shadow p-6">
+            <h3 class="text-lg font-semibold mb-4">Population par village</h3>
+            <canvas id="chart2"></canvas>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+async function loadCharts() {
+    const params = new URLSearchParams(window.location.search);
+    const response = await fetch('/geography/api/dashboard-chart-data/?' + params);
+    const data = await response.json();
+    
+    new Chart(document.getElementById('chart1'), {
+        type: 'bar',
+        data: {
+            labels: data.villages_parcelles.map(v => v.nom_village),
+            datasets: [{
+                label: 'Parcelles',
+                data: data.villages_parcelles.map(v => v.parcelles_count),
+                backgroundColor: 'rgba(59, 130, 246, 0.5)'
+            }]
+        }
+    });
+    
+    new Chart(document.getElementById('chart2'), {
+        type: 'line',
+        data: {
+            labels: data.villages_population.map(v => v.nom_village),
+            datasets: [{
+                label: 'Population',
+                data: data.villages_population.map(v => v.total_population || 0),
+                backgroundColor: 'rgba(16, 185, 129, 0.2)',
+                borderColor: 'rgba(16, 185, 129, 1)',
+                fill: true
+            }]
+        }
+    });
+}
+
+async function onRegionChange() {
+    const regionId = document.getElementById('region-filter').value;
+    const districtSelect = document.getElementById('district-filter');
+    districtSelect.innerHTML = '<option value="">Tous</option>';
+    
+    if (regionId) {
+        const response = await fetch('/geography/api/districts/' + regionId + '/');
+        const districts = await response.json();
+        districts.forEach(d => {
+            districtSelect.innerHTML += '<option value="' + d.id + '">' + d.nom_district + '</option>';
+        });
+    }
+}
+
+async function onDistrictChange() {
+    const districtId = document.getElementById('district-filter').value;
+    const communeSelect = document.getElementById('commune-filter');
+    communeSelect.innerHTML = '<option value="">Toutes</option>';
+    
+    if (districtId) {
+        const response = await fetch('/geography/api/communes/' + districtId + '/');
+        const communes = await response.json();
+        communes.forEach(c => {
+            communeSelect.innerHTML += '<option value="' + c.id + '">' + c.nom_commune + '</option>';
+        });
+    }
+}
+
+async function showModal(type) {
+    const modal = document.getElementById('detailModal');
+    const title = document.getElementById('modalTitle');
+    const content = document.getElementById('modalContent');
+
+    const params = new URLSearchParams(window.location.search);
+    const regionId = params.get('region');
+    const districtId = params.get('district');
+    const communeId = params.get('commune');
+    const villageId = params.get('village');
+
+    let apiUrl = '';
+    let titleText = '';
+
+    // Déterminer l'API selon le type et les filtres actifs
+    if (type === 'regions') {
+        titleText = 'Liste des Régions';
+        if (regionId) {
+            // Si une région est filtrée, charger seulement cette région
+            const response = await fetch('/geography/api/regions/');
+            const allRegions = await response.json();
+            const filteredRegion = allRegions.filter(r => r.id === regionId);
+            renderTable(filteredRegion, ['nom_region', 'districts_count'], ['Région', 'Districts']);
+            title.textContent = titleText;
+            modal.showModal();
+            return;
+        } else {
+            // Sinon charger toutes les régions
+            apiUrl = '/geography/api/regions/';
+        }
+    } else if (type === 'districts') {
+        titleText = 'Liste des Districts';
+        if (villageId || communeId) {
+            // Si un village ou commune est filtré, filtres trop spécifiques
+            content.innerHTML = '<p class="text-center">Filtres trop spécifiques. Utilisez les filtres Région ou District.</p>';
+            title.textContent = titleText;
+            modal.showModal();
+            return;
+        } else if (districtId) {
+            // Si un district est filtré, charger seulement ce district
+            content.innerHTML = '<div class="loading loading-spinner loading-lg mx-auto"></div>';
+            title.textContent = titleText;
+            modal.showModal();
+
+            // Charger le district parent
+            fetch('/geography/api/regions/').then(async regionsResponse => {
+                const regions = await regionsResponse.json();
+                for (const region of regions) {
+                    const districtsResponse = await fetch(`/geography/api/districts/${region.id}/`);
+                    const districts = await districtsResponse.json();
+                    const district = districts.find(d => d.id === districtId);
+                    if (district) {
+                        renderTable([district], ['nom_district', 'communes_count'], ['District', 'Communes']);
+                        return;
+                    }
+                }
+            });
+            return;
+        } else if (regionId) {
+            // Si une région est filtrée, charger ses districts
+            apiUrl = `/geography/api/districts/${regionId}/`;
+        } else {
+            // Aucun filtre, afficher tous les districts avec colonne région
+            const response = await fetch('/geography/api/all-districts/');
+            const districts = await response.json();
+            renderTable(districts, ['nom_district', 'region__nom_region', 'communes_count'], ['District', 'Région', 'Communes']);
+            title.textContent = titleText;
+            modal.showModal();
+            return;
+        }
+    } else if (type === 'communes') {
+        titleText = 'Liste des Communes';
+        if (communeId) {
+            // Si une commune est filtrée, charger cette commune uniquement
+            const response = await fetch(`/geography/api/fokontanys/${communeId}/`);
+            const fokontanys = await response.json();
+            const communeData = [{
+                nom_commune: 'Commune sélectionnée',
+                fokontanys_count: fokontanys.length
+            }];
+            renderTable(communeData, ['nom_commune', 'fokontanys_count'], ['Commune', 'Fokontanys']);
+            title.textContent = titleText;
+            modal.showModal();
+            return;
+        } else if (districtId) {
+            // District filtré, charger ses communes
+            apiUrl = `/geography/api/communes/${districtId}/`;
+        } else if (regionId) {
+            // Région filtrée, afficher toutes les communes de cette région avec colonne district
+            const response = await fetch(`/geography/api/all-communes/?region=${regionId}`);
+            const communes = await response.json();
+            renderTable(communes, ['nom_commune', 'district__nom_district', 'fokontanys_count'], ['Commune', 'District', 'Fokontanys']);
+            title.textContent = titleText;
+            modal.showModal();
+            return;
+        } else {
+            // Aucun filtre, afficher toutes les communes avec colonnes région et district
+            const response = await fetch('/geography/api/all-communes/');
+            const communes = await response.json();
+            renderTable(communes, ['nom_commune', 'district__nom_district', 'district__region__nom_region', 'fokontanys_count'], ['Commune', 'District', 'Région', 'Fokontanys']);
+            title.textContent = titleText;
+            modal.showModal();
+            return;
+        }
+    } else if (type === 'fokontanys') {
+        titleText = 'Liste des Fokontanys';
+        if (communeId) {
+            // Commune filtrée, charger ses fokontanys
+            const response = await fetch(`/geography/api/fokontanys/${communeId}/`);
+            const fokontanys = await response.json();
+            renderTable(fokontanys, ['nom_fokontany', 'villages_count'], ['Fokontany', 'Villages']);
+            title.textContent = titleText;
+            modal.showModal();
+            return;
+        } else if (districtId) {
+            // District filtré, afficher tous les fokontanys avec colonne commune
+            const communesResponse = await fetch(`/geography/api/communes/${districtId}/`);
+            const communes = await communesResponse.json();
+
+            let allFokontanys = [];
+            for (const commune of communes) {
+                const fokontanysResponse = await fetch(`/geography/api/fokontanys/${commune.id}/`);
+                const fokontanys = await fokontanysResponse.json();
+                fokontanys.forEach(f => {
+                    allFokontanys.push({
+                        nom_fokontany: f.nom_fokontany,
+                        commune: commune.nom_commune,
+                        villages_count: f.villages_count
+                    });
+                });
+            }
+            renderTable(allFokontanys, ['nom_fokontany', 'commune', 'villages_count'], ['Fokontany', 'Commune', 'Villages']);
+            title.textContent = titleText;
+            modal.showModal();
+            return;
+        } else if (regionId) {
+            // Région filtrée, afficher tous les fokontanys avec colonnes commune et district
+            content.innerHTML = '<div class="loading loading-spinner loading-lg mx-auto"></div>';
+            title.textContent = titleText;
+            modal.showModal();
+
+            const districtsResponse = await fetch(`/geography/api/districts/${regionId}/`);
+            const districts = await districtsResponse.json();
+
+            let allFokontanys = [];
+            for (const district of districts) {
+                const communesResponse = await fetch(`/geography/api/communes/${district.id}/`);
+                const communes = await communesResponse.json();
+                for (const commune of communes) {
+                    const fokontanysResponse = await fetch(`/geography/api/fokontanys/${commune.id}/`);
+                    const fokontanys = await fokontanysResponse.json();
+                    fokontanys.forEach(f => {
+                        allFokontanys.push({
+                            nom_fokontany: f.nom_fokontany,
+                            commune: commune.nom_commune,
+                            district: district.nom_district,
+                            villages_count: f.villages_count
+                        });
+                    });
+                }
+            }
+            renderTable(allFokontanys, ['nom_fokontany', 'commune', 'district', 'villages_count'], ['Fokontany', 'Commune', 'District', 'Villages']);
+            return;
+        } else {
+            // Aucun filtre, afficher tous les fokontanys
+            content.innerHTML = '<div class="loading loading-spinner loading-lg mx-auto"></div>';
+            title.textContent = titleText;
+            modal.showModal();
+
+            const regionsResponse = await fetch('/geography/api/regions/');
+            const regions = await regionsResponse.json();
+
+            let allFokontanys = [];
+            for (const region of regions) {
+                const districtsResponse = await fetch(`/geography/api/districts/${region.id}/`);
+                const districts = await districtsResponse.json();
+                for (const district of districts) {
+                    const communesResponse = await fetch(`/geography/api/communes/${district.id}/`);
+                    const communes = await communesResponse.json();
+                    for (const commune of communes) {
+                        const fokontanysResponse = await fetch(`/geography/api/fokontanys/${commune.id}/`);
+                        const fokontanys = await fokontanysResponse.json();
+                        fokontanys.forEach(f => {
+                            allFokontanys.push({
+                                nom_fokontany: f.nom_fokontany,
+                                commune: commune.nom_commune,
+                                district: district.nom_district,
+                                region: region.nom_region,
+                                villages_count: f.villages_count
+                            });
+                        });
+                    }
+                }
+            }
+            renderTable(allFokontanys, ['nom_fokontany', 'commune', 'district', 'region', 'villages_count'], ['Fokontany', 'Commune', 'District', 'Région', 'Villages']);
+            return;
+        }
+    } else if (type === 'villages') {
+        titleText = 'Liste des Villages';
+        if (villageId) {
+            // Si un village est filtré, charger seulement ce village
+            const response = await fetch(`/geography/api/parcelles/${villageId}/`);
+            const parcelles = await response.json();
+            const villageData = [{
+                nom_village: 'Village sélectionné',
+                parcelles_count: parcelles.length
+            }];
+            renderTable(villageData, ['nom_village', 'parcelles_count'], ['Village', 'Parcelles']);
+            title.textContent = titleText;
+            modal.showModal();
+            return;
+        } else if (communeId) {
+            // Commune filtrée, charger les fokontanys puis tous les villages
+            const fokontanysResponse = await fetch(`/geography/api/fokontanys/${communeId}/`);
+            const fokontanys = await fokontanysResponse.json();
+
+            let villages = [];
+            for (const fokontany of fokontanys) {
+                const villagesResponse = await fetch(`/geography/api/villages/${fokontany.id}/`);
+                const villagesList = await villagesResponse.json();
+                villages = villages.concat(villagesList);
+            }
+
+            renderTable(villages, ['nom_village', 'parcelles_count'], ['Village', 'Parcelles']);
+            title.textContent = titleText;
+            modal.showModal();
+            return;
+        } else if (districtId) {
+            // District filtré, afficher tous les villages avec colonnes commune et district
+            const response = await fetch(`/geography/api/all-villages/?district=${districtId}`);
+            const villages = await response.json();
+            renderTable(villages, ['nom_village', 'fokontany__commune__nom_commune', 'parcelles_count'], ['Village', 'Commune', 'Parcelles']);
+            title.textContent = titleText;
+            modal.showModal();
+            return;
+        } else if (regionId) {
+            // Région filtrée, afficher tous les villages avec colonnes commune et district
+            const response = await fetch(`/geography/api/all-villages/?region=${regionId}`);
+            const villages = await response.json();
+            renderTable(villages, ['nom_village', 'fokontany__commune__nom_commune', 'fokontany__commune__district__nom_district', 'parcelles_count'], ['Village', 'Commune', 'District', 'Parcelles']);
+            title.textContent = titleText;
+            modal.showModal();
+            return;
+        } else {
+            // Aucun filtre, afficher tous les villages avec toutes les colonnes
+            const response = await fetch('/geography/api/all-villages/');
+            const villages = await response.json();
+            renderTable(villages, ['nom_village', 'fokontany__commune__nom_commune', 'fokontany__commune__district__nom_district', 'fokontany__commune__district__region__nom_region', 'parcelles_count'], ['Village', 'Commune', 'District', 'Région', 'Parcelles']);
+            title.textContent = titleText;
+            modal.showModal();
+            return;
+        }
+    } else if (type === 'parcelles') {
+        titleText = 'Liste des Parcelles';
+        if (villageId) {
+            apiUrl = `/geography/api/parcelles/${villageId}/`;
+        } else {
+            content.innerHTML = '<p class="text-center">Sélectionnez un village pour voir les parcelles</p>';
+            title.textContent = titleText;
+            modal.showModal();
+            return;
+        }
+    }
+
+    if (apiUrl) {
+        try {
+            const response = await fetch(apiUrl);
+            const data = await response.json();
+
+            if (type === 'regions') {
+                renderTable(data, ['nom_region', 'districts_count'], ['Région', 'Districts']);
+            } else if (type === 'districts') {
+                renderTable(data, ['nom_district', 'communes_count'], ['District', 'Communes']);
+            } else if (type === 'communes') {
+                renderTable(data, ['nom_commune', 'fokontanys_count'], ['Commune', 'Fokontanys']);
+            } else if (type === 'parcelles') {
+                renderTable(data, ['reference_parcelle', 'nombre_habitants', 'nombre_menages'], ['Référence', 'Habitants', 'Ménages']);
+            }
+
+            title.textContent = titleText;
+            modal.showModal();
+        } catch (error) {
+            content.innerHTML = `<p class="text-error">Erreur: ${error.message}</p>`;
+            title.textContent = titleText;
+            modal.showModal();
+        }
+    }
+}
+
+function renderTable(data, columns, headers) {
+    const content = document.getElementById('modalContent');
+
+    if (!data || data.length === 0) {
+        content.innerHTML = '<p class="text-center text-base-content/70">Aucune donnée disponible</p>';
+        return;
+    }
+
+    let html = '<table class="table table-zebra w-full"><thead><tr>';
+    headers.forEach(h => {
+        html += `<th>${h}</th>`;
+    });
+    html += '</tr></thead><tbody>';
+
+    data.forEach(row => {
+        html += '<tr>';
+        columns.forEach(col => {
+            html += `<td>${row[col] !== null && row[col] !== undefined ? row[col] : '-'}</td>`;
+        });
+        html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    content.innerHTML = html;
+}
+
+document.addEventListener('DOMContentLoaded', loadCharts);
+</script>
+{% endblock %}

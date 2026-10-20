@@ -1,0 +1,355 @@
+{% extends planning_shell_base_template %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-col gap-3 lg:flex-row lg:justify-between lg:items-center">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">
+                <i class="fas fa-code-merge mr-2 text-warning"></i>Fusion des activités de réparation
+            </h1>
+            <p class="text-base-content/70 mt-1">
+                Regrouper les activités en doublon (« Remplacement robinet », « Remplacement du robinet »…) en une activité
+                générique, et reporter le composant sur chaque réparation.
+            </p>
+        </div>
+        <a href="{% url 'planning:suivi_reparations' %}" class="btn btn-outline btn-sm">
+            <i class="fas fa-arrow-left mr-2"></i>Retour aux réparations
+        </a>
+    </div>
+
+    <div class="alert alert-info text-sm">
+        <i class="fas fa-circle-info"></i>
+        <div>
+            Chaque fusion commence par un <strong>aperçu</strong> : rien n'est modifié tant que vous ne confirmez pas.
+            Les activités fusionnées ne sont pas supprimées (préfixe « [Fusionnée] ») et toute fusion peut être
+            <strong>annulée</strong> depuis l'historique en bas de page.
+        </div>
+    </div>
+
+    <div class="flex flex-col sm:flex-row gap-3 sm:items-center">
+        <input id="filtre-groupes" type="search" class="input input-bordered input-sm w-full sm:max-w-xs"
+               placeholder="Filtrer par nom d'activité…">
+        <span id="compteur-groupes" class="text-sm text-base-content/60"></span>
+    </div>
+
+    <div id="zone-chargement" class="flex items-center gap-2 text-base-content/70">
+        <span class="loading loading-spinner loading-sm"></span> Analyse des activités…
+    </div>
+    <div id="zone-erreur" class="alert alert-error hidden"></div>
+    <div id="liste-groupes" class="space-y-4"></div>
+
+    <!-- Fusion manuelle -->
+    <div class="card bg-base-200 border border-base-300">
+        <div class="card-body p-4">
+            <h2 class="card-title text-lg"><i class="fas fa-hand-pointer mr-2 text-primary"></i>Fusion manuelle</h2>
+            <p class="text-sm text-base-content/70">
+                Pour un doublon que la détection n'a pas repéré : recherchez les activités concernées, choisissez la cible
+                et cochez celles à fusionner.
+            </p>
+            <input id="filtre-manuel" type="search" class="input input-bordered input-sm w-full sm:max-w-md"
+                   placeholder="Rechercher une activité (2 lettres minimum)…">
+            <div id="zone-manuelle"></div>
+        </div>
+    </div>
+
+    <!-- Historique -->
+    <div class="card bg-base-200 border border-base-300">
+        <div class="card-body p-4">
+            <h2 class="card-title text-lg"><i class="fas fa-clock-rotate-left mr-2 text-primary"></i>Historique des fusions</h2>
+            <div id="zone-historique" class="overflow-x-auto"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Aperçu / confirmation -->
+<dialog id="modal-apercu" class="modal">
+    <div class="modal-box max-w-3xl">
+        <h3 class="font-bold text-lg mb-2"><i class="fas fa-eye mr-2"></i>Aperçu de la fusion</h3>
+        <div id="apercu-contenu" class="space-y-3 text-sm"></div>
+        <div class="modal-action">
+            <button class="btn btn-ghost" onclick="document.getElementById('modal-apercu').close()">Fermer</button>
+            <button id="btn-confirmer" class="btn btn-warning" disabled>
+                <i class="fas fa-code-merge mr-2"></i>Confirmer la fusion
+            </button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>fermer</button></form>
+</dialog>
+
+<script>
+const URLS = {
+    groupes: "{% url 'planning:api_fusion_groupes' %}",
+    apercu: "{% url 'planning:api_fusion_apercu' %}",
+    appliquer: "{% url 'planning:api_fusion_appliquer' %}",
+    annuler: "{% url 'planning:api_fusion_annuler' %}",
+};
+
+let etat = { groupes: [], fiches: [], catalogue: [], historique: [] };
+let payloadEnCours = null;
+let uid = 0;
+
+function esc(value) {
+    return String(value ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+}
+
+function csrfToken() {
+    const m = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+}
+
+async function appelApi(url, payload) {
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken()},
+        body: JSON.stringify(payload),
+    });
+    let data;
+    try { data = await response.json(); } catch (e) { data = {success: false, error: `Erreur serveur (${response.status})`}; }
+    return data;
+}
+
+function afficherErreur(message) {
+    const box = document.getElementById('zone-erreur');
+    box.textContent = message || '';
+    box.classList.toggle('hidden', !message);
+}
+
+/* ---------- Rendu d'une carte (groupe ou fusion manuelle) ---------- */
+
+function ligneFiche(f, groupId, cibleId) {
+    const isCible = f.id === cibleId;
+    return `
+        <tr data-fiche-id="${esc(f.id)}">
+            <td class="text-center"><input type="radio" class="radio radio-sm radio-primary" name="cible-${groupId}"
+                value="${esc(f.id)}" ${isCible ? 'checked' : ''} onchange="changerCible('${groupId}')"></td>
+            <td class="text-center"><input type="checkbox" class="checkbox checkbox-sm cb-fusion"
+                ${isCible ? 'disabled' : 'checked'}></td>
+            <td>${esc(f.tache)}${f.type_nom ? `<div class="text-xs text-base-content/50">${esc(f.type_nom)}</div>` : ''}</td>
+            <td class="text-right">${f.nb_plannings}</td>
+            <td><input type="text" class="input input-bordered input-xs w-full min-w-[9rem] in-composants"
+                list="dl-catalogue" placeholder="ex : Robinet, Clapet"
+                value="${esc((f.composants_detectes || []).join(', '))}"></td>
+        </tr>`;
+}
+
+function carte(groupId, titre, sousTitre, fiches, cibleId, nomSuggere) {
+    return `
+    <div class="card bg-base-100 border border-base-300 shadow-sm carte-groupe" id="${groupId}" data-titre="${esc((titre + ' ' + fiches.map(f => f.tache).join(' ')).toLowerCase())}">
+        <div class="card-body p-4 gap-3">
+            <div class="flex flex-col md:flex-row md:items-end gap-3 justify-between">
+                <div class="form-control w-full md:max-w-md">
+                    <label class="label py-0"><span class="label-text font-semibold">Nom de l'activité après fusion</span></label>
+                    <input type="text" class="input input-bordered input-sm in-nom" maxlength="255" value="${esc(nomSuggere)}">
+                </div>
+                <div class="text-sm text-base-content/60">${sousTitre}</div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead><tr>
+                        <th class="text-center">Cible</th><th class="text-center">Fusionner</th>
+                        <th>Activité</th><th class="text-right">Réparations</th><th>Composants concernés</th>
+                    </tr></thead>
+                    <tbody>${fiches.map(f => ligneFiche(f, groupId, cibleId)).join('')}</tbody>
+                </table>
+            </div>
+            <div class="flex justify-end">
+                <button class="btn btn-primary btn-sm" onclick="lancerApercu('${groupId}')">
+                    <i class="fas fa-eye mr-2"></i>Aperçu de la fusion
+                </button>
+            </div>
+        </div>
+    </div>`;
+}
+
+function changerCible(groupId) {
+    const root = document.getElementById(groupId);
+    const cible = root.querySelector('input[type=radio]:checked')?.value;
+    root.querySelectorAll('tbody tr').forEach(tr => {
+        const cb = tr.querySelector('.cb-fusion');
+        if (tr.dataset.ficheId === cible) { cb.checked = false; cb.disabled = true; }
+        else { if (cb.disabled) cb.checked = true; cb.disabled = false; }
+    });
+}
+
+function rendreGroupes() {
+    const filtre = (document.getElementById('filtre-groupes').value || '').trim().toLowerCase();
+    const zone = document.getElementById('liste-groupes');
+    const visibles = etat.groupes.map((g, i) => ({g, i}))
+        .filter(({g}) => !filtre || (g.nom_suggere + ' ' + g.fiches.map(f => f.tache).join(' ')).toLowerCase().includes(filtre));
+    zone.innerHTML = visibles.length
+        ? visibles.map(({g, i}) => carte(
+            `groupe-${i}`, g.nom_suggere,
+            `${esc(g.type_nom || 'Sans type')} · ${g.fiches.length} activité(s) · ${g.nb_plannings} réparation(s)`,
+            g.fiches, g.cible_suggeree_id, g.nom_suggere)).join('')
+        : '<div class="text-base-content/60 text-sm">Aucun doublon détecté pour ce filtre.</div>';
+    document.getElementById('compteur-groupes').textContent = `${visibles.length} groupe(s) suggéré(s)`;
+}
+
+function rendreManuel() {
+    const q = (document.getElementById('filtre-manuel').value || '').trim().toLowerCase();
+    const zone = document.getElementById('zone-manuelle');
+    if (q.length < 2) { zone.innerHTML = ''; return; }
+    const fiches = etat.fiches.filter(f => (f.tache || '').toLowerCase().includes(q)).slice(0, 60);
+    if (!fiches.length) { zone.innerHTML = '<div class="text-sm text-base-content/60 mt-2">Aucune activité trouvée.</div>'; return; }
+    zone.innerHTML = carte('manuel', 'manuel', `${fiches.length} activité(s) affichée(s)`, fiches, fiches[0].id, fiches[0].tache);
+    changerCible('manuel');
+}
+
+function rendreHistorique() {
+    const zone = document.getElementById('zone-historique');
+    if (!etat.historique.length) { zone.innerHTML = '<div class="text-sm text-base-content/60">Aucune fusion pour le moment.</div>'; return; }
+    zone.innerHTML = `<table class="table table-sm"><thead><tr>
+        <th>Date</th><th>Activité</th><th>Résumé</th><th></th></tr></thead><tbody>` +
+        etat.historique.map(h => {
+            const r = h.resume || {};
+            const date = new Date(h.date).toLocaleString('fr-FR');
+            const nom = h.nom_avant === h.nom_apres ? esc(h.nom_apres) : `${esc(h.nom_avant)} → ${esc(h.nom_apres)}`;
+            return `<tr>
+                <td class="whitespace-nowrap">${esc(date)}</td><td>${nom}</td>
+                <td class="text-xs">${r.sources || 0} fusionnée(s) · ${r.plannings || 0} réparation(s) · ${r.composants_affectes || 0} composant(s) affecté(s)${r.sans_cible ? ` · ${r.sans_cible} sans cible` : ''}</td>
+                <td class="text-right">${h.annulee
+                    ? '<span class="badge badge-ghost">Annulée</span>'
+                    : `<button class="btn btn-outline btn-error btn-xs" onclick="annulerFusion('${esc(h.id)}')">Annuler</button>`}</td></tr>`;
+        }).join('') + '</tbody></table>';
+}
+
+/* ---------- Lecture d'une carte -> payload ---------- */
+
+function lirePayload(groupId) {
+    const root = document.getElementById(groupId);
+    const cible = root.querySelector('input[type=radio]:checked')?.value;
+    if (!cible) { alert("Choisissez l'activité cible."); return null; }
+    const sources = [], composants = {};
+    root.querySelectorAll('tbody tr').forEach(tr => {
+        const id = tr.dataset.ficheId;
+        const estSource = tr.querySelector('.cb-fusion').checked;
+        if (id === cible || estSource) {
+            if (estSource) sources.push(id);
+            const txt = tr.querySelector('.in-composants').value.trim();
+            if (txt) composants[id] = txt;
+        }
+    });
+    const nom = root.querySelector('.in-nom').value.trim();
+    return {target_id: cible, source_ids: sources, composants, nouveau_nom: nom};
+}
+
+/* ---------- Aperçu / confirmation ---------- */
+
+async function lancerApercu(groupId) {
+    const payload = lirePayload(groupId);
+    if (!payload) return;
+    const contenu = document.getElementById('apercu-contenu');
+    contenu.innerHTML = '<span class="loading loading-spinner loading-sm"></span>';
+    const modal = document.getElementById('modal-apercu');
+    document.getElementById('btn-confirmer').disabled = true;
+    modal.showModal();
+
+    const data = await appelApi(URLS.apercu, payload);
+    if (!data.success) {
+        contenu.innerHTML = `<div class="alert alert-error">${esc(data.error || 'Erreur')}</div>`;
+        return;
+    }
+    payloadEnCours = payload;
+    const c = data.composants;
+    let html = `<div><strong>Cible :</strong> ${esc(data.cible.tache)}${data.cible.nouveau_nom !== data.cible.tache
+        ? ` → <strong>${esc(data.cible.nouveau_nom)}</strong>` : ''}
+        <span class="badge badge-ghost badge-sm ml-1">${esc(data.cible.type_nom || 'Sans type')}</span></div>`;
+
+    if (data.fiches.length) {
+        html += `<table class="table table-xs"><thead><tr><th>Activité fusionnée</th><th class="text-right">Réparations</th>
+            <th class="text-right">Postes</th><th class="text-right">Évaluations</th><th class="text-right">Règles</th></tr></thead><tbody>` +
+            data.fiches.map(f => `<tr><td>${esc(f.tache)}</td><td class="text-right">${f.plannings}</td>
+                <td class="text-right">${f.activites_postes}</td><td class="text-right">${f.evaluations}</td>
+                <td class="text-right">${f.politiques}</td></tr>`).join('') + '</tbody></table>';
+    }
+
+    let bloquants = [];
+    if (data.changement_type.length) {
+        html += `<div class="alert alert-warning text-sm"><div>
+            <div><i class="fas fa-triangle-exclamation mr-1"></i>Ces activités ont un <strong>type différent</strong> de la cible ;
+            leurs réparations prendront le type de la cible (cela peut changer leur classement réparation / réhabilitation) :</div>
+            <ul class="list-disc ml-5">${data.changement_type.map(x => `<li>${esc(x.tache)} <em>(${esc(x.type_nom || 'sans type')})</em></li>`).join('')}</ul>
+            <label class="label cursor-pointer justify-start gap-2"><input type="checkbox" id="ck-type" class="checkbox checkbox-sm">
+            <span class="label-text">J'accepte le changement de type</span></label></div></div>`;
+        bloquants.push('ck-type');
+    }
+    if (c.affectations || c.a_creer || c.sans_cible) {
+        html += `<div class="text-sm"><strong>Composants :</strong> ${c.affectations} affectation(s) possible(s)` +
+            (c.cibles_deduites ? `, ${c.cibles_deduites} cible(s) déduite(s) du matériel saisi` : '') + '.</div>';
+    }
+    if (c.manquants.length) {
+        html += `<div class="alert alert-warning text-sm"><div>
+            <div><i class="fas fa-triangle-exclamation mr-1"></i>Absents du catalogue du type concerné :</div>
+            <ul class="list-disc ml-5">${c.manquants.map(m => `<li><strong>${esc(m.composant)}</strong> — ${esc(m.type)} « ${esc(m.type_nom)} » (${m.reparations} réparation(s))</li>`).join('')}</ul>
+            <label class="label cursor-pointer justify-start gap-2"><input type="checkbox" id="ck-creer" class="checkbox checkbox-sm">
+            <span class="label-text">Créer ces composants dans le catalogue</span></label></div></div>`;
+        bloquants.push('ck-creer');
+    }
+    if (c.sans_cible) {
+        html += `<div class="alert text-sm"><div>
+            <div><i class="fas fa-circle-info mr-1"></i><strong>${c.sans_cible}</strong> réparation(s) sans équipement ni point d'eau identifiable :
+            elles seront fusionnées <strong>sans composant</strong> (à compléter à la main).</div>
+            ${c.sans_cible_exemples.length ? `<ul class="list-disc ml-5 text-xs">${c.sans_cible_exemples.map(e => `<li>${esc(e.date)} — ${esc(e.ouvrage || 'ouvrage inconnu')}</li>`).join('')}${c.sans_cible > c.sans_cible_exemples.length ? '<li>…</li>' : ''}</ul>` : ''}</div></div>`;
+    }
+    contenu.innerHTML = html;
+
+    const btn = document.getElementById('btn-confirmer');
+    const maj = () => { btn.disabled = bloquants.some(id => !document.getElementById(id).checked); };
+    bloquants.forEach(id => document.getElementById(id).addEventListener('change', maj));
+    maj();
+}
+
+document.getElementById('btn-confirmer').addEventListener('click', async () => {
+    if (!payloadEnCours) return;
+    const btn = document.getElementById('btn-confirmer');
+    btn.disabled = true;
+    const payload = {...payloadEnCours,
+        accepter_changement_type: !!document.getElementById('ck-type')?.checked,
+        creer_composants_manquants: !!document.getElementById('ck-creer')?.checked};
+    const data = await appelApi(URLS.appliquer, payload);
+    if (!data.success) {
+        document.getElementById('apercu-contenu').insertAdjacentHTML('afterbegin',
+            `<div class="alert alert-error">${esc(data.error || 'Erreur')}</div>`);
+        btn.disabled = false;
+        return;
+    }
+    payloadEnCours = null;
+    document.getElementById('modal-apercu').close();
+    const r = data.resume || {};
+    alert(`Fusion effectuée : ${r.plannings || 0} réparation(s) repointée(s), ${r.composants_affectes || 0} composant(s) affecté(s).`);
+    await charger();
+});
+
+async function annulerFusion(logId) {
+    if (!confirm('Annuler cette fusion ? Les activités et réparations reviennent à leur état d\'avant.')) return;
+    const data = await appelApi(URLS.annuler, {log_id: logId});
+    if (!data.success) { alert(data.error || 'Erreur'); return; }
+    await charger();
+}
+
+/* ---------- Chargement ---------- */
+
+async function charger() {
+    document.getElementById('zone-chargement').classList.remove('hidden');
+    afficherErreur('');
+    try {
+        const response = await fetch(URLS.groupes);
+        const data = await response.json();
+        if (!data.success) throw new Error(data.error || 'Erreur');
+        etat = {groupes: data.groupes, fiches: data.fiches, catalogue: data.catalogue, historique: data.historique};
+        let dl = document.getElementById('dl-catalogue');
+        if (!dl) { dl = document.createElement('datalist'); dl.id = 'dl-catalogue'; document.body.appendChild(dl); }
+        dl.innerHTML = etat.catalogue.map(n => `<option value="${esc(n)}">`).join('');
+        rendreGroupes(); rendreManuel(); rendreHistorique();
+    } catch (error) {
+        afficherErreur('Chargement impossible : ' + error.message);
+    } finally {
+        document.getElementById('zone-chargement').classList.add('hidden');
+    }
+}
+
+document.getElementById('filtre-groupes').addEventListener('input', rendreGroupes);
+document.getElementById('filtre-manuel').addEventListener('input', rendreManuel);
+charger();
+</script>
+{% endblock %}

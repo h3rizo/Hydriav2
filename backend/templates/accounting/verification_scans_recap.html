@@ -1,0 +1,823 @@
+{% extends "accounting/base.html" %}
+{% load diamex_import %}
+{% load humanize %}
+
+{% block title %}Vérification Scans - Récapitulatif{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    {% include 'accounting/includes/verification_nav.html' with current_page='scans' %}
+    <div class="flex justify-between items-center mb-6">
+        <div>
+        <h1 class="text-3xl font-bold">
+            <i class="fas fa-file-pdf mr-3 text-primary"></i>Vérification des Scans
+        </h1>
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'accounting:entries_list' %}" class="btn btn-ghost btn-sm">
+                <i class="fas fa-list mr-2"></i>Vue complète
+            </a>
+        </div>
+    </div>
+
+    <!-- Statistiques des scans -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <!-- Total opérations -->
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-database text-3xl"></i>
+            </div>
+            <div class="stat-title">Total opérations</div>
+            <div class="stat-value text-primary text-2xl">{{ total_entries|intcomma }}</div>
+            <div class="stat-desc">Avec besoin de scan</div>
+        </div>
+
+        <!-- Scans valides -->
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure">
+                <div class="radial-progress text-success" style="--value:{{ taux_scans_valides }}; --size:4rem; --thickness:4px;" role="progressbar">
+                    <span class="font-bold">{{ taux_scans_valides }}%</span>
+                </div>
+            </div>
+            <div class="stat-title">Scans valides</div>
+            <div class="stat-value text-success text-2xl">{{ scans_valides|intcomma }}</div>
+            <div class="stat-desc">{{ taux_scans_valides }}% du total</div>
+        </div>
+
+        <!-- Liens morts -->
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure">
+                <div class="radial-progress text-warning" style="--value:{{ taux_liens_morts }}; --size:4rem; --thickness:4px;" role="progressbar">
+                    <span class="font-bold">{{ taux_liens_morts }}%</span>
+                </div>
+            </div>
+            <div class="stat-title">Liens morts</div>
+            <div class="stat-value text-warning text-2xl">{{ liens_morts|intcomma }}</div>
+            <div class="stat-desc">{{ taux_liens_morts }}% du total</div>
+        </div>
+
+        <!-- Sans scan -->
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure">
+                <div class="radial-progress text-error" style="--value:{{ taux_sans_scan }}; --size:4rem; --thickness:4px;" role="progressbar">
+                    <span class="font-bold">{{ taux_sans_scan }}%</span>
+                </div>
+            </div>
+            <div class="stat-title">Sans scan</div>
+            <div class="stat-value text-error text-2xl">{{ sans_scan|intcomma }}</div>
+            <div class="stat-desc">{{ taux_sans_scan }}% du total</div>
+        </div>
+    </div>
+
+    <!-- Bandeau vérification scans -->
+    <div class="alert alert-warning mb-6">
+        <div class="flex-1">
+            <i class="fas fa-exclamation-triangle"></i>
+            <div class="ml-2">
+                {% if date_derniere_verif %}
+                    <p class="text-sm">
+                        <strong>Dernière vérification des scans :</strong> {{ date_derniere_verif|date:"d/m/Y à H:i" }}
+                    </p>
+                    <p class="text-xs text-base-content/70 mt-1">
+                        Relancez la vérification pour actualiser les statistiques.
+                    </p>
+                {% else %}
+                    <p class="text-sm">
+                        <strong>Aucune vérification des scans effectuée.</strong>
+                    </p>
+                    <p class="text-xs text-base-content/70 mt-1">
+                        Lancez une vérification pour identifier les scans valides et les liens morts.
+                    </p>
+                {% endif %}
+            </div>
+        </div>
+        <button onclick="lancerVerificationScans()" class="btn btn-sm btn-warning" id="btn-verifier-scans">
+            <i class="fas fa-sync mr-2"></i>
+            Vérifier les scans
+        </button>
+    </div>
+
+    <!-- Info export/impression -->
+    <div class="alert alert-info mb-6">
+        <i class="fas fa-info-circle"></i>
+        <div class="ml-2">
+            <p class="text-sm">
+                <strong>Export et impression :</strong> Utilisez les boutons dans la colonne "Actions" pour exporter ou imprimer les détails par fichier.
+            </p>
+            <p class="text-xs text-base-content/70 mt-1">
+                Les exports incluent uniquement les scans avec problèmes (liens morts et sans scan).
+            </p>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-200 shadow-md mb-6">
+        <div class="card-body">
+            <h3 class="card-title text-sm mb-4"><i class="fas fa-filter mr-2"></i>Filtres</h3>
+            <form method="GET" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mois</span></label>
+                    <input type="month" name="mois" value="{{ request.GET.mois }}" class="input input-bordered input-sm" />
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Fichier source</span></label>
+                    <select name="fichier" class="select select-bordered select-sm">
+                        <option value="">Tous les fichiers</option>
+                        {% for fichier_option in fichiers_list %}
+                        <option value="{{ fichier_option }}" {% if request.GET.fichier == fichier_option %}selected{% endif %}>{{ fichier_option }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control flex flex-row gap-2 items-end">
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="fas fa-search mr-2"></i>Filtrer
+                    </button>
+                    <a href="{% url 'accounting:verification_scans_recap' %}" class="btn btn-ghost btn-sm">
+                        <i class="fas fa-times mr-2"></i>Réinitialiser
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Tableau récapitulatif par fichier -->
+    <div class="card bg-base-100 shadow-md">
+        <div class="card-body">
+            <h2 class="card-title mb-4">
+                <i class="fas fa-folder-open mr-2"></i>Récapitulatif par fichier
+            </h2>
+
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead class="bg-base-200">
+                        <tr>
+                            <th>Fichier / Mois</th>
+                            <th class="text-right">Total</th>
+                            <th class="text-right">✅ Valides</th>
+                            <th class="text-right">⚠️ Liens morts</th>
+                            <th class="text-right">❌ Sans scan</th>
+                            <th class="text-center">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for fichier_data in recap_by_fichier %}
+                            <!-- Ligne de groupe fichier -->
+                            <tr class="bg-base-300 font-bold">
+                                <td colspan="6">
+                                    <i class="fas fa-folder text-info mr-2"></i>
+                                    <span class="badge badge-info badge-lg">{{ fichier_data.fichier }}</span>
+                                    <span class="text-xs text-base-content/70 ml-2">({{ fichier_data.mois_count }} mois)</span>
+                                </td>
+                            </tr>
+
+                            <!-- Lignes par mois pour ce fichier -->
+                            {% for mois_stats in fichier_data.mois_list %}
+                            <tr class="hover">
+                                <td class="pl-8">
+                                    <i class="fas fa-calendar text-xs text-base-content/50 mr-2"></i>
+                                    {{ mois_stats.mois }}
+                                </td>
+                                <td class="text-right font-mono">{{ mois_stats.total|intcomma }}</td>
+                                <td class="text-right">
+                                    {% if mois_stats.scans_valides > 0 %}
+                                    <span class="text-success font-semibold">{{ mois_stats.scans_valides|intcomma }}</span>
+                                    <span class="text-xs text-base-content/50 ml-1">
+                                        ({{ mois_stats.taux_valides }}%)
+                                    </span>
+                                    {% else %}
+                                    <span class="text-base-content/30">-</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-right">
+                                    {% if mois_stats.liens_morts > 0 %}
+                                    <span class="text-warning font-semibold">{{ mois_stats.liens_morts|intcomma }}</span>
+                                    {% else %}
+                                    <span class="text-base-content/30">-</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-right">
+                                    {% if mois_stats.sans_scan > 0 %}
+                                    <span class="text-error font-semibold">{{ mois_stats.sans_scan|intcomma }}</span>
+                                    {% else %}
+                                    <span class="text-base-content/30">-</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    <div class="dropdown dropdown-end">
+                                        <label tabindex="0" class="btn btn-xs btn-primary">
+                                            <i class="fas fa-eye mr-1"></i>Voir détail
+                                        </label>
+                                        <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow-xl bg-base-100 rounded-box w-52 mt-1">
+                                            <li>
+                                                <a onclick="voirDetail('{{ mois_stats.mois }}', '{{ fichier_data.fichier }}', 'all')">
+                                                    <i class="fas fa-list text-primary"></i>Tous ({{ mois_stats.total }})
+                                                </a>
+                                            </li>
+                                            {% if mois_stats.scans_valides > 0 %}
+                                            <li>
+                                                <a onclick="voirDetail('{{ mois_stats.mois }}', '{{ fichier_data.fichier }}', 'valides')">
+                                                    <i class="fas fa-check-circle text-success"></i>Scans valides ({{ mois_stats.scans_valides }})
+                                                </a>
+                                            </li>
+                                            {% endif %}
+                                            {% if mois_stats.liens_morts > 0 %}
+                                            <li>
+                                                <a onclick="voirDetail('{{ mois_stats.mois }}', '{{ fichier_data.fichier }}', 'liens_morts')">
+                                                    <i class="fas fa-exclamation-triangle text-warning"></i>Liens morts ({{ mois_stats.liens_morts }})
+                                                </a>
+                                            </li>
+                                            {% endif %}
+                                            {% if mois_stats.sans_scan > 0 %}
+                                            <li>
+                                                <a onclick="voirDetail('{{ mois_stats.mois }}', '{{ fichier_data.fichier }}', 'sans_scan')">
+                                                    <i class="fas fa-times-circle text-error"></i>Sans scan ({{ mois_stats.sans_scan }})
+                                                </a>
+                                            </li>
+                                            {% endif %}
+                                        </ul>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+
+                            <!-- Ligne de total pour le fichier -->
+                            <tr class="bg-base-200 font-semibold">
+                                <td class="pl-8">
+                                    <i class="fas fa-calculator text-xs mr-2"></i>
+                                    Total {{ fichier_data.fichier }}
+                                </td>
+                                <td class="text-right font-mono">{{ fichier_data.total|intcomma }}</td>
+                                <td class="text-right">
+                                    {% if fichier_data.scans_valides > 0 %}
+                                    <span class="text-success">{{ fichier_data.scans_valides|intcomma }}</span>
+                                    {% else %}
+                                    <span class="text-base-content/30">-</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-right">
+                                    {% if fichier_data.liens_morts > 0 %}
+                                    <span class="text-warning">{{ fichier_data.liens_morts|intcomma }}</span>
+                                    {% else %}
+                                    <span class="text-base-content/30">-</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-right">
+                                    {% if fichier_data.sans_scan > 0 %}
+                                    <span class="text-error">{{ fichier_data.sans_scan|intcomma }}</span>
+                                    {% else %}
+                                    <span class="text-base-content/30">-</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    <div class="flex gap-2 justify-center">
+                                        <a href="{% url 'accounting:export_excel_scans' %}?fichier={{ fichier_data.fichier|urlencode }}"
+                                           class="btn btn-xs btn-success tooltip"
+                                           data-tip="Export Excel (problèmes uniquement)">
+                                            <i class="fas fa-file-excel mr-1"></i>Excel
+                                        </a>
+                                        <button onclick="ouvrirImpression('{{ fichier_data.fichier|escapejs }}')"
+                                                class="btn btn-xs btn-info tooltip"
+                                                data-tip="Imprimer (problèmes uniquement)">
+                                            <i class="fas fa-print mr-1"></i>Imprimer
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="6" class="text-center py-8 text-gray-500">
+                                <i class="fas fa-inbox text-4xl mb-2"></i>
+                                <p>Aucune donnée disponible</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal détail des entrées -->
+<dialog id="modal_detail" class="modal">
+    <div class="modal-box max-w-7xl">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+        </form>
+
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-list mr-2 text-primary"></i>
+            <span id="modal_title">Détail des entrées</span>
+        </h3>
+
+        <!-- Statistiques du détail -->
+        <div class="alert alert-info mb-4">
+            <i class="fas fa-info-circle"></i>
+            <div class="text-sm">
+                <span id="detail_stats">Chargement...</span>
+            </div>
+        </div>
+
+        <!-- Tableau des entrées -->
+        <div class="overflow-x-auto">
+            <table class="table table-xs table-zebra">
+                <thead class="bg-base-200">
+                    <tr>
+                        <th>ID</th>
+                        <th>DateRec</th>
+                        <th>Rec</th>
+                        <th>Journal</th>
+                        <th>Description</th>
+                        <th>Compte</th>
+                        <th class="text-right">Entrée</th>
+                        <th class="text-right">Sortie</th>
+                        <th>Scan</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="detail_tbody">
+                    <tr>
+                        <td colspan="10" class="text-center py-8">
+                            <i class="fas fa-spinner fa-spin text-2xl"></i>
+                            <p class="mt-2">Chargement...</p>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="flex justify-between items-center mt-4" id="detail_pagination">
+            <!-- Sera rempli dynamiquement -->
+        </div>
+
+        <div class="modal-action">
+            <form method="dialog">
+                <button class="btn btn-sm">Fermer</button>
+            </form>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>Fermer</button>
+    </form>
+</dialog>
+
+<!-- Modal d'édition (réutilisé depuis entries_list) -->
+<dialog id="edit_modal" class="modal">
+    <div class="modal-box w-11/12 max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-edit mr-2 text-primary"></i>Modifier l'entrée
+        </h3>
+
+        <form id="edit_form" class="space-y-4">
+            {% csrf_token %}
+            <input type="hidden" id="entry_id" name="entry_id" />
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Description</span></label>
+                <textarea id="edit_description" name="description" class="textarea textarea-bordered h-24" rows="3"></textarea>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Info</span></label>
+                <input type="text" id="edit_info" name="info" class="input input-bordered" />
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">PERS</span></label>
+                <input type="text" id="edit_pers" name="pers" class="input input-bordered" />
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Détail</span></label>
+                <input type="text" id="edit_detail" name="detail" class="input input-bordered" />
+            </div>
+
+            <div id="edit_messages" class="hidden"></div>
+
+            <div class="modal-action">
+                <button type="button" onclick="document.getElementById('edit_modal').close()" class="btn btn-ghost">
+                    <i class="fas fa-times mr-2"></i>Annuler
+                </button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<script>
+// Variables globales pour la pagination
+let currentMois = '';
+let currentFichier = '';
+let currentStatut = 'all';
+let currentPage = 1;
+
+// Fonction pour voir le détail
+function voirDetail(mois, fichier, statut) {
+    currentMois = mois;
+    currentFichier = fichier;
+    currentStatut = statut;
+    currentPage = 1;
+
+    // Mettre à jour le titre
+    const statutLabels = {
+        'all': 'Toutes les entrées',
+        'valides': 'Scans valides',
+        'liens_morts': 'Liens morts',
+        'sans_scan': 'Sans scan'
+    };
+
+    document.getElementById('modal_title').textContent =
+        `${statutLabels[statut]} - ${mois} - ${fichier}`;
+
+    // Charger les données
+    chargerDetailEntries();
+
+    // Ouvrir le modal
+    document.getElementById('modal_detail').showModal();
+}
+
+// Fonction pour charger les entrées détaillées
+function chargerDetailEntries(page = 1) {
+    currentPage = page;
+
+    const tbody = document.getElementById('detail_tbody');
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="10" class="text-center py-8">
+                <i class="fas fa-spinner fa-spin text-2xl"></i>
+                <p class="mt-2">Chargement...</p>
+            </td>
+        </tr>
+    `;
+
+    const params = new URLSearchParams({
+        mois: currentMois,
+        fichier: currentFichier,
+        statut: currentStatut,
+        page: page
+    });
+
+    fetch(`{% url 'accounting:api_detail_scans' %}?${params}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                afficherDetailEntries(data.entries, data.pagination);
+            } else {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="10" class="text-center py-8 text-error">
+                            <i class="fas fa-exclamation-triangle text-2xl"></i>
+                            <p class="mt-2">Erreur: ${data.error}</p>
+                        </td>
+                    </tr>
+                `;
+            }
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="10" class="text-center py-8 text-error">
+                        <i class="fas fa-times text-2xl"></i>
+                        <p class="mt-2">Erreur réseau: ${error.message}</p>
+                    </td>
+                </tr>
+            `;
+        });
+}
+
+// Fonction pour afficher les entrées détaillées
+function afficherDetailEntries(entries, pagination) {
+    const tbody = document.getElementById('detail_tbody');
+
+    if (entries.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="10" class="text-center py-8 text-gray-500">
+                    <i class="fas fa-inbox text-4xl mb-2"></i>
+                    <p>Aucune entrée trouvée</p>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    let html = '';
+    entries.forEach(entry => {
+        const scanBadge = getScanBadge(entry);
+
+        html += `
+            <tr class="hover">
+                <td class="font-mono text-xs">${entry.id_access}</td>
+                <td class="text-xs">${entry.date_rec}</td>
+                <td class="text-xs">${entry.rec}</td>
+                <td class="text-xs">
+                    <span class="badge badge-sm badge-info">${entry.journal_code}</span>
+                </td>
+                <td class="max-w-xs truncate text-xs" title="${entry.description}">${entry.description}</td>
+                <td class="text-xs">${entry.compte_code}</td>
+                <td class="text-right font-semibold text-success text-xs">
+                    ${entry.montant_in > 0 ? entry.montant_in.toLocaleString() : '-'}
+                </td>
+                <td class="text-right font-semibold text-error text-xs">
+                    ${entry.montant_out > 0 ? entry.montant_out.toLocaleString() : '-'}
+                </td>
+                <td>${scanBadge}</td>
+                <td>
+                    <button onclick="openEditModal(${entry.id}, '${escapeHtml(entry.description)}', '${escapeHtml(entry.info)}', '${escapeHtml(entry.pers)}', '${escapeHtml(entry.detail)}')"
+                            class="btn btn-xs btn-primary" title="Modifier">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+    });
+
+    tbody.innerHTML = html;
+
+    // Mettre à jour les statistiques
+    document.getElementById('detail_stats').textContent =
+        `Page ${pagination.current_page} sur ${pagination.total_pages} - ${pagination.total_entries.toLocaleString()} entrée(s)`;
+
+    // Mettre à jour la pagination
+    afficherPagination(pagination);
+}
+
+// Fonction pour obtenir le badge de scan
+function getScanBadge(entry) {
+    const scanInfo = entry.scan_info || {};
+
+    if (scanInfo.statut === 'sans_scan') {
+        return `<span class="badge badge-xs ${scanInfo.badge_class || 'badge-error'} gap-1">
+                    <i class="fas fa-times"></i>
+                    ${scanInfo.label || 'Sans scan'}
+                </span>`;
+    }
+
+    if (entry.scan_absolu) {
+        const encodedPath = encodeURIComponent(entry.scan_absolu);
+        return `<button type="button"
+                        onclick="openScan(${entry.id}, decodeURIComponent('${encodedPath}'))"
+                        class="btn btn-xs btn-success gap-1"
+                        title="Ouvrir le scan">
+                    <i class="fas fa-file-pdf"></i>
+                </button>`;
+    }
+
+    return `<span class="badge badge-xs badge-error gap-1">
+                <i class="fas fa-times"></i>
+                Sans scan
+            </span>`;
+}
+
+function isLikelyLocalPath(filePath) {
+    if (!filePath) return false;
+    return /^[a-zA-Z]:[\\/]/.test(filePath) || filePath.startsWith('\\\\') || filePath.startsWith('/');
+}
+
+function openFileViaLocalAgent(filePath) {
+    fetch('http://127.0.0.1:8765/open-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_path: filePath })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.ok || !data.success) {
+            alert('Impossible d ouvrir le scan localement. Detail: ' + (data.error || 'Erreur inconnue'));
+        }
+    })
+    .catch(error => {
+        alert('Agent local injoignable. Detail: ' + error.message);
+    });
+}
+
+function openScan(entryId, scanPath) {
+    if (isLikelyLocalPath(scanPath)) {
+        openFileViaLocalAgent(scanPath);
+        return;
+    }
+    window.open('/comptabilite/scan/' + entryId + '/', '_blank');
+}
+
+// Fonction pour afficher la pagination
+function afficherPagination(pagination) {
+    const paginationDiv = document.getElementById('detail_pagination');
+
+    if (pagination.total_pages <= 1) {
+        paginationDiv.innerHTML = '';
+        return;
+    }
+
+    let html = '<div class="join">';
+
+    // Bouton précédent
+    if (pagination.has_previous) {
+        html += `<button class="join-item btn btn-sm" onclick="chargerDetailEntries(${pagination.current_page - 1})">«</button>`;
+    } else {
+        html += `<button class="join-item btn btn-sm btn-disabled">«</button>`;
+    }
+
+    // Page actuelle
+    html += `<button class="join-item btn btn-sm btn-active">${pagination.current_page}</button>`;
+
+    // Bouton suivant
+    if (pagination.has_next) {
+        html += `<button class="join-item btn btn-sm" onclick="chargerDetailEntries(${pagination.current_page + 1})">»</button>`;
+    } else {
+        html += `<button class="join-item btn btn-sm btn-disabled">»</button>`;
+    }
+
+    html += '</div>';
+    paginationDiv.innerHTML = html;
+}
+
+// Fonction utilitaire pour échapper HTML
+function escapeHtml(text) {
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return String(text).replace(/[&<>"']/g, m => map[m]);
+}
+
+// Ouvrir le modal d'édition
+function openEditModal(entryId, description, info, pers, detail) {
+    document.getElementById('entry_id').value = entryId;
+    document.getElementById('edit_description').value = description || '';
+    document.getElementById('edit_info').value = info || '';
+    document.getElementById('edit_pers').value = pers || '';
+    document.getElementById('edit_detail').value = detail || '';
+    document.getElementById('edit_messages').classList.add('hidden');
+
+    // Fermer le modal de détail
+    document.getElementById('modal_detail').close();
+
+    // Ouvrir le modal d'édition
+    document.getElementById('edit_modal').showModal();
+}
+
+// Soumettre le formulaire d'édition
+async function tryLocalAccessUpdateFallback(data) {
+    if (!data || !data.success || data.access_updated || !data.access_payload) {
+        return data;
+    }
+    try {
+        const response = await fetch('http://127.0.0.1:8765/update-entry-access', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data.access_payload)
+        });
+        const result = await response.json();
+        if (response.ok && result.success) {
+            data.access_updated = true;
+            data.message = 'Modification enregistree dans Django et Access (local)';
+            data.access_error = null;
+        } else {
+            data.access_error = result.error || data.access_error || 'Echec mise a jour Access locale';
+        }
+    } catch (e) {
+        data.access_error = data.access_error || ('Erreur agent local: ' + e.message);
+    }
+    return data;
+}
+
+document.getElementById('edit_form').addEventListener('submit', function(e) {
+    e.preventDefault();
+
+    const entryId = document.getElementById('entry_id').value;
+    const formData = new FormData(this);
+    const messagesDiv = document.getElementById('edit_messages');
+
+    fetch(`{% url 'accounting:update_entry' 0 %}`.replace('0', entryId), {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        }
+    })
+    .then(response => response.json())
+    .then(async data => {
+        data = await tryLocalAccessUpdateFallback(data);
+        if (data.success) {
+            messagesDiv.innerHTML = `
+                <div class="alert alert-success">
+                    <i class="fas fa-check"></i>
+                    <span>${data.message}</span>
+                </div>
+            `;
+            messagesDiv.classList.remove('hidden');
+
+            // Recharger après 1.5s
+            setTimeout(() => {
+                document.getElementById('edit_modal').close();
+                chargerDetailEntries(currentPage);
+            }, 1500);
+        } else {
+            messagesDiv.innerHTML = `
+                <div class="alert alert-error">
+                    <i class="fas fa-times"></i>
+                    <span>${data.message || 'Erreur lors de la mise à jour'}</span>
+                </div>
+            `;
+            messagesDiv.classList.remove('hidden');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        messagesDiv.innerHTML = `
+            <div class="alert alert-error">
+                <i class="fas fa-times"></i>
+                <span>Erreur réseau: ${error.message}</span>
+            </div>
+        `;
+        messagesDiv.classList.remove('hidden');
+    });
+});
+
+// Fonction pour récupérer le cookie CSRF
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Fonction pour lancer la vérification des scans (copié depuis entries_list.html)
+function lancerVerificationScans() {
+    const btn = document.getElementById('btn-verifier-scans');
+    const originalHTML = btn.innerHTML;
+
+    if (!confirm('Cette opération peut prendre quelques minutes selon le nombre d\'entrées.\n\nVoulez-vous continuer ?')) {
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Vérification en cours...';
+
+    // ✅ Utiliser EventSource pour gérer le streaming SSE
+    const eventSource = new EventSource('{% url "accounting:api_verifier_scans" %}');
+
+    eventSource.onmessage = function(event) {
+        try {
+            const data = JSON.parse(event.data);
+
+            if (data.type === 'start') {
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>' + data.message;
+
+            } else if (data.type === 'progress') {
+                const percent = data.percent || 0;
+                btn.innerHTML = `<i class="fas fa-spinner fa-spin mr-2"></i>${data.message} (${percent}%)`;
+
+            } else if (data.type === 'complete') {
+                eventSource.close();
+                alert(`✅ Vérification terminée !\n\nScans valides: ${data.stats.scans_valides}\nLiens morts: ${data.stats.liens_morts}\nSans scan: ${data.stats.sans_scan}`);
+                location.reload();
+
+            } else if (data.type === 'error') {
+                eventSource.close();
+                alert('Erreur: ' + data.message);
+                btn.disabled = false;
+                btn.innerHTML = originalHTML;
+            }
+
+        } catch (e) {
+            console.error('Erreur parsing JSON:', e);
+        }
+    };
+
+    eventSource.onerror = function(error) {
+        console.error('Erreur EventSource:', error);
+        eventSource.close();
+        alert('Erreur réseau lors de la vérification');
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+    };
+}
+
+// Fonction pour ouvrir la page d'impression dans une nouvelle fenêtre
+function ouvrirImpression(fichierSource) {
+    const url = "{% url 'accounting:impression_scans' %}?fichier=" + encodeURIComponent(fichierSource);
+    window.open(url, '_blank', 'width=1200,height=800,toolbar=yes,scrollbars=yes');
+}
+</script>
+{% endblock %}

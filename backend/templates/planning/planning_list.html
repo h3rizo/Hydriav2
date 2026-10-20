@@ -1,0 +1,1043 @@
+{% extends 'planning/base.html' %}
+{% load humanize %}
+{% load static %}
+{% load i18n %}
+{% load employee_grouping %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Statistiques -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="stat bg-base-100 shadow rounded-lg">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-list-ul text-3xl"></i>
+            </div>
+            <div class="stat-title">{% trans "Détails de Planning" %}</div>
+            <div class="stat-value text-primary">{{ total_details|default:0 }}</div>
+            <div class="stat-desc">{% trans "Total des lignes de détails" %}</div>
+        </div>
+
+        <div class="stat bg-base-100 shadow rounded-lg">
+            <div class="stat-figure text-success">
+                <i class="fas fa-coins text-3xl"></i>
+            </div>
+            <div class="stat-title">{% trans "Recettes" %}</div>
+            <div class="stat-value text-success">{{ montant_recettes|floatformat:0|intcomma }} Ar</div>
+            <div class="stat-desc">{% trans "Montant total des recettes" %}</div>
+        </div>
+
+        <div class="stat bg-base-100 shadow rounded-lg">
+            <div class="stat-figure text-warning">
+                <i class="fas fa-wallet text-3xl"></i>
+            </div>
+            <div class="stat-title">{% trans "Avances" %}</div>
+            <div class="stat-value text-warning">{{ montant_avances|floatformat:0|intcomma }} Ar</div>
+            <div class="stat-desc">{% trans "Montant total des avances" %}</div>
+        </div>
+    </div>
+
+    <div class="flex justify-between items-center">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">{{ title }}</h1>
+            {% if default_filters_applied %}
+            <p class="text-sm text-base-content/70 mt-1">
+                <i class="fas fa-filter mr-1"></i>
+                {% trans "Affichage par défaut : employé connecté et mois en cours" %}
+                <a href="?all=1" class="link link-primary ml-2">{% trans "Voir tous les plannings" %}</a>
+            </p>
+            {% elif request.GET.all %}
+            <p class="text-sm text-base-content/70 mt-1">
+                <i class="fas fa-globe mr-1"></i>
+                {% trans "Affichage de tous les plannings" %}
+                <a href="{% url 'planning:list' %}" class="link link-primary ml-2">{% trans "Retour au filtre par défaut" %}</a>
+            </p>
+            {% endif %}
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'planning:create' %}" class="btn btn-accent">
+                Nouveau Planning
+            </a>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow-md mb-4">
+        <div class="card-body">
+            <h3 class="font-bold text-lg mb-4"><i class="fas fa-filter mr-2"></i>Filtres</h3>
+            <form method="GET" class="flex flex-wrap gap-4 items-end">
+                <div class="form-control">
+                    <label class="label cursor-pointer gap-2 border border-base-300 rounded-lg px-3 py-2 hover:bg-base-200 transition-colors">
+                        <input type="checkbox" name="estvalide" value="true" class="checkbox checkbox-success checkbox-sm" {% if request.GET.estvalide %}checked{% endif %}>
+                        <span class="label-text"><i class="fas fa-check-circle mr-2 text-success"></i>Afficher seulement les validés</span>
+                    </label>
+                </div>
+                <div class="form-control">
+                    <label class="label cursor-pointer gap-2 border border-base-300 rounded-lg px-3 py-2 hover:bg-base-200 transition-colors">
+                        <input type="checkbox" name="nonvalide" value="true" class="checkbox checkbox-warning checkbox-sm" {% if request.GET.nonvalide %}checked{% endif %}>
+                        <span class="label-text"><i class="fas fa-clock mr-2 text-warning"></i>Afficher seulement En attente</span>
+                    </label>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-sm"><i class="fas fa-bolt mr-1 text-warning"></i>Type d'activite</span></label>
+                    <select id="filter_type_activite" name="activite" class="select select-bordered select-sm" title="Filtrer par type d'activite">
+                        <option value="">Toutes</option>
+                        {% for act in activites %}
+                        <option value="{{ act.id }}" {% if request.GET.activite == act.id|stringformat:"s" %}selected{% endif %}>{{ act.nomtype }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control min-w-[220px]">
+                    <label class="label"><span class="label-text text-sm"><i class="fas fa-briefcase mr-1 text-info"></i>Fiche de poste</span></label>
+                    <div class="relative">
+                        <input type="text" id="filter_fiche_search"
+                               class="input input-bordered input-sm w-full pr-8"
+                               placeholder="Rechercher une fiche..."
+                               autocomplete="off"
+                               onkeyup="filterFicheFilterList()"
+                               onfocus="showFicheFilterList()">
+                        <input type="hidden" id="filter_fiche_poste" name="fiche_poste" value="{{ request.GET.fiche_poste|default:'' }}">
+                        <button type="button" id="filter_clear_fiche" onclick="clearFicheFilter()"
+                                class="btn btn-ghost btn-xs absolute right-1 top-1 hidden">
+                            <i class="fas fa-times"></i>
+                        </button>
+                        <div id="filter_fiche_dropdown" class="absolute z-50 w-full bg-base-100 border border-base-300 rounded-box shadow-lg max-h-60 overflow-y-auto hidden mt-1">
+                            <div class="p-2 text-sm text-base-content/60">Chargement...</div>
+                        </div>
+                    </div>
+                    <label class="label">
+                        <span class="label-text-alt text-base-content/50" id="filter_fiche_count">{{ fiches_poste|length }} fiches disponibles</span>
+                    </label>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-sm"><i class="fas fa-map-marker-alt mr-1 text-info"></i>Ouvrage</span></label>
+                    <select name="ouvrage" class="select select-bordered select-sm" title="Filtrer par ouvrage">
+                        <option value="">Tous</option>
+                        {% for ouv in ouvrages %}
+                        <option value="{{ ouv.id }}" {% if request.GET.ouvrage == ouv.id|stringformat:"s" %}selected{% endif %}>{{ ouv.nom_ouvrage }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-sm"><i class="fas fa-calendar-alt mr-1 text-primary"></i>Mois</span></label>
+                    <input type="month" name="mois" value="{% if not default_filters_applied %}{{ selected_mois|default:'' }}{% endif %}" class="input input-bordered input-sm" title="Filtrer par mois">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-sm"><i class="fas fa-user mr-1 text-success"></i>Employé</span></label>
+                    <select name="employe_filter" class="select select-bordered select-sm" title="Filtrer par employé">
+                        {% grouped_employee_options employes_filter selected_employe_filter "Tous" %}
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm">
+                    <i class="fas fa-search mr-2"></i>Filtrer
+                </button>
+                <a href="{% url 'planning:list' %}" class="btn btn-ghost btn-sm">
+                    <i class="fas fa-times mr-2"></i>Réinitialiser
+                </a>
+            </form>
+        </div>
+    </div>
+
+    <details class="card bg-base-100 shadow-md">
+        <summary class="card-body cursor-pointer">
+            <div class="flex items-center justify-between w-full">
+                <h3 class="font-bold text-lg"><i class="fas fa-layer-group mr-2"></i>Actions groupees</h3>
+                <span class="text-xs text-base-content/50">Cliquez pour ouvrir/fermer</span>
+            </div>
+        </summary>
+        <div class="card-body pt-0">
+            <p class="text-xs text-base-content/60 mb-4">Applique la valeur a tous les plannings actuellement affiches dans le tableau.</p>
+            <div class="flex flex-wrap gap-4 items-end">
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-sm"><i class="fas fa-user mr-1 text-success"></i>Employe</span></label>
+                    <select id="bulk_employe" class="select select-bordered select-sm">
+                        <option value="">Selectionner...</option>
+                        {% for emp in employes %}
+                        <option value="{{ emp.id }}">{{ emp.surnom|default:emp.nom }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="button" class="btn btn-primary btn-sm mt-2" onclick="applyBulkUpdate('employe')">
+                        <i class="fas fa-check mr-2"></i>Appliquer Employe
+                    </button>
+                </div>
+
+                <div class="form-control min-w-[240px]">
+                    <label class="label"><span class="label-text text-sm"><i class="fas fa-briefcase mr-1 text-info"></i>Fiche de poste</span></label>
+                    <div class="relative">
+                        <input type="text" id="bulk_fiche_search"
+                               class="input input-bordered input-sm w-full pr-8"
+                               placeholder="Rechercher une fiche..."
+                               autocomplete="off"
+                               onkeyup="filterBulkFicheList()"
+                               onfocus="showBulkFicheList()">
+                        <input type="hidden" id="bulk_fiche_poste">
+                        <button type="button" id="bulk_clear_fiche" onclick="clearBulkFiche()"
+                                class="btn btn-ghost btn-xs absolute right-1 top-1 hidden">
+                            <i class="fas fa-times"></i>
+                        </button>
+                        <div id="bulk_fiche_dropdown" class="absolute z-50 w-full bg-base-100 border border-base-300 rounded-box shadow-lg max-h-60 overflow-y-auto hidden mt-1">
+                            <div class="p-2 text-sm text-base-content/60">Chargement...</div>
+                        </div>
+                    </div>
+                    <label class="label">
+                        <span class="label-text-alt text-base-content/50" id="bulk_fiche_count">{{ fiches_poste|length }} fiches disponibles</span>
+                    </label>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="applyBulkUpdate('fiche_poste')">
+                        <i class="fas fa-check mr-2"></i>Appliquer Fiche
+                    </button>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-sm"><i class="fas fa-map-marker-alt mr-1 text-info"></i>Ouvrage</span></label>
+                    <select id="bulk_ouvrage" class="select select-bordered select-sm">
+                        <option value="">Selectionner...</option>
+                        {% for ouv in ouvrages %}
+                        <option value="{{ ouv.id }}">{{ ouv.nom_ouvrage }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="button" class="btn btn-primary btn-sm mt-2" onclick="applyBulkUpdate('ouvrage')">
+                        <i class="fas fa-check mr-2"></i>Appliquer Ouvrage
+                    </button>
+                </div>
+            </div>
+        </div>
+    </details>
+
+    <div class="card bg-base-200 shadow-md">
+        {% if plannings %}
+        <div class="overflow-x-auto">
+            <table class="table table-zebra w-full">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Employé</th>
+                        <th>Fiche Poste</th>
+                        <th>Ouvrage</th>
+                        <th>Statut</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for planning in plannings %}
+                    <tr class="hover cursor-pointer" data-planning-id="{{ planning.id }}">
+                        <td>{{ planning.date|date:"d/m/Y" }}</td>
+                        <td>
+                            {% if planning.employe %}
+                                {{ planning.employe.nom_affichage }}
+                            {% else %}
+                                <span class="text-base-content/70">Non assigné</span>
+                            {% endif %}
+                        </td>
+                        <td id="cell-fp-{{ planning.pk }}">
+                            {% if planning.fiche_poste %}
+                                <span class="badge {% if planning.fiche_poste.tache == 'Repos' %}badge-info{% elif planning.fiche_poste.tache == 'Jour férié' %}badge-warning{% elif planning.fiche_poste.tache == 'Congé' %}badge-success{% elif planning.fiche_poste.tache == 'Récupération' %}badge-primary{% else %}badge-outline{% endif %}">
+                                    {{ planning.fiche_poste.tache }}
+                                </span>
+                            {% elif planning.type_activite %}
+                                <span class="badge badge-outline">{{ planning.type_activite.nomtype }}</span>
+                            {% else %}
+                                <span class="text-base-content/70">-</span>
+                            {% endif %}
+                            {% if planning.deplacement_summaries %}
+                            <div class="mt-2 space-y-1 text-xs text-base-content/70">
+                                {% for detail in planning.deplacement_summaries %}
+                                <div class="pl-3 border-l-2 border-warning/40">
+                                    <span class="font-semibold">{{ detail.designation.nom|default:"Frais de déplacement" }}</span>
+                                    {% if detail.trajet %} • {{ detail.get_trajet_display }}{% endif %}
+                                    {% if detail.point_a or detail.point_b %}
+                                    <div>{{ detail.point_a.nom_village|default:"-" }} → {{ detail.point_b.nom_village|default:"-" }}</div>
+                                    {% endif %}
+                                    {% if detail.moyen_transport %}
+                                    <div>{{ detail.get_moyen_transport_display }}</div>
+                                    {% endif %}
+                                    {% if detail.montant %}
+                                    <div>{{ detail.montant|floatformat:0|intcomma }} Ar</div>
+                                    {% endif %}
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if planning.ouvrage %}
+                                {{ planning.ouvrage.nom_ouvrage }}
+                            {% else %}
+                                <span class="text-base-content/70">N/A</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="flex flex-col gap-1">
+                                <span class="badge {{ planning.status_badge_class }}">{{ planning.get_statut_display }}</span>
+                                {% if planning.has_known_paper_verification %}
+                                <span class="badge badge-outline {{ planning.paper_badge_class }}">{{ planning.paper_verification_label }}</span>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td>
+                            <div class="flex gap-1 items-center">
+                                <!-- Badge Photos -->
+                                {% if planning.photo %}
+                                <span class="badge badge-info badge-sm gap-1" title="Contient des photos" id="photo-badge-{{ planning.pk }}">
+                                    <i class="fas fa-camera text-xs"></i>
+                                    <span id="photo-count-{{ planning.pk }}">0</span>
+                                </span>
+                                <script>
+                                    try {
+                                        const photos = {{ planning.photo|safe|default:'[]' }};
+                                        if (photos && Array.isArray(photos)) {
+                                            document.getElementById('photo-count-{{ planning.pk }}').textContent = photos.length;
+                                        } else {
+                                            document.getElementById('photo-badge-{{ planning.pk }}').style.display = 'none';
+                                        }
+                                    } catch(e) {
+                                        document.getElementById('photo-badge-{{ planning.pk }}').style.display = 'none';
+                                    }
+                                </script>
+                                {% endif %}
+
+                                <!-- Bouton Annuler (seulement pour Repos/Jour férié) -->
+                                {% if planning.fiche_poste_display == 'Repos' or planning.fiche_poste_display == 'Jour férié' %}
+                                <button
+                                    onclick="annulerReposFerie('{{ planning.id }}', '{{ planning.fiche_poste_display|escapejs }}')"
+                                    class="btn btn-xs btn-error gap-1"
+                                    title="Annuler ce {{ planning.fiche_poste_display|default:'-' }}">
+                                    <i class="fas fa-times"></i>
+                                    Annuler
+                                </button>
+                                {% endif %}
+
+                                <a href="{% url 'planning:detail' planning.pk %}" class="btn btn-ghost btn-xs" title="Voir détails">
+                                    <i class="fas fa-eye"></i>
+                                </a>
+                                <a href="{% url 'planning:cloture_page' planning.pk %}?next={{ request.get_full_path|urlencode }}" class="btn btn-ghost btn-xs text-info" title="Cloture et controle papier">
+                                    <i class="fas fa-clipboard-check"></i>
+                                </a>
+                                <button type="button" 
+                                        onclick="openFastUpdateModal('{{ planning.id }}', '{{ planning.fiche_poste.id|default:'' }}', '{{ planning.fiche_poste.tache|escapejs }}', '{{ planning.employe.id|default:'' }}', '{{ planning.ouvrage.id|default:'' }}', '{{ planning.date|date:"Y-m-d" }}', '{{ planning.participants_ids_csv|default:'' }}')" 
+                                        class="btn btn-ghost btn-xs text-primary" title="Modification rapide">
+                                    <i class="fas fa-magic"></i>
+                                </button>
+                                <a href="{% url 'planning:update' planning.pk %}" class="btn btn-ghost btn-xs" title="Modifier complet">
+                                    <i class="fas fa-edit"></i>
+                                </a>
+                                {% if planning.can_adjust_validation %}
+                                    {% if not planning.estvalide %}
+                                        <a href="{% url 'planning:validation_page' planning.pk %}?next={{ request.get_full_path|urlencode }}" class="btn btn-ghost btn-xs text-success" title="Valider">
+                                            <i class="fas fa-check"></i>
+                                        </a>
+                                    {% else %}
+                                        <a href="{% url 'planning:validation_page' planning.pk %}?next={{ request.get_full_path|urlencode }}" class="badge badge-success badge-sm hover:badge-warning transition-colors" title="Voir ou devalider">
+                                            <i class="fas fa-check-circle mr-1"></i>Valide
+                                        </a>
+                                    {% endif %}
+                                {% elif planning.estvalide %}
+                                    <span class="badge badge-success badge-sm"><i class="fas fa-check-circle mr-1"></i>Valide</span>
+                                {% endif %}
+                                <a href="#" class="btn btn-ghost btn-xs text-error" title="Supprimer">
+                                    <i class="fas fa-trash"></i>
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-8">
+            <p class="text-base-content/70">Aucun planning trouvé.</p>
+            <a href="{% url 'planning:create' %}" class="btn btn-accent mt-4">
+                Créer le premier planning
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+                    <label class="label">
+                        <span class="label-text-alt text-base-content/50" id="bulk_fiche_count">{{ fiches_poste|length }} fiches disponibles</span>
+                    </label>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="applyBulkUpdate('fiche_poste')">
+                        <i class="fas fa-check mr-2"></i>Appliquer Fiche
+                    </button>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text text-sm"><i class="fas fa-map-marker-alt mr-1 text-info"></i>Ouvrage</span></label>
+                    <select id="bulk_ouvrage" class="select select-bordered select-sm">
+                        <option value="">Selectionner...</option>
+                        {% for ouv in ouvrages %}
+                        <option value="{{ ouv.id }}">{{ ouv.nom_ouvrage }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="button" class="btn btn-primary btn-sm mt-2" onclick="applyBulkUpdate('ouvrage')">
+                        <i class="fas fa-check mr-2"></i>Appliquer Ouvrage
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal d'impression PDF -->
+<dialog id="printModal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-print mr-2"></i>Imprimer Planning Mensuel
+        </h3>
+        <div class="space-y-4">
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text">Employé *</span>
+                </label>
+                <select id="print_employe" class="select select-bordered w-full" required>
+                    <option value="">Sélectionner un employé...</option>
+                </select>
+            </div>
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text">Mois *</span>
+                </label>
+                <input type="month" id="print_mois" class="input input-bordered w-full" required>
+            </div>
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle mr-2"></i>
+                <span>Seuls les plannings validés seront inclus dans l'impression</span>
+            </div>
+        </div>
+        <div class="modal-action">
+            <button type="button" class="btn" onclick="closePrintModal()">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="generatePDF()">
+                <i class="fas fa-file-pdf mr-2"></i>Générer PDF
+            </button>
+        </div>
+    </div>
+</dialog>
+
+<!-- Modal d'import Excel -->
+<dialog id="importModal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-upload mr-2"></i>Importer depuis Excel
+        </h3>
+        <form id="importForm" enctype="multipart/form-data">
+            {% csrf_token %}
+            <input type="hidden" id="import_type" name="import_type">
+
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text">Fichier Excel *</span>
+                </label>
+                <input type="file" name="file" accept=".xlsx,.xls" class="file-input file-input-bordered w-full" required>
+            </div>
+
+            <div class="alert alert-info mt-4">
+                <i class="fas fa-info-circle"></i>
+                <span class="text-xs">Téléchargez d'abord le template Excel pour connaÃ®tre le format requis.</span>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost" onclick="closeImportModal()">Annuler</button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-upload mr-2"></i>Importer
+                </button>
+            </div>
+        </form>
+    </div>
+</dialog>
+
+<!-- Modal de modification rapide de l'activité (Fiche Poste) -->
+<dialog id="fastUpdateModal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-2">
+            <i class="fas fa-magic mr-2"></i>Modification Rapide
+        </h3>
+        <p class="text-xs text-base-content/60 mb-4">
+            Modifier rapidement les champs principaux du planning.
+        </p>
+        
+        <form id="fastUpdateForm">
+            <input type="hidden" id="fast_planning_id">
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Employé</span>
+                    </label>
+                    <select id="fast_employe" class="select select-bordered w-full select-sm">
+                        <option value="">-- Choisir --</option>
+                        {% for emp in employes %}
+                        <option value="{{ emp.id }}">{{ emp.nom }} {{ emp.prenom }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Ouvrage</span>
+                    </label>
+                    <select id="fast_ouvrage" class="select select-bordered w-full select-sm">
+                        <option value="">-- Choisir --</option>
+                        {% for ouvrage in ouvrages %}
+                        <option value="{{ ouvrage.id }}">{{ ouvrage.nom_ouvrage }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Date</span>
+                    </label>
+                    <input type="date" id="fast_date" class="input input-bordered input-sm w-full">
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Participants</span>
+                        <span class="label-text-alt text-base-content/50">Multi-sélection</span>
+                    </label>
+                    <select id="fast_participants" class="select select-bordered w-full select-sm" multiple size="6">
+                        {% for emp in employes %}
+                        <option value="{{ emp.id }}">{{ emp.nom }} {{ emp.prenom }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+              
+              <div class="form-control mb-4">
+                  <label class="label">
+                      <span class="label-text font-semibold">Rechercher une fiche</span>
+                  </label>
+                  <div class="relative">
+                      <input type="text" id="fast_fiche_search" 
+                             class="input input-bordered w-full input-sm pr-10" 
+                             placeholder="Rechercher une fiche..."
+                             autocomplete="off"
+                             onkeyup="filterFastFicheList()"
+                             onfocus="showFastFicheList()">
+                      <input type="hidden" id="fast_fiche_poste">
+                      <button type="button" id="fast_clear_fiche" onclick="clearFastFiche()" 
+                              class="btn btn-ghost btn-xs absolute right-1 top-1 hidden">
+                          <i class="fas fa-times"></i>
+                      </button>
+                      <div id="fast_fiche_dropdown" class="absolute z-50 w-full bg-base-100 border border-base-300 rounded-box shadow-lg max-h-60 overflow-y-auto hidden mt-1">
+                          <div class="p-2 text-sm text-base-content/60">Chargement...</div>
+                      </div>
+                  </div>
+              </div>
+
+              <div class="form-control">
+                  <label class="label">
+                      <span class="label-text font-semibold">Fiche de Poste</span>
+                  </label>
+                  <label class="label">
+                      <span class="label-text-alt text-base-content/50" id="fast_fiche_count">{{ fiches_poste|length }} fiches disponibles</span>
+                  </label>
+              </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('fastUpdateModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary" id="fastSubmitBtn">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+</dialog>
+
+<script>
+// Base API URL with placeholder for UUID
+const FAST_UPDATE_URL_TEMPLATE = "{% url 'planning:fast_update_api' planning_id='00000000-0000-0000-0000-000000000000' %}";
+const BULK_UPDATE_URL = "{% url 'planning:bulk_update_api' %}";
+
+  const fastFichesData = [
+      {% for fp in fiches_poste %}
+      { id: '{{ fp.id }}', tache: '{{ fp.tache|escapejs }}', type_id: '{{ fp.type_activites.id|default:'' }}' },
+      {% endfor %}
+  ];
+  
+  function renderFastFicheList(list) {
+      const dropdown = document.getElementById('fast_fiche_dropdown');
+      if (!list.length) {
+          dropdown.innerHTML = '<div class="p-2 text-sm text-base-content/60">Aucune fiche trouvée</div>';
+          return;
+      }
+      dropdown.innerHTML = list.map(fp => `
+          <div class="px-3 py-2 hover:bg-base-200 cursor-pointer border-b border-base-300 last:border-0"
+               onclick="selectFastFiche('${fp.id}', '${fp.tache.replace(/'/g, "\'")}')">
+              <div class="text-sm font-medium">${fp.tache}</div>
+          </div>
+      `).join('');
+  }
+  
+  function filterFastFicheList() {
+      const search = document.getElementById('fast_fiche_search').value.toLowerCase().trim();
+      let filtered = fastFichesData;
+      if (search) {
+          filtered = fastFichesData.filter(fp => (fp.tache || '').toLowerCase().includes(search));
+      }
+      renderFastFicheList(filtered);
+      document.getElementById('fast_fiche_count').textContent = `${filtered.length} fiche(s) trouvée(s)`;
+      document.getElementById('fast_fiche_dropdown').classList.remove('hidden');
+  }
+  
+  function showFastFicheList() {
+      const search = document.getElementById('fast_fiche_search').value.toLowerCase().trim();
+      if (search) {
+          filterFastFicheList();
+          return;
+      }
+      renderFastFicheList(fastFichesData);
+      document.getElementById('fast_fiche_dropdown').classList.remove('hidden');
+  }
+  
+  function hideFastFicheList() {
+      setTimeout(() => {
+          document.getElementById('fast_fiche_dropdown').classList.add('hidden');
+      }, 200);
+  }
+  
+  function selectFastFiche(id, tache) {
+      document.getElementById('fast_fiche_poste').value = id;
+      document.getElementById('fast_fiche_search').value = tache;
+      document.getElementById('fast_clear_fiche').classList.remove('hidden');
+      hideFastFicheList();
+  }
+  
+  function clearFastFiche() {
+      document.getElementById('fast_fiche_poste').value = '';
+      document.getElementById('fast_fiche_search').value = '';
+      document.getElementById('fast_clear_fiche').classList.add('hidden');
+      document.getElementById('fast_fiche_count').textContent = `${fastFichesData.length} fiches disponibles`;
+  }
+
+  const ficheFilterData = fastFichesData;
+
+  function renderFicheFilterList(list) {
+      const dropdown = document.getElementById('filter_fiche_dropdown');
+      if (!list.length) {
+          dropdown.innerHTML = '<div class="p-2 text-sm text-base-content/60">Aucune fiche trouv??e</div>';
+          return;
+      }
+      dropdown.innerHTML = list.map(fp => `
+          <div class="px-3 py-2 hover:bg-base-200 cursor-pointer border-b border-base-300 last:border-0"
+               onclick="selectFicheFilter('${fp.id}', '${fp.tache.replace(/'/g, "\'")}')">
+              <div class="text-sm font-medium">${fp.tache}</div>
+          </div>
+      `).join('');
+  }
+
+  function getFilteredFicheFilterList() {
+      const search = document.getElementById('filter_fiche_search').value.toLowerCase().trim();
+      const typeFilter = document.getElementById('filter_type_activite').value;
+      let filtered = ficheFilterData;
+      if (typeFilter) {
+          filtered = filtered.filter(fp => fp.type_id === typeFilter);
+      }
+      if (search) {
+          filtered = filtered.filter(fp => (fp.tache || '').toLowerCase().includes(search));
+      }
+      return filtered;
+  }
+
+  function filterFicheFilterList() {
+      const filtered = getFilteredFicheFilterList();
+      renderFicheFilterList(filtered);
+      document.getElementById('filter_fiche_count').textContent = `${filtered.length} fiche(s) trouv??e(s)`;
+      document.getElementById('filter_fiche_dropdown').classList.remove('hidden');
+  }
+
+  function showFicheFilterList() {
+      const filtered = getFilteredFicheFilterList();
+      renderFicheFilterList(filtered);
+      document.getElementById('filter_fiche_dropdown').classList.remove('hidden');
+  }
+
+  function hideFicheFilterList() {
+      setTimeout(() => {
+          document.getElementById('filter_fiche_dropdown').classList.add('hidden');
+      }, 200);
+  }
+
+  function selectFicheFilter(id, tache) {
+      document.getElementById('filter_fiche_poste').value = id;
+      document.getElementById('filter_fiche_search').value = tache;
+      document.getElementById('filter_clear_fiche').classList.remove('hidden');
+      hideFicheFilterList();
+  }
+
+  function clearFicheFilter() {
+      document.getElementById('filter_fiche_poste').value = '';
+      document.getElementById('filter_fiche_search').value = '';
+      document.getElementById('filter_clear_fiche').classList.add('hidden');
+      document.getElementById('filter_fiche_count').textContent = `${ficheFilterData.length} fiches disponibles`;
+  }
+
+  function syncFicheFilterSelection() {
+      const selectedId = document.getElementById('filter_fiche_poste').value;
+      if (!selectedId) {
+          return;
+      }
+      const selected = ficheFilterData.find(fp => fp.id === selectedId);
+      if (selected) {
+          document.getElementById('filter_fiche_search').value = selected.tache;
+          document.getElementById('filter_clear_fiche').classList.remove('hidden');
+      }
+  }
+
+  document.getElementById('filter_type_activite').addEventListener('change', function() {
+      const selectedId = document.getElementById('filter_fiche_poste').value;
+      if (selectedId) {
+          const selected = ficheFilterData.find(fp => fp.id === selectedId);
+          if (selected && this.value && selected.type_id !== this.value) {
+              clearFicheFilter();
+          }
+      }
+      filterFicheFilterList();
+  });
+
+  syncFicheFilterSelection();
+
+  const bulkFichesData = fastFichesData;
+
+  function renderBulkFicheList(list) {
+      const dropdown = document.getElementById('bulk_fiche_dropdown');
+      if (!list.length) {
+          dropdown.innerHTML = '<div class="p-2 text-sm text-base-content/60">Aucune fiche trouv??e</div>';
+          return;
+      }
+      dropdown.innerHTML = list.map(fp => `
+          <div class="px-3 py-2 hover:bg-base-200 cursor-pointer border-b border-base-300 last:border-0"
+               onclick="selectBulkFiche('${fp.id}', '${fp.tache.replace(/'/g, "\'")}')">
+              <div class="text-sm font-medium">${fp.tache}</div>
+          </div>
+      `).join('');
+  }
+
+  function filterBulkFicheList() {
+      const search = document.getElementById('bulk_fiche_search').value.toLowerCase().trim();
+      let filtered = bulkFichesData;
+      if (search) {
+          filtered = bulkFichesData.filter(fp => (fp.tache || '').toLowerCase().includes(search));
+      }
+      renderBulkFicheList(filtered);
+      document.getElementById('bulk_fiche_count').textContent = `${filtered.length} fiche(s) trouv??e(s)`;
+      document.getElementById('bulk_fiche_dropdown').classList.remove('hidden');
+  }
+
+  function showBulkFicheList() {
+      renderBulkFicheList(bulkFichesData);
+      document.getElementById('bulk_fiche_dropdown').classList.remove('hidden');
+  }
+
+  function hideBulkFicheList() {
+      setTimeout(() => {
+          document.getElementById('bulk_fiche_dropdown').classList.add('hidden');
+      }, 200);
+  }
+
+  function selectBulkFiche(id, tache) {
+      document.getElementById('bulk_fiche_poste').value = id;
+      document.getElementById('bulk_fiche_search').value = tache;
+      document.getElementById('bulk_clear_fiche').classList.remove('hidden');
+      hideBulkFicheList();
+  }
+
+  function clearBulkFiche() {
+      document.getElementById('bulk_fiche_poste').value = '';
+      document.getElementById('bulk_fiche_search').value = '';
+      document.getElementById('bulk_clear_fiche').classList.add('hidden');
+      document.getElementById('bulk_fiche_count').textContent = `${bulkFichesData.length} fiches disponibles`;
+  }
+
+// Logic for Fast Update Modal
+function openFastUpdateModal(id, currentFicheId, currentFicheTache, currentEmployeId, currentOuvrageId, currentDate, participantsCsv) {
+    document.getElementById('fast_planning_id').value = id;
+      document.getElementById('fast_fiche_poste').value = currentFicheId || '';
+      document.getElementById('fast_fiche_search').value = currentFicheTache || '';
+      if (currentFicheId) {
+          document.getElementById('fast_clear_fiche').classList.remove('hidden');
+      } else {
+          document.getElementById('fast_clear_fiche').classList.add('hidden');
+      }
+      document.getElementById('fast_fiche_count').textContent = `${fastFichesData.length} fiches disponibles`;
+      document.getElementById('fast_employe').value = currentEmployeId || '';
+      document.getElementById('fast_ouvrage').value = currentOuvrageId || '';
+      document.getElementById('fast_date').value = currentDate || '';
+      const participants = (participantsCsv || '').split(',').filter(Boolean);
+      const participantsSelect = document.getElementById('fast_participants');
+      Array.from(participantsSelect.options).forEach(opt => {
+          opt.selected = participants.includes(opt.value);
+      });
+      
+      document.getElementById('fastUpdateModal').showModal();
+  }
+
+function getVisiblePlanningIds() {
+    const rows = document.querySelectorAll('tr[data-planning-id]');
+    return Array.from(rows).map(row => row.getAttribute('data-planning-id')).filter(Boolean);
+}
+
+async function applyBulkUpdate(kind) {
+    const planningIds = getVisiblePlanningIds();
+    if (!planningIds.length) {
+        alert('Aucun planning a mettre a jour.');
+        return;
+    }
+
+    const payload = { planning_ids: planningIds };
+
+    if (kind === 'employe') {
+        const employeId = document.getElementById('bulk_employe').value;
+        if (!employeId) {
+            alert('Veuillez selectionner un employe.');
+            return;
+        }
+        payload.employe_id = employeId;
+    } else if (kind === 'fiche_poste') {
+        const ficheId = document.getElementById('bulk_fiche_poste').value;
+        if (!ficheId) {
+            alert('Veuillez choisir une fiche de poste.');
+            return;
+        }
+        payload.fiche_poste_id = ficheId;
+    } else if (kind === 'ouvrage') {
+        const ouvrageId = document.getElementById('bulk_ouvrage').value;
+        if (!ouvrageId) {
+            alert('Veuillez selectionner un ouvrage.');
+            return;
+        }
+        payload.ouvrage_id = ouvrageId;
+    }
+
+    try {
+        const response = await fetch(BULK_UPDATE_URL, {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            }
+        });
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || `Erreur serveur (${response.status})`);
+        }
+
+        alert(`Mise a jour effectuee : ${data.updated}/${data.requested}`);
+        window.location.reload();
+    } catch (error) {
+        console.error('Bulk update error:', error);
+        alert('??? Erreur: ' + error.message);
+    }
+}
+
+document.getElementById('fastUpdateForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const id = document.getElementById('fast_planning_id').value;
+      const ficheId = document.getElementById('fast_fiche_poste').value;
+      const employeId = document.getElementById('fast_employe').value;
+      const ouvrageId = document.getElementById('fast_ouvrage').value;
+      const dateVal = document.getElementById('fast_date').value;
+      const participantsSelect = document.getElementById('fast_participants');
+      const participantsIds = Array.from(participantsSelect.selectedOptions).map(o => o.value);
+      const btn = document.getElementById('fastSubmitBtn');
+    
+      if (!ficheId && !employeId && !ouvrageId && !dateVal && participantsIds.length === 0) {
+          alert("Veuillez renseigner au moins un champ");
+          return;
+      }
+
+    try {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="loading loading-spinner text-sm"></span> Envoi...';
+        
+        // Generate actual URL
+        const url = FAST_UPDATE_URL_TEMPLATE.replace('00000000-0000-0000-0000-000000000000', id);
+        
+        const payload = {
+            fiche_poste_id: ficheId || null,
+            employe_id: employeId || null,
+            ouvrage_id: ouvrageId || null,
+            date: dateVal || null,
+            participants_ids: participantsIds
+        };
+
+        const response = await fetch(url, {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            }
+  });
+
+        let data;
+        try {
+            data = await response.json();
+        } catch (e) {
+            console.error('Could not parse JSON response');
+        }
+
+        if (!response.ok) {
+            const errorMsg = data && data.error ? data.error : `Erreur serveur (${response.status})`;
+            throw new Error(errorMsg);
+        }
+
+        if (data.success) {
+            const cell = document.getElementById(`cell-fp-${id}`);
+            if (cell) {
+                let badgeClass = 'badge-outline';
+                if (data.new_display.includes('Repos')) badgeClass = 'badge-info';
+                else if (data.new_display.includes('férié')) badgeClass = 'badge-warning';
+                else if (data.new_display.includes('Congé')) badgeClass = 'badge-success';
+                else if (data.new_display.includes('Récupération')) badgeClass = 'badge-primary';
+                
+                cell.innerHTML = `
+                    <span class="badge ${badgeClass} animate-pulse">
+                        ${data.new_display}
+                    </span>
+                `;
+                setTimeout(() => {
+                    const badge = cell.querySelector('.badge');
+                    if (badge) badge.classList.remove('animate-pulse');
+                }, 2000);
+            }
+            
+            document.getElementById('fastUpdateModal').close();
+        } else {
+            alert('âŒ Erreur: ' + (data.error || 'Erreur inconnue'));
+        }
+    } catch (error) {
+        console.error('Fetch error:', error);
+        alert('âŒ Erreur: ' + error.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-save mr-2"></i>Enregistrer';
+    }
+});
+
+
+document.addEventListener('click', function(event) {
+    const dropdown = document.getElementById('fast_fiche_dropdown');
+    const searchInput = document.getElementById('fast_fiche_search');
+    if (dropdown && searchInput && !dropdown.contains(event.target) && event.target !== searchInput) {
+        dropdown.classList.add('hidden');
+    }
+});
+
+document.addEventListener('click', function(event) {
+    const dropdown = document.getElementById('filter_fiche_dropdown');
+    const searchInput = document.getElementById('filter_fiche_search');
+    if (dropdown && searchInput && !dropdown.contains(event.target) && event.target !== searchInput) {
+        dropdown.classList.add('hidden');
+    }
+});
+
+document.addEventListener('click', function(event) {
+    const dropdown = document.getElementById('bulk_fiche_dropdown');
+    const searchInput = document.getElementById('bulk_fiche_search');
+    if (dropdown && searchInput && !dropdown.contains(event.target) && event.target !== searchInput) {
+        dropdown.classList.add('hidden');
+    }
+});
+
+function showImportModal(type) {
+    document.getElementById('import_type').value = type;
+    document.getElementById('importModal').showModal();
+}
+
+function closeImportModal() {
+    document.getElementById('importModal').close();
+    document.getElementById('importForm').reset();
+}
+
+document.getElementById('importForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(this);
+    const importType = formData.get('import_type');
+
+    const url = importType === 'plannings'
+        ? '{% url "planning:import_excel_plannings" %}'
+        : '{% url "planning:import_excel_details" %}';
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(`âœ… ${data.message}\n\nCréés: ${data.created}\nMis Ã  jour: ${data.updated}`);
+            closeImportModal();
+            window.location.reload();
+        } else {
+            alert('âŒ Erreur: ' + data.message);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('âŒ Erreur lors de l\'importation du fichier');
+    }
+});
+
+async function openPrintModal() {
+    const modal = document.getElementById('printModal');
+    const employeSelect = document.getElementById('print_employe');
+    const moisInput = document.getElementById('print_mois');
+
+    try {
+        const response = await fetch('/plannings/api/employes/');
+        const data = await response.json();
+
+        employeSelect.innerHTML = '<option value="">Sélectionner un employé...</option>';
+        data.employes.forEach(emp => {
+            const option = document.createElement('option');
+            option.value = emp.id;
+            option.textContent = emp.nom_complet;
+            employeSelect.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Erreur chargement employés:', error);
+    }
+
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    moisInput.value = `${year}-${month}`;
+
+    modal.showModal();
+}
+
+function closePrintModal() {
+    document.getElementById('printModal').close();
+}
+
+function generatePDF() {
+    const employeId = document.getElementById('print_employe').value;
+    const mois = document.getElementById('print_mois').value;
+
+    if (!employeId || !mois) {
+        alert('Veuillez sélectionner un employé et un mois');
+        return;
+    }
+
+    window.open(`/plannings/print-pdf/?employe=${employeId}&mois=${mois}`, '_blank');
+    closePrintModal();
+}
+</script>
+
+<!-- Script d'annulation de Repos/Jours fériés -->
+<script src="{% static 'js/planning_annulation.js' %}"></script>
+{% endblock %}
+
+
+
+

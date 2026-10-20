@@ -1,0 +1,117 @@
+<div class="card bg-base-100 shadow mt-6" data-notes-widget data-entity-type="{{ notes_entity_type }}" data-entity-id="{{ notes_entity_id }}" data-entity-label="{{ notes_entity_label|default:''|escape }}">
+    <div class="card-body">
+        <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div>
+                <h2 class="card-title">Notes liées</h2>
+                <p class="text-sm text-base-content/70">Créer une note métier directement liée à cette fiche.</p>
+            </div>
+            <a href="{% url 'notes:workspace' %}?entity_type={{ notes_entity_type|urlencode }}&entity_id={{ notes_entity_id|urlencode }}&label={{ notes_entity_label|urlencode }}" class="btn btn-outline btn-sm">
+                Ouvrir l’espace notes
+            </a>
+        </div>
+
+        <div class="divider my-2"></div>
+
+        <form class="space-y-3 notes-quick-form">
+            {% csrf_token %}
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <input type="text" name="title" class="input input-bordered md:col-span-2" placeholder="Titre de la note">
+                <input type="text" name="tags" class="input input-bordered" placeholder="Tags: Réparation, Urgence">
+            </div>
+            <textarea name="content" class="textarea textarea-bordered w-full" rows="3" placeholder="Observation, contexte, décision, suivi..."></textarea>
+            <div class="flex justify-end">
+                <button type="submit" class="btn btn-primary btn-sm">Créer une note liée</button>
+            </div>
+        </form>
+
+        <div class="notes-widget-feedback text-sm"></div>
+        <div class="notes-linked-list space-y-3"></div>
+    </div>
+</div>
+
+<script>
+(function() {
+    const widget = document.currentScript.previousElementSibling;
+    if (!widget || !widget.hasAttribute('data-notes-widget')) {
+        return;
+    }
+
+    const entityType = widget.dataset.entityType;
+    const entityId = widget.dataset.entityId;
+    const entityLabel = widget.dataset.entityLabel;
+    const list = widget.querySelector('.notes-linked-list');
+    const feedback = widget.querySelector('.notes-widget-feedback');
+    const form = widget.querySelector('.notes-quick-form');
+
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i += 1) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === `${name}=`) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    function renderNotes(notes) {
+        if (!notes.length) {
+            list.innerHTML = '<div class="text-sm text-base-content/60">Aucune note liée pour le moment.</div>';
+            return;
+        }
+
+        list.innerHTML = notes.map((note) => `
+            <a href="${note.url}" class="block rounded-xl border border-base-300 p-3 hover:bg-base-200">
+                <div class="flex items-center justify-between gap-3">
+                    <div class="font-semibold">${note.title}</div>
+                    <span class="badge badge-outline">${note.note_type}</span>
+                </div>
+                <div class="mt-1 text-xs text-base-content/60">${note.updated_at}</div>
+                <div class="mt-2 flex flex-wrap gap-2">
+                    ${(note.tags || []).map((tag) => `<span class="badge badge-ghost badge-sm">${tag}</span>`).join('')}
+                    ${note.open_task_count ? `<span class="badge badge-warning badge-sm">${note.open_task_count} action(s) ouverte(s)</span>` : ''}
+                    ${note.decision_count ? `<span class="badge badge-info badge-sm">${note.decision_count} décision(s)</span>` : ''}
+                    ${note.attachment_count ? `<span class="badge badge-outline badge-sm">${note.attachment_count} fichier(s)</span>` : ''}
+                </div>
+            </a>
+        `).join('');
+    }
+
+    async function loadNotes() {
+        const response = await fetch(`/notes/api/entity/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}/`);
+        const data = await response.json();
+        renderNotes(data.results || []);
+    }
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        feedback.textContent = '';
+        const formData = new FormData(form);
+        formData.append('entity_type', entityType);
+        formData.append('entity_id', entityId);
+        formData.append('label', entityLabel);
+
+        const response = await fetch('{% url "notes:entity_quick_create" %}', {
+            method: 'POST',
+            headers: {'X-CSRFToken': getCookie('csrftoken')},
+            body: formData,
+        });
+        const data = await response.json();
+        if (!data.success) {
+            feedback.textContent = data.error || 'Erreur lors de la création.';
+            feedback.className = 'notes-widget-feedback text-sm text-error';
+            return;
+        }
+        feedback.textContent = 'Note créée avec succès.';
+        feedback.className = 'notes-widget-feedback text-sm text-success';
+        form.reset();
+        await loadNotes();
+    });
+
+    loadNotes();
+})();
+</script>

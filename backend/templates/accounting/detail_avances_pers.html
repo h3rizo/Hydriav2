@@ -1,0 +1,889 @@
+{% extends "accounting/base.html" %}
+{% load humanize %}
+
+{% block title %}Détail Avances 00PERS{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold">
+            <i class="fas fa-hand-holding-usd mr-3 text-info"></i>Détail Avances 00PERS
+        </h1>
+        <a href="{% url 'accounting:entries_list' %}{% if mois_filter %}?mois={{ mois_filter }}{% endif %}{% if fichier_source %}&fichier_source={{ fichier_source|urlencode }}{% endif %}" class="btn btn-ghost btn-sm">
+            <i class="fas fa-arrow-left mr-2"></i>Retour
+        </a>
+    </div>
+
+    <!-- Statistiques globales -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure {% if solde_total >= 0 %}text-info{% else %}text-error{% endif %}">
+                <i class="fas fa-balance-scale text-3xl"></i>
+            </div>
+            <div class="stat-title">Solde total</div>
+            <div class="stat-value {% if solde_total >= 0 %}text-info{% else %}text-error{% endif %} text-2xl">{{ solde_total|floatformat:0|intcomma }} Ar</div>
+            <div class="stat-desc">
+                {% if solde_total >= 0 %}
+                <span class="badge badge-info badge-xs">Tiers doivent à l'organisation</span>
+                {% else %}
+                <span class="badge badge-error badge-xs">Organisation doit aux tiers</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-error">
+                <i class="fas fa-hand-holding-usd text-3xl"></i>
+            </div>
+            <div class="stat-title">Org doit aux tiers</div>
+            <div class="stat-value text-error text-xl">{{ total_org_doit|floatformat:0|intcomma }} Ar</div>
+            <div class="stat-desc text-xs">Ce que l'organisation doit</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-success">
+                <i class="fas fa-coins text-3xl"></i>
+            </div>
+            <div class="stat-title">Tiers doivent à l'org</div>
+            <div class="stat-value text-success text-xl">{{ total_tiers_doit|floatformat:0|intcomma }} Ar</div>
+            <div class="stat-desc text-xs">Ce que les tiers doivent</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-users text-3xl"></i>
+            </div>
+            <div class="stat-title">Nombre de tiers</div>
+            <div class="stat-value text-primary text-2xl">{{ soldes_tiers|length }}</div>
+            <div class="stat-desc">{{ total_count }} transactions</div>
+        </div>
+    </div>
+
+    <!-- Explication des règles de calcul -->
+    <div class="alert alert-info mb-6">
+        <i class="fas fa-info-circle text-xl"></i>
+        <div class="text-sm">
+            <div class="font-bold mb-2">Compréhension des colonnes :</div>
+            <ul class="list-disc list-inside space-y-1">
+                <li><strong class="text-error">Org doit :</strong> Montant que l'organisation doit au tiers (avances à rembourser, dettes)</li>
+                <li><strong class="text-success">Tiers doit :</strong> Montant que le tiers doit à l'organisation (avances à justifier, créances)</li>
+                <li><strong>Solde :</strong> Tiers doit - Org doit (positif = tiers doit, négatif = org doit)</li>
+            </ul>
+            <div class="mt-2 text-xs opacity-80">
+                <strong>Solde positif :</strong> Le tiers doit de l'argent à l'organisation (créance)<br>
+                <strong>Solde négatif :</strong> L'organisation doit de l'argent au tiers (dette)
+            </div>
+        </div>
+    </div>
+
+    <!-- Répartition par tiers -->
+    <div class="card bg-base-100 shadow-xl mb-6">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-chart-pie mr-2 text-primary"></i>
+                Répartition par tiers
+            </h2>
+            <div class="alert alert-warning mb-4">
+                <i class="fas fa-filter"></i>
+                <span class="text-sm">
+                    <strong>Filtrage actif :</strong> Les comptes équilibrés (solde = 0) sont masqués.
+                    Seuls les tiers avec un solde non nul sont affichés.
+                </span>
+            </div>
+            <p class="text-sm text-base-content/70 mb-4">
+                Les tiers sous forme de numéro sont des fournisseurs/prestataires, ceux sous forme de nom sont des employés.
+            </p>
+
+            <div class="alert alert-info mb-4">
+                <i class="fas fa-eye"></i>
+                <span class="text-sm">
+                    <strong>Mode navigation :</strong> Cliquez sur "Voir (X)" pour afficher les transactions de chaque tiers.
+                </span>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead class="bg-base-200">
+                        <tr>
+                            <th>Tiers</th>
+                            <th>Type</th>
+                            <th class="text-right">Org doit</th>
+                            <th class="text-right">Tiers doit</th>
+                            <th class="text-right">Solde</th>
+                            <th>Statut</th>
+                            <th width="120">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for tiers_data in soldes_tiers %}
+                        <!-- Ligne principale -->
+                        <tr class="border-b border-base-300">
+                            <td class="font-semibold">{{ tiers_data.tiers }}</td>
+                            <td>
+                                {% if tiers_data.type == 'fournisseur' %}
+                                <span class="badge badge-warning badge-xs">
+                                    <i class="fas fa-industry mr-1"></i>Fournisseur
+                                </span>
+                                {% elif tiers_data.type == 'employe' %}
+                                <span class="badge badge-info badge-xs">
+                                    <i class="fas fa-user mr-1"></i>Employé
+                                </span>
+                                {% else %}
+                                <span class="badge badge-ghost badge-xs">Inconnu</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-right font-mono text-error">{{ tiers_data.org_doit|floatformat:0|intcomma }}</td>
+                            <td class="text-right font-mono text-success">{{ tiers_data.tiers_doit|floatformat:0|intcomma }}</td>
+                            <td class="text-right font-mono font-bold {% if tiers_data.solde >= 0 %}text-info{% else %}text-error{% endif %}">
+                                {{ tiers_data.solde|floatformat:0|intcomma }} Ar
+                            </td>
+                            <td>
+                                {% if tiers_data.solde > 0 %}
+                                <span class="badge badge-info badge-xs">Doit à l'org</span>
+                                {% elif tiers_data.solde < 0 %}
+                                <span class="badge badge-error badge-xs">Org doit</span>
+                                {% else %}
+                                <span class="badge badge-ghost badge-xs">Équilibré</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <button onclick="toggleTiersDetail('tiers-{{ forloop.counter }}')"
+                                        class="btn btn-primary btn-xs"
+                                        id="btn-tiers-{{ forloop.counter }}">
+                                    <i class="fas fa-eye mr-1"></i>
+                                    <span id="btn-text-tiers-{{ forloop.counter }}">Voir</span>
+                                    <span class="ml-1" id="count-tiers-{{ forloop.counter }}"></span>
+                                </button>
+                            </td>
+                        </tr>
+                        <!-- Ligne de détails (cachée par défaut) -->
+                        <tr id="tiers-{{ forloop.counter }}" class="hidden bg-base-100">
+                            <td colspan="7" class="p-0">
+                                <div class="p-4 bg-base-200/50">
+                                    <h4 class="font-semibold mb-3 text-sm">
+                                        <i class="fas fa-list mr-2"></i>Transactions de {{ tiers_data.tiers }}
+                                    </h4>
+                                    <div class="overflow-x-auto">
+                                        <table class="table table-xs table-zebra bg-base-100">
+                                            <thead>
+                                                <tr>
+                                                    <th>Date</th>
+                                                    <th>Journal</th>
+                                                    <th>Compte</th>
+                                                    <th>Description</th>
+                                                    <th class="text-right">IN</th>
+                                                    <th class="text-right">OUT</th>
+                                                    <th class="text-right">Impact</th>
+                                                    <th>Prog</th>
+                                                    <th>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody class="tiers-transactions-body" data-tiers="{{ tiers_data.tiers_id|escapejs }}">
+                                                <!-- Rempli par JavaScript -->
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="7" class="text-center py-8 text-gray-500">
+                                <i class="fas fa-inbox text-4xl mb-2"></i>
+                                <p>Aucun tiers trouvé</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot class="bg-base-200">
+                        <tr class="font-bold">
+                            <td colspan="2">TOTAL</td>
+                            <td class="text-right text-error">{{ total_org_doit|floatformat:0|intcomma }} Ar</td>
+                            <td class="text-right text-success">{{ total_tiers_doit|floatformat:0|intcomma }} Ar</td>
+                            <td class="text-right {% if solde_total >= 0 %}text-info{% else %}text-error{% endif %}">{{ solde_total|floatformat:0|intcomma }} Ar</td>
+                            <td colspan="2"></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pointage des comptes de tiers -->
+    <div class="card bg-base-100 shadow-xl mb-6">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-balance-scale mr-2 text-warning"></i>
+                Pointage des comptes de tiers (Match, Prog)
+            </h2>
+            <div class="alert alert-warning mb-4">
+                <i class="fas fa-filter"></i>
+                <span class="text-sm">
+                    <strong>Filtrage actif :</strong> Les pointages équilibrés (solde = 0) sont masqués.
+                    Seuls les pointages déséquilibrés sont affichés pour attirer l'attention.
+                </span>
+            </div>
+            <p class="text-sm text-base-content/70 mb-4">
+                Vérification que les lignes avec le même couple (Match, Prog) s'équilibrent à zéro. Les lignes avec Match vide ne sont pas encore pointées.
+            </p>
+
+            <!-- Stats pointage -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                <div class="stat bg-base-200 rounded-lg">
+                    <div class="stat-figure text-primary">
+                        <i class="fas fa-check-double text-2xl"></i>
+                    </div>
+                    <div class="stat-title text-xs">Total pointages</div>
+                    <div class="stat-value text-primary text-xl">{{ nb_pointages_total }}</div>
+                </div>
+
+                <div class="stat bg-base-200 rounded-lg">
+                    <div class="stat-figure text-success">
+                        <i class="fas fa-check-circle text-2xl"></i>
+                    </div>
+                    <div class="stat-title text-xs">Équilibrés (= 0)</div>
+                    <div class="stat-value text-success text-xl">{{ nb_pointages_equilibres }}</div>
+                </div>
+
+                <div class="stat bg-base-200 rounded-lg">
+                    <div class="stat-figure text-error">
+                        <i class="fas fa-exclamation-triangle text-2xl"></i>
+                    </div>
+                    <div class="stat-title text-xs">Déséquilibrés (≠ 0)</div>
+                    <div class="stat-value text-error text-xl">{{ nb_pointages_desequilibres }}</div>
+                </div>
+
+                <div class="stat bg-base-200 rounded-lg">
+                    <div class="stat-figure text-warning">
+                        <i class="fas fa-question-circle text-2xl"></i>
+                    </div>
+                    <div class="stat-title text-xs">Lignes non pointées</div>
+                    <div class="stat-value text-warning text-xl">{{ nb_lignes_non_pointees }}</div>
+                </div>
+            </div>
+
+            <div class="alert alert-info mb-4">
+                <i class="fas fa-eye"></i>
+                <span class="text-sm">
+                    <strong>Mode navigation :</strong> Cliquez sur "Voir (X)" pour afficher les lignes de chaque pointage.
+                </span>
+            </div>
+
+            <!-- Tableau des pointages -->
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead class="bg-base-200">
+                        <tr>
+                            <th>Match</th>
+                            <th>Prog</th>
+                            <th class="text-right">Solde</th>
+                            <th>Nb Lignes</th>
+                            <th>Statut</th>
+                            <th width="120">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for pointage in pointages %}
+                        <!-- Ligne principale -->
+                        <tr class="{% if not pointage.equilibre %}bg-error/10{% endif %} border-b border-base-300">
+                            <td class="font-mono font-semibold">{{ pointage.match }}</td>
+                            <td class="font-semibold">{{ pointage.prog }}</td>
+                            <td class="text-right font-mono font-bold {% if pointage.equilibre %}text-success{% else %}text-error{% endif %}">
+                                {{ pointage.solde|floatformat:2|intcomma }} Ar
+                            </td>
+                            <td>
+                                <span class="badge badge-ghost badge-sm">{{ pointage.nb_lignes }} ligne{{ pointage.nb_lignes|pluralize }}</span>
+                            </td>
+                            <td>
+                                {% if pointage.equilibre %}
+                                <span class="badge badge-success badge-sm">
+                                    <i class="fas fa-check mr-1"></i>Équilibré
+                                </span>
+                                {% else %}
+                                <span class="badge badge-error badge-sm">
+                                    <i class="fas fa-times mr-1"></i>Déséquilibré
+                                </span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <button onclick="togglePointageDetail('pointage-{{ forloop.counter }}')"
+                                        class="btn btn-primary btn-xs"
+                                        id="btn-pointage-{{ forloop.counter }}">
+                                    <i class="fas fa-eye mr-1"></i>
+                                    <span id="btn-text-pointage-{{ forloop.counter }}">Voir</span>
+                                    <span class="ml-1">({{ pointage.nb_lignes }})</span>
+                                </button>
+                            </td>
+                        </tr>
+                        <!-- Ligne de détails (cachée par défaut) -->
+                        <tr id="pointage-{{ forloop.counter }}" class="hidden bg-base-100">
+                            <td colspan="6" class="p-0">
+                                <div class="p-4 bg-base-200/50">
+                                    <h4 class="font-semibold mb-3 text-sm">
+                                        <i class="fas fa-list mr-2"></i>Lignes du pointage : {{ pointage.match }} / {{ pointage.prog }}
+                                    </h4>
+                                    <div class="overflow-x-auto">
+                                        <table class="table table-xs table-zebra bg-base-100">
+                                            <thead>
+                                                <tr>
+                                                    <th>Date</th>
+                                                    <th>Tiers</th>
+                                                    <th>Journal</th>
+                                                    <th>Compte</th>
+                                                    <th>Description</th>
+                                                    <th class="text-right">IN</th>
+                                                    <th class="text-right">OUT</th>
+                                                    <th class="text-right">Impact</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody class="pointage-lignes-body" data-match="{{ pointage.match|escapejs }}" data-prog="{{ pointage.prog|escapejs }}">
+                                                <!-- Rempli par JavaScript -->
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="6" class="text-center py-4 text-gray-500">
+                                <i class="fas fa-inbox text-2xl mb-2"></i>
+                                <p class="text-sm">Aucun pointage trouvé</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Lignes non pointées -->
+            {% if nb_lignes_non_pointees > 0 %}
+            <div class="divider mt-6">Lignes non pointées (Match vide)</div>
+
+            <div class="alert alert-warning mb-4">
+                <i class="fas fa-info-circle"></i>
+                <span class="text-sm">
+                    <strong>{{ nb_lignes_non_pointees }}</strong> ligne{{ nb_lignes_non_pointees|pluralize }} avec Match vide (non encore pointée{{ nb_lignes_non_pointees|pluralize }})
+                </span>
+            </div>
+
+            <details class="collapse collapse-arrow bg-base-200">
+                <summary class="collapse-title text-lg font-medium">
+                    <i class="fas fa-eye mr-2"></i>Voir les lignes non pointées
+                </summary>
+                <div class="collapse-content">
+                    <div class="overflow-x-auto mt-4">
+                        <table class="table table-xs table-zebra">
+                            <thead class="bg-base-200">
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Tiers</th>
+                                    <th>Prog</th>
+                                    <th>Description</th>
+                                    <th class="text-right">Impact Solde</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for ligne in lignes_non_pointees %}
+                                <tr>
+                                    <td class="whitespace-nowrap">{{ ligne.entry.date_m|date:"d/m/Y"|default:"-" }}</td>
+                                    <td class="font-semibold">{{ ligne.tiers }}</td>
+                                    <td>{{ ligne.prog }}</td>
+                                    <td class="max-w-xs truncate" title="{{ ligne.entry.description }}">{{ ligne.entry.description|default:"-" }}</td>
+                                    <td class="text-right font-mono font-bold {% if ligne.impact > 0 %}text-info{% elif ligne.impact < 0 %}text-error{% endif %}">
+                                        {% if ligne.impact > 0 %}+{% endif %}{{ ligne.impact|floatformat:0|intcomma }} Ar
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </details>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Détail des transactions - Toutes les lignes -->
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <details class="collapse collapse-arrow bg-base-200">
+                <summary class="collapse-title text-lg font-medium">
+                    <i class="fas fa-list mr-2"></i>
+                    Voir toutes les transactions ({{ total_count }} entrées)
+                </summary>
+                <div class="collapse-content">
+                    <p class="text-sm text-base-content/70 mb-4 mt-4">
+                        Liste complète des transactions 00PERS - Utilisez plutôt la navigation par tiers ci-dessus pour une meilleure lisibilité.
+                    </p>
+
+                    <div class="overflow-x-auto">
+                        <table class="table table-xs table-zebra">
+                    <thead class="bg-base-200">
+                        <tr>
+                            <th>Date</th>
+                            <th>Journal</th>
+                            <th>Compte</th>
+                            <th>Description</th>
+                            <th>Tiers (PERS)</th>
+                            <th class="text-right">IN</th>
+                            <th class="text-right">OUT</th>
+                            <th class="text-right">Impact Solde</th>
+                            <th>Fichier</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for trans in transactions %}
+                        <tr>
+                            <td class="whitespace-nowrap">{{ trans.entry.date_m|date:"d/m/Y"|default:"-" }}</td>
+                            <td>
+                                <div class="flex items-center gap-2">
+                                    {% if trans.entry.journal %}
+                                        <span class="badge badge-sm badge-info">{{ trans.entry.journal.code }}</span>
+                                    {% else %}
+                                        <span class="text-gray-400 text-xs">{{ trans.entry.journal_code|default:"-" }}</span>
+                                    {% endif %}
+
+                                    {% with journal_code=trans.entry.journal.code|default:trans.entry.journal_code %}
+                                        {% if journal_code|first == 'B' %}
+                                        <span class="badge badge-info badge-xs" title="Banque">
+                                            <i class="fas fa-university"></i>
+                                        </span>
+                                        {% elif journal_code|first == 'C' %}
+                                        <span class="badge badge-warning badge-xs" title="Caisse">
+                                            <i class="fas fa-cash-register"></i>
+                                        </span>
+                                        {% endif %}
+                                    {% endwith %}
+                                </div>
+                            </td>
+                            <td>
+                                <span class="badge badge-sm badge-info">{{ trans.entry.compte_code|default:"-" }}</span>
+                            </td>
+                            <td class="max-w-xs truncate" title="{{ trans.entry.description }}">{{ trans.entry.description|default:"-" }}</td>
+                            <td class="font-semibold">{{ trans.entry.pers|default:"-" }}</td>
+                            <td class="text-right font-mono text-success">
+                                {% if trans.entry.montant_in > 0 %}{{ trans.entry.montant_in|floatformat:0|intcomma }}{% else %}-{% endif %}
+                            </td>
+                            <td class="text-right font-mono text-error">
+                                {% if trans.entry.montant_out > 0 %}{{ trans.entry.montant_out|floatformat:0|intcomma }}{% else %}-{% endif %}
+                            </td>
+                            <td class="text-right font-mono font-bold">
+                                {% if trans.impact_solde > 0 %}
+                                <span class="text-info">+{{ trans.impact_solde|floatformat:0|intcomma }}</span>
+                                {% elif trans.impact_solde < 0 %}
+                                <span class="text-error">{{ trans.impact_solde|floatformat:0|intcomma }}</span>
+                                {% else %}
+                                <span class="text-base-content/50">0</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-xs">{{ trans.entry.fichier_source|truncatechars:20 }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="9" class="text-center py-8 text-gray-500">
+                                <i class="fas fa-inbox text-4xl mb-2"></i>
+                                <p>Aucune transaction trouvée</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+                </div>
+            </details>
+        </div>
+    </div>
+</div>
+
+<script>
+// Données des transactions pour la navigation
+const allTransactions = {{ transactions_json|safe }};
+
+// Cache pour éviter de recalculer les transactions
+const tiersCache = {};
+const pointageCache = {};
+
+// Fonction pour afficher/masquer les détails d'un tiers
+function toggleTiersDetail(rowId) {
+    const detailRow = document.getElementById(rowId);
+    const isHidden = detailRow.classList.contains('hidden');
+    const btnId = rowId.replace('tiers-', 'btn-tiers-');
+    const btnTextId = rowId.replace('tiers-', 'btn-text-tiers-');
+
+    if (isHidden) {
+        // Afficher les détails
+        detailRow.classList.remove('hidden');
+        document.getElementById(btnTextId).textContent = 'Masquer';
+
+        // Charger les transactions si pas encore chargées
+        const tbody = detailRow.querySelector('.tiers-transactions-body');
+        const tiersNom = tbody.dataset.tiers;
+
+        if (!tiersCache[tiersNom]) {
+            // Filtrer et cacher les transactions (case-insensitive)
+            // Masquer les lignes avec Match non vide
+            const tiersTrans = allTransactions.filter(t => {
+                const pers = t.entry.pers || 'Non spécifié';
+                const match = t.entry.match || '';
+                return pers.toLowerCase() === tiersNom.toLowerCase() && !match;
+            });
+            tiersCache[tiersNom] = tiersTrans;
+
+            // Remplir le tableau
+            if (tiersTrans.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="10" class="text-center py-4 text-gray-500">Aucune transaction (lignes avec Match masquées)</td></tr>';
+            } else {
+                tbody.innerHTML = '';
+                tiersTrans.forEach(trans => {
+                    const entry = trans.entry;
+                    const row = document.createElement('tr');
+
+                    // Format date
+                    let dateStr = '-';
+                    if (entry.date_m) {
+                        const date = new Date(entry.date_m);
+                        dateStr = date.toLocaleDateString('fr-FR');
+                    }
+
+                    // Format montants
+                    const montantIn = entry.montant_in > 0 ? entry.montant_in.toLocaleString('fr-FR') : '-';
+                    const montantOut = entry.montant_out > 0 ? entry.montant_out.toLocaleString('fr-FR') : '-';
+                    const impact = trans.impact_solde;
+                    let impactStr = '';
+                    let impactClass = '';
+                    if (impact > 0) {
+                        impactStr = '+' + impact.toLocaleString('fr-FR');
+                        impactClass = 'text-info';
+                    } else if (impact < 0) {
+                        impactStr = impact.toLocaleString('fr-FR');
+                        impactClass = 'text-error';
+                    } else {
+                        impactStr = '0';
+                        impactClass = 'text-base-content/50';
+                    }
+
+                    row.innerHTML = `
+                        <td class="whitespace-nowrap">${dateStr}</td>
+                        <td><span class="badge badge-sm badge-info">${entry.journal_code || '-'}</span></td>
+                        <td><span class="badge badge-sm badge-info">${entry.compte_code || '-'}</span></td>
+                        <td class="max-w-xs truncate" title="${entry.description || ''}">${entry.description || '-'}</td>
+                        <td class="text-right font-mono text-success">${montantIn}</td>
+                        <td class="text-right font-mono text-error">${montantOut}</td>
+                        <td class="text-right font-mono font-bold ${impactClass}">${impactStr}</td>
+                        <td class="font-mono text-xs">${entry.prog || '-'}</td>
+                        <td>
+                            <button onclick="openEditModal(${entry.id}, '${escapeHtml(entry.description || '')}', '${escapeHtml(entry.info || '')}', '${escapeHtml(entry.pers || '')}', '${escapeHtml(entry.detail || '')}', '${escapeHtml(entry.fichier_source || '')}')"
+                                    class="btn btn-xs btn-primary" title="Modifier">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            }
+        }
+    } else {
+        // Masquer les détails
+        detailRow.classList.add('hidden');
+        document.getElementById(btnTextId).textContent = 'Voir';
+    }
+}
+
+// Fonction pour afficher/masquer les détails d'un pointage
+function togglePointageDetail(rowId) {
+    const detailRow = document.getElementById(rowId);
+    const isHidden = detailRow.classList.contains('hidden');
+    const btnId = rowId.replace('pointage-', 'btn-pointage-');
+    const btnTextId = rowId.replace('pointage-', 'btn-text-pointage-');
+
+    if (isHidden) {
+        // Afficher les détails
+        detailRow.classList.remove('hidden');
+        document.getElementById(btnTextId).textContent = 'Masquer';
+
+        // Charger les lignes si pas encore chargées
+        const tbody = detailRow.querySelector('.pointage-lignes-body');
+        const match = tbody.dataset.match;
+        const prog = tbody.dataset.prog;
+        const cacheKey = match + '_' + prog;
+
+        if (!pointageCache[cacheKey]) {
+            // Filtrer les transactions du pointage
+            const pointageTrans = allTransactions.filter(t => {
+                const entryMatch = t.entry.match || '';
+                const entryProg = t.entry.prog || 'Vide';
+                return entryMatch === match && entryProg === prog;
+            });
+            pointageCache[cacheKey] = pointageTrans;
+
+            // Remplir le tableau
+            if (pointageTrans.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center py-4 text-gray-500">Aucune ligne</td></tr>';
+            } else {
+                tbody.innerHTML = '';
+                pointageTrans.forEach(trans => {
+                    const entry = trans.entry;
+                    const row = document.createElement('tr');
+
+                    // Format date
+                    let dateStr = '-';
+                    if (entry.date_m) {
+                        const date = new Date(entry.date_m);
+                        dateStr = date.toLocaleDateString('fr-FR');
+                    }
+
+                    // Format montants
+                    const montantIn = entry.montant_in > 0 ? entry.montant_in.toLocaleString('fr-FR') : '-';
+                    const montantOut = entry.montant_out > 0 ? entry.montant_out.toLocaleString('fr-FR') : '-';
+                    const impact = trans.impact_solde;
+                    let impactStr = '';
+                    let impactClass = '';
+                    if (impact > 0) {
+                        impactStr = '+' + impact.toLocaleString('fr-FR');
+                        impactClass = 'text-info';
+                    } else if (impact < 0) {
+                        impactStr = impact.toLocaleString('fr-FR');
+                        impactClass = 'text-error';
+                    } else {
+                        impactStr = '0';
+                        impactClass = 'text-base-content/50';
+                    }
+
+                    row.innerHTML = `
+                        <td class="whitespace-nowrap">${dateStr}</td>
+                        <td class="font-semibold">${entry.pers || 'Non spécifié'}</td>
+                        <td><span class="badge badge-sm badge-info">${entry.journal_code || '-'}</span></td>
+                        <td><span class="badge badge-sm badge-info">${entry.compte_code || '-'}</span></td>
+                        <td class="max-w-xs truncate" title="${entry.description || ''}">${entry.description || '-'}</td>
+                        <td class="text-right font-mono text-success">${montantIn}</td>
+                        <td class="text-right font-mono text-error">${montantOut}</td>
+                        <td class="text-right font-mono font-bold ${impactClass}">${impactStr}</td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            }
+        }
+    } else {
+        // Masquer les détails
+        detailRow.classList.add('hidden');
+        document.getElementById(btnTextId).textContent = 'Voir';
+    }
+}
+
+// Fonction pour échapper les caractères HTML
+function escapeHtml(text) {
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, m => map[m]);
+}
+
+// Fonction pour ouvrir le modal d'édition
+function openEditModal(entryId, description, info, pers, detail, fichierSource) {
+    document.getElementById('entry_id').value = entryId;
+    document.getElementById('edit_description').value = description || '';
+    document.getElementById('edit_info').value = info || '';
+    document.getElementById('edit_pers').value = pers || '';
+    document.getElementById('edit_detail').value = detail || '';
+    document.getElementById('edit_fichier').textContent = fichierSource || 'Non disponible';
+    document.getElementById('edit_messages').classList.add('hidden');
+    document.getElementById('edit_modal').showModal();
+}
+
+// Fonction pour récupérer le cookie CSRF
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Soumettre le formulaire d'édition
+async function tryLocalAccessUpdateFallback(data) {
+    if (!data || !data.success || data.access_updated || !data.access_payload) {
+        return data;
+    }
+    try {
+        const response = await fetch('http://127.0.0.1:8765/update-entry-access', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data.access_payload)
+        });
+        const result = await response.json();
+        if (response.ok && result.success) {
+            data.access_updated = true;
+            data.message = 'Modification enregistree dans Django et Access (local)';
+            data.access_error = null;
+        } else {
+            data.access_error = result.error || data.access_error || 'Echec mise a jour Access locale';
+        }
+    } catch (e) {
+        data.access_error = data.access_error || ('Erreur agent local: ' + e.message);
+    }
+    return data;
+}
+
+document.getElementById('edit_form').addEventListener('submit', function(e) {
+    e.preventDefault();
+
+    const entryId = document.getElementById('entry_id').value;
+    const formData = new FormData(this);
+    const messagesDiv = document.getElementById('edit_messages');
+
+    fetch(`{% url 'accounting:update_entry' 0 %}`.replace('0', entryId), {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-CSRFToken': getCookie('csrftoken')
+        }
+    })
+    .then(response => response.json())
+    .then(async data => {
+        data = await tryLocalAccessUpdateFallback(data);
+        if (data.success) {
+            let debugHtml = '';
+            if (data.debug_info) {
+                debugHtml = `<details class="text-xs mt-2">
+                    <summary class="cursor-pointer">Détails de débogage</summary>
+                    <pre class="mt-2 p-2 bg-base-300 rounded">${JSON.stringify(data.debug_info, null, 2)}</pre>
+                    ${data.access_error ? `<p class="text-error mt-1">Erreur: ${data.access_error}</p>` : ''}
+                </details>`;
+            }
+
+            let warningHtml = '';
+            if (data.partial && data.warning) {
+                warningHtml = `<p class="text-xs mt-1 opacity-75"><i class="fas fa-info-circle"></i> ${data.warning}</p>`;
+            }
+
+            let alertType = 'success';
+            if (!data.access_updated) alertType = 'warning';
+            else if (data.partial) alertType = 'info';
+
+            messagesDiv.innerHTML = `
+                <div class="alert alert-${alertType}">
+                    <div class="flex-1">
+                        <i class="fas fa-${data.access_updated ? 'check' : 'exclamation-triangle'}"></i>
+                        <div>
+                            <span>${data.message}</span>
+                            ${warningHtml}
+                            ${debugHtml}
+                        </div>
+                    </div>
+                </div>
+            `;
+            messagesDiv.classList.remove('hidden');
+
+            if (data.access_updated) {
+                setTimeout(() => {
+                    location.reload();
+                }, 1500);
+            }
+        } else {
+            messagesDiv.innerHTML = `
+                <div class="alert alert-error">
+                    <i class="fas fa-times"></i>
+                    <span>${data.message || 'Erreur lors de la mise à jour'}</span>
+                </div>
+            `;
+            messagesDiv.classList.remove('hidden');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        messagesDiv.innerHTML = `
+            <div class="alert alert-error">
+                <i class="fas fa-times"></i>
+                <span>Erreur réseau: ${error.message}</span>
+            </div>
+        `;
+        messagesDiv.classList.remove('hidden');
+    });
+});
+</script>
+
+<!-- Modal d'édition -->
+<dialog id="edit_modal" class="modal">
+    <div class="modal-box w-11/12 max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-edit mr-2 text-primary"></i>Modifier l'entrée
+        </h3>
+
+        <!-- Bandeau d'information fichier Access -->
+        <div class="alert alert-warning mb-4">
+            <div class="flex items-center gap-2">
+                <i class="fas fa-database"></i>
+                <div class="text-sm">
+                    <strong>Fichier Access à mettre à jour :</strong>
+                    <div class="flex items-center gap-2 mt-1">
+                        <i class="fas fa-file-excel"></i>
+                        <span id="edit_fichier" class="font-mono font-semibold">Non disponible</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <form id="edit_form" class="space-y-4">
+            {% csrf_token %}
+            <input type="hidden" id="entry_id" name="entry_id" />
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Description</span></label>
+                <input type="text" id="edit_description" name="description" class="input input-bordered" />
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Info</span></label>
+                <input type="text" id="edit_info" name="info" class="input input-bordered" />
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">PERS</span></label>
+                <input type="text" id="edit_pers" name="pers" list="pers_list" class="input input-bordered" placeholder="Saisir ou sélectionner..." />
+                <datalist id="pers_list">
+                    {% for value in pers_values %}
+                    <option value="{{ value }}">{{ value }}</option>
+                    {% endfor %}
+                </datalist>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Détail</span></label>
+                <input type="text" id="edit_detail" name="detail" list="detail_list" class="input input-bordered" placeholder="Saisir ou sélectionner..." />
+                <datalist id="detail_list">
+                    {% for value in detail_values %}
+                    <option value="{{ value }}">{{ value }}</option>
+                    {% endfor %}
+                </datalist>
+            </div>
+
+            <div id="edit_messages" class="hidden"></div>
+
+            <div class="modal-action">
+                <button type="button" onclick="document.getElementById('edit_modal').close()" class="btn btn-ghost">
+                    <i class="fas fa-times mr-2"></i>Annuler
+                </button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+{% endblock %}

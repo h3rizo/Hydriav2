@@ -1,0 +1,1246 @@
+{% extends "accounting/base.html" %}
+{% load humanize %}
+
+{% block title %}Vérification Dépenses Fournisseurs{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    {% include 'accounting/includes/verification_nav.html' with current_page='fournisseurs' %}
+    <!-- En-tête -->
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold mb-2">
+            <i class="fas fa-hiking text-primary mr-3"></i>
+            Vérification des Dépenses Fournisseurs
+        </h1>
+        <p class="text-base-content/70">
+            Contrôle de conformité des descriptions DiameX pour les paiements aux fournisseurs<br>
+            <strong>Charte:</strong> [NIF/ISI [PREST]]_[Nom Fournisseur]_Libellé_[Unité]_[PU]_reste
+        </p>
+        <p class="text-sm text-info mt-2">
+            <i class="fas fa-info-circle mr-1"></i>
+            {{ comptes_fournisseurs_count }} compte(s) fournisseur(s) configuré(s)
+        </p>
+    </div>
+
+    <!-- Statistiques -->
+    <div id="stats-container" class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <!-- Total -->
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-title">Total analysé</div>
+            <div class="stat-value text-primary" id="stat-total">0</div>
+            <div class="stat-desc">Transactions DiameX</div>
+        </div>
+
+        <!-- Conformes -->
+        <div class="stat bg-success/10 rounded-lg shadow">
+            <div class="stat-figure">
+                <div class="radial-progress text-success" style="--value:0; --size:3.5rem; --thickness:4px;" id="progress-conformes">0%</div>
+            </div>
+            <div class="stat-title">Conformes</div>
+            <div class="stat-value text-success text-2xl" id="stat-conformes">0</div>
+            <div class="stat-desc" id="desc-conformes">0% du total</div>
+        </div>
+
+        <!-- Non conformes -->
+        <div class="stat bg-error/10 rounded-lg shadow">
+            <div class="stat-figure">
+                <div class="radial-progress text-error" style="--value:0; --size:3.5rem; --thickness:4px;" id="progress-non-conformes">0%</div>
+            </div>
+            <div class="stat-title">Non conformes</div>
+            <div class="stat-value text-error text-2xl" id="stat-non-conformes">0</div>
+            <div class="stat-desc" id="desc-non-conformes">0% du total</div>
+        </div>
+
+        <!-- Taux de conformité -->
+        <div class="stat bg-info/10 rounded-lg shadow">
+            <div class="stat-title">Taux de conformité</div>
+            <div class="stat-value text-info text-2xl" id="stat-taux">0%</div>
+            <div class="stat-desc">Objectif: 100%</div>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow-xl mb-6">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-filter mr-2"></i>
+                Filtres
+            </h2>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                <!-- Prog -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Programme</span>
+                    </label>
+                    <select id="filter-prog" class="select select-bordered select-sm">
+                        <option value="all">Tous</option>
+                    </select>
+                </div>
+
+                <!-- Compte -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Compte Cat</span>
+                    </label>
+                    <select id="filter-compte" class="select select-bordered select-sm">
+                        <option value="all">Tous</option>
+                        {% for compte in comptes_fournisseurs %}
+                        <option value="{{ compte.compte }}">{{ compte.compte }} - {{ compte.nom_compte|truncatechars:30 }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Source -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Source</span>
+                    </label>
+                    <select id="filter-source" class="select select-bordered select-sm">
+                        <option value="all">Toutes</option>
+                    </select>
+                </div>
+
+                <!-- Conformité -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Conformité</span>
+                    </label>
+                    <select id="filter-conformite" class="select select-bordered select-sm">
+                        <option value="all">Tous</option>
+                        <option value="conforme">Conformes</option>
+                        <option value="non_conforme" selected>Non conformes</option>
+                    </select>
+                </div>
+
+                <!-- Mois -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Mois</span>
+                    </label>
+                    <input type="month" id="filter-mois" class="input input-bordered input-sm">
+                </div>
+
+                <!-- Recherche -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Recherche</span>
+                    </label>
+                    <input type="text" id="filter-search" placeholder="Description, fournisseur..." class="input input-bordered input-sm">
+                </div>
+
+            </div>
+
+            <div class="card-actions justify-end mt-4">
+                <button class="btn btn-primary btn-sm" onclick="chargerVerifications()">
+                    <i class="fas fa-sync mr-2"></i>
+                    Appliquer les filtres
+                </button>
+                <button class="btn btn-ghost btn-sm" onclick="resetFilters()">
+                    <i class="fas fa-redo mr-2"></i>
+                    Réinitialiser
+                </button>
+                <button class="btn btn-accent btn-sm" onclick="ouvrirVersionImprimable()">
+                    <i class="fas fa-print mr-2"></i>
+                    Version imprimable
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tableau des résultats -->
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title mb-4">
+                <i class="fas fa-list mr-2"></i>
+                Résultats de vérification
+                <span class="badge badge-primary ml-2" id="badge-total">0</span>
+            </h2>
+
+            <!-- Bouton Ajouter fournisseur (visible seulement si ligne sélectionnée avec fournisseur inexistant) -->
+            <div id="action-bar" class="hidden mb-4">
+                <button id="btn-ajouter-fournisseur" class="btn btn-info btn-sm" onclick="ajouterFournisseurSelection()">
+                    <i class="fas fa-plus mr-2"></i>
+                    Ajouter le fournisseur sélectionné
+                </button>
+                <span class="text-sm text-base-content/70 ml-3">
+                    <i class="fas fa-info-circle"></i>
+                    1 ligne sélectionnée avec fournisseur manquant
+                </span>
+            </div>
+
+            <!-- Barre modification par lot (visible dès qu'au moins une ligne est cochée) -->
+            <div id="batch-bar" class="hidden mb-4 flex items-center gap-3">
+                <button class="btn btn-warning btn-sm" onclick="ouvrirModalLot()">
+                    <i class="fas fa-users-cog mr-2"></i>
+                    Modifier le fournisseur des lignes cochées
+                </button>
+                <span class="badge badge-warning" id="batch-count">0</span>
+                <button class="btn btn-ghost btn-xs" onclick="deselectionnerTout()">Tout décocher</button>
+            </div>
+
+            <!-- Loading -->
+            <div id="loading" class="flex justify-center items-center py-12 hidden">
+                <span class="loading loading-spinner loading-lg text-primary"></span>
+            </div>
+
+            <!-- Tableau -->
+            <div id="results-container" class="overflow-x-auto">
+                <div id="results-tbody">
+                    <!-- Rempli par JavaScript avec regroupement par Prog -->
+                </div>
+            </div>
+
+            <!-- Pagination -->
+            <div id="pagination-container" class="flex justify-center mt-6">
+                <!-- Rempli par JavaScript -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de détails -->
+<dialog id="modal-details" class="modal">
+    <div class="modal-box w-11/12 max-w-4xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-info-circle text-info mr-2"></i>
+            Détails de la transaction
+        </h3>
+
+        <div id="modal-content">
+            <!-- Rempli dynamiquement -->
+        </div>
+
+        <div class="modal-action">
+            <form method="dialog">
+                <button class="btn">Fermer</button>
+            </form>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Modal d'édition -->
+<dialog id="modal-edit" class="modal">
+    <div class="modal-box w-11/12 max-w-3xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-edit text-warning mr-2"></i>
+            Modifier la description
+        </h3>
+
+        <!-- Bandeau fichier Access -->
+        <div class="alert alert-info mb-4">
+            <i class="fas fa-database"></i>
+            <div>
+                <div class="font-bold">Fichier qui sera modifié :</div>
+                <div class="text-sm font-mono" id="edit-fichier-source">-</div>
+            </div>
+        </div>
+
+        <div class="alert alert-warning mb-4">
+            <i class="fas fa-exclamation-triangle"></i>
+            <span>La modification sera sauvegardée dans PostgreSQL ET dans le fichier Access DiameX</span>
+        </div>
+
+        <div class="form-control mb-4">
+            <label class="label">
+                <span class="label-text font-bold">Description actuelle</span>
+            </label>
+            <textarea id="edit-description-current" class="textarea textarea-bordered" rows="3" readonly></textarea>
+        </div>
+
+        <div class="form-control mb-4">
+            <label class="label">
+                <span class="label-text font-bold">Nouvelle description</span>
+            </label>
+            <textarea id="edit-description-new" class="textarea textarea-bordered textarea-primary" rows="3" placeholder="[NIF/ISI [PREST]]_[Nom Fournisseur]_Libellé_[Unité]_[PU]_reste"></textarea>
+            <label class="label">
+                <span class="label-text-alt text-info">Format: [NIF/ISI [PREST]]_[Nom Fournisseur]_Libellé_[Unité]_[PU]_reste</span>
+            </label>
+        </div>
+
+        <div class="form-control mb-4">
+            <label class="label">
+                <span class="label-text font-bold">Fournisseur (IDxls)</span>
+            </label>
+            <input type="text" id="edit-fournisseur-new" class="input input-bordered input-primary font-mono" placeholder="IDxls du fournisseur">
+            <label class="label">
+                <span class="label-text-alt text-info">Valeur de la colonne Fournisseur. Modifiez-la pour changer le fournisseur de cette ligne (PostgreSQL + Access).</span>
+            </label>
+        </div>
+
+        <input type="hidden" id="edit-entry-id">
+
+        <div class="modal-action">
+            <button class="btn btn-primary" onclick="saveEdit()">
+                <i class="fas fa-save mr-2"></i>
+                Sauvegarder (PostgreSQL + Access)
+            </button>
+            <form method="dialog">
+                <button class="btn">Annuler</button>
+            </form>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Modal modification du fournisseur par lot -->
+<dialog id="modal-lot" class="modal">
+    <div class="modal-box w-11/12 max-w-lg">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-users-cog text-warning mr-2"></i>
+            Modifier le fournisseur par lot
+        </h3>
+        <div class="alert alert-warning mb-4">
+            <i class="fas fa-exclamation-triangle"></i>
+            <span><strong id="lot-nb">0</strong> ligne(s) cochée(s) : la colonne Fournisseur sera remplacée (PostgreSQL + Access). Les descriptions ne sont pas modifiées.</span>
+        </div>
+        <div class="form-control mb-4">
+            <label class="label"><span class="label-text font-bold">Nouveau fournisseur (IDxls)</span></label>
+            <input type="text" id="lot-fournisseur" class="input input-bordered input-primary font-mono" placeholder="IDxls du fournisseur">
+        </div>
+        <div class="modal-action">
+            <button id="btn-save-lot" class="btn btn-primary" onclick="saveLot()">
+                <i class="fas fa-save mr-2"></i>Appliquer au lot
+            </button>
+            <form method="dialog"><button class="btn">Annuler</button></form>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal d'ajout de fournisseur -->
+<dialog id="modal-add-fournisseur" class="modal">
+    <div class="modal-box w-11/12 max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-plus text-success mr-2"></i>
+            Ajouter un fournisseur
+        </h3>
+
+        <form id="form-add-fournisseur" class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- IDxls (pré-rempli) -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">IDxls *</span>
+                    </label>
+                    <input type="text" id="add-fournisseur-idxls" class="input input-bordered input-sm" readonly required>
+                </div>
+
+                <!-- Nom fournisseur (pré-rempli) -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Nom fournisseur *</span>
+                    </label>
+                    <input type="text" id="add-fournisseur-nom" class="input input-bordered input-sm" required>
+                </div>
+
+                <!-- NIF -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">NIF</span>
+                    </label>
+                    <input type="text" id="add-fournisseur-nif" class="input input-bordered input-sm" placeholder="Ex: 1234567890">
+                </div>
+
+                <!-- CIN -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">CIN</span>
+                    </label>
+                    <input type="text" id="add-fournisseur-cin" class="input input-bordered input-sm" placeholder="Ex: 123456789012">
+                </div>
+
+                <!-- Date CIN -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Date CIN</span>
+                    </label>
+                    <input type="date" id="add-fournisseur-date-cin" class="input input-bordered input-sm">
+                </div>
+
+                <!-- Lieu CIN -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Lieu CIN</span>
+                    </label>
+                    <input type="text" id="add-fournisseur-lieu-cin" class="input input-bordered input-sm" placeholder="Ex: Antananarivo">
+                </div>
+
+                <!-- Adresse -->
+                <div class="form-control md:col-span-2">
+                    <label class="label">
+                        <span class="label-text">Adresse</span>
+                    </label>
+                    <input type="text" id="add-fournisseur-adresse" class="input input-bordered input-sm" placeholder="Adresse complète">
+                </div>
+
+                <!-- Téléphone -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Téléphone</span>
+                    </label>
+                    <input type="text" id="add-fournisseur-tel" class="input input-bordered input-sm" placeholder="Ex: 034 12 345 67">
+                </div>
+
+                <!-- Email -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Email</span>
+                    </label>
+                    <input type="email" id="add-fournisseur-email" class="input input-bordered input-sm" placeholder="email@example.com">
+                </div>
+
+                <!-- Remarque -->
+                <div class="form-control md:col-span-2">
+                    <label class="label">
+                        <span class="label-text">Remarque</span>
+                    </label>
+                    <textarea id="add-fournisseur-remarque" class="textarea textarea-bordered textarea-sm" rows="2" placeholder="Informations supplémentaires..."></textarea>
+                </div>
+            </div>
+
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle"></i>
+                <span class="text-sm">Les champs marqués d'un * sont obligatoires</span>
+            </div>
+
+            <div class="modal-action">
+                <button type="submit" class="btn btn-success">
+                    <i class="fas fa-save mr-2"></i>
+                    Enregistrer
+                </button>
+                <button type="button" class="btn" onclick="document.getElementById('modal-add-fournisseur').close()">
+                    Annuler
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<script>
+let currentPage = 1;
+let totalPages = 1;
+let currentData = [];
+
+// Fonction CSRF
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Charger les vérifications
+async function chargerVerifications(page = 1) {
+    const loading = document.getElementById('loading');
+    const resultsContainer = document.getElementById('results-container');
+
+    loading.classList.remove('hidden');
+    resultsContainer.classList.add('hidden');
+
+    const params = new URLSearchParams({
+        page: page,
+        per_page: 50,
+        prog: document.getElementById('filter-prog').value,
+        compte: document.getElementById('filter-compte').value,
+        source: document.getElementById('filter-source').value,
+        conformite: document.getElementById('filter-conformite').value,
+        mois: document.getElementById('filter-mois').value,
+        search: document.getElementById('filter-search').value
+    });
+
+    try {
+        const response = await fetch(`{% url 'accounting:api_verification_fournisseurs' %}?${params}`);
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (!data || !data.entries) {
+            throw new Error('Données invalides reçues du serveur');
+        }
+
+        currentData = data.entries;
+        currentPage = data.page;
+        totalPages = data.total_pages;
+
+        afficherResultats(data.entries);
+        afficherStats(data.stats);
+        afficherPagination(data.page, data.total_pages);
+
+        // Peupler les filtres dynamiquement
+        peuplerFiltresDepuisData(data.entries);
+
+    } catch (error) {
+        console.error('Erreur détaillée:', error);
+        alert('Erreur lors du chargement des données: ' + error.message);
+        resultsContainer.innerHTML = '<div class="alert alert-error m-4"><i class="fas fa-exclamation-triangle mr-2"></i>Erreur: ' + error.message + '</div>';
+    } finally {
+        loading.classList.add('hidden');
+        resultsContainer.classList.remove('hidden');
+    }
+}
+
+// Afficher les résultats avec regroupement hiérarchique Prog → Compte
+function afficherResultats(entries) {
+    const container = document.getElementById('results-tbody');
+    container.innerHTML = '';
+
+    if (!entries || entries.length === 0) {
+        container.innerHTML = '<div class="text-center py-8 text-base-content/50">Aucune transaction trouvée</div>';
+        return;
+    }
+
+    try {
+        // Regroupement hiérarchique : Prog → Compte
+        const groupesParProg = {};
+        entries.forEach(entry => {
+            const prog = entry.prog || 'Sans programme';
+            if (!groupesParProg[prog]) {
+                groupesParProg[prog] = {};
+            }
+
+            const compte = entry.cat ? `${entry.cat} - ${entry.cat_label || ''}` : 'Sans compte';
+            if (!groupesParProg[prog][compte]) {
+                groupesParProg[prog][compte] = [];
+            }
+
+            groupesParProg[prog][compte].push(entry);
+        });
+
+    // Afficher chaque Prog (Niveau 1)
+    Object.keys(groupesParProg).sort().forEach((prog, indexProg) => {
+        const comptesGroupe = groupesParProg[prog];
+        const progId = `prog-${indexProg}`;
+
+        // Calculer stats totales du Prog
+        let totalProg = 0;
+        let conformesProg = 0;
+        let nonConformesProg = 0;
+
+        Object.values(comptesGroupe).forEach(lignes => {
+            totalProg += lignes.length;
+            conformesProg += lignes.filter(e => e.conforme).length;
+            nonConformesProg += lignes.filter(e => !e.conforme).length;
+        });
+
+        // Header du Prog (Niveau 1)
+        const progHeader = document.createElement('div');
+        progHeader.className = 'bg-primary/10 border-l-4 border-primary px-4 py-3 rounded cursor-pointer hover:bg-primary/20 transition-colors mb-2';
+        progHeader.innerHTML = `
+            <div class="flex items-center gap-3">
+                <i id="icon-${progId}" class="fas fa-chevron-down transition-transform"></i>
+                <i class="fas fa-folder text-primary"></i>
+                <span class="text-primary font-bold text-lg">Prog: ${prog}</span>
+                <span class="badge badge-primary badge-md">${totalProg} transaction(s)</span>
+                ${conformesProg > 0 ? `<span class="badge badge-success badge-md gap-1"><i class="fas fa-check"></i> ${conformesProg}</span>` : ''}
+                ${nonConformesProg > 0 ? `<span class="badge badge-error badge-md gap-1"><i class="fas fa-times"></i> ${nonConformesProg}</span>` : ''}
+            </div>
+        `;
+        progHeader.onclick = () => toggleSection(progId);
+        container.appendChild(progHeader);
+
+        // Container pour ce Prog
+        const progContainer = document.createElement('div');
+        progContainer.id = progId;
+        progContainer.className = 'mb-6 ml-4';
+
+        // Pour chaque Compte dans ce Prog (Niveau 2)
+        Object.keys(comptesGroupe).sort().forEach((compte, indexCompte) => {
+            const lignes = comptesGroupe[compte];
+            const compteId = `${progId}-compte-${indexCompte}`;
+
+            // Stats du compte
+            const nbConformes = lignes.filter(e => e.conforme).length;
+            const nbNonConformes = lignes.filter(e => !e.conforme).length;
+
+            // Header du Compte (Niveau 2)
+            const compteHeader = document.createElement('div');
+            compteHeader.className = 'bg-base-200 px-4 py-2 rounded cursor-pointer hover:bg-base-300 transition-colors mb-2 ml-4';
+            compteHeader.innerHTML = `
+                <div class="flex items-center gap-3">
+                    <i id="icon-${compteId}" class="fas fa-chevron-down transition-transform"></i>
+                    <i class="fas fa-receipt text-info"></i>
+                    <span class="text-info font-semibold">Compte Cat: ${compte}</span>
+                    <span class="badge badge-neutral badge-sm">${lignes.length} transaction(s)</span>
+                    ${nbConformes > 0 ? `<span class="badge badge-success badge-sm gap-1"><i class="fas fa-check"></i> ${nbConformes}</span>` : ''}
+                    ${nbNonConformes > 0 ? `<span class="badge badge-error badge-sm gap-1"><i class="fas fa-times"></i> ${nbNonConformes}</span>` : ''}
+                </div>
+            `;
+            compteHeader.onclick = () => toggleSection(compteId);
+            progContainer.appendChild(compteHeader);
+
+            // Tableau pour ce Compte
+            const compteTable = document.createElement('div');
+            compteTable.id = compteId;
+            compteTable.className = 'ml-8 mb-4';
+
+            const table = document.createElement('table');
+            table.className = 'table table-zebra table-sm';
+            table.innerHTML = `
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" class="checkbox checkbox-sm" onclick="toggleSelectAll(this, '${compteId}')"></th>
+                        <th>Date</th>
+                        <th>Rec</th>
+                        <th>Fournisseur (IDxls)</th>
+                        <th>Description</th>
+                        <th>Détail</th>
+                        <th>Montant</th>
+                        <th>Scan</th>
+                        <th>Conformité</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            `;
+
+            const tbody = table.querySelector('tbody');
+
+            lignes.forEach(entry => {
+            const tr = document.createElement('tr');
+
+            // Badge conformité
+            const conformiteBadge = entry.conforme
+                ? '<span class="badge badge-success badge-sm">✓ Conforme</span>'
+                : '<span class="badge badge-error badge-sm">✗ Non conforme</span>';
+
+            // Erreurs si non conforme
+            const erreursHtml = !entry.conforme && entry.erreurs.length > 0
+                ? `<div class="text-xs text-error mt-1">${entry.erreurs.slice(0, 2).join(', ')}</div>`
+                : '';
+
+            // Échapper les valeurs pour éviter les erreurs JavaScript
+            const scanPath = (entry.scan || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            const fournisseurId = entry.fournisseur || '';
+
+            // Extraire le nom du fournisseur :
+            // - Si le fournisseur existe dans la base (entry.details), utiliser nom_fournisseur
+            // - Sinon, extraire depuis la description (texte entre IDxls et premier underscore)
+            let nomFournisseur = '';
+            if (entry.details && entry.details.nom_fournisseur) {
+                nomFournisseur = entry.details.nom_fournisseur.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            } else if (entry.description && fournisseurId) {
+                // Extraire "NOM_" depuis "IDxls NOM_reste_de_la_description"
+                const match = entry.description.match(new RegExp(fournisseurId + '\\s+([^_]+)'));
+                if (match && match[1]) {
+                    nomFournisseur = match[1].trim().replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                }
+            }
+
+            // Bouton scan
+            const scanBtn = entry.scan
+                ? `<button class="btn btn-success btn-xs" onclick="ouvrirScan('${scanPath}', ${entry.id})" title="Ouvrir le justificatif">
+                       <i class="fas fa-file-pdf"></i>
+                   </button>`
+                : '<span class="text-base-content/30 text-xs">-</span>';
+
+            // Checkbox seulement si fournisseur inexistant
+            // entry.details contient toujours un objet, mais si le fournisseur n'existe pas,
+            // entry.details.nom_fournisseur_attendu sera absent
+            const fournisseurInexistant = entry.details && !entry.details.nom_fournisseur_attendu;
+            const canSelect = fournisseurInexistant && !!fournisseurId;
+
+            // Toutes les lignes sont cochables pour la modification par lot ;
+            // seules celles au fournisseur manquant ont aussi "row-select" (ajout de fournisseur)
+            const checkbox = `<input type="checkbox" class="checkbox checkbox-sm batch-select${canSelect ? ' row-select' : ''}"
+                          data-entry-id="${entry.id}"
+                          data-fournisseur-id="${fournisseurId}"
+                          data-fournisseur-nom="${nomFournisseur}"
+                          onchange="onRowSelect()">`;
+
+                tr.innerHTML = `
+                    <td class="text-center">${checkbox}</td>
+                    <td class="whitespace-nowrap">${entry.date_m || '-'}</td>
+                    <td class="font-mono text-xs">${entry.rec ?? '-'}</td>
+                    <td class="font-mono text-xs">${entry.fournisseur || '-'}</td>
+                    <td class="max-w-md">
+                        <div class="truncate" title="${entry.description || ''}">${entry.description || '-'}</div>
+                        ${entry.is_carburant && entry.details ? `
+                            <div class="text-xs text-info mt-1">
+                                ${entry.details.quantite_litres ? `${entry.details.quantite_litres} L` : 'Qté ?'}
+                            </div>
+                        ` : ''}
+                        ${erreursHtml}
+                    </td>
+                    <td class="max-w-xs">
+                        <div class="truncate" title="${entry.detail_col || ''}">${entry.detail_col || '-'}</div>
+                        ${entry.is_carburant && entry.details && entry.details.matricule_vehicule ? `
+                            <div class="mt-1">
+                                ${entry.vehicule_match
+                                    ? `<span class="badge badge-success badge-xs">Matricule OK: ${entry.vehicule_match_label || entry.details.matricule_vehicule}</span>`
+                                    : `<span class="badge badge-error badge-xs">Matricule introuvable</span>`
+                                }
+                            </div>
+                        ` : ''}
+                    </td>
+                    <td class="text-right font-mono">${entry.out.toLocaleString('fr-FR')} Ar</td>
+                    <td class="text-center">${scanBtn}</td>
+                    <td>${conformiteBadge}</td>
+                    <td class="whitespace-nowrap">
+                        <button class="btn btn-ghost btn-xs" onclick="voirDetails(${entry.id})" title="Voir détails">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        <button class="btn btn-ghost btn-xs" onclick="editerDescription(${entry.id})" title="Modifier">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                    </td>
+                `;
+
+                tbody.appendChild(tr);
+            });
+
+            compteTable.appendChild(table);
+            progContainer.appendChild(compteTable);
+        });
+
+        container.appendChild(progContainer);
+    });
+
+    } catch (error) {
+        console.error('Erreur dans afficherResultats:', error);
+        container.innerHTML = '<div class="alert alert-error m-4"><i class="fas fa-exclamation-triangle mr-2"></i>Erreur lors de l\'affichage: ' + error.message + '</div>';
+    }
+}
+
+// Fonction pour plier/déplier les sections
+function toggleSection(sectionId) {
+    const section = document.getElementById(sectionId);
+    const icon = document.getElementById(`icon-${sectionId}`);
+
+    if (section.classList.contains('hidden')) {
+        section.classList.remove('hidden');
+        icon.classList.remove('fa-chevron-right');
+        icon.classList.add('fa-chevron-down');
+    } else {
+        section.classList.add('hidden');
+        icon.classList.remove('fa-chevron-down');
+        icon.classList.add('fa-chevron-right');
+    }
+}
+
+function isLikelyLocalPath(filePath) {
+    if (!filePath) return false;
+    return /^[a-zA-Z]:[\\/]/.test(filePath) || filePath.startsWith('\\\\') || filePath.startsWith('/');
+}
+
+async function ouvrirScan(scanPath, entryId = null) {
+    if (!scanPath) return;
+
+    try {
+        if (entryId) {
+            window.open('/comptabilite/scan/' + entryId + '/', '_blank');
+            return;
+        }
+
+        if (isLikelyLocalPath(scanPath)) {
+            const response = await fetch('http://127.0.0.1:8765/open-file', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ file_path: scanPath })
+            });
+            const data = await response.json();
+
+            if (data.ok && data.success) {
+                return;
+            }
+
+            alert('Impossible d ouvrir le scan localement. Detail: ' + (data.error || 'Erreur inconnue'));
+            return;
+        }
+
+        alert('Aucun identifiant de scan disponible.');
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Agent local injoignable ou erreur reseau: ' + error.message);
+    }
+}
+
+// Afficher les stats
+function afficherStats(stats) {
+    document.getElementById('stat-total').textContent = stats.total.toLocaleString();
+    document.getElementById('stat-conformes').textContent = stats.conformes.toLocaleString();
+    document.getElementById('stat-non-conformes').textContent = stats.non_conformes.toLocaleString();
+    document.getElementById('stat-taux').textContent = stats.taux_conformite + '%';
+
+    document.getElementById('desc-conformes').textContent = stats.taux_conformite + '% du total';
+    document.getElementById('desc-non-conformes').textContent = (100 - stats.taux_conformite) + '% du total';
+
+    document.getElementById('progress-conformes').style.setProperty('--value', stats.taux_conformite);
+    document.getElementById('progress-conformes').textContent = stats.taux_conformite + '%';
+
+    document.getElementById('progress-non-conformes').style.setProperty('--value', 100 - stats.taux_conformite);
+    document.getElementById('progress-non-conformes').textContent = (100 - stats.taux_conformite) + '%';
+
+    document.getElementById('badge-total').textContent = stats.total;
+}
+
+// Afficher pagination
+function afficherPagination(page, totalPages) {
+    const container = document.getElementById('pagination-container');
+    if (totalPages <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+
+    let html = '<div class="join">';
+
+    // Bouton précédent
+    html += `<button class="join-item btn btn-sm ${page === 1 ? 'btn-disabled' : ''}" onclick="chargerVerifications(${page - 1})">«</button>`;
+
+    // Pages
+    for (let i = Math.max(1, page - 2); i <= Math.min(totalPages, page + 2); i++) {
+        html += `<button class="join-item btn btn-sm ${i === page ? 'btn-active' : ''}" onclick="chargerVerifications(${i})">${i}</button>`;
+    }
+
+    // Bouton suivant
+    html += `<button class="join-item btn btn-sm ${page === totalPages ? 'btn-disabled' : ''}" onclick="chargerVerifications(${page + 1})">»</button>`;
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+// Peupler les filtres
+function peuplerFiltresDepuisData(entries) {
+    // Prog
+    const progs = [...new Set(entries.map(e => e.prog).filter(p => p))];
+    const progSelect = document.getElementById('filter-prog');
+    const currentProg = progSelect.value;
+    progSelect.innerHTML = '<option value="all">Tous</option>';
+    progs.sort().forEach(prog => {
+        const option = document.createElement('option');
+        option.value = prog;
+        option.textContent = prog;
+        if (prog === currentProg) option.selected = true;
+        progSelect.appendChild(option);
+    });
+
+    // Source
+    const sources = [...new Set(entries.map(e => e.fichier_source).filter(s => s))];
+    const sourceSelect = document.getElementById('filter-source');
+    const currentSource = sourceSelect.value;
+    sourceSelect.innerHTML = '<option value="all">Toutes</option>';
+    sources.sort().forEach(source => {
+        const option = document.createElement('option');
+        option.value = source;
+        option.textContent = source;
+        if (source === currentSource) option.selected = true;
+        sourceSelect.appendChild(option);
+    });
+}
+
+// Voir détails
+function voirDetails(entryId) {
+    const entry = currentData.find(e => e.id === entryId);
+    if (!entry) return;
+
+    const modalContent = document.getElementById('modal-content');
+
+    let html = `
+        <div class="space-y-4">
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <p class="font-bold">Date</p>
+                    <p>${entry.date_m || '-'}</p>
+                </div>
+                <div>
+                    <p class="font-bold">Rec</p>
+                    <p class="font-mono text-sm">${entry.rec ?? '-'}</p>
+                </div>
+                <div>
+                    <p class="font-bold">Programme</p>
+                    <p class="font-mono text-sm">${entry.prog || '-'}</p>
+                </div>
+                <div>
+                    <p class="font-bold">Compte Cat</p>
+                    <p class="font-mono text-sm">${entry.cat || '-'}</p>
+                </div>
+                <div>
+                    <p class="font-bold">Fournisseur (IDxls)</p>
+                    <p class="font-mono text-sm">${entry.fournisseur || '-'}</p>
+                </div>
+                <div class="col-span-2">
+                    <p class="font-bold">Description</p>
+                    <p class="font-mono text-sm bg-base-200 p-2 rounded">${entry.description || '-'}</p>
+                </div>
+                <div class="col-span-2">
+                    <p class="font-bold">Détail</p>
+                    <p class="font-mono text-sm bg-base-200 p-2 rounded">${entry.detail_col || '-'}</p>
+                </div>
+                <div>
+                    <p class="font-bold">Montant</p>
+                    <p class="text-lg">${entry.out.toLocaleString('fr-FR')} Ar</p>
+                </div>
+                <div>
+                    <p class="font-bold">Conformité</p>
+                    ${entry.conforme ? '<span class="badge badge-success">✓ Conforme</span>' : '<span class="badge badge-error">✗ Non conforme</span>'}
+                </div>
+            </div>
+
+            ${!entry.conforme && entry.erreurs.length > 0 ? `
+                <div class="alert alert-error">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <div>
+                        <h4 class="font-bold">Erreurs détectées:</h4>
+                        <ul class="list-disc list-inside text-sm mt-2">
+                            ${entry.erreurs.map(err => `<li>${err}</li>`).join('')}
+                        </ul>
+                    </div>
+                </div>
+            ` : ''}
+
+            ${entry.details && Object.keys(entry.details).length > 0 ? `
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i>
+                    <div>
+                        <h4 class="font-bold">Détails analysés:</h4>
+                        <ul class="text-sm mt-2 space-y-1">
+                            ${Object.entries(entry.details).map(([key, val]) => `<li><strong>${key}:</strong> ${val || '-'}</li>`).join('')}
+                        </ul>
+                    </div>
+                </div>
+            ` : ''}
+        </div>
+    `;
+
+    modalContent.innerHTML = html;
+    document.getElementById('modal-details').showModal();
+}
+
+// Éditer description
+function editerDescription(entryId) {
+    const entry = currentData.find(e => e.id === entryId);
+    if (!entry) return;
+
+    document.getElementById('edit-description-current').value = entry.description || '';
+    document.getElementById('edit-description-new').value = entry.description || '';
+    document.getElementById('edit-fournisseur-new').value = entry.fournisseur || '';
+    document.getElementById('edit-entry-id').value = entryId;
+    document.getElementById('edit-fichier-source').textContent = entry.fichier_source || 'Non spécifié';
+
+    document.getElementById('modal-edit').showModal();
+}
+
+// Ajouter fournisseur
+function ajouterFournisseur(idxls, nomFournisseur, entryId) {
+    // Pré-remplir les champs
+    document.getElementById('add-fournisseur-idxls').value = idxls || '';
+    document.getElementById('add-fournisseur-nom').value = nomFournisseur || '';
+
+    // Réinitialiser les autres champs
+    document.getElementById('add-fournisseur-nif').value = '';
+    document.getElementById('add-fournisseur-cin').value = '';
+    document.getElementById('add-fournisseur-date-cin').value = '';
+    document.getElementById('add-fournisseur-lieu-cin').value = '';
+    document.getElementById('add-fournisseur-adresse').value = '';
+    document.getElementById('add-fournisseur-tel').value = '';
+    document.getElementById('add-fournisseur-email').value = '';
+    document.getElementById('add-fournisseur-remarque').value = '';
+
+    // Ouvrir le modal
+    document.getElementById('modal-add-fournisseur').showModal();
+}
+
+// Sauvegarder nouveau fournisseur
+document.getElementById('form-add-fournisseur').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const data = {
+        idxls: document.getElementById('add-fournisseur-idxls').value.trim(),
+        nom_fournisseur: document.getElementById('add-fournisseur-nom').value.trim(),
+        nif: document.getElementById('add-fournisseur-nif').value.trim(),
+        cin: document.getElementById('add-fournisseur-cin').value.trim(),
+        date_cin: document.getElementById('add-fournisseur-date-cin').value,
+        lieu_cin: document.getElementById('add-fournisseur-lieu-cin').value.trim(),
+        adresse: document.getElementById('add-fournisseur-adresse').value.trim(),
+        telephone: document.getElementById('add-fournisseur-tel').value.trim(),
+        email: document.getElementById('add-fournisseur-email').value.trim(),
+        remarque: document.getElementById('add-fournisseur-remarque').value.trim()
+    };
+
+    try {
+        const response = await fetch('{% url "accounting:api_ajouter_fournisseur" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify(data)
+        });
+
+        let result = null;
+        try {
+            result = await response.json();
+        } catch (parseError) {
+            const text = await response.text();
+            throw new Error(text || 'Réponse non-JSON');
+        }
+
+        if (response.ok && result && result.success) {
+            alert('✓ Fournisseur ajouté avec succès !');
+            document.getElementById('modal-add-fournisseur').close();
+            chargerVerifications(currentPage);
+        } else {
+            const message = result && result.message ? result.message : `Erreur HTTP ${response.status}`;
+            alert('Erreur: ' + message);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors de l\'ajout du fournisseur');
+    }
+});
+
+// Gestion de la sélection des lignes
+function onRowSelect() {
+    const coches = document.querySelectorAll('.batch-select:checked');
+    const actionBar = document.getElementById('action-bar');
+    const batchBar = document.getElementById('batch-bar');
+
+    // "Ajouter le fournisseur" : exactement 1 ligne cochée au total, et c'est une ligne à fournisseur manquant
+    if (coches.length === 1 && coches[0].classList.contains('row-select')) {
+        actionBar.classList.remove('hidden');
+    } else {
+        actionBar.classList.add('hidden');
+    }
+
+    // Modification par lot : au moins 1 ligne cochée
+    document.getElementById('batch-count').textContent = coches.length;
+    batchBar.classList.toggle('hidden', coches.length === 0);
+}
+
+function deselectionnerTout() {
+    document.querySelectorAll('.batch-select:checked').forEach(cb => { cb.checked = false; });
+    document.querySelectorAll('thead input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+    onRowSelect();
+}
+
+// Toggle sélection de toutes les lignes d'un groupe
+function toggleSelectAll(checkbox, progId) {
+    const groupTable = document.getElementById(progId);
+    const checkboxes = groupTable.querySelectorAll('.batch-select');
+    checkboxes.forEach(cb => {
+        cb.checked = checkbox.checked;
+    });
+    onRowSelect();
+}
+
+// Ajouter le fournisseur de la ligne sélectionnée
+function ajouterFournisseurSelection() {
+    const checkbox = document.querySelector('.row-select:checked');
+    if (!checkbox) {
+        alert('Aucune ligne sélectionnée');
+        return;
+    }
+
+    const fournisseurId = checkbox.dataset.fournisseurId;
+    const fournisseurNom = checkbox.dataset.fournisseurNom;
+    const entryId = checkbox.dataset.entryId;
+
+    ajouterFournisseur(fournisseurId, fournisseurNom, entryId);
+}
+
+async function tryLocalAccessUpdateFallback(data) {
+    if (!data || !data.success || data.access_updated || !data.access_payload) {
+        return data;
+    }
+    try {
+        const response = await fetch('http://127.0.0.1:8765/update-entry-access', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data.access_payload)
+        });
+        const result = await response.json();
+        if (response.ok && result.success) {
+            data.access_updated = true;
+            data.access_status = 'updated';
+            data.message = 'Description mise a jour avec succes (agent local Access)';
+            data.access_error = null;
+        } else {
+            data.access_error = result.error || data.access_error || 'Echec mise a jour Access locale';
+        }
+    } catch (e) {
+        data.access_error = data.access_error || ('Erreur agent local: ' + e.message);
+    }
+    return data;
+}
+
+// ===== Modification du fournisseur par lot =====
+function ouvrirModalLot() {
+    const nb = document.querySelectorAll('.batch-select:checked').length;
+    if (nb === 0) return;
+    document.getElementById('lot-nb').textContent = nb;
+    document.getElementById('lot-fournisseur').value = '';
+    document.getElementById('modal-lot').showModal();
+}
+
+async function saveLot() {
+    const ids = Array.from(document.querySelectorAll('.batch-select:checked'))
+        .map(cb => parseInt(cb.dataset.entryId));
+    const nouveau = document.getElementById('lot-fournisseur').value.trim();
+
+    if (!nouveau) {
+        alert('Saisissez le fournisseur (IDxls)');
+        return;
+    }
+    if (!confirm(`Remplacer le fournisseur par "${nouveau}" sur ${ids.length} ligne(s) ?`)) return;
+
+    const btn = document.getElementById('btn-save-lot');
+    btn.disabled = true;
+    try {
+        const response = await fetch('{% url "accounting:api_modifier_fournisseur_lot" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ entry_ids: ids, nouveau_fournisseur: nouveau })
+        });
+        const data = await response.json();
+        if (!data.success) {
+            alert('Erreur: ' + data.message);
+            return;
+        }
+
+        // Synchronisation Access via l'agent local (une requête par ligne)
+        let accesOk = 0, accesKo = 0;
+        for (const payload of (data.access_payloads || [])) {
+            try {
+                const r = await fetch('http://127.0.0.1:8765/update-entry-access', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const res = await r.json();
+                if (r.ok && res.success) accesOk++; else accesKo++;
+            } catch (e) {
+                accesKo++;
+            }
+        }
+
+        let msg = `${data.modifiees} ligne(s) modifiée(s) dans PostgreSQL`;
+        if (data.inchangees) msg += `\n${data.inchangees} déjà avec ce fournisseur`;
+        if (data.introuvables && data.introuvables.length) msg += `\n${data.introuvables.length} introuvable(s)`;
+        if ((data.access_payloads || []).length) {
+            msg += `\nAccess : ${accesOk} mise(s) à jour`;
+            if (accesKo) msg += `, ${accesKo} échec(s) (agent local lancé ? sinon relancer l'agent puis refaire l'opération)`;
+        }
+        if (data.sans_source_access) msg += `\n${data.sans_source_access} ligne(s) sans fichier Access associé`;
+        alert(msg);
+
+        document.getElementById('modal-lot').close();
+        chargerVerifications(currentPage);
+        onRowSelect();
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors de la modification par lot');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+// Sauvegarder édition
+async function saveEdit() {
+    const entryId = document.getElementById('edit-entry-id').value;
+    const nouvelleDescription = document.getElementById('edit-description-new').value.trim();
+
+    if (!nouvelleDescription) {
+        alert('La description ne peut pas être vide');
+        return;
+    }
+
+    try {
+        const response = await fetch('{% url "accounting:api_modifier_description_fournisseur" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                entry_id: parseInt(entryId),
+                nouvelle_description: nouvelleDescription,
+                nouveau_fournisseur: document.getElementById('edit-fournisseur-new').value.trim()
+            })
+        });
+
+        let data = await response.json();
+        data = await tryLocalAccessUpdateFallback(data);
+
+        if (data.success) {
+            alert('? ' + (data.message || 'Description mise a jour avec succes'));
+            document.getElementById('modal-edit').close();
+            chargerVerifications(currentPage);
+        } else {
+            alert('Erreur: ' + data.message);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors de la sauvegarde');
+    }
+}
+
+// Reset filtres
+function resetFilters() {
+    document.getElementById('filter-prog').value = 'all';
+    document.getElementById('filter-compte').value = 'all';
+    document.getElementById('filter-source').value = 'all';
+    document.getElementById('filter-conformite').value = 'non_conforme';
+    document.getElementById('filter-mois').value = '';
+    document.getElementById('filter-search').value = '';
+    chargerVerifications(1);
+}
+
+// Ouvrir version imprimable
+function ouvrirVersionImprimable() {
+    const prog = document.getElementById('filter-prog').value;
+    const compte = document.getElementById('filter-compte').value;
+    const conformite = document.getElementById('filter-conformite').value;
+
+    const params = new URLSearchParams();
+
+    if (prog && prog !== 'all') params.append('prog', prog);
+    if (compte && compte !== 'all') params.append('compte', compte);
+    if (conformite && conformite !== 'all') params.append('conformite', conformite);
+
+    // Le champ month donne "AAAA-MM" ; la vue d'impression attend annee + mois séparés
+    const moisVal = document.getElementById('filter-mois').value;
+    if (moisVal) {
+        const [a, m] = moisVal.split('-');
+        params.append('annee', a);
+        params.append('mois', String(parseInt(m, 10)));
+    } else {
+        params.append('annee', '');
+    }
+
+    const url = '{% url "accounting:verification_fournisseurs_print" %}?' + params.toString();
+    window.open(url, '_blank', 'width=1200,height=800');
+}
+
+// Charger au démarrage
+document.addEventListener('DOMContentLoaded', function() {
+    chargerVerifications(1);
+});
+</script>
+
+{% endblock %}

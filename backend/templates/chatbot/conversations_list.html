@@ -1,0 +1,499 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Conversations - Hydria{% endblock %}
+
+{% block extra_css %}
+<style>
+.conversation-item {
+    transition: all 0.2s ease;
+    border-left: 4px solid transparent;
+}
+
+.conversation-item:hover {
+    border-left-color: var(--primary);
+    background-color: rgba(var(--primary-rgb), 0.05);
+}
+
+.conversation-item.unread {
+    border-left-color: #ff4757;
+    background-color: rgba(255, 71, 87, 0.05);
+}
+
+.unread-count {
+    background: #ff4757;
+    color: white;
+    border-radius: 50%;
+    min-width: 20px;
+    height: 20px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.avatar-group {
+    display: flex;
+    margin-left: -8px;
+}
+
+.avatar-group .avatar {
+    margin-left: -8px;
+    border: 2px solid white;
+}
+
+.search-bar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--fallback-b1, oklch(var(--b1)));
+    padding: 1rem 0;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <div class="max-w-4xl mx-auto">
+        <!-- Header avec navigation -->
+        <div class="flex items-center justify-between mb-6">
+            <div class="flex items-center gap-4">
+                <a href="{% url 'chatbot:chat_menu' %}" class="btn btn-ghost btn-sm">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                    </svg>
+                    Retour au menu
+                </a>
+                <h1 class="text-2xl font-bold">💬 Mes Conversations</h1>
+            </div>
+            
+            <button onclick="showNewConversationModal()" class="btn btn-primary">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                </svg>
+                Nouvelle conversation
+            </button>
+        </div>
+
+        <!-- Barre de recherche -->
+        <div class="search-bar">
+            <div class="form-control">
+                <div class="input-group">
+                    <input type="text" id="searchInput" placeholder="Rechercher dans les conversations..." 
+                           class="input input-bordered w-full" oninput="searchConversations(this.value)">
+                    <button class="btn btn-square" onclick="clearSearch()">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Liste des conversations -->
+        <div id="conversationsList" class="space-y-2">
+            <div class="loading-conversations text-center py-8">
+                <div class="loading loading-spinner loading-lg"></div>
+                <div class="mt-2">Chargement des conversations...</div>
+            </div>
+        </div>
+
+        <!-- Pagination -->
+        <div id="pagination" class="flex justify-center mt-6"></div>
+    </div>
+</div>
+
+<!-- Modal nouvelle conversation -->
+<div id="newConversationModal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">📞 Nouvelle conversation</h3>
+        
+        <div class="form-control mb-4">
+            <label class="label">
+                <span class="label-text">Rechercher des utilisateurs</span>
+            </label>
+            <input type="text" id="userSearch" placeholder="Tapez un nom d'utilisateur..." 
+                   class="input input-bordered" oninput="searchUsers(this.value)">
+        </div>
+        
+        <div id="userResults" class="mb-4 max-h-48 overflow-y-auto"></div>
+        
+        <div class="form-control mb-4">
+            <label class="label">
+                <span class="label-text">Participants sélectionnés</span>
+            </label>
+            <div id="selectedUsers" class="flex flex-wrap gap-2 min-h-[40px] p-2 border rounded"></div>
+        </div>
+        
+        <div class="form-control mb-4">
+            <label class="label">
+                <span class="label-text">Type de conversation</span>
+            </label>
+            <select id="conversationType" class="select select-bordered" onchange="toggleGroupOptions()">
+                <option value="private">Conversation privée</option>
+                <option value="group">Groupe de discussion</option>
+            </select>
+        </div>
+        
+        <div class="form-control mb-4">
+            <label class="label">
+                <span class="label-text">Titre de la conversation</span>
+            </label>
+            <input type="text" id="conversationTitle" placeholder="Ex: Réunion équipe technique..." class="input input-bordered">
+            <div class="label">
+                <span class="label-text-alt">Obligatoire pour les groupes, optionnel pour les conversations privées</span>
+            </div>
+        </div>
+        
+        <div class="modal-action">
+            <button class="btn btn-primary" onclick="createNewConversation()">Créer la conversation</button>
+            <button class="btn btn-ghost" onclick="closeModal('newConversationModal')">Annuler</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentPage = 1;
+let isLoading = false;
+let selectedUsers = [];
+
+// Charger les conversations au chargement de la page
+document.addEventListener('DOMContentLoaded', function() {
+    loadConversations();
+});
+
+async function loadConversations(page = 1, search = '') {
+    if (isLoading) return;
+    isLoading = true;
+    
+    try {
+        const url = new URL("{% url 'chatbot:api_conversations_list' %}", window.location.origin);
+        url.searchParams.set('page', page);
+        if (search) url.searchParams.set('search', search);
+        
+        const response = await fetch(url);
+        const data = await response.json();
+        
+        if (data.success) {
+            displayConversations(data.conversations);
+            updatePagination(data.pagination);
+            currentPage = page;
+        } else {
+            showError('Erreur lors du chargement des conversations: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        showError('Erreur réseau lors du chargement des conversations');
+    } finally {
+        isLoading = false;
+    }
+}
+
+function displayConversations(conversations) {
+    const container = document.getElementById('conversationsList');
+    
+    if (conversations.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-8">
+                <div class="text-6xl mb-4">💬</div>
+                <h3 class="text-lg font-medium mb-2">Aucune conversation</h3>
+                <p class="text-gray-500 mb-4">Commencez votre première conversation !</p>
+                <button onclick="showNewConversationModal()" class="btn btn-primary">
+                    Nouvelle conversation
+                </button>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = conversations.map(conv => {
+        const lastMessage = conv.last_message;
+        const timeAgo = lastMessage ? formatTimeAgo(lastMessage.created_at) : 'Pas de messages';
+        const isUnread = conv.unread_count > 0;
+        
+        return `
+            <div class="conversation-item ${isUnread ? 'unread' : ''} bg-white dark:bg-gray-800 rounded-lg p-4 cursor-pointer hover:shadow-md"
+                 onclick="openConversation('${conv.id}')">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3 flex-1">
+                        <!-- Avatar ou icône -->
+                        <div class="avatar placeholder">
+                            <div class="bg-neutral-focus text-neutral-content rounded-full w-12">
+                                <span class="text-lg">
+                                    ${conv.type === 'group' ? '👥' : '💬'}
+                                </span>
+                            </div>
+                        </div>
+                        
+                        <!-- Contenu de la conversation -->
+                        <div class="flex-1">
+                            <div class="flex items-center gap-2 mb-1">
+                                <h3 class="font-semibold text-sm">${conv.title}</h3>
+                                ${conv.type === 'group' ? '<div class="badge badge-xs">Groupe</div>' : ''}
+                                <div class="text-xs text-gray-500">${conv.participants_count} participant${conv.participants_count > 1 ? 's' : ''}</div>
+                            </div>
+                            
+                            ${lastMessage ? `
+                                <p class="text-sm text-gray-600 dark:text-gray-400 truncate">
+                                    <strong>${lastMessage.sender}:</strong> ${lastMessage.content}
+                                </p>
+                            ` : `
+                                <p class="text-sm text-gray-500 italic">Aucun message</p>
+                            `}
+                        </div>
+                    </div>
+                    
+                    <!-- Métadonnées -->
+                    <div class="flex flex-col items-end gap-2">
+                        <div class="text-xs text-gray-500">${timeAgo}</div>
+                        ${isUnread ? `<div class="unread-count">${conv.unread_count}</div>` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function updatePagination(pagination) {
+    const container = document.getElementById('pagination');
+    
+    if (pagination.total_pages <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+    
+    let buttons = [];
+    
+    // Bouton précédent
+    if (pagination.has_previous) {
+        buttons.push(`<button class="btn btn-sm" onclick="loadConversations(${pagination.current_page - 1})">Précédent</button>`);
+    }
+    
+    // Numéros de pages
+    for (let i = Math.max(1, pagination.current_page - 2); 
+         i <= Math.min(pagination.total_pages, pagination.current_page + 2); i++) {
+        const isActive = i === pagination.current_page;
+        buttons.push(`
+            <button class="btn btn-sm ${isActive ? 'btn-active' : ''}" 
+                    onclick="loadConversations(${i})">${i}</button>
+        `);
+    }
+    
+    // Bouton suivant
+    if (pagination.has_next) {
+        buttons.push(`<button class="btn btn-sm" onclick="loadConversations(${pagination.current_page + 1})">Suivant</button>`);
+    }
+    
+    container.innerHTML = `<div class="join">${buttons.join('')}</div>`;
+}
+
+function formatTimeAgo(dateString) {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffInSeconds = Math.floor((now - date) / 1000);
+    
+    if (diffInSeconds < 60) return 'À l\'instant';
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}min`;
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h`;
+    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}j`;
+    
+    return date.toLocaleDateString('fr-FR');
+}
+
+function openConversation(conversationId) {
+    window.location.href = `/assistant/conversations/${conversationId}/`;
+}
+
+let searchTimeout;
+function searchConversations(query) {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+        loadConversations(1, query);
+    }, 500);
+}
+
+function clearSearch() {
+    document.getElementById('searchInput').value = '';
+    loadConversations(1, '');
+}
+
+function showError(message) {
+    const container = document.getElementById('conversationsList');
+    container.innerHTML = `
+        <div class="alert alert-error">
+            <svg class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <span>${message}</span>
+        </div>
+    `;
+}
+
+// Fonctions pour la création de nouvelle conversation
+function showNewConversationModal() {
+    selectedUsers = [];
+    document.getElementById('conversationTitle').value = '';
+    document.getElementById('userSearch').value = '';
+    document.getElementById('userResults').innerHTML = '';
+    updateSelectedUsersDisplay();
+    document.getElementById('newConversationModal').checked = true;
+}
+
+function closeModal(modalId) {
+    document.getElementById(modalId).checked = false;
+}
+
+async function searchUsers(query) {
+    if (query.length < 2) {
+        document.getElementById('userResults').innerHTML = '';
+        return;
+    }
+    
+    try {
+        const response = await fetch(`{% url 'chatbot:api_search_users' %}?q=${encodeURIComponent(query)}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            displayUserResults(data.users);
+        }
+    } catch (error) {
+        console.error('Erreur recherche utilisateurs:', error);
+    }
+}
+
+function displayUserResults(users) {
+    const resultsDiv = document.getElementById('userResults');
+    
+    if (users.length === 0) {
+        resultsDiv.innerHTML = '<div class="text-gray-500 p-2">Aucun utilisateur trouvé</div>';
+        return;
+    }
+    
+    resultsDiv.innerHTML = users.map(user => `
+        <div class="user-result p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer rounded" 
+             onclick="selectUser(${user.id}, '${user.username}', '${user.full_name}')">
+            <div class="font-medium">${user.full_name}</div>
+            <div class="text-sm text-gray-500">@${user.username}</div>
+        </div>
+    `).join('');
+}
+
+function selectUser(id, username, fullName) {
+    if (!selectedUsers.find(u => u.id === id)) {
+        selectedUsers.push({ id, username, full_name: fullName });
+        updateSelectedUsersDisplay();
+    }
+    document.getElementById('userSearch').value = '';
+    document.getElementById('userResults').innerHTML = '';
+}
+
+function removeUser(id) {
+    selectedUsers = selectedUsers.filter(u => u.id !== id);
+    updateSelectedUsersDisplay();
+}
+
+function updateSelectedUsersDisplay() {
+    const container = document.getElementById('selectedUsers');
+    
+    if (selectedUsers.length === 0) {
+        container.innerHTML = '<div class="text-gray-400">Aucun participant sélectionné</div>';
+        return;
+    }
+    
+    container.innerHTML = selectedUsers.map(user => `
+        <div class="badge badge-primary gap-2">
+            ${user.full_name}
+            <button onclick="removeUser(${user.id})" class="text-white hover:text-red-200">✕</button>
+        </div>
+    `).join('');
+}
+
+function toggleGroupOptions() {
+    const type = document.getElementById('conversationType').value;
+    const titleInput = document.getElementById('conversationTitle');
+    
+    if (type === 'group') {
+        titleInput.required = true;
+        titleInput.placeholder = "Ex: Équipe technique, Projet Alpha...";
+        document.querySelector('.label-text-alt').textContent = "Obligatoire pour les groupes";
+    } else {
+        titleInput.required = false;
+        titleInput.placeholder = "Ex: Discussion privée...";
+        document.querySelector('.label-text-alt').textContent = "Optionnel pour les conversations privées";
+    }
+}
+
+async function createNewConversation() {
+    const type = document.getElementById('conversationType').value;
+    const title = document.getElementById('conversationTitle').value.trim();
+    
+    // Validation selon le type
+    if (type === 'group') {
+        if (!title) {
+            alert('Le titre est obligatoire pour les groupes');
+            return;
+        }
+        if (selectedUsers.length === 0) {
+            alert('Veuillez sélectionner au moins un participant pour le groupe');
+            return;
+        }
+    } else {
+        if (selectedUsers.length === 0) {
+            alert('Veuillez sélectionner au moins un participant');
+            return;
+        }
+        if (selectedUsers.length > 1) {
+            const confirm = window.confirm(`Vous avez sélectionné ${selectedUsers.length} participants. Voulez-vous créer un groupe à la place ?`);
+            if (confirm) {
+                document.getElementById('conversationType').value = 'group';
+                toggleGroupOptions();
+                return;
+            }
+        }
+    }
+    
+    const participantIds = selectedUsers.map(u => u.id);
+    
+    try {
+        const response = await fetch("{% url 'chatbot:api_create_conversation' %}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify({
+                title: title || (type === 'group' ? 'Nouveau groupe' : ''),
+                type: type,
+                participants: participantIds
+            })
+        });
+        
+        const data = await response.json();
+        console.log('API Response:', data);
+        
+        if (data.success) {
+            alert('Conversation créée avec succès !');
+            
+            // Recharger la liste des conversations
+            loadConversations();
+            
+            // Fermer le modal
+            closeModal('newConversationModal');
+            
+            // Rediriger vers la conversation
+            setTimeout(() => {
+                window.location.href = `/assistant/conversations/${data.conversation.id}/`;
+            }, 500);
+        } else {
+            console.error('Erreur API:', data.error);
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors de la création de la conversation');
+    }
+}
+</script>
+{% endblock %}

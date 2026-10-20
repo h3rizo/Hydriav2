@@ -1,0 +1,1005 @@
+{% extends "base.html" %}
+{% block title %}Demandes de Branchements Privés{% endblock %}
+{% block content %}
+<div class="container mx-auto px-4 py-6 space-y-6">
+    <!-- En-tête -->
+    <div class="flex justify-between items-center">
+        <h1 class="text-3xl font-bold">Demandes de Branchements Privés (BP)</h1>
+        <div class="flex gap-2">
+            <a href="{% url 'billing:import_paiements_bp' %}" class="btn btn-success">
+                <i class="fas fa-file-excel mr-2"></i>Importer paiements
+            </a>
+            <button onclick="openLignesDiameXModal()" class="btn btn-info">
+                <i class="fas fa-list mr-2"></i>Lignes DiameX en attente
+            </button>
+            <button onclick="openCreateModal()" class="btn btn-primary">
+                <i class="fas fa-plus mr-2"></i>Nouvelle Demande BP
+            </button>
+        </div>
+    </div>
+
+    <div id="auto-normalisation-alert" class="alert alert-info hidden">
+        <i class="fas fa-circle-info"></i>
+        <span id="auto-normalisation-message"></span>
+    </div>
+
+    <!-- Statistiques du workflow -->
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div class="stats shadow">
+            <div class="stat">
+                <div class="stat-figure text-info"><i class="fas fa-list text-3xl"></i></div>
+                <div class="stat-title">Total</div>
+                <div class="stat-value text-info" id="stat-total">0</div>
+            </div>
+        </div>
+        <div class="stats shadow">
+            <div class="stat">
+                <div class="stat-figure text-warning"><i class="fas fa-file-invoice-dollar text-3xl"></i></div>
+                <div class="stat-title">Attente paiement</div>
+                <div class="stat-value text-warning text-2xl" id="stat-attente-demande">0</div>
+                <div class="stat-desc">Demande</div>
+            </div>
+        </div>
+        <div class="stats shadow">
+            <div class="stat">
+                <div class="stat-figure text-primary"><i class="fas fa-file-contract text-3xl"></i></div>
+                <div class="stat-title">Attente devis</div>
+                <div class="stat-value text-primary text-2xl" id="stat-attente-devis">0</div>
+                <div class="stat-desc">Paiement devis</div>
+            </div>
+        </div>
+        <div class="stats shadow">
+            <div class="stat">
+                <div class="stat-figure text-accent"><i class="fas fa-tools text-3xl"></i></div>
+                <div class="stat-title">Attente branchement</div>
+                <div class="stat-value text-accent text-2xl" id="stat-attente-branchement">0</div>
+                <div class="stat-desc">Travaux</div>
+            </div>
+        </div>
+        <div class="stats shadow">
+            <div class="stat">
+                <div class="stat-figure text-success"><i class="fas fa-check-circle text-3xl"></i></div>
+                <div class="stat-title">Complètes</div>
+                <div class="stat-value text-success" id="stat-complete">0</div>
+                <div class="stat-desc">Branchées</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow-md">
+        <div class="card-body">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Recherche</span></label>
+                    <input type="text" id="search" placeholder="Nom, code, téléphone..." class="input input-bordered" oninput="loadDemandes()" />
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Ouvrage</span></label>
+                    <select id="filter-ouvrage" class="select select-bordered" onchange="loadDemandes()">
+                        <option value="all">Tous</option>
+                        {% for ouvrage in ouvrages %}
+                        <option value="{{ ouvrage.id }}">{{ ouvrage.nom_ouvrage }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Statut</span></label>
+                    <select id="filter-statut" class="select select-bordered" onchange="loadDemandes()">
+                        <option value="en_attente">En attente</option>
+                        <option value="branche">Branchés</option>
+                        <option value="tous">Tous</option>
+                    </select>
+                </div>
+                <div class="form-control flex flex-col justify-end">
+                    <button type="button" onclick="loadDemandes()" class="btn btn-primary">
+                        <i class="fas fa-sync mr-2"></i>Actualiser
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tableau des demandes -->
+    <div class="card bg-base-100 shadow-md">
+        <div class="card-body">
+            <div class="overflow-x-auto">
+                <table class="table table-xs w-full">
+                    <thead>
+                        <tr>
+                            <th rowspan="2">Code</th>
+                            <th rowspan="2">Nom Abonné</th>
+                            <th rowspan="2">Village</th>
+                            <th rowspan="2">Ouvrage</th>
+                            <th rowspan="2">Montant<br>Demande</th>
+                            <th rowspan="2">Montant<br>Devis</th>
+                            <th colspan="2" class="bg-warning/20">Paiement Demande</th>
+                            <th colspan="2" class="bg-primary/20">Paiement Devis</th>
+                            <th class="bg-success/20">Branchement</th>
+                            <th rowspan="2">Étape</th>
+                            <th rowspan="2">Actions</th>
+                        </tr>
+                        <tr>
+                            <th class="bg-warning/10">N° DiameX</th>
+                            <th class="bg-warning/10">Date</th>
+                            <th class="bg-primary/10">N° DiameX</th>
+                            <th class="bg-primary/10">Date</th>
+                            <th class="bg-success/10">Date</th>
+                        </tr>
+                    </thead>
+                    <tbody id="demandes-list">
+                        <tr><td colspan="14" class="text-center">Chargement...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Nouvelle Demande BP -->
+<dialog id="modal-demande-bp" class="modal">
+    <div class="modal-box w-11/12 max-w-3xl">
+        <h3 class="font-bold text-lg mb-4" id="modal-title">Nouvelle Demande BP</h3>
+        <form id="form-demande-bp" class="space-y-4">
+            <input type="hidden" id="demande-id" />
+
+            <div class="grid grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Nom de l'abonné *</span></label>
+                    <input type="text" id="nom-abonne" class="input input-bordered" required />
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Téléphone</span></label>
+                    <input type="text" id="telephone" class="input input-bordered" />
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Type de point d'eau</span></label>
+                    <input type="text" id="type-point-eau" class="input input-bordered bg-base-200 cursor-not-allowed" value="BP" readonly />
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Ouvrage *</span></label>
+                    <select id="ouvrage-id" class="select select-bordered" required>
+                        <option value="">Sélectionner</option>
+                        {% for ouvrage in ouvrages %}
+                        <option value="{{ ouvrage.id }}">{{ ouvrage.nom_ouvrage }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Montant demande (Ar) *</span></label>
+                    <input type="number" id="montant-demande" class="input input-bordered" step="0.01" required />
+                </div>
+            </div>
+
+            <!-- GPS -->
+            <div class="form-control">
+                <label class="label"><span class="label-text"><i class="fas fa-map-marker-alt mr-1"></i>Coordonnées GPS</span></label>
+                <div class="flex gap-2">
+                    <input type="number" id="latitude" step="0.0000001" placeholder="Latitude" class="input input-bordered flex-1" />
+                    <input type="number" id="longitude" step="0.0000001" placeholder="Longitude" class="input input-bordered flex-1" />
+                    <button type="button" onclick="captureGPS()" class="btn btn-success gap-2">
+                        <i class="fas fa-map-marker-alt"></i>
+                        <span class="hidden md:inline">Capturer GPS</span>
+                    </button>
+                </div>
+                <span class="text-xs mt-1" id="gps-status"></span>
+            </div>
+
+            <div class="modal-action">
+                <button type="submit" class="btn btn-primary">Enregistrer</button>
+                <button type="button" onclick="document.getElementById('modal-demande-bp').close()" class="btn">Annuler</button>
+            </div>
+        </form>
+    </div>
+</dialog>
+
+<!-- Modal Prévisualisation Export -->
+<dialog id="modal-preview-export" class="modal">
+    <div class="modal-box w-11/12 max-w-3xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-eye mr-2"></i>Prévisualisation avant export vers DiameX
+        </h3>
+
+        <div class="alert alert-info mb-4">
+            <i class="fas fa-info-circle"></i>
+            <span>Vérifiez les informations avant de valider l'export vers la table temporaire DiameX</span>
+        </div>
+
+        <div class="space-y-4">
+            <!-- Informations demande -->
+            <div class="card bg-base-200">
+                <div class="card-body">
+                    <h4 class="font-semibold mb-2"><i class="fas fa-user mr-2"></i>Informations demande</h4>
+                    <div class="grid grid-cols-2 gap-2 text-sm">
+                        <div><span class="font-semibold">Code:</span> <span id="preview-code"></span></div>
+                        <div><span class="font-semibold">Abonné:</span> <span id="preview-nom"></span></div>
+                        <div><span class="font-semibold">Village:</span> <span id="preview-village"></span></div>
+                        <div><span class="font-semibold">Ouvrage:</span> <span id="preview-ouvrage"></span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Données DiameX -->
+            <div class="card bg-warning/10 border border-warning/30">
+                <div class="card-body">
+                    <h4 class="font-semibold mb-2"><i class="fas fa-file-invoice mr-2"></i>Données à exporter vers TemporaireDiameX</h4>
+                    <div class="overflow-x-auto">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Champ</th>
+                                    <th>Valeur</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="font-semibold">numero_ticket</td>
+                                    <td class="font-mono" id="preview-numero-ticket"></td>
+                                </tr>
+                                <tr>
+                                    <td class="font-semibold">type_ticket</td>
+                                    <td><span class="badge badge-warning" id="preview-type-ticket"></span></td>
+                                </tr>
+                                <tr>
+                                    <td class="font-semibold">designation</td>
+                                    <td id="preview-designation"></td>
+                                </tr>
+                                <tr>
+                                    <td class="font-semibold">quantite</td>
+                                    <td>1</td>
+                                </tr>
+                                <tr>
+                                    <td class="font-semibold">prix_unitaire</td>
+                                    <td class="font-bold" id="preview-prix-unitaire"></td>
+                                </tr>
+                                <tr>
+                                    <td class="font-semibold">montant</td>
+                                    <td class="font-bold text-lg" id="preview-montant"></td>
+                                </tr>
+                                <tr>
+                                    <td class="font-semibold">point_eau_id</td>
+                                    <td class="font-mono text-xs" id="preview-point-eau-id"></td>
+                                </tr>
+                                <tr>
+                                    <td class="font-semibold">date_ticket</td>
+                                    <td id="preview-date-ticket"></td>
+                                </tr>
+                                <tr>
+                                    <td class="font-semibold">statut</td>
+                                    <td><span class="badge badge-warning">en_attente</span></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-action">
+            <button type="button" onclick="confirmExport()" class="btn btn-warning">
+                <i class="fas fa-check mr-2"></i>Confirmer l'export
+            </button>
+            <button type="button" onclick="document.getElementById('modal-preview-export').close()" class="btn">Annuler</button>
+        </div>
+    </div>
+</dialog>
+
+<!-- Modal Lignes DiameX -->
+<dialog id="modal-lignes-diamex" class="modal">
+    <div class="modal-box w-11/12 max-w-4xl">
+        <h3 class="font-bold text-lg mb-4">Lignes en attente d'envoi vers DiameX</h3>
+        <div class="overflow-x-auto">
+            <table class="table table-zebra w-full">
+                <thead>
+                    <tr>
+                        <th>N° Ticket</th>
+                        <th>Abonné</th>
+                        <th>Montant</th>
+                        <th>Date</th>
+                        <th>Statut</th>
+                    </tr>
+                </thead>
+                <tbody id="lignes-diamex-list">
+                    <tr><td colspan="5" class="text-center">Chargement...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="modal-action">
+            <button type="button" onclick="document.getElementById('modal-lignes-diamex').close()" class="btn">Fermer</button>
+        </div>
+    </div>
+</dialog>
+
+<!-- Modal Pointage Demande BP -->
+<dialog id="modal-pointage-demande-bp" class="modal">
+    <div class="modal-box w-11/12 max-w-7xl">
+        <h3 class="font-bold text-lg mb-4" id="modal-pointage-demande-title">Pointage demande BP</h3>
+
+        <div id="modal-pointage-demande-loading" class="flex justify-center items-center py-8">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+        </div>
+
+        <div id="modal-pointage-demande-content" class="hidden space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                <div class="card bg-base-200">
+                    <div class="card-body p-3">
+                        <div class="text-xs uppercase opacity-60">Demande</div>
+                        <div class="font-bold" id="pointage-demande-nom"></div>
+                        <div class="opacity-70" id="pointage-demande-code"></div>
+                    </div>
+                </div>
+                <div class="card bg-base-200">
+                    <div class="card-body p-3">
+                        <div class="text-xs uppercase opacity-60">Ouvrage</div>
+                        <div class="font-bold" id="pointage-demande-ouvrage"></div>
+                        <div class="opacity-70" id="pointage-demande-village"></div>
+                    </div>
+                </div>
+                <div class="card bg-base-200">
+                    <div class="card-body p-3">
+                        <div class="text-xs uppercase opacity-60">Paiement actuel</div>
+                        <div class="font-bold font-mono" id="pointage-demande-diamex"></div>
+                        <div class="opacity-70" id="pointage-demande-date"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div class="border rounded-xl p-3 bg-base-100">
+                    <h4 class="font-bold mb-3 text-primary">
+                        <i class="fas fa-book mr-2"></i>Lignes comptables 748201 compatibles
+                    </h4>
+                    <div class="overflow-x-auto max-h-[430px]">
+                        <table class="table table-xs table-zebra w-full">
+                            <thead class="sticky top-0 bg-base-200">
+                                <tr>
+                                    <th class="w-10 text-center">Sel.</th>
+                                    <th class="w-24">Date Rec.</th>
+                                    <th>Description</th>
+                                    <th class="w-28 text-right">Montant</th>
+                                    <th class="w-24 text-center">N° DiameX</th>
+                                    <th class="w-32">Base</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pointage-compta-body">
+                                <tr><td colspan="6" class="text-center py-4 opacity-60">Chargement...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="border rounded-xl p-3 bg-base-100">
+                    <h4 class="font-bold mb-3 text-secondary">
+                        <i class="fas fa-clipboard-check mr-2"></i>Résumé du pointage
+                    </h4>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between"><span>Ligne sélectionnée</span><span id="pointage-selected-count" class="font-bold">0</span></div>
+                        <div class="flex justify-between"><span>Montant compta</span><span id="pointage-selected-montant" class="font-mono font-bold">0 Ar</span></div>
+                        <div class="flex justify-between"><span>Montant BP</span><span id="pointage-bp-montant" class="font-mono font-bold">0 Ar</span></div>
+                        <div class="flex justify-between"><span>Écart</span><span id="pointage-ecart" class="font-mono font-bold">0 Ar</span></div>
+                    </div>
+                    <div class="alert alert-info mt-4">
+                        <i class="fas fa-info-circle"></i>
+                        <span>La ligne comptable doit être du compte 748201 et correspondre au même ouvrage que la demande BP.</span>
+                    </div>
+                    <div class="modal-action mt-6">
+                        <button type="button" id="btn-appliquer-pointage-bp" onclick="applyPointageDemandeBP()" class="btn btn-primary" disabled>
+                            <i class="fas fa-link mr-2"></i>Pointer
+                        </button>
+                        <button type="button" onclick="document.getElementById('modal-pointage-demande-bp').close()" class="btn">Fermer</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="modal-pointage-demande-error" class="hidden">
+            <div class="alert alert-error">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span id="modal-pointage-demande-error-text">Une erreur s'est produite</span>
+            </div>
+        </div>
+    </div>
+</dialog>
+
+<script>
+let currentPointageDemande = null;
+let selectedPointageLigneId = null;
+let selectedPointageMontant = 0;
+
+function getCsrfToken() {
+    const name = 'csrftoken=';
+    const decodedCookie = decodeURIComponent(document.cookie || '');
+    const cookies = decodedCookie.split(';');
+    for (let cookie of cookies) {
+        cookie = cookie.trim();
+        if (cookie.indexOf(name) === 0) {
+            return cookie.substring(name.length, cookie.length);
+        }
+    }
+    return '';
+}
+
+// Charger les demandes BP
+async function loadDemandes() {
+    const search = document.getElementById('search').value;
+    const ouvrage = document.getElementById('filter-ouvrage').value;
+    const statut = document.getElementById('filter-statut').value;
+
+    try {
+        const response = await fetch(`/facturation/demandes-bp/api/list/?search=${search}&ouvrage=${ouvrage}&statut=${statut}`);
+        const data = await response.json();
+
+        if (data.success) {
+            updateAutoNormalisationAlert(data.normalisations_appliquees || 0);
+            displayDemandes(data.demandes);
+            updateStats(data.demandes, data.stats);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+    }
+}
+
+// Afficher les demandes dans le tableau (regroupées par commune)
+function updateAutoNormalisationAlert(count) {
+    const alertBox = document.getElementById('auto-normalisation-alert');
+    const message = document.getElementById('auto-normalisation-message');
+
+    if (!count) {
+        alertBox.classList.add('hidden');
+        message.textContent = '';
+        return;
+    }
+
+    message.textContent = `${count} point${count > 1 ? 's' : ''} d'eau deja releve${count > 1 ? 's' : ''} sans date de branchement ont ete marques automatiquement comme branches a la date de leur premier releve.`;
+    alertBox.classList.remove('hidden');
+}
+
+function displayDemandes(demandes) {
+    const tbody = document.getElementById('demandes-list');
+    tbody.innerHTML = '';
+
+    if (demandes.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="13" class="text-center">Aucune demande trouvée</td></tr>';
+        return;
+    }
+
+    // Regrouper par commune
+    const parCommune = {};
+    demandes.forEach(d => {
+        const commune = d.commune || 'Sans commune';
+        if (!parCommune[commune]) {
+            parCommune[commune] = [];
+        }
+        parCommune[commune].push(d);
+    });
+
+    // Trier les communes par ordre alphabétique
+    const communesTries = Object.keys(parCommune).sort();
+
+    // Afficher chaque commune avec ses demandes
+    communesTries.forEach(commune => {
+        const demandesCommune = parCommune[commune];
+
+        // Ligne de séparation pour la commune
+        const headerRow = document.createElement('tr');
+        headerRow.className = 'bg-primary text-primary-content font-bold';
+        headerRow.innerHTML = `
+            <td colspan="13" class="text-lg py-3">
+                <i class="fas fa-map-marker-alt mr-2"></i>
+                ${commune} (${demandesCommune.length} demande${demandesCommune.length > 1 ? 's' : ''})
+            </td>
+        `;
+        tbody.appendChild(headerRow);
+
+        // Afficher les demandes de cette commune
+        demandesCommune.forEach(d => {
+        let etapeBadge = '';
+        if (d.etape === 'complete') {
+            etapeBadge = '<span class="badge badge-success badge-sm">Complète</span>';
+        } else if (d.etape === 'en_attente_branchement') {
+            etapeBadge = '<span class="badge badge-accent badge-sm">Attente branchement</span>';
+        } else if (d.etape === 'en_attente_paiement_devis') {
+            etapeBadge = '<span class="badge badge-primary badge-sm">Attente devis</span>';
+        } else {
+            etapeBadge = '<span class="badge badge-warning badge-sm">Attente paiement</span>';
+        }
+
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td class="font-mono text-xs">${d.code}</td>
+            <td class="font-semibold">${d.nom_abonne}</td>
+            <td class="text-xs">${d.village}</td>
+            <td class="text-xs">${d.ouvrage}</td>
+            <td class="font-bold">${d.montant_demande > 0 ? d.montant_demande.toLocaleString() + ' Ar' : '<span class="text-base-content/40">-</span>'}</td>
+            <td class="font-bold">${d.montant_devis > 0 ? d.montant_devis.toLocaleString() + ' Ar' : '<span class="text-base-content/40">-</span>'}</td>
+
+            <!-- Paiement demande -->
+            <td class="bg-warning/5 font-mono text-xs">${d.numero_diamex_demande || '<span class="text-base-content/40">-</span>'}</td>
+            <td class="bg-warning/5 text-xs">${d.date_paiement_demande || '<span class="text-base-content/40">-</span>'}</td>
+
+            <!-- Paiement devis -->
+            <td class="bg-primary/5 font-mono text-xs">${d.numero_diamex_devis || '<span class="text-base-content/40">-</span>'}</td>
+            <td class="bg-primary/5 text-xs">${d.date_paiement_devis || '<span class="text-base-content/40">-</span>'}</td>
+
+            <!-- Branchement -->
+            <td class="bg-success/5 text-xs">${d.date_branchement || '<span class="text-base-content/40">-</span>'}</td>
+
+            <td>${etapeBadge}</td>
+            <td>
+                <div class="flex flex-col gap-1.5 min-w-[130px]">
+                    <button onclick="openPointageDemandeModal('${d.id}')" class="btn btn-secondary btn-sm whitespace-nowrap" title="Voir le détail et pointer une ligne comptable">
+                        <i class="fas fa-link"></i>
+                        <span class="ml-1">Détails</span>
+                    </button>
+                    ${!d.numero_diamex_demande
+                        ? (d.export_demande_attente
+                            ? `<div class="flex flex-col gap-1">
+                                <button class="btn btn-warning btn-sm whitespace-nowrap btn-disabled" title="Export en attente vers DiameX">
+                                    <i class="fas fa-file-invoice-dollar"></i>
+                                    <span class="ml-1">Payer demande</span>
+                                </button>
+                                <div class="alert alert-warning py-1 px-2 text-xs">
+                                    <i class="fas fa-clock"></i>
+                                    <span>Export en attente</span>
+                                </div>
+                               </div>`
+                            : `<button onclick="ouvrirModalPaiementDemande(${JSON.stringify(d).replace(/"/g, '&quot;')})" class="btn btn-warning btn-sm whitespace-nowrap" title="Payer la demande">
+                                <i class="fas fa-file-invoice-dollar"></i>
+                                <span class="ml-1">Payer demande</span>
+                               </button>`)
+                        : `<div class="flex flex-col gap-1">
+                            <button class="btn btn-warning btn-sm whitespace-nowrap btn-disabled opacity-50" title="Demande déjà payée">
+                                <i class="fas fa-file-invoice-dollar"></i>
+                                <span class="ml-1">Payer demande</span>
+                            </button>
+                            <div class="alert alert-success py-1 px-2 text-xs">
+                                <i class="fas fa-check-circle"></i>
+                                <span>Demande payée</span>
+                            </div>
+                           </div>`
+                    }
+                    ${d.numero_diamex_demande && !d.numero_diamex_devis
+                        ? (d.export_devis_attente
+                            ? `<div class="flex flex-col gap-1">
+                                <button class="btn btn-primary btn-sm whitespace-nowrap btn-disabled" title="Export en attente vers DiameX">
+                                    <i class="fas fa-file-contract"></i>
+                                    <span class="ml-1">Payer devis</span>
+                                </button>
+                                <div class="alert alert-info py-1 px-2 text-xs">
+                                    <i class="fas fa-clock"></i>
+                                    <span>Export en attente</span>
+                                </div>
+                               </div>`
+                            : `<button onclick="ouvrirModalPaiementDevis(${JSON.stringify(d).replace(/"/g, '&quot;')})" class="btn btn-primary btn-sm whitespace-nowrap" title="Payer le devis">
+                                <i class="fas fa-file-contract"></i>
+                                <span class="ml-1">Payer devis</span>
+                               </button>`)
+                        : d.numero_diamex_devis
+                        ? `<div class="flex flex-col gap-1">
+                            <button class="btn btn-primary btn-sm whitespace-nowrap btn-disabled opacity-50" title="Devis déjà payé">
+                                <i class="fas fa-file-contract"></i>
+                                <span class="ml-1">Payer devis</span>
+                            </button>
+                            <div class="alert alert-success py-1 px-2 text-xs">
+                                <i class="fas fa-check-circle"></i>
+                                <span>Devis payé</span>
+                            </div>
+                           </div>`
+                        : ''
+                    }
+                    ${d.numero_diamex_devis && !d.date_branchement
+                        ? `<button onclick="ouvrirModalBranchement(${JSON.stringify(d).replace(/"/g, '&quot;')})" class="btn btn-success btn-sm whitespace-nowrap" title="Enregistrer le branchement">
+                            <i class="fas fa-check-circle"></i>
+                            <span class="ml-1">Brancher</span>
+                           </button>`
+                        : d.date_branchement
+                        ? `<div class="flex flex-col gap-1">
+                            <button class="btn btn-success btn-sm whitespace-nowrap btn-disabled opacity-50" title="Branchement déjà enregistré">
+                                <i class="fas fa-check-circle"></i>
+                                <span class="ml-1">Brancher</span>
+                            </button>
+                            <div class="alert alert-success py-1 px-2 text-xs">
+                                <i class="fas fa-check-circle"></i>
+                                <span>Branché</span>
+                            </div>
+                           </div>`
+                        : ''
+                    }
+                </div>
+            </td>
+        `;
+        tbody.appendChild(row);
+        });
+    });
+}
+
+// Mettre à jour les statistiques du workflow
+function updateStats(demandes, stats) {
+    if (stats) {
+        // Utiliser les stats du serveur
+        document.getElementById('stat-total').textContent = stats.total;
+        document.getElementById('stat-attente-demande').textContent = stats.en_attente_paiement_demande;
+        document.getElementById('stat-attente-devis').textContent = stats.en_attente_paiement_devis;
+        document.getElementById('stat-attente-branchement').textContent = stats.en_attente_branchement;
+        document.getElementById('stat-complete').textContent = stats.complete;
+    } else {
+        // Calculer localement si pas de stats serveur
+        const total = demandes.length;
+        const attenteDemande = demandes.filter(d => d.etape === 'en_attente_paiement_demande').length;
+        const attenteDevis = demandes.filter(d => d.etape === 'en_attente_paiement_devis').length;
+        const attenteBranchement = demandes.filter(d => d.etape === 'en_attente_branchement').length;
+        const complete = demandes.filter(d => d.etape === 'complete').length;
+
+        document.getElementById('stat-total').textContent = total;
+        document.getElementById('stat-attente-demande').textContent = attenteDemande;
+        document.getElementById('stat-attente-devis').textContent = attenteDevis;
+        document.getElementById('stat-attente-branchement').textContent = attenteBranchement;
+        document.getElementById('stat-complete').textContent = complete;
+    }
+}
+
+// Ouvrir modal création
+function openCreateModal() {
+    document.getElementById('modal-title').textContent = 'Nouvelle Demande BP';
+    document.getElementById('form-demande-bp').reset();
+    document.getElementById('demande-id').value = '';
+    document.getElementById('modal-demande-bp').showModal();
+}
+
+// Modifier une demande
+async function editDemande(id) {
+    // Récupérer les données de la demande
+    const response = await fetch(`/facturation/demandes-bp/api/list/`);
+    const data = await response.json();
+    const demande = data.demandes.find(d => d.id === id);
+
+    if (demande) {
+        document.getElementById('modal-title').textContent = 'Modifier Demande BP';
+        document.getElementById('demande-id').value = id;
+        document.getElementById('nom-abonne').value = demande.nom_abonne;
+        document.getElementById('telephone').value = demande.telephone;
+        document.getElementById('montant-demande').value = demande.montant_demande;
+        document.getElementById('modal-demande-bp').showModal();
+    }
+}
+
+// Soumettre le formulaire
+document.getElementById('form-demande-bp').onsubmit = async (e) => {
+    e.preventDefault();
+
+    const demandeId = document.getElementById('demande-id').value;
+    const url = demandeId
+        ? `/facturation/demandes-bp/api/${demandeId}/update/`
+        : '/facturation/demandes-bp/api/create/';
+
+    const data = {
+        nom_abonne: document.getElementById('nom-abonne').value,
+        telephone: document.getElementById('telephone').value,
+        ouvrage_id: document.getElementById('ouvrage-id').value,
+        montant_demande: document.getElementById('montant-demande').value,
+        latitude: document.getElementById('latitude').value || null,
+        longitude: document.getElementById('longitude').value || null,
+    };
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert(result.message);
+            document.getElementById('modal-demande-bp').close();
+            loadDemandes();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        alert('Erreur: ' + error.message);
+    }
+};
+
+// Variables globales pour l'export
+let currentExportData = null;
+
+// Prévisualiser l'export de la demande (paiement 1)
+async function previewExportDemande(id) {
+    try {
+        const response = await fetch(`/facturation/demandes-bp/api/list/`);
+        const data = await response.json();
+        const demande = data.demandes.find(d => d.id === id);
+
+        if (!demande) {
+            alert('Demande non trouvée');
+            return;
+        }
+
+        // Préparer les données d'export
+        const today = new Date().toLocaleDateString('fr-FR');
+        const numeroTicket = `BP-DEM-${demande.code || id.substring(0, 8)}`;
+        const designation = `Paiement demande BP - ${demande.nom_abonne}`;
+
+        // Stocker les données pour l'export
+        currentExportData = {
+            id: id,
+            type: 'demande_bp',
+            numero_ticket: numeroTicket,
+            designation: designation,
+            montant: demande.montant_demande
+        };
+
+        // Remplir le modal
+        document.getElementById('preview-code').textContent = demande.code;
+        document.getElementById('preview-nom').textContent = demande.nom_abonne;
+        document.getElementById('preview-village').textContent = demande.village;
+        document.getElementById('preview-ouvrage').textContent = demande.ouvrage;
+        document.getElementById('preview-numero-ticket').textContent = numeroTicket;
+        document.getElementById('preview-type-ticket').textContent = 'Paiement demande BP';
+        document.getElementById('preview-designation').textContent = designation;
+        document.getElementById('preview-prix-unitaire').textContent = demande.montant_demande.toLocaleString() + ' Ar';
+        document.getElementById('preview-montant').textContent = demande.montant_demande.toLocaleString() + ' Ar';
+        document.getElementById('preview-point-eau-id').textContent = id;
+        document.getElementById('preview-date-ticket').textContent = today;
+
+        // Ouvrir le modal
+        document.getElementById('modal-preview-export').showModal();
+    } catch (error) {
+        alert('Erreur: ' + error.message);
+    }
+}
+
+// Prévisualiser l'export du devis (paiement 2)
+async function previewExportDevis(id) {
+    try {
+        const response = await fetch(`/facturation/demandes-bp/api/list/`);
+        const data = await response.json();
+        const demande = data.demandes.find(d => d.id === id);
+
+        if (!demande) {
+            alert('Demande non trouvée');
+            return;
+        }
+
+        // Préparer les données d'export
+        const today = new Date().toLocaleDateString('fr-FR');
+        const numeroTicket = `BP-DEV-${demande.code || id.substring(0, 8)}`;
+        const designation = `Paiement devis BP - ${demande.nom_abonne}`;
+
+        // Stocker les données pour l'export
+        currentExportData = {
+            id: id,
+            type: 'devis_bp',
+            numero_ticket: numeroTicket,
+            designation: designation,
+            montant: demande.montant_demande
+        };
+
+        // Remplir le modal
+        document.getElementById('preview-code').textContent = demande.code;
+        document.getElementById('preview-nom').textContent = demande.nom_abonne;
+        document.getElementById('preview-village').textContent = demande.village;
+        document.getElementById('preview-ouvrage').textContent = demande.ouvrage;
+        document.getElementById('preview-numero-ticket').textContent = numeroTicket;
+        document.getElementById('preview-type-ticket').textContent = 'Paiement devis BP';
+        document.getElementById('preview-designation').textContent = designation;
+        document.getElementById('preview-prix-unitaire').textContent = demande.montant_demande.toLocaleString() + ' Ar';
+        document.getElementById('preview-montant').textContent = demande.montant_demande.toLocaleString() + ' Ar';
+        document.getElementById('preview-point-eau-id').textContent = id;
+        document.getElementById('preview-date-ticket').textContent = today;
+
+        // Ouvrir le modal
+        document.getElementById('modal-preview-export').showModal();
+    } catch (error) {
+        alert('Erreur: ' + error.message);
+    }
+}
+
+// Confirmer et exécuter l'export
+async function confirmExport() {
+    if (!currentExportData) {
+        alert('Aucune donnée à exporter');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/facturation/demandes-bp/api/${currentExportData.id}/exporter/`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                type_export: currentExportData.type
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert(result.message);
+            document.getElementById('modal-preview-export').close();
+            currentExportData = null;
+            loadDemandes();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        alert('Erreur: ' + error.message);
+    }
+}
+
+// Ouvrir modal lignes DiameX
+async function openLignesDiameXModal() {
+    document.getElementById('modal-lignes-diamex').showModal();
+
+    try {
+        const response = await fetch('/facturation/demandes-bp/api/lignes-diamex/');
+        const data = await response.json();
+
+        const tbody = document.getElementById('lignes-diamex-list');
+        tbody.innerHTML = '';
+
+        if (data.lignes.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center">Aucune ligne en attente</td></tr>';
+            return;
+        }
+
+        data.lignes.forEach(l => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${l.numero_ticket}</td>
+                <td>${l.nom_abonne}</td>
+                <td class="font-bold">${l.montant.toLocaleString()} Ar</td>
+                <td>${l.date_ticket}</td>
+                <td><span class="badge badge-warning">${l.statut}</span></td>
+            `;
+            tbody.appendChild(row);
+        });
+    } catch (error) {
+        console.error('Erreur:', error);
+    }
+}
+
+async function openPointageDemandeModal(pointEauId) {
+    currentPointageDemande = null;
+    selectedPointageLigneId = null;
+    selectedPointageMontant = 0;
+
+    const modal = document.getElementById('modal-pointage-demande-bp');
+    const loading = document.getElementById('modal-pointage-demande-loading');
+    const content = document.getElementById('modal-pointage-demande-content');
+    const error = document.getElementById('modal-pointage-demande-error');
+
+    loading.classList.remove('hidden');
+    content.classList.add('hidden');
+    error.classList.add('hidden');
+    modal.showModal();
+
+    try {
+        const response = await fetch(`/facturation/demandes-bp/api/${pointEauId}/details-pointage/`);
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Impossible de charger le détail');
+        }
+
+        currentPointageDemande = data;
+        document.getElementById('modal-pointage-demande-title').textContent = 'Pointage demande BP';
+        document.getElementById('pointage-demande-nom').textContent = data.demande.nom_abonne || '-';
+        document.getElementById('pointage-demande-code').textContent = data.demande.code || '-';
+        document.getElementById('pointage-demande-ouvrage').textContent = data.demande.ouvrage || '-';
+        document.getElementById('pointage-demande-village').textContent = data.demande.village || '-';
+        document.getElementById('pointage-demande-diamex').textContent = data.demande.numero_diamex_demande
+            ? `${data.demande.numero_diamex_demande} / ${data.demande.base_diamex_demande || ''}`
+            : 'Non pointée';
+        document.getElementById('pointage-demande-date').textContent = data.demande.date_paiement_demande || '-';
+
+        const tbody = document.getElementById('pointage-compta-body');
+        tbody.innerHTML = '';
+
+        if (!data.lignes || data.lignes.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4 opacity-60">Aucune ligne comptable 748201 correspondante</td></tr>';
+        } else {
+            data.lignes.forEach(ligne => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="text-center">
+                        <input type="radio" name="pointage-ligne" class="radio radio-sm" value="${ligne.id}" onchange="selectPointageLigneBP('${ligne.id}', ${Number(ligne.montant || 0)})">
+                    </td>
+                    <td class="font-mono text-xs">${ligne.date_rec || '-'}</td>
+                    <td class="text-xs max-w-md break-words">${ligne.description || '-'}</td>
+                    <td class="text-right font-mono font-bold">${Number(ligne.montant || 0).toLocaleString()} Ar</td>
+                    <td class="text-center font-mono text-xs">${ligne.id_access || '-'}</td>
+                    <td class="text-xs">${ligne.prog || '-'}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        updatePointageDemandeSummary();
+        loading.classList.add('hidden');
+        content.classList.remove('hidden');
+    } catch (error) {
+        loading.classList.add('hidden');
+        error.classList.remove('hidden');
+        document.getElementById('modal-pointage-demande-error-text').textContent = error.message || 'Erreur de chargement';
+    }
+}
+
+function selectPointageLigneBP(ligneId, montant) {
+    selectedPointageLigneId = String(ligneId);
+    selectedPointageMontant = Number(montant || 0);
+    updatePointageDemandeSummary();
+}
+
+function updatePointageDemandeSummary() {
+    const montantDemande = Number(currentPointageDemande?.demande?.montant_demande || 0);
+    document.getElementById('pointage-selected-count').textContent = selectedPointageLigneId ? '1' : '0';
+    document.getElementById('pointage-selected-montant').textContent = `${selectedPointageMontant.toLocaleString()} Ar`;
+    document.getElementById('pointage-bp-montant').textContent = `${montantDemande.toLocaleString()} Ar`;
+    document.getElementById('pointage-ecart').textContent = `${(selectedPointageMontant - montantDemande).toLocaleString()} Ar`;
+    document.getElementById('btn-appliquer-pointage-bp').disabled = !selectedPointageLigneId;
+}
+
+async function applyPointageDemandeBP() {
+    if (!currentPointageDemande || !selectedPointageLigneId) {
+        alert('Sélectionnez une ligne comptable.');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/facturation/demandes-bp/api/${currentPointageDemande.demande.id}/pointer/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrfToken()
+            },
+            body: JSON.stringify({
+                ligne_id: selectedPointageLigneId
+            })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Pointage impossible');
+        }
+
+        alert(data.message || 'Pointage appliqué');
+        document.getElementById('modal-pointage-demande-bp').close();
+        loadDemandes();
+    } catch (error) {
+        alert(error.message || 'Erreur de pointage');
+    }
+}
+
+// Capturer GPS
+function captureGPS() {
+    const statusEl = document.getElementById('gps-status');
+    statusEl.textContent = '📍 Récupération de la position...';
+    statusEl.className = 'text-xs text-info mt-1';
+
+    if ('geolocation' in navigator) {
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                document.getElementById('latitude').value = position.coords.latitude.toFixed(7);
+                document.getElementById('longitude').value = position.coords.longitude.toFixed(7);
+                statusEl.textContent = `✓ Position capturée (±${Math.round(position.coords.accuracy)}m)`;
+                statusEl.className = 'text-xs text-success mt-1';
+            },
+            (error) => {
+                statusEl.textContent = '✗ Erreur GPS';
+                statusEl.className = 'text-xs text-error mt-1';
+            },
+            {enableHighAccuracy: true, timeout: 10000, maximumAge: 0}
+        );
+    } else {
+        statusEl.textContent = '✗ GPS non supporté';
+        statusEl.className = 'text-xs text-error mt-1';
+    }
+}
+
+// Charger au démarrage
+loadDemandes();
+</script>
+
+<!-- Inclure les modals et le workflow -->
+{% include 'billing/demandes_bp_workflow_modals.html' %}
+{% endblock %}

@@ -1,0 +1,499 @@
+{% extends "base.html" %}
+
+{% block title %}Annuaire des personnes{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+        <div>
+            <h1 class="text-2xl font-bold">
+                <i class="fas fa-address-book text-primary mr-2"></i>Annuaire des personnes
+            </h1>
+            <p class="text-sm text-base-content/70 mt-1">
+                Parcourez tous les abonnés, employés, représentantes des usagers, autorités, tiers et fournisseurs.
+                Pour une recherche plus generale (plannings, ouvrages, villages...), utilisez plutot la
+                <a href="{% url 'core:search' %}" class="link link-primary">recherche globale</a>.
+            </p>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow mb-4">
+        <div class="card-body p-4">
+            <div class="flex flex-wrap items-end gap-3">
+                <div class="form-control flex-1 min-w-[200px]">
+                    <label class="label py-1"><span class="label-text text-xs">Rechercher</span></label>
+                    <input type="text" id="annuaire-search" class="input input-bordered input-sm w-full" placeholder="Nom, contact, email...">
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Type</span></label>
+                    <select id="annuaire-type" class="select select-bordered select-sm">
+                        <option value="">Tous types</option>
+                        {% for value, label in personne_types %}
+                        <option value="{{ value }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Statut</span></label>
+                    <select id="annuaire-statut" class="select select-bordered select-sm">
+                        <option value="actif" selected>Actifs seulement</option>
+                        <option value="inactif">Inactifs seulement</option>
+                        <option value="tous">Actifs et inactifs</option>
+                    </select>
+                </div>
+                <button type="button" class="btn btn-primary btn-sm" onclick="loadAnnuaire(1)">
+                    <i class="fas fa-filter mr-2"></i>Filtrer
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="annuaire-badges" class="flex flex-wrap gap-2 mb-4"></div>
+
+    <!-- Vue table : desktop/tablette uniquement (cf. sm:block / sm:hidden ci-dessous pour les
+         cartes). Les deux vues consomment le meme tableau JS "results" (un seul appel reseau
+         par page), seul le rendu differe selon la largeur d'ecran. -->
+    <div class="card bg-base-100 shadow-xl hidden sm:block">
+        <div class="card-body p-0">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Nom</th>
+                            <th>Détail</th>
+                            <th>Contact</th>
+                            <th>Statut</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="annuaire-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Vue cartes : mobile uniquement. -->
+    <div id="annuaire-cards" class="sm:hidden grid grid-cols-1 gap-3"></div>
+
+    <div id="annuaire-pagination" class="flex items-center justify-between mt-4"></div>
+</div>
+
+<!-- Modal d'edition rapide (nom + telephone). Le champ ORM reel derriere ces 2 champs
+     varie selon le type (cf. TYPE_CONFIG dans views_personnes.py), mais le formulaire
+     reste uniforme cote utilisateur. -->
+<dialog id="modal-edit-personne" class="modal">
+    <div class="modal-box max-w-sm">
+        <h3 class="font-bold text-lg mb-1" id="edit-personne-titre">Modifier</h3>
+        <p class="text-xs text-base-content/60 mb-3" id="edit-personne-type"></p>
+        <form id="form-edit-personne" class="space-y-3">
+            <input type="hidden" id="edit-personne-type-key">
+            <input type="hidden" id="edit-personne-id">
+            <div class="form-control">
+                <label class="label py-1"><span class="label-text text-xs">Nom *</span></label>
+                <input type="text" id="edit-personne-nom" class="input input-bordered input-sm w-full" required>
+            </div>
+            <div class="form-control">
+                <label class="label py-1"><span class="label-text text-xs">Téléphone</span></label>
+                <input type="text" id="edit-personne-telephone" class="input input-bordered input-sm w-full">
+            </div>
+            <div id="edit-personne-error" class="alert alert-error hidden text-xs py-1"></div>
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('modal-edit-personne').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary btn-sm">
+                    <i class="fas fa-check mr-1"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal "Voir plus" : details enrichis specifiques a chaque type (ouvrage/paiements pour
+     abonne, base/hierarchie/ouvrages geres pour employe, reunions pour representant/
+     autorite/tiers, lignes DiameX pour fournisseur). Contenu charge en AJAX a l'ouverture
+     (cf. personne_details_json), pas au chargement de la liste, pour rester leger. -->
+<dialog id="modal-details-personne" class="modal">
+    <div class="modal-box max-w-lg">
+        <div class="flex items-center justify-between mb-1">
+            <h3 class="font-bold text-lg" id="details-personne-titre">Détails</h3>
+            <button type="button" class="btn btn-ghost btn-xs btn-circle" onclick="document.getElementById('modal-details-personne').close()">
+                <i class="fas fa-xmark"></i>
+            </button>
+        </div>
+        <p class="text-xs text-base-content/60 mb-3" id="details-personne-sous-titre"></p>
+        <div id="details-personne-loading" class="flex justify-center py-6">
+            <span class="loading loading-spinner loading-md text-primary"></span>
+        </div>
+        <div id="details-personne-content" class="hidden space-y-4 text-sm"></div>
+        <div class="modal-action">
+            <button type="button" id="details-personne-btn-edit" class="btn btn-ghost btn-sm">
+                <i class="fas fa-pen mr-1"></i>Modifier nom / téléphone
+            </button>
+            <a href="#" id="details-personne-lien-complet" class="btn btn-outline btn-sm">
+                <i class="fas fa-arrow-up-right-from-square mr-1"></i>Voir la fiche complète
+            </a>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+const csrfToken = "{{ csrf_token }}";
+
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return csrfToken;
+}
+const TYPE_ICONS = {
+    abonne: 'fa-tint',
+    employe: 'fa-user',
+    representant: 'fa-user-tie',
+    autorite: 'fa-landmark',
+    tiers: 'fa-handshake',
+    fournisseur: 'fa-truck',
+};
+const TYPE_BADGE_CLASS = {
+    abonne: 'badge-info',
+    employe: 'badge-success',
+    representant: 'badge-success',
+    autorite: 'badge-primary',
+    tiers: 'badge-accent',
+    fournisseur: 'badge-warning',
+};
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str == null ? '' : String(str);
+    return div.innerHTML;
+}
+
+let searchTimeout = null;
+let currentPage = 1;
+document.getElementById('annuaire-search').addEventListener('input', () => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => loadAnnuaire(1), 400);
+});
+document.getElementById('annuaire-type').addEventListener('change', () => loadAnnuaire(1));
+document.getElementById('annuaire-statut').addEventListener('change', () => loadAnnuaire(1));
+
+async function loadAnnuaire(page) {
+    currentPage = page;
+    const params = new URLSearchParams({
+        search: document.getElementById('annuaire-search').value.trim(),
+        type: document.getElementById('annuaire-type').value,
+        statut: document.getElementById('annuaire-statut').value,
+        page: page,
+    });
+    const res = await fetch(`{% url 'core:personnes_annuaire_json' %}?${params.toString()}`);
+    const data = await res.json();
+    if (!data.success) return;
+
+    displayResults(data.results);
+    displayBadges(data.compte_par_type, data.total);
+    displayPagination(data);
+}
+
+function displayBadges(comptePartType, total) {
+    const box = document.getElementById('annuaire-badges');
+    const entries = Object.entries(comptePartType || {});
+    if (!entries.length) {
+        box.innerHTML = '';
+        return;
+    }
+    box.innerHTML = `<span class="badge badge-outline">Total: ${total}</span>` + entries.map(([type, count]) => {
+        const badgeClass = TYPE_BADGE_CLASS[type] || 'badge-ghost';
+        const icon = TYPE_ICONS[type] || 'fa-user';
+        return `<span class="badge ${badgeClass} gap-1"><i class="fas ${icon}"></i>${count}</span>`;
+    }).join('');
+}
+
+// Resultats de la page courante, indexes par "type_id" pour retrouver les valeurs actuelles
+// (nom/telephone/type_display...) a l'ouverture des modals sans refaire d'appel reseau.
+let currentResultsByKey = {};
+
+function displayResults(results) {
+    currentResultsByKey = {};
+    results.forEach(r => { currentResultsByKey[`${r.type}_${r.id}`] = r; });
+
+    renderTable(results);
+    renderCards(results);
+}
+
+function renderTable(results) {
+    const tbody = document.getElementById('annuaire-tbody');
+    tbody.innerHTML = results.map(r => {
+        const icon = TYPE_ICONS[r.type] || 'fa-user';
+        const badgeClass = TYPE_BADGE_CLASS[r.type] || 'badge-ghost';
+        const statutBadge = r.actif
+            ? '<span class="badge badge-success badge-sm">Actif</span>'
+            : '<span class="badge badge-ghost badge-sm">Inactif</span>';
+        return `<tr class="hover cursor-pointer" onclick="openDetailsPersonneModal('${r.type}', '${r.id}')">
+            <td><span class="badge ${badgeClass} badge-sm gap-1"><i class="fas ${icon}"></i>${escapeHtml(r.type_display)}</span></td>
+            <td class="font-medium">${escapeHtml(r.nom)}</td>
+            <td class="text-sm opacity-70">${escapeHtml(r.sous_titre)}</td>
+            <td class="text-sm">${escapeHtml(r.contact)}</td>
+            <td>${statutBadge}</td>
+            <td class="text-right whitespace-nowrap">
+                <button type="button" class="btn btn-ghost btn-xs" title="Modifier nom / téléphone" onclick="event.stopPropagation(); openEditPersonneModal('${r.type}', '${r.id}')"><i class="fas fa-pen"></i></button>
+                <a href="${r.detail_url}" class="btn btn-ghost btn-xs" onclick="event.stopPropagation()" title="Voir la fiche complète"><i class="fas fa-eye"></i></a>
+            </td>
+        </tr>`;
+    }).join('') || '<tr><td colspan="6" class="text-center py-8 opacity-50 italic">Aucune personne trouvée</td></tr>';
+}
+
+// Vue cartes mobile : memes actions que la table (voir details, modifier, fiche complete),
+// presentees en pile verticale plus lisible qu'un tableau sur petit ecran.
+function renderCards(results) {
+    const box = document.getElementById('annuaire-cards');
+    box.innerHTML = results.map(r => {
+        const icon = TYPE_ICONS[r.type] || 'fa-user';
+        const badgeClass = TYPE_BADGE_CLASS[r.type] || 'badge-ghost';
+        const statutBadge = r.actif
+            ? '<span class="badge badge-success badge-xs">Actif</span>'
+            : '<span class="badge badge-ghost badge-xs">Inactif</span>';
+        const contactLine = r.contact && r.contact !== '-'
+            ? `<div class="text-sm opacity-70"><i class="fas fa-phone text-xs mr-1"></i>${escapeHtml(r.contact)}</div>`
+            : '';
+        const sousTitreLine = r.sous_titre && r.sous_titre !== '-'
+            ? `<div class="text-sm opacity-70">${escapeHtml(r.sous_titre)}</div>`
+            : '';
+        return `<div class="card bg-base-100 shadow cursor-pointer active:scale-[0.99] transition" onclick="openDetailsPersonneModal('${r.type}', '${r.id}')">
+            <div class="card-body p-3">
+                <div class="flex items-start justify-between gap-2">
+                    <div class="min-w-0">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="badge ${badgeClass} badge-sm gap-1"><i class="fas ${icon}"></i>${escapeHtml(r.type_display)}</span>
+                            ${statutBadge}
+                        </div>
+                        <div class="font-medium mt-1 truncate">${escapeHtml(r.nom)}</div>
+                        ${sousTitreLine}
+                        ${contactLine}
+                    </div>
+                    <div class="flex flex-col gap-1 shrink-0">
+                        <button type="button" class="btn btn-ghost btn-xs" title="Modifier nom / téléphone" onclick="event.stopPropagation(); openEditPersonneModal('${r.type}', '${r.id}')"><i class="fas fa-pen"></i></button>
+                        <a href="${r.detail_url}" class="btn btn-ghost btn-xs" onclick="event.stopPropagation()" title="Voir la fiche complète"><i class="fas fa-eye"></i></a>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    }).join('') || '<div class="text-center py-8 opacity-50 italic">Aucune personne trouvée</div>';
+}
+
+function openEditPersonneModal(type, id) {
+    const r = currentResultsByKey[`${type}_${id}`];
+    if (!r) return;
+
+    document.getElementById('edit-personne-type-key').value = type;
+    document.getElementById('edit-personne-id').value = id;
+    document.getElementById('edit-personne-titre').textContent = 'Modifier ' + r.type_display.toLowerCase();
+    document.getElementById('edit-personne-type').textContent = r.sous_titre && r.sous_titre !== '-' ? r.sous_titre : '';
+    document.getElementById('edit-personne-nom').value = r.nom;
+    document.getElementById('edit-personne-telephone').value = r.contact === '-' ? '' : r.contact;
+    document.getElementById('edit-personne-error').classList.add('hidden');
+    document.getElementById('modal-edit-personne').showModal();
+}
+
+document.getElementById('form-edit-personne').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errorBox = document.getElementById('edit-personne-error');
+    errorBox.classList.add('hidden');
+
+    const type = document.getElementById('edit-personne-type-key').value;
+    const id = document.getElementById('edit-personne-id').value;
+    const nom = document.getElementById('edit-personne-nom').value.trim();
+    if (!nom) {
+        errorBox.textContent = 'Le nom est obligatoire.';
+        errorBox.classList.remove('hidden');
+        return;
+    }
+
+    try {
+        const url = `/recherche/personnes/${type}/${id}/modifier/`;
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify({
+                nom,
+                telephone: document.getElementById('edit-personne-telephone').value.trim(),
+            }),
+        });
+        const data = await response.json();
+        if (!data.success) {
+            errorBox.textContent = data.error || 'Erreur lors de la modification.';
+            errorBox.classList.remove('hidden');
+            return;
+        }
+        document.getElementById('modal-edit-personne').close();
+        loadAnnuaire(currentPage);
+    } catch (err) {
+        errorBox.textContent = 'Erreur réseau : ' + err.message;
+        errorBox.classList.remove('hidden');
+    }
+});
+
+// ---------------------------------------------------------------------
+// Modal "Voir plus" : details enrichis (relations propres a chaque type)
+// ---------------------------------------------------------------------
+
+function statutBadgeHtml(statut) {
+    const s = (statut || '').toLowerCase();
+    if (s === 'payé' || s === 'paye') return `<span class="badge badge-success badge-xs">${escapeHtml(statut)}</span>`;
+    if (s === 'impayé' || s === 'impaye') return `<span class="badge badge-error badge-xs">${escapeHtml(statut)}</span>`;
+    return `<span class="badge badge-ghost badge-xs">${escapeHtml(statut || '-')}</span>`;
+}
+
+function renderDetailsSection(titre, icon, rows) {
+    if (!rows || !rows.length) return '';
+    return `<div>
+        <h4 class="font-semibold text-xs uppercase opacity-60 mb-1"><i class="fas ${icon} mr-1"></i>${titre}</h4>
+        <ul class="space-y-1">${rows.join('')}</ul>
+    </div>`;
+}
+
+function renderDetailsContent(type, details) {
+    const blocks = [];
+
+    if (type === 'abonne') {
+        if (details.idxls) {
+            blocks.push(`<div><i class="fas fa-hashtag mr-1 opacity-60"></i>IDXLS du point d'eau : <span class="font-medium">${escapeHtml(details.idxls)}</span></div>`);
+        }
+        if (details.ouvrage) {
+            blocks.push(`<div><i class="fas fa-building mr-1 opacity-60"></i>Ouvrage : <span class="font-medium">${escapeHtml(details.ouvrage)}</span></div>`);
+        }
+        blocks.push(renderDetailsSection(
+            `Paiements forfaitaires (${details.paiements_forfaitaires_total})`,
+            'fa-money-bill-wave',
+            (details.paiements_forfaitaires_recents || []).map(p => `<li class="flex justify-between border-b border-base-200 py-1">
+                <span>${escapeHtml(p.date)} — ${escapeHtml(p.label)}</span>
+                <span class="flex items-center gap-2">${p.montant.toLocaleString('fr-FR')} Ar ${statutBadgeHtml(p.statut)}</span>
+            </li>`)
+        ));
+        blocks.push(renderDetailsSection(
+            `Relevés volumétriques (${details.releves_total})`,
+            'fa-tint',
+            (details.releves_recents || []).map(r => `<li class="flex justify-between border-b border-base-200 py-1">
+                <span>${escapeHtml(r.date)} — ${r.consommation === null || r.consommation === undefined ? '-' : Number(r.consommation).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' m³'}</span>
+                <span class="flex items-center gap-2">${r.montant.toLocaleString('fr-FR')} Ar ${statutBadgeHtml(r.statut)}</span>
+            </li>`)
+        ));
+    } else if (type === 'employe') {
+        if (details.base) {
+            blocks.push(`<div><i class="fas fa-map-marker-alt mr-1 opacity-60"></i>Base : <span class="font-medium">${escapeHtml(details.base)}</span>${details.organisation ? ` (${escapeHtml(details.organisation)})` : ''}</div>`);
+        }
+        blocks.push(renderDetailsSection(
+            'Ouvrages dont il/elle est responsable',
+            'fa-building',
+            (details.ouvrages_responsable || []).map(o => `<li class="border-b border-base-200 py-1">
+                ${escapeHtml(o.nom)} ${o.principal ? '<span class="badge badge-primary badge-xs ml-1">Principal</span>' : ''}
+            </li>`)
+        ));
+        blocks.push(renderDetailsSection(
+            'Ouvrages dont il/elle assure la gestion',
+            'fa-clipboard-list',
+            (details.ouvrages_gestion || []).map(o => `<li class="border-b border-base-200 py-1">${escapeHtml(o.nom)}</li>`)
+        ));
+        blocks.push(renderDetailsSection(
+            'Supérieur(s) hiérarchique(s)',
+            'fa-user-tie',
+            (details.superieurs || []).map(s => `<li class="border-b border-base-200 py-1">${escapeHtml(s.nom)}</li>`)
+        ));
+        blocks.push(renderDetailsSection(
+            `Subordonné(s) (${details.subordonnes_total})`,
+            'fa-users',
+            (details.subordonnes || []).map(s => `<li class="border-b border-base-200 py-1">${escapeHtml(s.nom)}</li>`)
+        ));
+    } else if (type === 'representant' || type === 'autorite' || type === 'tiers') {
+        blocks.push(renderDetailsSection(
+            `Réunions (${details.reunions_total})`,
+            'fa-users',
+            (details.reunions_recentes || []).map(r => `<li class="flex justify-between items-center border-b border-base-200 py-1">
+                <a href="/usagers/reunions/?reunion=${r.reunion_id}" target="_blank" class="link link-hover truncate">${escapeHtml(r.date)} — ${escapeHtml(r.objet)}</a>
+                <span class="badge badge-${r.present ? 'success' : 'ghost'} badge-xs shrink-0">${r.present ? 'Présent' : 'Absent'}</span>
+            </li>`)
+        ));
+        if (type === 'representant') {
+            blocks.push(renderDetailsSection(
+                `Avis recueillis (${details.avis_total})`,
+                'fa-comment-dots',
+                (details.avis_recents || []).map(a => `<li class="flex justify-between border-b border-base-200 py-1">
+                    <span>${escapeHtml(a.date)}</span><span>${a.score}/4</span>
+                </li>`)
+            ));
+        }
+    } else if (type === 'fournisseur') {
+        blocks.push(`<div class="flex gap-4">
+            <span>Payé : <span class="font-medium text-error">${Number(details.lignes_diamex_total_out || 0).toLocaleString('fr-FR')} Ar</span></span>
+            <span>Reçu : <span class="font-medium text-success">${Number(details.lignes_diamex_total_in || 0).toLocaleString('fr-FR')} Ar</span></span>
+        </div>`);
+        blocks.push(renderDetailsSection(
+            `Lignes comptables DiameX (${details.lignes_diamex_total})`,
+            'fa-file-invoice-dollar',
+            (details.lignes_diamex_recentes || []).map(l => `<li class="flex justify-between border-b border-base-200 py-1">
+                <span class="truncate mr-2">${escapeHtml(l.date)} — ${escapeHtml(l.description)}</span>
+                <span class="shrink-0">${Number(l.montant).toLocaleString('fr-FR')} Ar</span>
+            </li>`)
+        ));
+    }
+
+    const html = blocks.filter(Boolean).join('');
+    return html || '<p class="opacity-60 italic">Aucune donnée liée pour le moment.</p>';
+}
+
+async function openDetailsPersonneModal(type, id) {
+    const r = currentResultsByKey[`${type}_${id}`];
+    if (!r) return;
+
+    document.getElementById('details-personne-titre').textContent = r.nom;
+    document.getElementById('details-personne-sous-titre').textContent =
+        r.type_display + (r.sous_titre && r.sous_titre !== '-' ? ' — ' + r.sous_titre : '');
+    document.getElementById('details-personne-lien-complet').href = r.detail_url;
+    document.getElementById('details-personne-btn-edit').onclick = () => {
+        document.getElementById('modal-details-personne').close();
+        openEditPersonneModal(type, id);
+    };
+    document.getElementById('details-personne-loading').classList.remove('hidden');
+    document.getElementById('details-personne-content').classList.add('hidden');
+    document.getElementById('modal-details-personne').showModal();
+
+    try {
+        const response = await fetch(`/recherche/personnes/${type}/${id}/details/`);
+        const data = await response.json();
+        const content = document.getElementById('details-personne-content');
+        content.innerHTML = data.success
+            ? renderDetailsContent(type, data.details)
+            : `<p class="text-error">${escapeHtml(data.error || 'Erreur lors du chargement.')}</p>`;
+        document.getElementById('details-personne-loading').classList.add('hidden');
+        content.classList.remove('hidden');
+    } catch (err) {
+        document.getElementById('details-personne-loading').classList.add('hidden');
+        const content = document.getElementById('details-personne-content');
+        content.innerHTML = `<p class="text-error">Erreur réseau : ${escapeHtml(err.message)}</p>`;
+        content.classList.remove('hidden');
+    }
+}
+
+function displayPagination(data) {
+    const box = document.getElementById('annuaire-pagination');
+    if (data.num_pages <= 1) {
+        box.innerHTML = '';
+        return;
+    }
+    box.innerHTML = `
+        <span class="text-sm opacity-70">Page ${data.page} / ${data.num_pages} (${data.total} résultat${data.total > 1 ? 's' : ''})</span>
+        <div class="join">
+            <button type="button" class="join-item btn btn-sm" ${data.has_previous ? '' : 'disabled'} onclick="loadAnnuaire(${data.page - 1})">
+                <i class="fas fa-chevron-left"></i>
+            </button>
+            <button type="button" class="join-item btn btn-sm" ${data.has_next ? '' : 'disabled'} onclick="loadAnnuaire(${data.page + 1})">
+                <i class="fas fa-chevron-right"></i>
+            </button>
+        </div>
+    `;
+}
+
+loadAnnuaire(1);
+</script>
+{% endblock %}

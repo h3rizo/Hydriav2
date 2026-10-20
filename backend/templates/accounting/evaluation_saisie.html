@@ -1,0 +1,874 @@
+{% extends "accounting/base.html" %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Évaluation Saisie Comptable{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">
+                <i class="fas fa-chart-line text-primary mr-2"></i>
+                Évaluation de la Saisie Comptable
+            </h1>
+            <p class="text-base-content/70 mt-2">
+                Analyse de la qualité et de la productivité de la saisie dans DiameX
+            </p>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-200 shadow mb-6">
+        <div class="card-body">
+            <h2 class="card-title text-lg mb-4">
+                <i class="fas fa-filter mr-2"></i>Filtres
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Date début saisie</span>
+                    </label>
+                    <input type="date" id="filter_date_debut" class="input input-bordered input-sm">
+                </div>
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Date fin saisie</span>
+                    </label>
+                    <input type="date" id="filter_date_fin" class="input input-bordered input-sm">
+                </div>
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Fichier source</span>
+                    </label>
+                    <select id="filter_fichier" class="select select-bordered select-sm">
+                        <option value="all">Tous les fichiers</option>
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label opacity-0">Action</label>
+                    <button onclick="appliquerFiltres()" class="btn btn-primary btn-sm">
+                        <i class="fas fa-sync mr-2"></i>Actualiser
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistiques globales -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <!-- Total lignes saisies -->
+        <div class="stat bg-base-100 rounded-lg shadow">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-database text-4xl"></i>
+            </div>
+            <div class="stat-title">Lignes saisies</div>
+            <div class="stat-value text-primary text-2xl" id="stat_total">0</div>
+            <div class="stat-desc" id="stat_jours">0 jours de saisie</div>
+        </div>
+
+        <!-- Conformité -->
+        <div class="stat bg-base-100 rounded-lg shadow">
+            <div class="stat-figure">
+                <div class="radial-progress text-success" style="--value:0; --size:4rem; --thickness:4px;" role="progressbar" id="radial_conformite">
+                    <span id="radial_conformite_text">0%</span>
+                </div>
+            </div>
+            <div class="stat-title">Saisie conforme</div>
+            <div class="stat-value text-success text-2xl" id="stat_conformes">0</div>
+            <div class="stat-desc" id="stat_conformes_desc">Dans le même mois</div>
+        </div>
+
+        <!-- Hors mois -->
+        <div class="stat bg-base-100 rounded-lg shadow">
+            <div class="stat-figure">
+                <div class="radial-progress text-warning" style="--value:0; --size:4rem; --thickness:4px;" role="progressbar" id="radial_hors_mois">
+                    <span id="radial_hors_mois_text">0%</span>
+                </div>
+            </div>
+            <div class="stat-title">Saisie hors mois</div>
+            <div class="stat-value text-warning text-2xl" id="stat_hors_mois">0</div>
+            <div class="stat-desc" id="stat_hors_mois_desc">Décalage temporel</div>
+        </div>
+
+        <!-- Productivité -->
+        <div class="stat bg-base-100 rounded-lg shadow">
+            <div class="stat-figure text-info">
+                <i class="fas fa-tachometer-alt text-4xl"></i>
+            </div>
+            <div class="stat-title">Moyenne par jour</div>
+            <div class="stat-value text-info text-2xl" id="stat_moyenne">0</div>
+            <div class="stat-desc" id="stat_jour_max">Pic: 0 lignes</div>
+        </div>
+    </div>
+
+    <!-- Graphiques -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <!-- Graphique saisie par jour -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-calendar-day text-primary mr-2"></i>
+                    Lignes saisies par jour
+                </h2>
+                <div class="h-80">
+                    <canvas id="chartParJour"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Graphique par mois comptable -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-calendar-alt text-success mr-2"></i>
+                    Conformité par mois comptable (avec détail du décalage)
+                </h2>
+                <div class="h-80">
+                    <canvas id="chartParMois"></canvas>
+                </div>
+                <div class="alert alert-info mt-4">
+                    <i class="fas fa-info-circle"></i>
+                    <span class="text-sm">
+                        Les barres sont empilées avec dégradé de gravité :
+                        <span class="font-semibold text-success">Vert</span> = conforme (même mois),
+                        <span class="font-semibold" style="color: rgb(251, 146, 60);">Orange</span> = 1 mois de décalage,
+                        <span class="font-semibold" style="color: rgb(249, 115, 22);">Orange foncé</span> = 2 mois,
+                        <span class="font-semibold" style="color: rgb(234, 88, 12);">Orange-rouge</span> = 3 mois,
+                        <span class="font-semibold text-error">Rouge</span> = 4+ mois
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Graphiques délais -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <!-- Délais de saisie (jours) -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-clock text-warning mr-2"></i>
+                    Délai entre date comptable et date de saisie (jours)
+                </h2>
+                <div class="h-64 mt-4">
+                    <canvas id="chartDelais"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Décalage par mois -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-calendar-times text-error mr-2"></i>
+                    Décalage en mois (date_rec vs date_input)
+                </h2>
+                <div class="h-64 mt-4">
+                    <canvas id="chartDecalageMois"></canvas>
+                </div>
+                <div class="alert alert-warning mt-4">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span class="text-sm">
+                        <strong>Attention:</strong> Analyse basée sur la différence entre date_rec (reçu) et date_input (saisie).
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Vue Calendrier par fichier source -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="card-title">
+                    <i class="fas fa-calendar-alt text-primary mr-2"></i>
+                    Calendrier de saisie par fichier source
+                </h2>
+                <div class="flex gap-2">
+                    <select id="calendrier_mois" class="select select-bordered select-sm">
+                        <option value="1">Janvier</option>
+                        <option value="2">Février</option>
+                        <option value="3">Mars</option>
+                        <option value="4">Avril</option>
+                        <option value="5">Mai</option>
+                        <option value="6">Juin</option>
+                        <option value="7">Juillet</option>
+                        <option value="8">Août</option>
+                        <option value="9">Septembre</option>
+                        <option value="10">Octobre</option>
+                        <option value="11">Novembre</option>
+                        <option value="12">Décembre</option>
+                    </select>
+                    <select id="calendrier_annee" class="select select-bordered select-sm">
+                        <option value="2024">2024</option>
+                        <option value="2025">2025</option>
+                    </select>
+                    <button onclick="chargerCalendrier()" class="btn btn-primary btn-sm">
+                        <i class="fas fa-sync mr-1"></i>Charger
+                    </button>
+                </div>
+            </div>
+
+            <!-- 3 Cartes pour les fichiers sources -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4" id="fichiers_cards">
+                <div class="text-center text-base-content/50">
+                    <i class="fas fa-spinner fa-spin mr-2"></i>Chargement...
+                </div>
+            </div>
+
+            <!-- Calendriers -->
+            <div id="calendriers_container" class="space-y-6">
+                <!-- Les calendriers seront générés ici dynamiquement -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Top 10 jours productifs -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-trophy text-warning mr-2"></i>
+                Top 10 des jours les plus productifs
+            </h2>
+            <div class="overflow-x-auto mt-4">
+                <table class="table table-zebra table-sm">
+                    <thead>
+                        <tr>
+                            <th>Rang</th>
+                            <th>Date</th>
+                            <th class="text-right">Total lignes</th>
+                            <th class="text-right">Conformes</th>
+                            <th class="text-right">Hors mois</th>
+                            <th class="text-right">Taux conformité</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableTopJours">
+                        <tr>
+                            <td colspan="6" class="text-center text-base-content/50">
+                                <i class="fas fa-spinner fa-spin mr-2"></i>Chargement...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+let chartParJour, chartParMois, chartDelais, chartDecalageMois;
+
+// Charger les fichiers sources au chargement de la page
+async function chargerFichiersSources() {
+    try {
+        const response = await fetch('/comptabilite/api/evaluation-saisie/fichiers-sources/');
+        const data = await response.json();
+
+        if (data.success) {
+            const select = document.getElementById('filter_fichier');
+            data.fichiers.forEach(fichier => {
+                const option = document.createElement('option');
+                option.value = fichier.fichier_source;
+                option.textContent = `${fichier.fichier_source} (${fichier.count.toLocaleString('fr-FR')} lignes)`;
+                select.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error('Erreur chargement fichiers:', error);
+    }
+}
+
+// Charger les statistiques globales
+async function chargerStatistiquesGlobales() {
+    const params = new URLSearchParams({
+        date_debut: document.getElementById('filter_date_debut').value || '',
+        date_fin: document.getElementById('filter_date_fin').value || '',
+        fichier_source: document.getElementById('filter_fichier').value || 'all'
+    });
+
+    try {
+        const response = await fetch(`/comptabilite/api/evaluation-saisie/stats-globales/?${params}`);
+        const data = await response.json();
+
+        if (data.success) {
+            const stats = data.stats;
+
+            // Mise à jour des stats
+            document.getElementById('stat_total').textContent = stats.total_lignes.toLocaleString('fr-FR');
+            document.getElementById('stat_jours').textContent = `${stats.jours_saisie} jour(s) de saisie`;
+
+            document.getElementById('stat_conformes').textContent = stats.lignes_conformes.toLocaleString('fr-FR');
+            document.getElementById('stat_conformes_desc').textContent = `${stats.taux_conformite}% du total`;
+
+            document.getElementById('stat_hors_mois').textContent = stats.lignes_hors_mois.toLocaleString('fr-FR');
+            document.getElementById('stat_hors_mois_desc').textContent = `${stats.taux_hors_mois}% du total`;
+
+            document.getElementById('stat_moyenne').textContent = stats.moyenne_jour.toLocaleString('fr-FR');
+            document.getElementById('stat_jour_max').textContent = `Pic: ${stats.jour_max.count.toLocaleString('fr-FR')} lignes`;
+
+            // Mise à jour des radial progress
+            const radialConformite = document.getElementById('radial_conformite');
+            radialConformite.style.setProperty('--value', stats.taux_conformite);
+            document.getElementById('radial_conformite_text').textContent = `${stats.taux_conformite}%`;
+
+            const radialHorsMois = document.getElementById('radial_hors_mois');
+            radialHorsMois.style.setProperty('--value', stats.taux_hors_mois);
+            document.getElementById('radial_hors_mois_text').textContent = `${stats.taux_hors_mois}%`;
+        }
+    } catch (error) {
+        console.error('Erreur chargement stats:', error);
+    }
+}
+
+// Charger graphique par jour
+async function chargerGraphiqueParJour() {
+    const params = new URLSearchParams({
+        date_debut: document.getElementById('filter_date_debut').value || '',
+        date_fin: document.getElementById('filter_date_fin').value || '',
+        fichier_source: document.getElementById('filter_fichier').value || 'all'
+    });
+
+    try {
+        const response = await fetch(`/comptabilite/api/evaluation-saisie/par-jour/?${params}`);
+        const data = await response.json();
+
+        if (data.success) {
+            const ctx = document.getElementById('chartParJour').getContext('2d');
+
+            if (chartParJour) {
+                chartParJour.destroy();
+            }
+
+            chartParJour = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.labels,
+                    datasets: [
+                        {
+                            label: 'Total',
+                            data: data.datasets.total,
+                            borderColor: 'rgb(59, 130, 246)',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Conformes',
+                            data: data.datasets.conformes,
+                            borderColor: 'rgb(34, 197, 94)',
+                            backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Hors mois',
+                            data: data.datasets.hors_mois,
+                            borderColor: 'rgb(251, 146, 60)',
+                            backgroundColor: 'rgba(251, 146, 60, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.3
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    return value.toLocaleString('fr-FR');
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Erreur chargement graphique par jour:', error);
+    }
+}
+
+// Charger graphique par mois comptable
+async function chargerGraphiqueParMois() {
+    const params = new URLSearchParams({
+        date_debut: document.getElementById('filter_date_debut').value || '',
+        date_fin: document.getElementById('filter_date_fin').value || '',
+        fichier_source: document.getElementById('filter_fichier').value || 'all'
+    });
+
+    try {
+        const response = await fetch(`/comptabilite/api/evaluation-saisie/par-mois-compta/?${params}`);
+        const data = await response.json();
+
+        if (data.success) {
+            const ctx = document.getElementById('chartParMois').getContext('2d');
+
+            if (chartParMois) {
+                chartParMois.destroy();
+            }
+
+            chartParMois = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: data.labels,
+                    datasets: [
+                        {
+                            label: 'Conformes (même mois)',
+                            data: data.datasets.conformes,
+                            backgroundColor: 'rgba(34, 197, 94, 0.8)',
+                            borderColor: 'rgb(34, 197, 94)',
+                            borderWidth: 1
+                        },
+                        {
+                            label: 'Décalage 1 mois',
+                            data: data.datasets.decalage_1,
+                            backgroundColor: 'rgba(251, 146, 60, 0.8)', // Orange
+                            borderColor: 'rgb(251, 146, 60)',
+                            borderWidth: 1
+                        },
+                        {
+                            label: 'Décalage 2 mois',
+                            data: data.datasets.decalage_2,
+                            backgroundColor: 'rgba(249, 115, 22, 0.8)', // Orange foncé
+                            borderColor: 'rgb(249, 115, 22)',
+                            borderWidth: 1
+                        },
+                        {
+                            label: 'Décalage 3 mois',
+                            data: data.datasets.decalage_3,
+                            backgroundColor: 'rgba(234, 88, 12, 0.8)', // Orange-rouge
+                            borderColor: 'rgb(234, 88, 12)',
+                            borderWidth: 1
+                        },
+                        {
+                            label: 'Décalage 4+ mois',
+                            data: data.datasets.decalage_4_plus,
+                            backgroundColor: 'rgba(220, 38, 38, 0.8)', // Rouge foncé
+                            borderColor: 'rgb(220, 38, 38)',
+                            borderWidth: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            callbacks: {
+                                footer: function(tooltipItems) {
+                                    let total = 0;
+                                    tooltipItems.forEach(function(tooltipItem) {
+                                        total += tooltipItem.parsed.y;
+                                    });
+                                    return 'Total: ' + total.toLocaleString('fr-FR');
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            stacked: true,
+                        },
+                        y: {
+                            stacked: true,
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    return value.toLocaleString('fr-FR');
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Erreur chargement graphique par mois:', error);
+    }
+}
+
+// Charger graphique délais
+async function chargerGraphiqueDelais() {
+    const params = new URLSearchParams({
+        date_debut: document.getElementById('filter_date_debut').value || '',
+        date_fin: document.getElementById('filter_date_fin').value || '',
+        fichier_source: document.getElementById('filter_fichier').value || 'all'
+    });
+
+    try {
+        const response = await fetch(`/comptabilite/api/evaluation-saisie/delai/?${params}`);
+        const data = await response.json();
+
+        if (data.success) {
+            const delais = data.delais;
+            const ctx = document.getElementById('chartDelais').getContext('2d');
+
+            if (chartDelais) {
+                chartDelais.destroy();
+            }
+
+            chartDelais = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Même jour', 'J+1 à J+7', 'J+8 à J+30', 'J+31 et plus', 'Saisie en retard'],
+                    datasets: [{
+                        label: 'Nombre de lignes',
+                        data: [
+                            delais.meme_jour,
+                            delais.j_plus_1_7,
+                            delais.j_plus_8_30,
+                            delais.j_plus_31,
+                            delais.retard
+                        ],
+                        backgroundColor: [
+                            'rgba(34, 197, 94, 0.8)',
+                            'rgba(59, 130, 246, 0.8)',
+                            'rgba(251, 146, 60, 0.8)',
+                            'rgba(239, 68, 68, 0.8)',
+                            'rgba(168, 85, 247, 0.8)'
+                        ],
+                        borderColor: [
+                            'rgb(34, 197, 94)',
+                            'rgb(59, 130, 246)',
+                            'rgb(251, 146, 60)',
+                            'rgb(239, 68, 68)',
+                            'rgb(168, 85, 247)'
+                        ],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    return value.toLocaleString('fr-FR');
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Erreur chargement graphique délais:', error);
+    }
+}
+
+// Charger top jours productifs
+async function chargerTopJours() {
+    const params = new URLSearchParams({
+        date_debut: document.getElementById('filter_date_debut').value || '',
+        date_fin: document.getElementById('filter_date_fin').value || '',
+        fichier_source: document.getElementById('filter_fichier').value || 'all'
+    });
+
+    try {
+        const response = await fetch(`/comptabilite/api/evaluation-saisie/top-jours/?${params}`);
+        const data = await response.json();
+
+        if (data.success) {
+            const tbody = document.getElementById('tableTopJours');
+            tbody.innerHTML = '';
+
+            if (data.top_jours.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/50">Aucune donnée</td></tr>';
+                return;
+            }
+
+            data.top_jours.forEach((jour, index) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>
+                        <div class="badge badge-${index < 3 ? 'warning' : 'ghost'} badge-sm">
+                            ${index === 0 ? '<i class="fas fa-trophy mr-1"></i>' : ''}#${index + 1}
+                        </div>
+                    </td>
+                    <td><span class="font-mono">${jour.date}</span></td>
+                    <td class="text-right font-bold">${jour.total.toLocaleString('fr-FR')}</td>
+                    <td class="text-right text-success">${jour.conformes.toLocaleString('fr-FR')}</td>
+                    <td class="text-right text-warning">${jour.hors_mois.toLocaleString('fr-FR')}</td>
+                    <td class="text-right">
+                        <div class="badge badge-${jour.taux_conformite >= 80 ? 'success' : jour.taux_conformite >= 50 ? 'warning' : 'error'} badge-sm">
+                            ${jour.taux_conformite}%
+                        </div>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+    } catch (error) {
+        console.error('Erreur chargement top jours:', error);
+    }
+}
+
+// Charger graphique décalage par mois
+async function chargerGraphiqueDecalageMois() {
+    const params = new URLSearchParams({
+        date_debut: document.getElementById('filter_date_debut').value || '',
+        date_fin: document.getElementById('filter_date_fin').value || '',
+        fichier_source: document.getElementById('filter_fichier').value || 'all'
+    });
+
+    try {
+        const response = await fetch(`/comptabilite/api/evaluation-saisie/decalage-mois/?${params}`);
+        const data = await response.json();
+
+        if (data.success) {
+            const decalages = data.decalages;
+            const ctx = document.getElementById('chartDecalageMois').getContext('2d');
+
+            if (chartDecalageMois) {
+                chartDecalageMois.destroy();
+            }
+
+            chartDecalageMois = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Même mois', '1 mois', '2 mois', '3 mois', '4+ mois'],
+                    datasets: [{
+                        label: 'Nombre de lignes',
+                        data: [
+                            decalages.decalage_0,
+                            decalages.decalage_1,
+                            decalages.decalage_2,
+                            decalages.decalage_3,
+                            decalages.decalage_4_plus
+                        ],
+                        backgroundColor: [
+                            'rgba(34, 197, 94, 0.8)',
+                            'rgba(59, 130, 246, 0.8)',
+                            'rgba(251, 146, 60, 0.8)',
+                            'rgba(239, 68, 68, 0.8)',
+                            'rgba(168, 85, 247, 0.8)'
+                        ],
+                        borderColor: [
+                            'rgb(34, 197, 94)',
+                            'rgb(59, 130, 246)',
+                            'rgb(251, 146, 60)',
+                            'rgb(239, 68, 68)',
+                            'rgb(168, 85, 247)'
+                        ],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    return value.toLocaleString('fr-FR');
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Erreur chargement décalage mois:', error);
+    }
+}
+
+// Charger calendrier de saisie par fichier source
+async function chargerCalendrier() {
+    const mois = document.getElementById('calendrier_mois').value;
+    const annee = document.getElementById('calendrier_annee').value;
+
+    try {
+        const response = await fetch(`/comptabilite/api/evaluation-saisie/calendrier/?mois=${mois}&annee=${annee}`);
+        const data = await response.json();
+
+        if (data.success) {
+            // Afficher les 3 cartes pour les fichiers sources
+            const fichiersCards = document.getElementById('fichiers_cards');
+            fichiersCards.innerHTML = '';
+
+            Object.values(data.fichiers).forEach(fichier => {
+                const card = document.createElement('div');
+                card.className = 'stat bg-base-200 rounded-lg shadow';
+                card.innerHTML = `
+                    <div class="stat-title text-xs">${fichier.nom}</div>
+                    <div class="stat-value text-lg text-primary">${fichier.total_mois.toLocaleString('fr-FR')}</div>
+                    <div class="stat-desc">lignes saisies ce mois</div>
+                `;
+                fichiersCards.appendChild(card);
+            });
+
+            // Générer les calendriers pour chaque fichier source
+            const calendriersContainer = document.getElementById('calendriers_container');
+            calendriersContainer.innerHTML = '';
+
+            Object.values(data.fichiers).forEach(fichier => {
+                const calDiv = document.createElement('div');
+                calDiv.className = 'card bg-base-100 shadow';
+
+                // Header du calendrier
+                let calHTML = `
+                    <div class="card-body">
+                        <h3 class="card-title text-sm">
+                            <i class="fas fa-file-alt mr-2 text-info"></i>
+                            ${fichier.nom}
+                        </h3>
+                        <div class="overflow-x-auto">
+                            <table class="table table-xs table-bordered">
+                                <thead>
+                                    <tr class="bg-base-200">
+                                        <th class="text-center">Lun</th>
+                                        <th class="text-center">Mar</th>
+                                        <th class="text-center">Mer</th>
+                                        <th class="text-center">Jeu</th>
+                                        <th class="text-center">Ven</th>
+                                        <th class="text-center">Sam</th>
+                                        <th class="text-center">Dim</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                `;
+
+                // Générer les jours du mois
+                const premierJour = new Date(annee, mois - 1, 1);
+                const dernierJour = new Date(annee, mois, 0);
+                const nbJours = data.nb_jours;
+
+                // Jour de la semaine du 1er (0=Dimanche, 1=Lundi, ...)
+                let premierJourSemaine = premierJour.getDay();
+                // Convertir (0=Dimanche -> 6, 1=Lundi -> 0, etc.)
+                premierJourSemaine = premierJourSemaine === 0 ? 6 : premierJourSemaine - 1;
+
+                let jourCourant = 1;
+                let finMois = false;
+
+                // Générer les semaines
+                for (let semaine = 0; semaine < 6 && !finMois; semaine++) {
+                    calHTML += '<tr>';
+
+                    for (let jour = 0; jour < 7; jour++) {
+                        if ((semaine === 0 && jour < premierJourSemaine) || jourCourant > nbJours) {
+                            // Cellule vide
+                            calHTML += '<td class="bg-base-300"></td>';
+                            if (jourCourant > nbJours) finMois = true;
+                        } else {
+                            // Cellule avec jour
+                            const dateStr = `${annee}-${String(mois).padStart(2, '0')}-${String(jourCourant).padStart(2, '0')}`;
+                            const count = fichier.jours[dateStr] || 0;
+
+                            // Couleur selon le nombre de saisies
+                            let bgClass = 'bg-base-100';
+                            let textClass = 'text-base-content/50';
+                            let badge = '';
+
+                            if (count > 0) {
+                                if (count >= 100) {
+                                    bgClass = 'bg-success text-success-content';
+                                    textClass = 'font-bold';
+                                } else if (count >= 50) {
+                                    bgClass = 'bg-warning text-warning-content';
+                                    textClass = 'font-semibold';
+                                } else {
+                                    bgClass = 'bg-info text-info-content';
+                                    textClass = '';
+                                }
+                                badge = `<div class="badge badge-xs badge-ghost mt-1">${count}</div>`;
+                            }
+
+                            calHTML += `
+                                <td class="${bgClass} text-center p-1" title="${count} ligne(s) saisie(s)">
+                                    <div class="${textClass}">${jourCourant}</div>
+                                    ${badge}
+                                </td>
+                            `;
+                            jourCourant++;
+                        }
+                    }
+
+                    calHTML += '</tr>';
+                }
+
+                calHTML += `
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="text-xs text-center mt-2 text-base-content/70">
+                            <span class="badge badge-success badge-xs mr-1"></span> 100+ lignes
+                            <span class="badge badge-warning badge-xs mx-1"></span> 50-99 lignes
+                            <span class="badge badge-info badge-xs mx-1"></span> 1-49 lignes
+                            <span class="badge badge-ghost badge-xs ml-1"></span> Aucune saisie
+                        </div>
+                    </div>
+                `;
+
+                calDiv.innerHTML = calHTML;
+                calendriersContainer.appendChild(calDiv);
+            });
+        }
+    } catch (error) {
+        console.error('Erreur chargement calendrier:', error);
+        document.getElementById('fichiers_cards').innerHTML = `
+            <div class="alert alert-error">
+                <i class="fas fa-exclamation-triangle mr-2"></i>
+                Erreur lors du chargement du calendrier
+            </div>
+        `;
+    }
+}
+
+// Appliquer les filtres
+function appliquerFiltres() {
+    chargerStatistiquesGlobales();
+    chargerGraphiqueParJour();
+    chargerGraphiqueParMois();
+    chargerGraphiqueDelais();
+    chargerGraphiqueDecalageMois();
+    chargerTopJours();
+}
+
+// Initialisation
+document.addEventListener('DOMContentLoaded', function() {
+    chargerFichiersSources();
+    appliquerFiltres();
+
+    // Initialiser le calendrier avec le mois et l'année actuels
+    const now = new Date();
+    document.getElementById('calendrier_mois').value = now.getMonth() + 1;
+    document.getElementById('calendrier_annee').value = now.getFullYear();
+    chargerCalendrier();
+});
+</script>
+{% endblock %}

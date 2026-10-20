@@ -1,0 +1,580 @@
+{% extends "base.html" %}
+
+{% block title %}{{ conversation }}{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-4">
+        <div class="flex items-center gap-3">
+            <a href="{% url 'messaging:conversations_list' %}" class="btn btn-ghost btn-circle">
+                <i class="fas fa-arrow-left"></i>
+            </a>
+            <div class="avatar placeholder">
+                <div class="bg-neutral text-neutral-content rounded-full w-12">
+                    <span class="text-xl">
+                        {% if conversation.type == 'group' %}
+                        <i class="fas fa-users"></i>
+                        {% else %}
+                        <i class="fas fa-user"></i>
+                        {% endif %}
+                    </span>
+                </div>
+            </div>
+            <div>
+                <h1 class="text-2xl font-bold">{{ conversation }}</h1>
+                {% if conversation.type == 'group' %}
+                <p class="text-sm opacity-70">{{ conversation.nombre_participants }} participants</p>
+                {% endif %}
+            </div>
+        </div>
+        <div class="flex gap-2">
+            <button onclick="startCall('audio')" class="btn btn-circle btn-success">
+                <i class="fas fa-phone"></i>
+            </button>
+            <button onclick="startCall('video')" class="btn btn-circle btn-info">
+                <i class="fas fa-video"></i>
+            </button>
+            <button id="notificationBtn" class="btn btn-circle btn-ghost" title="Activer les notifications">
+                <i class="fas fa-bell"></i>
+            </button>
+            <div class="dropdown dropdown-end">
+                <label tabindex="0" class="btn btn-circle btn-ghost">
+                    <i class="fas fa-ellipsis-v"></i>
+                </label>
+                <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52">
+                    {% if conversation.type == 'group' and participant.est_admin %}
+                    <li><a><i class="fas fa-user-plus mr-2"></i>Ajouter des membres</a></li>
+                    <li><a><i class="fas fa-cog mr-2"></i>Paramètres du groupe</a></li>
+                    {% endif %}
+                    <li><a><i class="fas fa-archive mr-2"></i>Archiver</a></li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Messages Container -->
+    <div class="card bg-base-100 shadow-lg overflow-hidden" style="height: calc(100vh - 300px);">
+        <div class="card-body p-0 flex flex-col min-h-0">
+            <!-- Messages Area -->
+            <div id="messagesArea" class="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
+                {% for message in conversation_messages %}
+                <div
+                    class="{% if message.expediteur.id == employe_actuel.id %}chat chat-end{% else %}chat chat-start{% endif %}"
+                    data-message-id="{{ message.id }}"
+                    data-message-date="{{ message.date_envoi|date:'c' }}"
+                >
+                    <div class="chat-image avatar placeholder">
+                        <div class="w-10 rounded-full bg-neutral text-neutral-content">
+                            <span>{% if message.expediteur %}{{ message.expediteur.surnom.0|default:message.expediteur.nom_employe.0 }}{% else %}?{% endif %}</span>
+                        </div>
+                    </div>
+                    <div class="chat-header">
+                        {% if message.expediteur %}{{ message.expediteur.surnom|default:message.expediteur.nom_employe }}{% else %}N/A{% endif %}
+                        <time class="text-xs opacity-50">{{ message.date_envoi|date:"H:i" }}</time>
+                    </div>
+                    <div class="chat-bubble {% if message.type == 'system' %}chat-bubble-info{% elif message.expediteur.id == employe_actuel.id %}chat-bubble-primary{% endif %}">
+                        {% if message.message_repondu %}
+                        <div class="opacity-60 text-xs border-l-2 pl-2 mb-1">
+                            <i class="fas fa-reply mr-1"></i>{{ message.message_repondu.contenu|truncatewords:10|escape }}
+                        </div>
+                        {% endif %}
+                        {{ message.contenu|escape|linebreaks }}
+                        {% if message.fichier %}
+                        <div class="mt-2">
+                            <a href="{{ message.fichier.url }}" target="_blank" class="btn btn-xs btn-ghost">
+                                <i class="fas fa-file mr-1"></i>Voir le fichier
+                            </a>
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="chat-footer opacity-50">
+                        {% if message.expediteur.id == employe_actuel.id %}
+                        <button onclick="deleteMessage({{ message.id }})" class="btn btn-xs btn-ghost">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <!-- Input Area -->
+            <div class="border-t p-4">
+                <form id="messageForm" class="flex gap-2 items-end" enctype="multipart/form-data">
+                    <label class="btn btn-circle btn-ghost">
+                        <i class="fas fa-paperclip"></i>
+                        <input type="file" id="fichierInput" class="hidden" />
+                    </label>
+                    <div class="flex-1">
+                        <textarea
+                            id="messageInput"
+                            name="contenu"
+                            class="textarea textarea-bordered w-full"
+                            placeholder="Écrivez votre message..."
+                            rows="1"
+                            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();document.getElementById('messageForm').dispatchEvent(new Event('submit'));}"
+                        ></textarea>
+                        <div id="attachmentIndicator" class="hidden mt-2 text-xs text-info flex items-center gap-2">
+                            <i class="fas fa-paperclip"></i>
+                            <span id="attachmentName" class="truncate"></span>
+                            <button type="button" id="attachmentClear" class="btn btn-xs btn-ghost">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-circle">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Participants Sidebar (for groups) -->
+    {% if conversation.type == 'group' %}
+    <div class="mt-4">
+        <details class="collapse collapse-arrow bg-base-100 shadow">
+            <summary class="collapse-title text-lg font-medium">
+                <i class="fas fa-users mr-2"></i>Participants ({{ conversation.nombre_participants }})
+            </summary>
+            <div class="collapse-content">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-2 mt-2">
+                    {% for p in participants %}
+                    <div class="flex items-center gap-2 p-2 rounded hover:bg-base-200">
+                        <div class="avatar placeholder">
+                            <div class="w-10 rounded-full bg-neutral text-neutral-content">
+                                <span>{% if p.employe %}{{ p.employe.surnom.0|default:p.employe.nom_employe.0 }}{% else %}?{% endif %}</span>
+                            </div>
+                        </div>
+                        <div class="flex-1">
+                            <div class="font-medium">{% if p.employe %}{{ p.employe.surnom|default:p.employe.nom_employe }}{% else %}N/A{% endif %}</div>
+                            <div class="text-xs opacity-70">{{ p.employe.poste_actuel }}</div>
+                        </div>
+                        {% if p.est_admin %}
+                        <span class="badge badge-accent badge-xs">Admin</span>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </details>
+    </div>
+    {% endif %}
+
+    <!-- Recent Calls -->
+    {% if appels %}
+    <div class="mt-4">
+        <details class="collapse collapse-arrow bg-base-100 shadow">
+            <summary class="collapse-title text-lg font-medium">
+                <i class="fas fa-phone mr-2"></i>Appels récents
+            </summary>
+            <div class="collapse-content">
+                <div class="space-y-2 mt-2">
+                    {% for appel in appels %}
+                    <div class="flex items-center justify-between p-2 rounded hover:bg-base-200">
+                        <div class="flex items-center gap-3">
+                            <i class="fas fa-{{ appel.type }} text-{{ appel.statut|yesno:'success,error,warning' }}"></i>
+                            <div>
+                                <div class="font-medium">{% if appel.initiateur %}{{ appel.initiateur.surnom|default:appel.initiateur.nom_employe }}{% else %}N/A{% endif %}</div>
+                                <div class="text-xs opacity-70">{{ appel.date_debut|date:"d/m/Y H:i" }}</div>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <div class="badge badge-sm badge-{{ appel.statut|yesno:'success,error,warning' }}">{{ appel.get_statut_display }}</div>
+                            {% if appel.duree_secondes %}
+                            <div class="text-xs opacity-70">{{ appel.duree_formatee }}</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </details>
+    </div>
+    {% endif %}
+</div>
+<div id="toastContainer" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+<!-- Modal pour appel en cours -->
+<dialog id="callModal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4" id="callTitle">Appel en cours...</h3>
+        <div class="flex flex-col items-center gap-4">
+            <div class="avatar placeholder">
+                <div class="bg-neutral text-neutral-content rounded-full w-24">
+                    <span class="text-4xl"><i class="fas fa-user"></i></span>
+                </div>
+            </div>
+            <div id="callDuration" class="text-2xl font-mono">00:00</div>
+            <div class="flex gap-4 mt-4">
+                <button onclick="endCall()" class="btn btn-error btn-circle btn-lg">
+                    <i class="fas fa-phone-slash text-2xl"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</dialog>
+
+<script>
+const conversationId = '{{ conversation.id }}';
+const employeActuelId = '{{ employe_actuel.id }}';
+const employeActuelIdNum = Number.parseInt(employeActuelId, 10);
+let currentCallId = null;
+let callTimer = null;
+let callSeconds = 0;
+const seenMessageIds = new Set();
+
+// Fonction utilitaire pour échapper le HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Get CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Auto-scroll to bottom
+function scrollToBottom() {
+    const area = document.getElementById('messagesArea');
+    area.scrollTop = area.scrollHeight;
+}
+
+function showToast(message, type = 'info') {
+    const toastContainer = document.getElementById('toastContainer');
+    if (!toastContainer) return;
+    const toast = document.createElement('div');
+    const typeClass = type === 'success' ? 'alert-success' : type === 'warning' ? 'alert-warning' : 'alert-info';
+    toast.className = `alert ${typeClass} shadow`;
+    toast.innerHTML = `<span>${escapeHtml(message)}</span>`;
+    toastContainer.appendChild(toast);
+    setTimeout(() => {
+        toast.remove();
+    }, 4000);
+}
+
+async function enableNotifications() {
+    if (!('Notification' in window)) {
+        showToast('Notifications non supportées par ce navigateur', 'warning');
+        return;
+    }
+    const permission = await Notification.requestPermission();
+    if (permission === 'granted') {
+        showToast('Notifications activées', 'success');
+        localStorage.setItem('conversation_notifications', 'enabled');
+    } else {
+        showToast('Notifications refusées', 'warning');
+    }
+}
+
+function notifyNewMessage(msg) {
+    const body = msg.contenu || (msg.file_name ? `Fichier: ${msg.file_name}` : 'Nouveau message');
+    if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+        new Notification(`Nouveau message de ${msg.expediteur}`, { body });
+    }
+    showToast(`Nouveau message de ${msg.expediteur}`, 'info');
+}
+
+scrollToBottom();
+
+// Initialiser la "watermark" de polling avec le dernier message deja rendu,
+// pour eviter de recharger tout l'historique.
+const existingMessageNodes = Array.from(document.querySelectorAll('[data-message-id]'));
+existingMessageNodes.forEach(node => {
+    const id = Number(node.getAttribute('data-message-id'));
+    if (Number.isFinite(id)) seenMessageIds.add(id);
+});
+const lastRenderedMessage = existingMessageNodes[existingMessageNodes.length - 1];
+let lastMessageDate = (
+    (lastRenderedMessage && lastRenderedMessage.getAttribute('data-message-date')) ||
+    new Date().toISOString()
+);
+
+// Send message
+const fileInput = document.getElementById('fichierInput');
+const attachmentIndicator = document.getElementById('attachmentIndicator');
+const attachmentName = document.getElementById('attachmentName');
+const attachmentClear = document.getElementById('attachmentClear');
+
+fileInput.addEventListener('change', () => {
+    const file = fileInput.files[0];
+    if (file) {
+        attachmentName.textContent = file.name;
+        attachmentIndicator.classList.remove('hidden');
+    } else {
+        attachmentIndicator.classList.add('hidden');
+        attachmentName.textContent = '';
+    }
+});
+
+attachmentClear.addEventListener('click', () => {
+    fileInput.value = '';
+    attachmentIndicator.classList.add('hidden');
+    attachmentName.textContent = '';
+});
+
+document.getElementById('messageForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const input = document.getElementById('messageInput');
+    const contenuRaw = input.value.trim();
+    const fichier = fileInput.files[0];
+    const contenu = contenuRaw || (fichier ? fichier.name : '');
+
+    if (!contenu && !fichier) return;
+
+    const formData = new FormData();
+    formData.append('contenu', contenu);
+    formData.append('type', fichier ? 'file' : 'text');
+    if (fichier) {
+        formData.append('fichier', fichier);
+    }
+
+    try {
+        const response = await fetch(`/conversations/conversation/${conversationId}/send/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: formData
+        });
+
+        let data = null;
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+            data = await response.json();
+        } else {
+            const text = await response.text();
+            throw new Error(text || 'Réponse serveur invalide');
+        }
+
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Erreur lors de l\'envoi du message');
+        }
+
+        // Ajouter immédiatement le message à l'interface
+        const area = document.getElementById('messagesArea');
+        const div = document.createElement('div');
+        div.className = 'chat chat-end';
+
+        const employeInitiale = '{% if employe_actuel.surnom %}{{ employe_actuel.surnom.0|escapejs }}{% else %}{{ employe_actuel.nom_employe.0|escapejs }}{% endif %}';
+        const employeNom = '{% if employe_actuel.surnom %}{{ employe_actuel.surnom|escapejs }}{% else %}{{ employe_actuel.nom_employe|escapejs }}{% endif %}';
+        const currentTime = new Date().toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'});
+
+        const fileHtml = data.file_url
+            ? `<div class="mt-2">
+                    <a href="${data.file_url}" target="_blank" class="btn btn-xs btn-ghost">
+                        <i class="fas fa-file mr-1"></i>${escapeHtml(data.file_name || 'Fichier joint')}
+                    </a>
+               </div>`
+            : '';
+        div.innerHTML = `
+            <div class="chat-image avatar placeholder">
+                <div class="w-10 rounded-full bg-neutral text-neutral-content">
+                    <span>${employeInitiale}</span>
+                </div>
+            </div>
+            <div class="chat-header">
+                ${employeNom}
+                <time class="text-xs opacity-50">${currentTime}</time>
+            </div>
+            <div class="chat-bubble chat-bubble-primary">
+                ${escapeHtml(contenu)}
+                ${fileHtml}
+            </div>
+        `;
+        area.appendChild(div);
+        if (Number.isFinite(Number(data.id))) {
+            seenMessageIds.add(Number(data.id));
+        }
+
+        input.value = '';
+        input.style.height = 'auto';
+        fileInput.value = '';
+        attachmentIndicator.classList.add('hidden');
+        attachmentName.textContent = '';
+        scrollToBottom();
+
+        if (data.repair_completed) {
+            showToast('Reparation marquee terminee. Cette discussion sera archivee.', 'success');
+            setTimeout(() => {
+                window.location.href = '{% url "messaging:conversations_list" %}';
+            }, 1200);
+        }
+    } catch (error) {
+        console.error('Erreur envoi message:', error);
+        alert(`Erreur lors de l'envoi du message : ${error.message}`);
+    }
+};
+
+// Delete message
+window.deleteMessage = async function deleteMessage(messageId) {
+    if (!confirm('Supprimer ce message ?')) return;
+
+    const response = await fetch(`/conversations/message/${messageId}/delete/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': getCookie('csrftoken')
+        }
+    });
+
+    if (response.ok) {
+        location.reload();
+    } else {
+        alert('Erreur lors de la suppression');
+    }
+}
+
+// Start call
+window.startCall = async function startCall(type) {
+    const response = await fetch(`/conversations/conversation/${conversationId}/call/start/`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({type})
+    });
+
+    if (response.ok) {
+        const data = await response.json();
+        currentCallId = data.id;
+        document.getElementById('callTitle').textContent = type === 'audio' ? 'Appel audio en cours' : 'Appel vidéo en cours';
+        document.getElementById('callModal').showModal();
+
+        // Start timer
+        callSeconds = 0;
+        callTimer = setInterval(() => {
+            callSeconds++;
+            const mins = Math.floor(callSeconds / 60);
+            const secs = callSeconds % 60;
+            document.getElementById('callDuration').textContent =
+                `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }, 1000);
+    } else {
+        alert('Erreur lors du démarrage de l\'appel');
+    }
+}
+
+// End call
+window.endCall = async function endCall() {
+    if (!currentCallId) return;
+
+    clearInterval(callTimer);
+
+    const response = await fetch(`/conversations/call/${currentCallId}/end/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': getCookie('csrftoken')
+        }
+    });
+
+    if (response.ok) {
+        document.getElementById('callModal').close();
+        currentCallId = null;
+        location.reload();
+    } else {
+        alert('Erreur lors de la fin de l\'appel');
+    }
+}
+
+// Poll for new messages every 3 seconds
+
+async function loadNewMessages() {
+    try {
+        const sinceParam = encodeURIComponent(lastMessageDate || '');
+        const response = await fetch(`/conversations/conversation/${conversationId}/messages/?since=${sinceParam}`);
+        const contentType = response.headers.get('content-type') || '';
+        if (!response.ok || !contentType.includes('application/json')) {
+            return;
+        }
+        const data = await response.json();
+
+        if (data.messages.length > 0) {
+            const area = document.getElementById('messagesArea');
+            data.messages.forEach(msg => {
+                const msgId = Number(msg.id);
+                if (Number.isFinite(msgId) && seenMessageIds.has(msgId)) {
+                    return;
+                }
+                if (Number.isFinite(msgId)) {
+                    seenMessageIds.add(msgId);
+                }
+
+                if (Number(msg.expediteur_id) !== employeActuelIdNum) {
+                    const div = document.createElement('div');
+                    div.className = 'chat chat-start';
+                    if (Number.isFinite(msgId)) {
+                        div.setAttribute('data-message-id', String(msgId));
+                    }
+                    if (msg.date_envoi) {
+                        div.setAttribute('data-message-date', String(msg.date_envoi));
+                    }
+                    const fileHtml = msg.file_url
+                        ? `<div class="mt-2">
+                                <a href="${msg.file_url}" target="_blank" class="btn btn-xs btn-ghost">
+                                    <i class="fas fa-file mr-1"></i>${escapeHtml(msg.file_name || 'Fichier joint')}
+                                </a>
+                           </div>`
+                        : '';
+                    div.innerHTML = `
+                        <div class="chat-image avatar placeholder">
+                            <div class="w-10 rounded-full bg-neutral text-neutral-content">
+                                <span>${escapeHtml(msg.expediteur[0] || '?')}</span>
+                            </div>
+                        </div>
+                        <div class="chat-header">
+                            ${escapeHtml(msg.expediteur)}
+                            <time class="text-xs opacity-50">${new Date(msg.date_envoi).toLocaleTimeString()}</time>
+                        </div>
+                        <div class="chat-bubble">
+                            ${escapeHtml(msg.contenu || '')}
+                            ${fileHtml}
+                        </div>
+                    `;
+                    area.appendChild(div);
+                    if (msg.type !== 'system') {
+                        notifyNewMessage(msg);
+                    }
+                }
+            });
+            const newestDate = data.messages
+                .map(m => m.date_envoi)
+                .filter(Boolean)
+                .sort()
+                .pop();
+            if (newestDate) {
+                lastMessageDate = newestDate;
+            }
+            scrollToBottom();
+        }
+    } catch (error) {
+        console.warn('Erreur lors du chargement des messages:', error);
+    }
+}
+
+setInterval(loadNewMessages, 3000);
+
+// Auto-resize textarea
+document.getElementById('messageInput').addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = (this.scrollHeight) + 'px';
+});
+
+document.getElementById('notificationBtn').addEventListener('click', enableNotifications);
+</script>
+{% endblock %}
+

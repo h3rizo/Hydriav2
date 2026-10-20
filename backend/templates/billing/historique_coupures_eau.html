@@ -1,0 +1,497 @@
+{% extends "base.html" %}
+
+{% block title %}Historique des coupures d'eau{% endblock %}
+
+{% block content %}
+<div class="max-w-[1800px] mx-auto p-4 lg:p-6 space-y-5">
+    <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        <div>
+            <h1 class="text-2xl lg:text-3xl font-bold">
+                <i class="fas fa-clock-rotate-left mr-2 text-primary"></i>Historique des coupures d'eau
+            </h1>
+            <p class="text-sm text-base-content/65 mt-1">
+                Coupures, remises en eau et état actuel des points d'eau — regroupé par Région / District / Commune / Ouvrage / Point d'eau
+                {% if selected_organisation %}— {{ selected_organisation.nom_organisation }}{% endif %}
+            </p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <a href="{% url 'billing:export_historique_coupures_eau_excel' %}?{{ query_without_page }}" class="btn btn-success btn-sm lg:btn-md">
+                <i class="fas fa-file-excel"></i> Export Excel
+            </a>
+            <a href="{% url 'billing:gestion_coupures_eau' %}" class="btn btn-primary btn-sm lg:btn-md">
+                <i class="fas fa-faucet-drip"></i> Gérer les coupures
+            </a>
+        </div>
+    </div>
+
+    <form id="history-filters" method="get" class="card bg-base-100 border border-base-300 shadow-sm">
+        <input id="view-filter" type="hidden" name="vue" value="{{ filters.vue }}">
+        <input id="incoherences-filter" type="hidden" name="incoherences" value="{% if filters.incoherences %}1{% endif %}">
+        <div class="card-body p-4 lg:p-5">
+            <div class="flex items-center justify-between gap-2 mb-1">
+                <h2 class="font-bold"><i class="fas fa-filter mr-2 text-primary"></i>Filtres</h2>
+                <a href="{% url 'billing:historique_coupures_eau' %}" class="btn btn-ghost btn-xs">Réinitialiser</a>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+                <label class="form-control xl:col-span-2">
+                    <span class="label-text mb-1">Organisation</span>
+                    <select name="organisation" class="select select-bordered select-sm w-full">
+                        {% if request.user.is_superuser %}<option value="all" {% if filters.organisation == 'all' %}selected{% endif %}>Toutes les organisations</option>{% endif %}
+                        {% for organisation in organisations %}
+                        <option value="{{ organisation.id }}" {% if filters.organisation == organisation.id|stringformat:'s' %}selected{% endif %}>{{ organisation.nom_organisation }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="form-control xl:col-span-2">
+                    <span class="label-text mb-1">Employé responsable d'ouvrage</span>
+                    <select id="employee-filter" name="employe" class="select select-bordered select-sm w-full">
+                        <option value="">Tous les responsables</option>
+                        {% for employee in employee_options %}
+                        <option value="{{ employee.id }}" {% if filters.employe == employee.id|stringformat:'s' %}selected{% endif %}>{{ employee.label }} — {{ employee.ouvrage_count }} ouvrage{{ employee.ouvrage_count|pluralize }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="form-control xl:col-span-2">
+                    <span class="label-text mb-1">Recherche</span>
+                    <input name="search" value="{{ filters.search }}" class="input input-bordered input-sm w-full" placeholder="Point d'eau, abonné ou ouvrage">
+                </label>
+
+                <label class="form-control">
+                    <span class="label-text mb-1">Catégorie de point d'eau</span>
+                    <select name="categorie_point_eau" class="select select-bordered select-sm w-full">
+                        <option value="">Points privés et publics</option>
+                        <option value="bp" {% if filters.categorie_point_eau == 'bp' %}selected{% endif %}>Points d'eau privés uniquement</option>
+                        <option value="autres" {% if filters.categorie_point_eau == 'autres' %}selected{% endif %}>Points d'eau publics uniquement</option>
+                    </select>
+                </label>
+
+                <label class="form-control">
+                    <span class="label-text mb-1">Région</span>
+                    <select id="region-filter" name="region" class="select select-bordered select-sm w-full">
+                        <option value="">Toutes</option>
+                        {% for region in regions %}<option value="{{ region.id }}" data-employees="{{ region.filter_employe_ids }}" {% if filters.region == region.id|stringformat:'s' %}selected{% endif %}>{{ region.nom_region }}</option>{% endfor %}
+                    </select>
+                </label>
+                <label class="form-control">
+                    <span class="label-text mb-1">District</span>
+                    <select id="district-filter" name="district" class="select select-bordered select-sm w-full">
+                        <option value="">Tous</option>
+                        {% for district in districts %}<option value="{{ district.id }}" data-region="{{ district.region_id }}" data-employees="{{ district.filter_employe_ids }}" {% if filters.district == district.id|stringformat:'s' %}selected{% endif %}>{{ district.nom_district }}</option>{% endfor %}
+                    </select>
+                </label>
+                <label class="form-control">
+                    <span class="label-text mb-1">Commune</span>
+                    <select id="commune-filter" name="commune" class="select select-bordered select-sm w-full">
+                        <option value="">Toutes</option>
+                        {% for commune in communes %}<option value="{{ commune.id }}" data-region="{{ commune.district.region_id }}" data-district="{{ commune.district_id }}" data-employees="{{ commune.filter_employe_ids }}" {% if filters.commune == commune.id|stringformat:'s' %}selected{% endif %}>{{ commune.nom_commune }}</option>{% endfor %}
+                    </select>
+                </label>
+                <label class="form-control">
+                    <span class="label-text mb-1">Ouvrage</span>
+                    <select id="ouvrage-filter" name="ouvrage" class="select select-bordered select-sm w-full">
+                        <option value="">Tous</option>
+                        {% for ouvrage in ouvrages %}<option value="{{ ouvrage.id }}" data-region="{{ ouvrage.filter_region_id|default:'' }}" data-district="{{ ouvrage.filter_district_id|default:'' }}" data-commune="{{ ouvrage.filter_commune_id|default:'' }}" data-employees="{{ ouvrage.filter_employe_ids }}" {% if filters.ouvrage == ouvrage.id|stringformat:'s' %}selected{% endif %}>{{ ouvrage.nom_ouvrage }}</option>{% endfor %}
+                    </select>
+                </label>
+                <label class="form-control">
+                    <span class="label-text mb-1">Du</span>
+                    <input type="date" name="date_debut" value="{{ filters.date_debut }}" class="input input-bordered input-sm w-full">
+                </label>
+                <label class="form-control">
+                    <span class="label-text mb-1">Au</span>
+                    <input type="date" name="date_fin" value="{{ filters.date_fin }}" class="input input-bordered input-sm w-full">
+                </label>
+            </div>
+            <div class="card-actions justify-end mt-3">
+                <button class="btn btn-primary btn-sm" type="submit"><i class="fas fa-magnifying-glass"></i> Appliquer</button>
+            </div>
+        </div>
+    </form>
+
+    <div class="flex flex-wrap items-center gap-2">
+        <span class="text-sm font-semibold">Afficher dans le tableau :</span>
+        <button type="button" onclick="selectView('tous')" class="btn btn-xs {% if filters.vue == 'tous' %}btn-primary{% else %}btn-ghost{% endif %}">Tous les événements</button>
+        <button type="button" onclick="selectView('coupes_historique')" class="btn btn-xs {% if filters.vue == 'coupes_historique' %}btn-warning{% else %}btn-ghost{% endif %}">Coupures</button>
+        <button type="button" onclick="selectView('encore_coupes')" class="btn btn-xs {% if filters.vue == 'encore_coupes' %}btn-error{% else %}btn-ghost{% endif %}">Encore coupés</button>
+        <button type="button" onclick="selectView('remis')" class="btn btn-xs {% if filters.vue == 'remis' %}btn-success{% else %}btn-ghost{% endif %}">Remis en eau</button>
+        <span class="mx-1 opacity-30">|</span>
+        <button type="button" onclick="toggleIncoherences()" class="btn btn-xs {% if filters.incoherences %}btn-error{% else %}btn-outline btn-error{% endif %}">
+            <i class="fas fa-triangle-exclamation"></i> Incohérences uniquement
+        </button>
+    </div>
+
+    {% if stats_incoherences.nb_points_incoherents %}
+    <button type="button" onclick="toggleIncoherences(true)" class="card w-full border-2 border-error bg-error/10 shadow-sm text-left transition hover:shadow-md">
+        <div class="card-body p-4 flex-row items-center justify-between flex-wrap gap-3">
+            <div class="flex items-center gap-3">
+                <i class="fas fa-triangle-exclamation text-error text-3xl"></i>
+                <div>
+                    <div class="font-bold text-error">
+                        {{ stats_incoherences.nb_points_incoherents }} point{{ stats_incoherences.nb_points_incoherents|pluralize }} d'eau incohérent{{ stats_incoherences.nb_points_incoherents|pluralize }}
+                    </div>
+                    <div class="text-xs text-base-content/65">
+                        {{ stats_incoherences.nb_incoherences }} événement{{ stats_incoherences.nb_incoherences|pluralize }} en double sans coupure/remise intermédiaire (ex. deux coupures à la suite sans remise entre elles)
+                        — {{ stats_incoherences.nb_points_incoherents_pct|floatformat:0 }}% des points du périmètre filtré
+                    </div>
+                </div>
+            </div>
+            <span class="btn btn-error btn-sm">Voir uniquement ces points <i class="fas fa-arrow-right ml-1"></i></span>
+        </div>
+    </button>
+    {% endif %}
+
+    <div class="grid grid-cols-1 2xl:grid-cols-2 gap-4">
+        {% if stats_bp.total_points %}
+        <section class="card border border-primary/35 bg-base-100 shadow-sm">
+            <div class="card-body p-4">
+                <div class="flex items-center justify-between gap-3">
+                    <h2 class="card-title text-primary"><i class="fas fa-house-faucet"></i> Points d'eau privés</h2>
+                    <span class="badge badge-primary badge-outline">{{ stats_bp.total_points }} point{{ stats_bp.total_points|pluralize }}</span>
+                </div>
+                <p class="text-xs text-base-content/60">Branchements desservant un usager privé dans le périmètre filtré</p>
+                <div class="mt-2 grid grid-cols-2 xl:grid-cols-4 gap-2">
+                    {% if stats_bp.total_evenements %}
+                    <div class="stat rounded-box bg-base-200/60 p-3"><div class="stat-title text-xs">Événements</div><div class="stat-value text-primary text-2xl">{{ stats_bp.total_evenements }}</div><div class="stat-desc">Historique</div></div>
+                    {% endif %}
+                    {% if stats_bp.points_coupes_historique %}
+                    <div class="stat rounded-box bg-warning/10 p-3"><div class="stat-title text-xs">Déjà coupés</div><div class="stat-value text-warning text-2xl">{{ stats_bp.points_coupes_historique }}</div><div class="stat-desc"><strong>{{ stats_bp.points_coupes_historique_pct|floatformat:0 }} %</strong> des points privés</div></div>
+                    {% endif %}
+                    {% if stats_bp.encore_coupes %}
+                    <div class="stat rounded-box bg-error/10 p-3"><div class="stat-title text-xs">Encore coupés</div><div class="stat-value text-error text-2xl">{{ stats_bp.encore_coupes }}</div><div class="stat-desc"><strong>{{ stats_bp.encore_coupes_pct|floatformat:0 }} %</strong> des points privés</div></div>
+                    {% endif %}
+                    {% if stats_bp.remis %}
+                    <div class="stat rounded-box bg-success/10 p-3"><div class="stat-title text-xs">Remis en eau</div><div class="stat-value text-success text-2xl">{{ stats_bp.remis }}</div><div class="stat-desc"><strong>{{ stats_bp.remis_pct|floatformat:0 }} %</strong> des points privés</div></div>
+                    {% endif %}
+                </div>
+            </div>
+        </section>
+        {% endif %}
+
+        {% if stats_autres.total_points %}
+        <section class="card border border-info/35 bg-base-100 shadow-sm">
+            <div class="card-body p-4">
+                <div class="flex items-center justify-between gap-3">
+                    <h2 class="card-title text-info"><i class="fas fa-faucet-drip"></i> Points d'eau publics</h2>
+                    <span class="badge badge-info badge-outline">{{ stats_autres.total_points }} point{{ stats_autres.total_points|pluralize }}</span>
+                </div>
+                <p class="text-xs text-base-content/60">Bornes-fontaines, kiosques et points à usage public dans le périmètre filtré</p>
+                <div class="mt-2 grid grid-cols-2 xl:grid-cols-4 gap-2">
+                    {% if stats_autres.total_evenements %}
+                    <div class="stat rounded-box bg-base-200/60 p-3"><div class="stat-title text-xs">Événements</div><div class="stat-value text-info text-2xl">{{ stats_autres.total_evenements }}</div><div class="stat-desc">Historique</div></div>
+                    {% endif %}
+                    {% if stats_autres.points_coupes_historique %}
+                    <div class="stat rounded-box bg-warning/10 p-3"><div class="stat-title text-xs">Déjà coupés</div><div class="stat-value text-warning text-2xl">{{ stats_autres.points_coupes_historique }}</div><div class="stat-desc"><strong>{{ stats_autres.points_coupes_historique_pct|floatformat:0 }} %</strong> des points publics</div></div>
+                    {% endif %}
+                    {% if stats_autres.encore_coupes %}
+                    <div class="stat rounded-box bg-error/10 p-3"><div class="stat-title text-xs">Encore coupés</div><div class="stat-value text-error text-2xl">{{ stats_autres.encore_coupes }}</div><div class="stat-desc"><strong>{{ stats_autres.encore_coupes_pct|floatformat:0 }} %</strong> des points publics</div></div>
+                    {% endif %}
+                    {% if stats_autres.remis %}
+                    <div class="stat rounded-box bg-success/10 p-3"><div class="stat-title text-xs">Remis en eau</div><div class="stat-value text-success text-2xl">{{ stats_autres.remis }}</div><div class="stat-desc"><strong>{{ stats_autres.remis_pct|floatformat:0 }} %</strong> des points publics</div></div>
+                    {% endif %}
+                </div>
+            </div>
+        </section>
+        {% endif %}
+    </div>
+
+    <div class="card bg-base-100 border border-base-300 shadow-sm">
+        <div class="card-body p-0">
+            <div class="flex flex-wrap items-center justify-between gap-2 px-4 pt-4">
+                <h2 class="font-bold"><i class="fas fa-table-list mr-2 text-primary"></i>{{ page_obj.paginator.count }} point{{ page_obj.paginator.count|pluralize }} d'eau</h2>
+                <div class="flex items-center gap-2">
+                    <button type="button" id="bulk-delete-btn" class="btn btn-error btn-sm" disabled onclick="bulkDeleteSelected()">
+                        <i class="fas fa-trash"></i> Supprimer la sélection (<span id="bulk-delete-count">0</span>)
+                    </button>
+                    <span class="badge badge-ghost">20 points par page</span>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead class="bg-base-200">
+                        <tr>
+                            <th class="w-8"><input type="checkbox" id="select-all-events" class="checkbox checkbox-sm" onchange="toggleSelectAllEvents(this)"></th>
+                            <th>Date</th><th>Événement</th><th>Raison / notes</th><th>Saisi par</th><th class="text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for group in page_obj %}
+                        {% if group.nouvelle_region %}
+                        <tr class="bg-primary text-primary-content">
+                            <td colspan="6" class="font-bold py-2"><i class="fas fa-map-location-dot mr-2"></i>{{ group.geo.region }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if group.nouveau_district %}
+                        <tr class="bg-primary/70 text-primary-content">
+                            <td colspan="6" class="font-semibold py-1.5 pl-6"><i class="fas fa-map mr-2"></i>{{ group.geo.district }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if group.nouvelle_commune %}
+                        <tr class="bg-base-300">
+                            <td colspan="6" class="font-semibold py-1.5 pl-10"><i class="fas fa-city mr-2"></i>{{ group.geo.commune }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if group.nouveau_ouvrage %}
+                        <tr class="bg-base-200">
+                            <td colspan="6" class="font-medium py-1.5 pl-14"><i class="fas fa-industry mr-2 text-secondary"></i>{{ group.ouvrage.nom_ouvrage|default:'N/A' }}
+                                {% if group.responsables %}<span class="text-xs opacity-60 font-normal">— {{ group.responsables|join:", " }}</span>{% endif %}
+                            </td>
+                        </tr>
+                        {% endif %}
+
+                        <tr class="{% if group.is_incoherent %}bg-error/10{% else %}bg-base-100{% endif %} border-t-2 border-base-300">
+                            <td colspan="6" class="pl-16 py-2">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <a class="link link-primary font-semibold" href="{% url 'core:search_detail' 'point_eau' group.point.id %}">{{ group.point.code_point_eau|default:'Sans code' }}</a>
+                                    <span class="text-xs opacity-70">{{ group.point.nomabonne|default:'Sans abonné' }}</span>
+                                    <span class="badge {% if group.current_cut %}badge-error badge-outline{% else %}badge-success badge-outline{% endif %} badge-sm">{% if group.current_cut %}Coupé{% else %}En service{% endif %}</span>
+                                    <span class="badge badge-ghost badge-sm">{{ group.nb_events }} événement{{ group.nb_events|pluralize }}</span>
+                                    {% if group.is_incoherent %}
+                                    <span class="badge badge-error badge-sm" title="Coupures/remises consécutives du même type sans événement intermédiaire">
+                                        <i class="fas fa-triangle-exclamation mr-1"></i>{{ group.nb_incoherences }} incohérence{{ group.nb_incoherences|pluralize }}
+                                    </span>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+
+                        {% for event in group.events %}
+                        <tr class="{% if event.is_anomaly %}bg-error/15{% endif %}">
+                            <td><input type="checkbox" class="checkbox checkbox-sm event-checkbox" value="{{ event.id }}" onchange="updateBulkDeleteButton()"></td>
+                            <td class="whitespace-nowrap pl-16">
+                                {{ event.date_evenement|date:'d/m/Y' }}
+                                {% if event.is_anomaly %}<i class="fas fa-triangle-exclamation text-error ml-1" title="Incohérence : même type d'événement que le précédent, sans événement intermédiaire"></i>{% endif %}
+                            </td>
+                            <td>
+                                <span class="badge {% if event.type_evenement == 'coupure' %}badge-error{% else %}badge-success{% endif %} badge-sm whitespace-nowrap">{{ event.type_label }}</span>
+                                {% if event.legacy %}<div class="badge badge-warning badge-xs mt-1">Ancien</div>{% endif %}
+                            </td>
+                            <td class="min-w-52">
+                                <div class="font-medium text-xs">{{ event.raison }}</div>
+                                {% if event.notes %}<div class="text-xs opacity-65 line-clamp-2" title="{{ event.notes }}">{{ event.notes }}</div>{% endif %}
+                            </td>
+                            <td class="text-xs">{{ event.cree_par }}</td>
+                            <td class="text-right whitespace-nowrap">
+                                <button type="button" class="btn btn-ghost btn-xs" title="Modifier"
+                                    onclick='openEditModal("{{ event.id }}", "{{ event.date_evenement|date:"Y-m-d" }}", "{{ event.type_evenement }}", "{{ event.raison_code }}", "{{ event.notes|escapejs }}")'>
+                                    <i class="fas fa-pen text-info"></i>
+                                </button>
+                                <button type="button" class="btn btn-ghost btn-xs" title="Supprimer"
+                                    onclick='deleteEvent("{{ event.id }}", "{{ event.type_label|escapejs }}", "{{ event.date_evenement|date:"d/m/Y" }}")'>
+                                    <i class="fas fa-trash text-error"></i>
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% empty %}
+                        <tr><td colspan="6" class="py-12 text-center text-base-content/55"><i class="fas fa-circle-info mr-2"></i>Aucun historique ne correspond aux filtres.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if page_obj.paginator.num_pages > 1 %}
+            <div class="flex justify-center p-4">
+                <div class="join">
+                    {% if page_obj.has_previous %}<a class="join-item btn btn-sm" href="?{% if query_without_page %}{{ query_without_page }}&{% endif %}page={{ page_obj.previous_page_number }}">«</a>{% endif %}
+                    <button class="join-item btn btn-sm btn-disabled">Page {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</button>
+                    {% if page_obj.has_next %}<a class="join-item btn btn-sm" href="?{% if query_without_page %}{{ query_without_page }}&{% endif %}page={{ page_obj.next_page_number }}">»</a>{% endif %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<dialog id="edit-event-modal" class="modal">
+    <div class="modal-box max-w-md">
+        <h3 class="font-bold text-lg mb-3"><i class="fas fa-pen mr-2 text-info"></i>Modifier l'événement</h3>
+        <input type="hidden" id="edit-event-id">
+        <div class="space-y-3">
+            <label class="form-control">
+                <span class="label-text mb-1">Date de l'événement</span>
+                <input type="date" id="edit-event-date" class="input input-bordered w-full">
+            </label>
+            <label class="form-control">
+                <span class="label-text mb-1">Type</span>
+                <select id="edit-event-type" class="select select-bordered w-full">
+                    {% for value, label in type_choices %}
+                    <option value="{{ value }}">{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label class="form-control">
+                <span class="label-text mb-1">Raison</span>
+                <select id="edit-event-raison" class="select select-bordered w-full">
+                    {% for value, label in raison_choices %}
+                    <option value="{{ value }}">{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label class="form-control">
+                <span class="label-text mb-1">Notes</span>
+                <textarea id="edit-event-notes" class="textarea textarea-bordered w-full" rows="3"></textarea>
+            </label>
+        </div>
+        <div class="modal-action">
+            <button type="button" class="btn btn-ghost" onclick="document.getElementById('edit-event-modal').close()">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="submitEditModal()"><i class="fas fa-check mr-1"></i>Enregistrer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+function selectView(value) {
+    document.getElementById('view-filter').value = value;
+    document.getElementById('history-filters').submit();
+}
+
+function toggleIncoherences(forceOn) {
+    const input = document.getElementById('incoherences-filter');
+    const currentlyOn = input.value === '1';
+    input.value = (forceOn || !currentlyOn) ? '1' : '';
+    document.getElementById('history-filters').submit();
+}
+
+function toggleSelectAllEvents(checkbox) {
+    document.querySelectorAll('.event-checkbox').forEach(cb => { cb.checked = checkbox.checked; });
+    updateBulkDeleteButton();
+}
+
+function updateBulkDeleteButton() {
+    const checkboxes = document.querySelectorAll('.event-checkbox');
+    const checked = document.querySelectorAll('.event-checkbox:checked');
+    const btn = document.getElementById('bulk-delete-btn');
+    document.getElementById('bulk-delete-count').textContent = checked.length;
+    btn.disabled = checked.length === 0;
+
+    const selectAll = document.getElementById('select-all-events');
+    selectAll.checked = checkboxes.length > 0 && checked.length === checkboxes.length;
+    selectAll.indeterminate = checked.length > 0 && checked.length < checkboxes.length;
+}
+
+async function bulkDeleteSelected() {
+    const ids = [...document.querySelectorAll('.event-checkbox:checked')].map(cb => cb.value);
+    if (!ids.length) return;
+    if (!confirm(`Supprimer ${ids.length} événement(s) sélectionné(s) ?\n\nCette action est irréversible.`)) return;
+
+    const btn = document.getElementById('bulk-delete-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="loading loading-spinner loading-xs"></span> Suppression...';
+
+    try {
+        const response = await fetch('{% url "billing:api_supprimer_historique_coupures_bulk" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ coupure_ids: ids })
+        });
+        const data = await response.json();
+        if (!data.success) {
+            alert(data.error || 'Suppression impossible');
+            btn.disabled = false;
+            updateBulkDeleteButton();
+            return;
+        }
+        if (data.erreurs && data.erreurs.length) {
+            alert(data.message + '\n\n' + data.erreurs.join('\n'));
+        }
+        window.location.reload();
+    } catch (err) {
+        alert('Erreur réseau : ' + err.message);
+        btn.disabled = false;
+        updateBulkDeleteButton();
+    }
+}
+
+function openEditModal(id, date, type, raison, notes) {
+    document.getElementById('edit-event-id').value = id;
+    document.getElementById('edit-event-date').value = date || '';
+    document.getElementById('edit-event-type').value = type || 'coupure';
+    document.getElementById('edit-event-raison').value = raison || 'autre';
+    document.getElementById('edit-event-notes').value = notes || '';
+    document.getElementById('edit-event-modal').showModal();
+}
+
+async function submitEditModal() {
+    const id = document.getElementById('edit-event-id').value;
+    const date = document.getElementById('edit-event-date').value;
+    const type = document.getElementById('edit-event-type').value;
+    const raison = document.getElementById('edit-event-raison').value;
+    const notes = document.getElementById('edit-event-notes').value;
+    if (!date) {
+        alert('La date est obligatoire.');
+        return;
+    }
+    try {
+        const response = await fetch('{% url "billing:api_modifier_historique_coupure" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                coupure_id: id,
+                date_evenement: date,
+                type_evenement: type,
+                raison: raison,
+                notes: notes
+            })
+        });
+        const data = await response.json();
+        if (!data.success) {
+            alert(data.error || 'Modification impossible');
+            return;
+        }
+        window.location.reload();
+    } catch (err) {
+        alert('Erreur réseau : ' + err.message);
+    }
+}
+
+async function deleteEvent(id, typeLabel, dateDisplay) {
+    if (!confirm(`Supprimer "${typeLabel}" du ${dateDisplay} ?\n\nCette action est irréversible.`)) return;
+    try {
+        const response = await fetch('{% url "billing:api_supprimer_historique_coupure" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ coupure_id: id })
+        });
+        const data = await response.json();
+        if (!data.success) {
+            alert(data.error || 'Suppression impossible');
+            return;
+        }
+        window.location.reload();
+    } catch (err) {
+        alert('Erreur réseau : ' + err.message);
+    }
+}
+
+(function setupCascade() {
+    const employee = document.getElementById('employee-filter');
+    const region = document.getElementById('region-filter');
+    const district = document.getElementById('district-filter');
+    const commune = document.getElementById('commune-filter');
+    const ouvrage = document.getElementById('ouvrage-filter');
+    const containsEmployee = (option, employeeId) => !employeeId || (option.dataset.employees || '').split(',').includes(employeeId);
+    const filterOptions = (select, predicate) => {
+        [...select.options].forEach((option, index) => { if (index) option.hidden = !predicate(option); });
+        if (select.selectedOptions[0]?.hidden) select.value = '';
+    };
+    function refresh() {
+        const employeeId = employee.value;
+        filterOptions(region, option => containsEmployee(option, employeeId));
+        filterOptions(district, option => (!region.value || option.dataset.region === region.value) && containsEmployee(option, employeeId));
+        filterOptions(commune, option => (!region.value || option.dataset.region === region.value) && (!district.value || option.dataset.district === district.value) && containsEmployee(option, employeeId));
+        filterOptions(ouvrage, option => (!region.value || option.dataset.region === region.value) && (!district.value || option.dataset.district === district.value) && (!commune.value || option.dataset.commune === commune.value) && containsEmployee(option, employeeId));
+    }
+    [employee, region, district, commune].forEach(select => select.addEventListener('change', refresh));
+    refresh();
+})();
+</script>
+{% endblock %}

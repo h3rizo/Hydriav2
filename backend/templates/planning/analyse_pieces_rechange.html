@@ -1,0 +1,1467 @@
+{% extends analyses_shell_base_template %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Analyse des Pièces de Rechange{% endblock %}
+
+{% block extra_css %}
+<style>
+    .stat-card {
+        transition: transform 0.2s;
+    }
+    .stat-card:hover {
+        transform: translateY(-2px);
+    }
+    .chart-container {
+        position: relative;
+        height: 400px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- En-tête -->
+    <div class="mb-6">
+        <div class="flex justify-between items-start">
+            <div>
+                <h1 class="text-3xl font-bold mb-2">
+                    <i class="fas fa-cogs text-primary mr-2"></i>
+                    Analyse des Pièces de Rechange par Ouvrage
+                </h1>
+                <p class="text-base-content/70">
+                    Statistiques d'utilisation des pièces pour les ouvrages avec points d'eau
+                </p>
+            </div>
+
+            <!-- Boutons de navigation entre les vues -->
+            <div class="flex gap-2">
+                <button class="btn btn-sm btn-primary" disabled>
+                    <i class="fas fa-building mr-1"></i>
+                    Par Ouvrage
+                </button>
+                <a href="{% url 'planning:analyse_pieces_par_commune' %}?{{ request.GET.urlencode }}"
+                   class="btn btn-sm btn-outline">
+                    <i class="fas fa-map-marked-alt mr-1"></i>
+                    Par Commune
+                </a>
+                <a href="{% url 'planning:analyse_pieces_par_district' %}?{{ request.GET.urlencode }}"
+                   class="btn btn-sm btn-outline">
+                    <i class="fas fa-map mr-1"></i>
+                    Par District
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-200 shadow-lg mb-6">
+        <div class="card-body">
+            <h2 class="card-title text-lg mb-4">
+                <i class="fas fa-filter text-info mr-2"></i>
+                Filtres
+            </h2>
+
+            <form method="get" action="{% url 'planning:analyse_pieces_rechange' %}" id="filterForm">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                    <!-- Filtre District -->
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text font-semibold">
+                                <i class="fas fa-map-marked-alt text-primary mr-1"></i>
+                                District
+                            </span>
+                        </label>
+                        <select name="district_id" id="district_id" class="select select-bordered" onchange="onDistrictChange()">
+                            <option value="">Tous les districts</option>
+                            {% for district in districts %}
+                            <option value="{{ district.id }}" {% if selected_district == district.id|stringformat:"s" %}selected{% endif %}>
+                                {{ district.nom_district }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <!-- Filtre Communes -->
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text font-semibold">
+                                <i class="fas fa-city text-success mr-1"></i>
+                                Communes
+                            </span>
+                        </label>
+                        <select name="commune_ids" id="commune_ids" class="select select-bordered" multiple size="1" onchange="onCommuneChange()">
+                            <option value="">Toutes les communes</option>
+                            {% for commune in communes %}
+                            <option value="{{ commune.id }}" {% if commune.id|stringformat:"s" in selected_communes %}selected{% endif %}>
+                                {{ commune.nom_commune }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <label class="label">
+                            <span class="label-text-alt text-info">Maintenez Ctrl pour sélectionner plusieurs</span>
+                        </label>
+                    </div>
+
+                    <!-- Filtre Ouvrages -->
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text font-semibold">
+                                <i class="fas fa-building text-warning mr-1"></i>
+                                Ouvrages
+                            </span>
+                        </label>
+                        <select name="ouvrage_ids" id="ouvrage_ids" class="select select-bordered" multiple size="1">
+                            <option value="">Tous les ouvrages</option>
+                            {% for ouvrage in ouvrages %}
+                            <option value="{{ ouvrage.id }}" {% if ouvrage.id|stringformat:"s" in selected_ouvrages %}selected{% endif %}>
+                                {{ ouvrage.nom_ouvrage }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <label class="label">
+                            <span class="label-text-alt text-info">Maintenez Ctrl pour sélectionner plusieurs</span>
+                        </label>
+                    </div>
+
+                    <!-- Filtre Type de Désignation -->
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text font-semibold">
+                                <i class="fas fa-tags text-info mr-1"></i>
+                                Type de Pièce
+                            </span>
+                        </label>
+                        <select name="type_designation_ids" id="type_designation_ids" class="select select-bordered" multiple size="1">
+                            <option value="">Tous les types</option>
+                            {% for type_desig in types_designation %}
+                            <option value="{{ type_desig.id }}" {% if type_desig.id|stringformat:"s" in selected_type_designations %}selected{% endif %}>
+                                {{ type_desig.nom }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <label class="label">
+                            <span class="label-text-alt text-info">Maintenez Ctrl pour sélectionner plusieurs</span>
+                        </label>
+                    </div>
+
+                    <!-- Nombre de résultats dans les classements -->
+                    <div class="form-control">
+                        <label class="label" for="top_n">
+                            <span class="label-text font-semibold">
+                                <i class="fas fa-list-ol text-secondary mr-1"></i>
+                                Classements
+                            </span>
+                        </label>
+                        <select name="top_n" id="top_n" class="select select-bordered">
+                            <option value="10" {% if top_limit == 10 %}selected{% endif %}>Top 10</option>
+                            <option value="20" {% if top_limit == 20 %}selected{% endif %}>Top 20</option>
+                            <option value="30" {% if top_limit == 30 %}selected{% endif %}>Top 30</option>
+                        </select>
+                        <label class="label">
+                            <span class="label-text-alt text-info">Appliqué aux graphiques et tableaux</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Boutons d'action -->
+                <div class="flex gap-2 mt-4">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-filter mr-2"></i>
+                        Appliquer les filtres
+                    </button>
+                    <button type="button" class="btn btn-ghost" onclick="resetFilters()">
+                        <i class="fas fa-times mr-2"></i>
+                        Réinitialiser
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Indicateur des filtres actifs -->
+    {% if selected_district or selected_communes or selected_ouvrages or selected_type_designations %}
+    <div class="alert alert-info shadow-lg mb-6">
+        <div class="w-full">
+            <div class="flex items-start gap-3">
+                <i class="fas fa-filter text-2xl mt-1"></i>
+                <div class="flex-1">
+                    <h3 class="font-bold mb-2">Filtres actifs - Résultats filtrés</h3>
+                    <div class="flex flex-wrap gap-2">
+                        {% if selected_district_obj %}
+                        <span class="badge badge-primary badge-lg">
+                            <i class="fas fa-map-marked-alt mr-1"></i>
+                            District: {{ selected_district_obj.nom_district }}
+                        </span>
+                        {% endif %}
+
+                        {% if selected_communes_objs %}
+                        <div class="flex flex-wrap gap-1">
+                            {% for commune in selected_communes_objs %}
+                            <span class="badge badge-success">
+                                <i class="fas fa-city mr-1"></i>
+                                {{ commune.nom_commune }}
+                            </span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+
+                        {% if selected_ouvrages_objs %}
+                        <div class="flex flex-wrap gap-1">
+                            {% for ouvrage in selected_ouvrages_objs %}
+                            <span class="badge badge-warning">
+                                <i class="fas fa-building mr-1"></i>
+                                {{ ouvrage.nom_ouvrage|truncatechars:30 }}
+                            </span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+
+                        {% if selected_types_objs %}
+                        <div class="flex flex-wrap gap-1">
+                            {% for type_desig in selected_types_objs %}
+                            <span class="badge badge-info">
+                                <i class="fas fa-tags mr-1"></i>
+                                {{ type_desig.nom }}
+                            </span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Statistiques globales -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+        <!-- Total quantités - CLIQUABLE -->
+        <div class="stat stat-card bg-base-200 rounded-lg shadow cursor-pointer hover:bg-base-300 transition-colors" onclick="openStatDetail('quantites')">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-boxes text-3xl"></i>
+            </div>
+            <div class="stat-title">Total Quantités</div>
+            <div class="stat-value text-primary text-2xl">{{ stats_globales.total_quantite|floatformat:0|intcomma }}</div>
+            <div class="stat-desc">📊 Cliquer pour détails</div>
+        </div>
+
+        <!-- Total montant - CLIQUABLE -->
+        <div class="stat stat-card bg-base-200 rounded-lg shadow cursor-pointer hover:bg-base-300 transition-colors" onclick="openStatDetail('montants')">
+            <div class="stat-figure text-success">
+                <i class="fas fa-money-bill-wave text-3xl"></i>
+            </div>
+            <div class="stat-title">Total Montant</div>
+            <div class="stat-value text-success text-2xl">{{ stats_globales.total_montant|floatformat:0|intcomma }}</div>
+            <div class="stat-desc">📊 Cliquer pour détails</div>
+        </div>
+
+        <!-- Pièces différentes - CLIQUABLE -->
+        <div class="stat stat-card bg-base-200 rounded-lg shadow cursor-pointer hover:bg-base-300 transition-colors" onclick="openStatDetail('pieces')">
+            <div class="stat-figure text-info">
+                <i class="fas fa-tools text-3xl"></i>
+            </div>
+            <div class="stat-title">Pièces Différentes</div>
+            <div class="stat-value text-info text-2xl">{{ stats_globales.nb_pieces_differentes|intcomma }}</div>
+            <div class="stat-desc">📊 Cliquer pour détails</div>
+        </div>
+
+        <!-- Ouvrages concernés - CLIQUABLE -->
+        <div class="stat stat-card bg-base-200 rounded-lg shadow cursor-pointer hover:bg-base-300 transition-colors" onclick="openStatDetail('ouvrages')">
+            <div class="stat-figure text-warning">
+                <i class="fas fa-building text-3xl"></i>
+            </div>
+            <div class="stat-title">Ouvrages</div>
+            <div class="stat-value text-warning text-2xl">{{ stats_globales.nb_ouvrages_concernes|intcomma }}</div>
+            <div class="stat-desc">📊 Cliquer pour détails</div>
+        </div>
+
+        <!-- Nombre d'utilisations - CLIQUABLE -->
+        <div class="stat stat-card bg-base-200 rounded-lg shadow cursor-pointer hover:bg-base-300 transition-colors" onclick="openStatDetail('utilisations')">
+            <div class="stat-figure text-error">
+                <i class="fas fa-clipboard-list text-3xl"></i>
+            </div>
+            <div class="stat-title">Utilisations</div>
+            <div class="stat-value text-error text-2xl">{{ stats_globales.nb_utilisations|intcomma }}</div>
+            <div class="stat-desc">📊 Cliquer pour détails</div>
+        </div>
+    </div>
+
+    <!-- Graphiques -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <!-- Pièces par quantité -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-chart-bar text-primary mr-2"></i>
+                    Top {{ top_limit }} - Pièces par Quantité
+                </h2>
+                <div class="chart-container">
+                    <canvas id="chartPiecesQuantite"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pièces par montant -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-chart-bar text-success mr-2"></i>
+                    Top {{ top_limit }} - Pièces par Montant
+                </h2>
+                <div class="chart-container">
+                    <canvas id="chartPiecesMontant"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ouvrages en usage absolu -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-chart-bar text-warning mr-2"></i>
+                    Top {{ top_limit }} - Ouvrages (Usage Absolu)
+                </h2>
+                <div class="chart-container">
+                    <canvas id="chartOuvragesAbsolu"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ouvrages par point d'eau -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-chart-bar text-info mr-2"></i>
+                    Top {{ top_limit }} - Ouvrages (par Point d'Eau)
+                </h2>
+                <div class="chart-container">
+                    <canvas id="chartOuvragesRelatif"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tableaux détaillés -->
+    <div class="grid grid-cols-1 gap-6">
+        <!-- Tableau top pièces par quantité -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title mb-4">
+                    <i class="fas fa-table text-primary mr-2"></i>
+                    Top {{ top_limit }} Pièces - Détails par Quantité
+                </h2>
+                <div class="overflow-x-auto">
+                    <table class="table table-zebra table-sm">
+                        <thead>
+                            <tr>
+                                <th class="bg-primary text-primary-content">#</th>
+                                <th class="bg-primary text-primary-content">Pièce</th>
+                                <th class="bg-primary text-primary-content text-right">Quantité</th>
+                                <th class="bg-primary text-primary-content text-right">Montant (Ar)</th>
+                                <th class="bg-primary text-primary-content text-right">Utilisations</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for piece in top_pieces_quantite %}
+                            <tr class="cursor-pointer hover:bg-base-300 transition-colors" onclick="openPieceDetail('{{ piece.designation_id }}', '{{ piece.nom|escapejs }}')">
+                                <td class="font-bold">{{ forloop.counter }}</td>
+                                <td>{{ piece.nom }}</td>
+                                <td class="text-right font-mono">{{ piece.quantite|floatformat:2|intcomma }}</td>
+                                <td class="text-right font-mono">{{ piece.montant|floatformat:0|intcomma }}</td>
+                                <td class="text-right">{{ piece.nb_utilisations|intcomma }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="5" class="text-center text-base-content/50">Aucune donnée disponible</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tableau top pièces par montant -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title mb-4">
+                    <i class="fas fa-table text-success mr-2"></i>
+                    Top {{ top_limit }} Pièces - Détails par Montant
+                </h2>
+                <div class="overflow-x-auto">
+                    <table class="table table-zebra table-sm">
+                        <thead>
+                            <tr>
+                                <th class="bg-success text-success-content">#</th>
+                                <th class="bg-success text-success-content">Pièce</th>
+                                <th class="bg-success text-success-content text-right">Montant (Ar)</th>
+                                <th class="bg-success text-success-content text-right">Quantité</th>
+                                <th class="bg-success text-success-content text-right">Utilisations</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for piece in top_pieces_montant %}
+                            <tr class="cursor-pointer hover:bg-base-300 transition-colors" onclick="openPieceDetail('{{ piece.designation_id }}', '{{ piece.nom|escapejs }}')">
+                                <td class="font-bold">{{ forloop.counter }}</td>
+                                <td>{{ piece.nom }}</td>
+                                <td class="text-right font-mono font-bold text-success">{{ piece.montant|floatformat:0|intcomma }}</td>
+                                <td class="text-right font-mono">{{ piece.quantite|floatformat:2|intcomma }}</td>
+                                <td class="text-right">{{ piece.nb_utilisations|intcomma }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="5" class="text-center text-base-content/50">Aucune donnée disponible</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tableau top ouvrages absolu -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title mb-4">
+                    <i class="fas fa-table text-warning mr-2"></i>
+                    Top {{ top_limit }} Ouvrages - Usage Absolu
+                </h2>
+                <div class="overflow-x-auto">
+                    <table class="table table-zebra table-sm">
+                        <thead>
+                            <tr>
+                                <th class="bg-warning text-warning-content">#</th>
+                                <th class="bg-warning text-warning-content">Ouvrage</th>
+                                <th class="bg-warning text-warning-content">État</th>
+                                <th class="bg-warning text-warning-content text-right">Quantité</th>
+                                <th class="bg-warning text-warning-content text-right">Montant (Ar)</th>
+                                <th class="bg-warning text-warning-content text-right">Points d'Eau</th>
+                                <th class="bg-warning text-warning-content text-right">Pièces diff.</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for ouvrage in top_ouvrages_absolu %}
+                            <tr class="cursor-pointer hover:bg-base-300 transition-colors" onclick="openOuvrageDetail('{{ ouvrage.ouvrage_id }}', '{{ ouvrage.nom|escapejs }}')">
+                                <td class="font-bold">{{ forloop.counter }}</td>
+                                <td>{{ ouvrage.nom }}</td>
+                                <td>
+                                    {% if ouvrage.grading %}
+                                        <span class="badge {{ ouvrage.grading.badge_class }} badge-sm" title="{{ ouvrage.grading.description }}">
+                                            {{ ouvrage.grading.label }}
+                                        </span>
+                                    {% else %}
+                                        <span class="badge badge-ghost badge-sm">-</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-right font-mono font-bold text-warning">{{ ouvrage.quantite|floatformat:2|intcomma }}</td>
+                                <td class="text-right font-mono">{{ ouvrage.montant|floatformat:0|intcomma }}</td>
+                                <td class="text-right">{{ ouvrage.nb_points_eau|intcomma }}</td>
+                                <td class="text-right">{{ ouvrage.nb_pieces_diff|intcomma }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="7" class="text-center text-base-content/50">Aucune donnée disponible</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tableau top ouvrages relatif -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title mb-4">
+                    <i class="fas fa-table text-info mr-2"></i>
+                    Top {{ top_limit }} Ouvrages - Usage par Point d'Eau
+                </h2>
+                <div class="overflow-x-auto">
+                    <table class="table table-zebra table-sm">
+                        <thead>
+                            <tr>
+                                <th class="bg-info text-info-content">#</th>
+                                <th class="bg-info text-info-content">Ouvrage</th>
+                                <th class="bg-info text-info-content">État</th>
+                                <th class="bg-info text-info-content text-right">Qté / PE</th>
+                                <th class="bg-info text-info-content text-right">Montant / PE (Ar)</th>
+                                <th class="bg-info text-info-content text-right">Points d'Eau</th>
+                                <th class="bg-info text-info-content text-right">Total Qté</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for ouvrage in top_ouvrages_relatif %}
+                            <tr class="cursor-pointer hover:bg-base-300 transition-colors" onclick="openOuvrageDetail('{{ ouvrage.ouvrage_id }}', '{{ ouvrage.nom|escapejs }}')">
+                                <td class="font-bold">{{ forloop.counter }}</td>
+                                <td>{{ ouvrage.nom }}</td>
+                                <td>
+                                    {% if ouvrage.grading %}
+                                        <span class="badge {{ ouvrage.grading.badge_class }} badge-sm" title="{{ ouvrage.grading.description }}">
+                                            {{ ouvrage.grading.label }}
+                                        </span>
+                                    {% else %}
+                                        <span class="badge badge-ghost badge-sm">-</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-right font-mono font-bold text-info">{{ ouvrage.quantite_par_pe|floatformat:2|intcomma }}</td>
+                                <td class="text-right font-mono">{{ ouvrage.montant_par_pe|floatformat:0|intcomma }}</td>
+                                <td class="text-right">{{ ouvrage.nb_points_eau|intcomma }}</td>
+                                <td class="text-right font-mono">{{ ouvrage.quantite|floatformat:2|intcomma }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="7" class="text-center text-base-content/50">Aucune donnée disponible</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals pour les détails drill-down -->
+
+    <!-- Modal détails statistiques -->
+    <dialog id="modalStatDetail" class="modal">
+        <div class="modal-box max-w-4xl">
+            <form method="dialog">
+                <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+            </form>
+            <h3 class="font-bold text-lg mb-4" id="statDetailTitle">Détails</h3>
+            <div id="statDetailContent" class="overflow-x-auto">
+                <!-- Contenu dynamique -->
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+
+    <!-- Modal détails pièce -->
+    <dialog id="modalPieceDetail" class="modal">
+        <div class="modal-box max-w-6xl">
+            <form method="dialog">
+                <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+            </form>
+            <h3 class="font-bold text-lg mb-4" id="pieceDetailTitle">Détails Pièce</h3>
+            <div class="alert alert-info mb-4">
+                <i class="fas fa-info-circle"></i>
+                <span>Liste de toutes les utilisations de cette pièce dans les plannings et bons de livraison</span>
+            </div>
+            <div id="pieceDetailContent" class="overflow-x-auto">
+                <!-- Contenu dynamique -->
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+
+    <!-- Modal détails ouvrage -->
+    <dialog id="modalOuvrageDetail" class="modal">
+        <div class="modal-box max-w-6xl">
+            <form method="dialog">
+                <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+            </form>
+            <h3 class="font-bold text-lg mb-4" id="ouvrageDetailTitle">Détails Ouvrage</h3>
+            <div class="alert alert-info mb-4">
+                <i class="fas fa-info-circle"></i>
+                <span>Liste de toutes les pièces utilisées pour cet ouvrage</span>
+            </div>
+            <div id="ouvrageDetailContent" class="overflow-x-auto">
+                <!-- Contenu dynamique -->
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+// Configuration des graphiques
+const chartConfig = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+        legend: {
+            display: false
+        }
+    }
+};
+
+// Graphique Pièces par Quantité
+const ctxPiecesQty = document.getElementById('chartPiecesQuantite');
+new Chart(ctxPiecesQty, {
+    type: 'bar',
+    data: {
+        labels: {{ graphique_pieces_qty.labels|safe }},
+        datasets: [{
+            label: 'Quantité',
+            data: {{ graphique_pieces_qty.data|safe }},
+            backgroundColor: 'rgba(59, 130, 246, 0.7)',
+            borderColor: 'rgba(59, 130, 246, 1)',
+            borderWidth: 1
+        }]
+    },
+    options: {
+        ...chartConfig,
+        scales: {
+            y: {
+                beginAtZero: true,
+                title: {
+                    display: true,
+                    text: 'Quantité'
+                }
+            }
+        }
+    }
+});
+
+// Graphique Pièces par Montant
+const ctxPiecesMontant = document.getElementById('chartPiecesMontant');
+new Chart(ctxPiecesMontant, {
+    type: 'bar',
+    data: {
+        labels: {{ graphique_pieces_montant.labels|safe }},
+        datasets: [{
+            label: 'Montant (Ar)',
+            data: {{ graphique_pieces_montant.data|safe }},
+            backgroundColor: 'rgba(34, 197, 94, 0.7)',
+            borderColor: 'rgba(34, 197, 94, 1)',
+            borderWidth: 1
+        }]
+    },
+    options: {
+        ...chartConfig,
+        scales: {
+            y: {
+                beginAtZero: true,
+                title: {
+                    display: true,
+                    text: 'Montant (Ar)'
+                }
+            }
+        }
+    }
+});
+
+// Graphique Ouvrages Absolu
+const ctxOuvragesAbsolu = document.getElementById('chartOuvragesAbsolu');
+new Chart(ctxOuvragesAbsolu, {
+    type: 'bar',
+    data: {
+        labels: {{ graphique_ouvrages_absolu.labels|safe }},
+        datasets: [{
+            label: 'Quantité',
+            data: {{ graphique_ouvrages_absolu.data|safe }},
+            backgroundColor: 'rgba(251, 191, 36, 0.7)',
+            borderColor: 'rgba(251, 191, 36, 1)',
+            borderWidth: 1
+        }]
+    },
+    options: {
+        ...chartConfig,
+        scales: {
+            y: {
+                beginAtZero: true,
+                title: {
+                    display: true,
+                    text: 'Quantité Totale'
+                }
+            }
+        }
+    }
+});
+
+// Graphique Ouvrages Relatif
+const ctxOuvragesRelatif = document.getElementById('chartOuvragesRelatif');
+new Chart(ctxOuvragesRelatif, {
+    type: 'bar',
+    data: {
+        labels: {{ graphique_ouvrages_relatif.labels|safe }},
+        datasets: [{
+            label: 'Quantité par PE',
+            data: {{ graphique_ouvrages_relatif.data|safe }},
+            backgroundColor: 'rgba(14, 165, 233, 0.7)',
+            borderColor: 'rgba(14, 165, 233, 1)',
+            borderWidth: 1
+        }]
+    },
+    options: {
+        ...chartConfig,
+        scales: {
+            y: {
+                beginAtZero: true,
+                title: {
+                    display: true,
+                    text: 'Quantité / Point d\'Eau'
+                }
+            }
+        }
+    }
+});
+
+// ============================================================================
+// GESTION DES FILTRES EN CASCADE
+// ============================================================================
+
+function onDistrictChange() {
+    const districtId = document.getElementById('district_id').value;
+
+    if (!districtId) {
+        // Si aucun district sélectionné, soumettre le formulaire
+        document.getElementById('filterForm').submit();
+        return;
+    }
+
+    // Réinitialiser les communes et ouvrages
+    document.getElementById('commune_ids').value = '';
+    document.getElementById('ouvrage_ids').value = '';
+
+    // Soumettre le formulaire pour recharger les communes filtrées
+    document.getElementById('filterForm').submit();
+}
+
+function onCommuneChange() {
+    // Réinitialiser les ouvrages quand on change de commune
+    document.getElementById('ouvrage_ids').value = '';
+
+    // On ne soumet pas automatiquement pour permettre de sélectionner plusieurs communes
+}
+
+function resetFilters() {
+    // Réinitialiser tous les filtres
+    document.getElementById('district_id').value = '';
+    document.getElementById('commune_ids').value = '';
+    document.getElementById('ouvrage_ids').value = '';
+    document.getElementById('type_designation_ids').value = '';
+    document.getElementById('top_n').value = '10';
+
+    // Soumettre le formulaire
+    document.getElementById('filterForm').submit();
+}
+
+// Gérer la sélection multiple dans les selects
+// Convertir les valeurs sélectionnées en string séparé par virgules avant soumission
+document.getElementById('filterForm').addEventListener('submit', function(e) {
+    // Communes
+    const communeSelect = document.getElementById('commune_ids');
+    const selectedCommunes = Array.from(communeSelect.selectedOptions)
+        .map(opt => opt.value)
+        .filter(val => val !== '');
+
+    if (selectedCommunes.length > 0) {
+        // Créer un input hidden avec les valeurs séparées par virgules
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'commune_ids';
+        input.value = selectedCommunes.join(',');
+        this.appendChild(input);
+
+        // Désactiver le select pour éviter la duplication
+        communeSelect.disabled = true;
+    }
+
+    // Ouvrages
+    const ouvrageSelect = document.getElementById('ouvrage_ids');
+    const selectedOuvrages = Array.from(ouvrageSelect.selectedOptions)
+        .map(opt => opt.value)
+        .filter(val => val !== '');
+
+    if (selectedOuvrages.length > 0) {
+        // Créer un input hidden avec les valeurs séparées par virgules
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'ouvrage_ids';
+        input.value = selectedOuvrages.join(',');
+        this.appendChild(input);
+
+        // Désactiver le select pour éviter la duplication
+        ouvrageSelect.disabled = true;
+    }
+
+    // Types de désignation
+    const typeDesignationSelect = document.getElementById('type_designation_ids');
+    const selectedTypeDesignations = Array.from(typeDesignationSelect.selectedOptions)
+        .map(opt => opt.value)
+        .filter(val => val !== '');
+
+    if (selectedTypeDesignations.length > 0) {
+        // Créer un input hidden avec les valeurs séparées par virgules
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'type_designation_ids';
+        input.value = selectedTypeDesignations.join(',');
+        this.appendChild(input);
+
+        // Désactiver le select pour éviter la duplication
+        typeDesignationSelect.disabled = true;
+    }
+});
+
+// ============================================================================
+// DRILL-DOWN INTERACTIVITY - MODALS DÉTAILLÉS
+// ============================================================================
+
+// ============================================================================
+// DONNÉES POUR DRILL-DOWN INTERACTIVITY
+// ============================================================================
+
+// Données depuis le backend (déjà sérialisées en JSON côté serveur)
+console.log('🔍 Chargement des données JavaScript...');
+
+const topPiecesQuantite = {{ top_pieces_quantite_json|safe }};
+console.log('✅ topPiecesQuantite chargé:', topPiecesQuantite.length, 'éléments');
+
+const topPiecesMontant = {{ top_pieces_montant_json|safe }};
+console.log('✅ topPiecesMontant chargé:', topPiecesMontant.length, 'éléments');
+
+const topOuvragesAbsolu = {{ top_ouvrages_absolu_json|safe }};
+console.log('✅ topOuvragesAbsolu chargé:', topOuvragesAbsolu.length, 'éléments');
+
+const topOuvragesRelatif = {{ top_ouvrages_relatif_json|safe }};
+console.log('✅ topOuvragesRelatif chargé:', topOuvragesRelatif.length, 'éléments');
+
+const statsGlobales = {{ stats_globales_json|safe }};
+console.log('✅ statsGlobales chargé:', statsGlobales);
+
+console.log('🎉 Toutes les données drill-down chargées avec succès!');
+
+/**
+ * Ouvre le modal de détails pour une statistique globale
+ */
+function openStatDetail(type) {
+    const modal = document.getElementById('modalStatDetail');
+    const titleEl = document.getElementById('statDetailTitle');
+    const contentEl = document.getElementById('statDetailContent');
+
+    let title = '';
+    let content = '';
+
+    switch(type) {
+        case 'quantites':
+            title = '📦 Détail Total Quantités';
+            content = generateQuantitesDetail();
+            break;
+        case 'montants':
+            title = '💰 Détail Total Montant';
+            content = generateMontantsDetail();
+            break;
+        case 'pieces':
+            title = '🔧 Liste des Pièces Différentes';
+            content = generatePiecesListDetail();
+            break;
+        case 'ouvrages':
+            title = '🏢 Liste des Ouvrages Concernés';
+            content = generateOuvragesListDetail();
+            break;
+        case 'utilisations':
+            title = '📋 Détail des Utilisations';
+            content = generateUtilisationsDetail();
+            break;
+    }
+
+    titleEl.textContent = title;
+    contentEl.innerHTML = content;
+    modal.showModal();
+}
+
+/**
+ * Génère le tableau de détail pour Total Quantités
+ */
+function generateQuantitesDetail() {
+    // Trier par quantité décroissante
+    const pieces = [...topPiecesQuantite, ...topPiecesMontant];
+    const uniquePieces = {};
+
+    pieces.forEach(p => {
+        if (!uniquePieces[p.designation_id]) {
+            uniquePieces[p.designation_id] = p;
+        }
+    });
+
+    const sorted = Object.values(uniquePieces).sort((a, b) => parseFloat(b.quantite) - parseFloat(a.quantite));
+
+    let html = `
+        <table class="table table-zebra table-sm">
+            <thead>
+                <tr class="bg-primary text-primary-content">
+                    <th>#</th>
+                    <th>Pièce</th>
+                    <th class="text-right">Quantité</th>
+                    <th class="text-right">% du Total</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    const total = parseFloat(statsGlobales.total_quantite || 0);
+
+    sorted.forEach((piece, index) => {
+        const quantite = parseFloat(piece.quantite || 0);
+        const pct = total > 0 ? ((quantite / total) * 100).toFixed(2) : 0;
+
+        html += `
+            <tr class="cursor-pointer hover:bg-base-300" onclick="openPieceDetail('${piece.designation_id}', '${piece.nom.replace(/'/g, "\\'")}')">
+                <td>${index + 1}</td>
+                <td>${piece.nom}</td>
+                <td class="text-right font-mono">${quantite.toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                <td class="text-right">${pct}%</td>
+            </tr>
+        `;
+    });
+
+    html += `
+            </tbody>
+            <tfoot>
+                <tr class="bg-base-200 font-bold">
+                    <td colspan="2" class="text-right">TOTAL</td>
+                    <td class="text-right font-mono">${total.toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                    <td class="text-right">100%</td>
+                </tr>
+            </tfoot>
+        </table>
+    `;
+
+    return html;
+}
+
+/**
+ * Génère le tableau de détail pour Total Montant
+ */
+function generateMontantsDetail() {
+    const pieces = [...topPiecesQuantite, ...topPiecesMontant];
+    const uniquePieces = {};
+
+    pieces.forEach(p => {
+        if (!uniquePieces[p.designation_id]) {
+            uniquePieces[p.designation_id] = p;
+        }
+    });
+
+    const sorted = Object.values(uniquePieces).sort((a, b) => parseFloat(b.montant) - parseFloat(a.montant));
+
+    let html = `
+        <table class="table table-zebra table-sm">
+            <thead>
+                <tr class="bg-success text-success-content">
+                    <th>#</th>
+                    <th>Pièce</th>
+                    <th class="text-right">Montant (Ar)</th>
+                    <th class="text-right">% du Total</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    const total = parseFloat(statsGlobales.total_montant || 0);
+
+    sorted.forEach((piece, index) => {
+        const montant = parseFloat(piece.montant || 0);
+        const pct = total > 0 ? ((montant / total) * 100).toFixed(2) : 0;
+
+        html += `
+            <tr class="cursor-pointer hover:bg-base-300" onclick="openPieceDetail('${piece.designation_id}', '${piece.nom.replace(/'/g, "\\'")}')">
+                <td>${index + 1}</td>
+                <td>${piece.nom}</td>
+                <td class="text-right font-mono text-success">${montant.toLocaleString('fr-FR', {minimumFractionDigits: 0, maximumFractionDigits: 0})}</td>
+                <td class="text-right">${pct}%</td>
+            </tr>
+        `;
+    });
+
+    html += `
+            </tbody>
+            <tfoot>
+                <tr class="bg-base-200 font-bold">
+                    <td colspan="2" class="text-right">TOTAL</td>
+                    <td class="text-right font-mono">${total.toLocaleString('fr-FR', {minimumFractionDigits: 0, maximumFractionDigits: 0})}</td>
+                    <td class="text-right">100%</td>
+                </tr>
+            </tfoot>
+        </table>
+    `;
+
+    return html;
+}
+
+/**
+ * Génère la liste complète des pièces différentes
+ */
+function generatePiecesListDetail() {
+    const pieces = [...topPiecesQuantite, ...topPiecesMontant];
+    const uniquePieces = {};
+
+    pieces.forEach(p => {
+        if (!uniquePieces[p.designation_id]) {
+            uniquePieces[p.designation_id] = p;
+        }
+    });
+
+    const sorted = Object.values(uniquePieces).sort((a, b) => a.nom.localeCompare(b.nom));
+
+    let html = `
+        <table class="table table-zebra table-sm">
+            <thead>
+                <tr class="bg-info text-info-content">
+                    <th>#</th>
+                    <th>Pièce</th>
+                    <th class="text-right">Quantité</th>
+                    <th class="text-right">Montant (Ar)</th>
+                    <th class="text-right">Utilisations</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    sorted.forEach((piece, index) => {
+        html += `
+            <tr class="cursor-pointer hover:bg-base-300" onclick="openPieceDetail('${piece.designation_id}', '${piece.nom.replace(/'/g, "\\'")}')">
+                <td>${index + 1}</td>
+                <td>${piece.nom}</td>
+                <td class="text-right font-mono">${parseFloat(piece.quantite || 0).toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                <td class="text-right font-mono">${parseFloat(piece.montant || 0).toLocaleString('fr-FR', {minimumFractionDigits: 0, maximumFractionDigits: 0})}</td>
+                <td class="text-right">${piece.nb_utilisations || 0}</td>
+            </tr>
+        `;
+    });
+
+    html += `
+            </tbody>
+        </table>
+    `;
+
+    return html;
+}
+
+/**
+ * Génère la liste complète des ouvrages concernés
+ */
+function generateOuvragesListDetail() {
+    const ouvrages = [...topOuvragesAbsolu, ...topOuvragesRelatif];
+    const uniqueOuvrages = {};
+
+    ouvrages.forEach(o => {
+        if (!uniqueOuvrages[o.ouvrage_id]) {
+            uniqueOuvrages[o.ouvrage_id] = o;
+        }
+    });
+
+    const sorted = Object.values(uniqueOuvrages).sort((a, b) => a.nom.localeCompare(b.nom));
+
+    let html = `
+        <table class="table table-zebra table-sm">
+            <thead>
+                <tr class="bg-warning text-warning-content">
+                    <th>#</th>
+                    <th>Ouvrage</th>
+                    <th class="text-right">Points d'Eau</th>
+                    <th class="text-right">Quantité Totale</th>
+                    <th class="text-right">Montant (Ar)</th>
+                    <th class="text-right">Pièces Diff.</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    sorted.forEach((ouvrage, index) => {
+        html += `
+            <tr class="cursor-pointer hover:bg-base-300" onclick="openOuvrageDetail('${ouvrage.ouvrage_id}', '${ouvrage.nom.replace(/'/g, "\\'")}')">
+                <td>${index + 1}</td>
+                <td>${ouvrage.nom}</td>
+                <td class="text-right">${ouvrage.nb_points_eau || 0}</td>
+                <td class="text-right font-mono">${parseFloat(ouvrage.quantite || 0).toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                <td class="text-right font-mono">${parseFloat(ouvrage.montant || 0).toLocaleString('fr-FR', {minimumFractionDigits: 0, maximumFractionDigits: 0})}</td>
+                <td class="text-right">${ouvrage.nb_pieces_diff || 0}</td>
+            </tr>
+        `;
+    });
+
+    html += `
+            </tbody>
+        </table>
+    `;
+
+    return html;
+}
+
+/**
+ * Génère le détail des utilisations
+ */
+function generateUtilisationsDetail() {
+    const pieces = [...topPiecesQuantite, ...topPiecesMontant];
+    const uniquePieces = {};
+
+    pieces.forEach(p => {
+        if (!uniquePieces[p.designation_id]) {
+            uniquePieces[p.designation_id] = p;
+        }
+    });
+
+    const sorted = Object.values(uniquePieces).sort((a, b) => parseFloat(b.nb_utilisations) - parseFloat(a.nb_utilisations));
+
+    let html = `
+        <table class="table table-zebra table-sm">
+            <thead>
+                <tr class="bg-error text-error-content">
+                    <th>#</th>
+                    <th>Pièce</th>
+                    <th class="text-right">Utilisations</th>
+                    <th class="text-right">Quantité Moyenne</th>
+                    <th class="text-right">Quantité Totale</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    sorted.forEach((piece, index) => {
+        const quantite = parseFloat(piece.quantite || 0);
+        const nbUtil = parseFloat(piece.nb_utilisations || 1);
+        const moyenne = nbUtil > 0 ? quantite / nbUtil : 0;
+
+        html += `
+            <tr class="cursor-pointer hover:bg-base-300" onclick="openPieceDetail('${piece.designation_id}', '${piece.nom.replace(/'/g, "\\'")}')">
+                <td>${index + 1}</td>
+                <td>${piece.nom}</td>
+                <td class="text-right font-bold">${nbUtil}</td>
+                <td class="text-right font-mono">${moyenne.toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                <td class="text-right font-mono">${quantite.toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+            </tr>
+        `;
+    });
+
+    html += `
+            </tbody>
+        </table>
+    `;
+
+    return html;
+}
+
+/**
+ * Ouvre le modal de détails pour une pièce spécifique
+ */
+async function openPieceDetail(designationId, nom) {
+    const modal = document.getElementById('modalPieceDetail');
+    const titleEl = document.getElementById('pieceDetailTitle');
+    const contentEl = document.getElementById('pieceDetailContent');
+
+    titleEl.textContent = `🔧 ${nom}`;
+    contentEl.innerHTML = `
+        <div class="flex items-center justify-center py-8">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+            <span class="ml-3">Chargement des détails...</span>
+        </div>
+    `;
+    modal.showModal();
+
+    try {
+        // Appel API pour récupérer les détails
+        const response = await fetch(`/plannings/analyse-pieces/api/piece/${designationId}/`);
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error || 'Erreur inconnue');
+        }
+
+        // Générer le HTML avec les données
+        contentEl.innerHTML = generatePieceDetailHTML(data);
+
+    } catch (error) {
+        console.error('Erreur lors du chargement des détails:', error);
+        contentEl.innerHTML = `
+            <div class="alert alert-error">
+                <i class="fas fa-exclamation-circle"></i>
+                <div>
+                    <p class="font-bold">Erreur de chargement</p>
+                    <p class="text-sm">${error.message}</p>
+                </div>
+            </div>
+        `;
+    }
+}
+
+/**
+ * Génère le HTML pour afficher les détails d'une pièce
+ */
+function generatePieceDetailHTML(data) {
+    const { designation, stats, details } = data;
+
+    let html = `
+        <!-- Informations de base -->
+        <div class="card bg-base-200 mb-4">
+            <div class="card-body">
+                <h4 class="card-title text-lg">📦 ${designation.nom}</h4>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-2">
+                    <div>
+                        <p class="text-sm text-base-content/70">Type</p>
+                        <p class="font-semibold">${designation.type || 'N/A'}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Prix unitaire</p>
+                        <p class="font-semibold">${parseFloat(designation.prix_unitaire || 0).toLocaleString('fr-FR')} Ar</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Unité</p>
+                        <p class="font-semibold">${designation.unite || 'N/A'}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Actif</p>
+                        <p class="font-semibold">${designation.actif ? '✅ Oui' : '❌ Non'}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistiques -->
+        <div class="stats stats-vertical lg:stats-horizontal shadow mb-4 w-full">
+            <div class="stat">
+                <div class="stat-title">Total Quantité</div>
+                <div class="stat-value text-primary text-xl">${parseFloat(stats.total_quantite || 0).toLocaleString('fr-FR')}</div>
+            </div>
+            <div class="stat">
+                <div class="stat-title">Total Montant</div>
+                <div class="stat-value text-secondary text-xl">${parseFloat(stats.total_montant || 0).toLocaleString('fr-FR')} Ar</div>
+            </div>
+            <div class="stat">
+                <div class="stat-title">Nb Utilisations</div>
+                <div class="stat-value text-accent text-xl">${stats.nb_utilisations || 0}</div>
+            </div>
+        </div>
+
+        <!-- Tableau des détails -->
+        <div class="overflow-x-auto">
+            <h4 class="font-bold mb-2">📋 Détails des utilisations (${details.length} résultats)</h4>
+            <table class="table table-zebra table-sm">
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Date</th>
+                        <th>Employé</th>
+                        <th>Ouvrage</th>
+                        <th>Quantité</th>
+                        <th>Montant</th>
+                        <th>Localisation</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+
+    if (details.length === 0) {
+        html += `
+                    <tr>
+                        <td colspan="7" class="text-center text-base-content/70">Aucune utilisation enregistrée</td>
+                    </tr>
+        `;
+    } else {
+        details.forEach(detail => {
+            const typeBadge = detail.type === 'PlanningDetail'
+                ? '<span class="badge badge-info badge-sm">Planning</span>'
+                : '<span class="badge badge-success badge-sm">Livraison</span>';
+
+            html += `
+                    <tr>
+                        <td>${typeBadge}</td>
+                        <td>${detail.date || 'N/A'}</td>
+                        <td>${detail.employe || 'N/A'}</td>
+                        <td>${detail.ouvrage || 'N/A'}</td>
+                        <td class="text-right">${parseFloat(detail.quantite || 0).toLocaleString('fr-FR')}</td>
+                        <td class="text-right">${parseFloat(detail.montant || 0).toLocaleString('fr-FR')} Ar</td>
+                        <td class="text-sm">${detail.point_eau || detail.equipement || 'N/A'}</td>
+                    </tr>
+            `;
+        });
+    }
+
+    html += `
+                </tbody>
+            </table>
+        </div>
+    `;
+
+    return html;
+}
+
+/**
+ * Ouvre le modal de détails pour un ouvrage spécifique
+ */
+async function openOuvrageDetail(ouvrageId, nom) {
+    const modal = document.getElementById('modalOuvrageDetail');
+    const titleEl = document.getElementById('ouvrageDetailTitle');
+    const contentEl = document.getElementById('ouvrageDetailContent');
+
+    titleEl.textContent = `🏢 ${nom}`;
+    contentEl.innerHTML = `
+        <div class="flex items-center justify-center py-8">
+            <span class="loading loading-spinner loading-lg text-warning"></span>
+            <span class="ml-3">Chargement des détails...</span>
+        </div>
+    `;
+    modal.showModal();
+
+    try {
+        // Appel API pour récupérer les détails
+        const response = await fetch(`/plannings/analyse-pieces/api/ouvrage/${ouvrageId}/`);
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error || 'Erreur inconnue');
+        }
+
+        // Générer le HTML avec les données
+        contentEl.innerHTML = generateOuvrageDetailHTML(data);
+
+    } catch (error) {
+        console.error('Erreur lors du chargement des détails:', error);
+        contentEl.innerHTML = `
+            <div class="alert alert-error">
+                <i class="fas fa-exclamation-circle"></i>
+                <div>
+                    <p class="font-bold">Erreur de chargement</p>
+                    <p class="text-sm">${error.message}</p>
+                </div>
+            </div>
+        `;
+    }
+}
+
+/**
+ * Génère le HTML pour afficher les détails d'un ouvrage
+ */
+function generateOuvrageDetailHTML(data) {
+    const { ouvrage, stats, pieces } = data;
+
+    let html = `
+        <!-- Informations de base -->
+        <div class="card bg-base-200 mb-4">
+            <div class="card-body">
+                <h4 class="card-title text-lg">🏢 ${ouvrage.nom}</h4>
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mt-2">
+                    <div>
+                        <p class="text-sm text-base-content/70">Type</p>
+                        <p class="font-semibold">${ouvrage.type || 'N/A'}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Village</p>
+                        <p class="font-semibold">${ouvrage.village || 'N/A'}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Commune</p>
+                        <p class="font-semibold">${ouvrage.commune || 'N/A'}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistiques -->
+        <div class="stats stats-vertical lg:stats-horizontal shadow mb-4 w-full">
+            <div class="stat">
+                <div class="stat-title">Points d'Eau</div>
+                <div class="stat-value text-primary text-xl">${stats.nb_points_eau || 0}</div>
+            </div>
+            <div class="stat">
+                <div class="stat-title">Total Quantité</div>
+                <div class="stat-value text-secondary text-xl">${parseFloat(stats.total_quantite || 0).toLocaleString('fr-FR')}</div>
+            </div>
+            <div class="stat">
+                <div class="stat-title">Total Montant</div>
+                <div class="stat-value text-accent text-xl">${parseFloat(stats.total_montant || 0).toLocaleString('fr-FR')} Ar</div>
+            </div>
+            <div class="stat">
+                <div class="stat-title">Pièces Différentes</div>
+                <div class="stat-value text-info text-xl">${stats.nb_pieces_differentes || 0}</div>
+            </div>
+        </div>
+
+        <!-- Tableau des pièces -->
+        <div class="overflow-x-auto">
+            <h4 class="font-bold mb-2">🔧 Pièces utilisées (${pieces.length} résultats)</h4>
+            <table class="table table-zebra table-sm">
+                <thead>
+                    <tr>
+                        <th>Pièce</th>
+                        <th>Type</th>
+                        <th class="text-right">Quantité</th>
+                        <th class="text-right">Montant</th>
+                        <th class="text-right">Utilisations</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+
+    if (pieces.length === 0) {
+        html += `
+                    <tr>
+                        <td colspan="5" class="text-center text-base-content/70">Aucune pièce utilisée</td>
+                    </tr>
+        `;
+    } else {
+        pieces.forEach(piece => {
+            html += `
+                    <tr class="cursor-pointer hover:bg-base-300" onclick="openPieceDetail('${piece.designation_id}', '${piece.nom.replace(/'/g, "\\'")}')">
+                        <td class="font-semibold">${piece.nom}</td>
+                        <td class="text-sm">${piece.type || 'N/A'}</td>
+                        <td class="text-right">${parseFloat(piece.quantite || 0).toLocaleString('fr-FR')}</td>
+                        <td class="text-right">${parseFloat(piece.montant || 0).toLocaleString('fr-FR')} Ar</td>
+                        <td class="text-right">${piece.nb_utilisations || 0}</td>
+                    </tr>
+            `;
+        });
+    }
+
+    html += `
+                </tbody>
+            </table>
+        </div>
+        <div class="mt-2 text-sm text-base-content/70">
+            💡 Cliquez sur une pièce pour voir ses détails d'utilisation
+        </div>
+    `;
+
+    return html;
+}
+
+/**
+ * Note: Les anciennes fonctions generatePieceBasicInfo et generateOuvrageBasicInfo
+ * ont été supprimées car elles sont remplacées par les appels API ci-dessus.
+ */
+
+// Fonction helper pour le stat (reste du code ci-dessous)
+function generateOuvrageBasicInfo_UNUSED(ouvrageId, nom) {
+    // Cette fonction n'est plus utilisée - conservée pour référence
+    const ouvrageData = [...topOuvragesAbsolu, ...topOuvragesRelatif].find(o => o.ouvrage_id === ouvrageId);
+
+    if (!ouvrageData) {
+        return '<p>Aucune donnée disponible</p>';
+    }
+
+    return `
+        <div class="stats stats-vertical lg:stats-horizontal shadow w-full">
+            <div class="stat">
+                <div class="stat-title">Points d'Eau</div>
+                <div class="stat-value text-primary">${ouvrageData.nb_points_eau || 0}</div>
+            </div>
+            <div class="stat">
+                <div class="stat-title">Quantité Totale</div>
+                <div class="stat-value text-warning">${parseFloat(ouvrageData.quantite || 0).toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+            </div>
+            <div class="stat">
+                <div class="stat-title">Montant Total</div>
+                <div class="stat-value text-success">${parseFloat(ouvrageData.montant || 0).toLocaleString('fr-FR', {minimumFractionDigits: 0, maximumFractionDigits: 0})} Ar</div>
+            </div>
+            <div class="stat">
+                <div class="stat-title">Pièces Différentes</div>
+                <div class="stat-value text-info">${ouvrageData.nb_pieces_diff || 0}</div>
+            </div>
+        </div>
+    `;
+}
+</script>
+{% endblock %}

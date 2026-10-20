@@ -1,0 +1,490 @@
+{% extends admin_shell_base_template %}
+{% load static %}
+{% load employee_grouping %}
+
+{% block title %}Évaluations Résultats{% endblock %}
+
+{% block content %}
+<div class="container mx-auto space-y-6 px-4 py-8">
+    <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+            <h1 class="text-3xl font-bold">Évaluation par les résultats</h1>
+            <p class="text-base-content/70">Score métier calculé selon le poste: réparations, recouvrement ou agrégation des subordonnés.</p>
+        </div>
+        <div class="alert alert-info lg:max-w-xl">
+            <i class="fas fa-circle-info"></i>
+            <span>Mpikojakoja ifotony: réparations terminées. Agent de recouvrement: recouvrement. Supérieur: somme des subordonnés contributeurs.</span>
+        </div>
+    </div>
+
+    <div id="pageError" class="alert alert-error hidden"></div>
+
+    <div class="grid grid-cols-1 gap-6 xl:grid-cols-[420px,1fr]">
+        <div class="card bg-base-100 shadow">
+            <div class="card-body space-y-4">
+                <div>
+                    <h2 class="card-title">Calculer une évaluation</h2>
+                    <p class="text-sm text-base-content/70">Une période existante sera recalculée si elle existe déjà.</p>
+                </div>
+
+                <select id="createBase" class="select select-bordered">
+                    <option value="">Toutes les bases</option>
+                    {% for base in bases %}
+                        <option value="{{ base.id }}">{{ base.nom_base }}</option>
+                    {% endfor %}
+                </select>
+
+                <select id="createEmploye" class="select select-bordered">
+                    <option value="">Choisir un employé</option>
+                    {% for emp in employes %}
+                        <option value="{{ emp.id }}" data-base-id="{{ emp.base_id }}">{{ emp.nom_affichage }}</option>
+                    {% endfor %}
+                </select>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <label class="form-control">
+                        <span class="label-text mb-1">Début</span>
+                        <input id="createPeriodeDebut" type="date" class="input input-bordered">
+                    </label>
+                    <label class="form-control">
+                        <span class="label-text mb-1">Fin</span>
+                        <input id="createPeriodeFin" type="date" class="input input-bordered">
+                    </label>
+                </div>
+
+                <select id="createStatut" class="select select-bordered">
+                    <option value="provisoire">Provisoire</option>
+                    <option value="validee">Validée</option>
+                </select>
+
+                <textarea id="createCommentaire" class="textarea textarea-bordered h-28" placeholder="Commentaire optionnel"></textarea>
+
+                <button onclick="createEvaluation()" class="btn btn-primary">
+                    <i class="fas fa-calculator mr-2"></i>Calculer
+                </button>
+            </div>
+        </div>
+
+        <div class="space-y-6">
+            <div class="card bg-base-100 shadow">
+                <div class="card-body">
+                    <div class="grid grid-cols-1 gap-3 md:grid-cols-4">
+                        <select id="filterBase" class="select select-bordered">
+                            <option value="">Toutes les bases</option>
+                            {% for base in bases %}
+                                <option value="{{ base.id }}">{{ base.nom_base }}</option>
+                            {% endfor %}
+                        </select>
+
+                        <select id="filterEmploye" class="select select-bordered">
+                            {% grouped_employee_options employes "" "Tous les employés" %}
+                        </select>
+
+                        <select id="filterStatut" class="select select-bordered">
+                            <option value="">Tous les statuts</option>
+                            <option value="provisoire">Provisoire</option>
+                            <option value="validee">Validée</option>
+                        </select>
+
+                        <div class="join">
+                            <input id="filterAnnee" type="number" class="input input-bordered join-item w-full" placeholder="Année">
+                            <button onclick="loadEvaluations()" class="btn btn-outline join-item">Filtrer</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="evaluationsList" class="space-y-4"></div>
+        </div>
+    </div>
+</div>
+
+<dialog id="detailsDialog" class="modal">
+    <div class="modal-box max-w-5xl">
+        <div class="flex items-start justify-between gap-4">
+            <div>
+                <h3 id="detailsTitle" class="text-2xl font-bold">Détail</h3>
+                <p id="detailsSubtitle" class="text-base-content/70"></p>
+            </div>
+            <form method="dialog">
+                <button class="btn btn-sm btn-circle btn-ghost">✕</button>
+            </form>
+        </div>
+
+        <div id="detailsSummary" class="grid grid-cols-1 gap-3 py-4 md:grid-cols-3"></div>
+
+        <div class="overflow-x-auto">
+            <table class="table table-zebra">
+                <thead>
+                    <tr>
+                        <th>Référence</th>
+                        <th>Ouvrage</th>
+                        <th>Nature</th>
+                        <th>Attendu</th>
+                        <th>Réalisé</th>
+                        <th>Score</th>
+                    </tr>
+                </thead>
+                <tbody id="detailsBody"></tbody>
+            </table>
+        </div>
+
+        <div class="modal-action">
+            <form method="dialog">
+                <button class="btn">Fermer</button>
+            </form>
+        </div>
+    </div>
+</dialog>
+
+<script>
+const listEndpoint = '/employes/api/evaluations-resultats/';
+const createEndpoint = '/employes/api/evaluations-resultats/create/';
+
+setDefaultDates();
+filterEmployesByBase('createBase', 'createEmploye');
+filterEmployesByBase('filterBase', 'filterEmploye');
+loadEvaluations();
+
+document.getElementById('createBase').addEventListener('change', () => filterEmployesByBase('createBase', 'createEmploye'));
+document.getElementById('filterBase').addEventListener('change', () => filterEmployesByBase('filterBase', 'filterEmploye'));
+
+function setDefaultDates() {
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    document.getElementById('createPeriodeFin').value = `${yyyy}-${mm}-${dd}`;
+    document.getElementById('createPeriodeDebut').value = `${yyyy}-${mm}-01`;
+    document.getElementById('filterAnnee').value = yyyy;
+}
+
+function setPageError(message) {
+    const box = document.getElementById('pageError');
+    if (!message) {
+        box.classList.add('hidden');
+        box.innerHTML = '';
+        return;
+    }
+    box.classList.remove('hidden');
+    box.innerHTML = `<i class="fas fa-triangle-exclamation"></i><span>${message}</span>`;
+}
+
+function filterEmployesByBase(baseSelectId, employeSelectId) {
+    const baseId = document.getElementById(baseSelectId).value;
+    const select = document.getElementById(employeSelectId);
+    let selectedVisible = false;
+
+    Array.from(select.options).forEach((option) => {
+        if (!option.value) {
+            option.hidden = false;
+            return;
+        }
+        const isVisible = !baseId || option.dataset.baseId === baseId;
+        option.hidden = !isVisible;
+        if (isVisible && option.selected) {
+            selectedVisible = true;
+        }
+    });
+
+    if (!selectedVisible) {
+        select.value = '';
+    }
+}
+
+async function loadEvaluations() {
+    setPageError('');
+    const params = new URLSearchParams({
+        base_id: document.getElementById('filterBase').value,
+        employe_id: document.getElementById('filterEmploye').value,
+        statut: document.getElementById('filterStatut').value,
+        annee: document.getElementById('filterAnnee').value,
+    });
+
+    try {
+        const response = await fetch(`${listEndpoint}?${params.toString()}`);
+        const data = await response.json();
+        if (!data.success) {
+            throw new Error(data.error || 'Chargement impossible.');
+        }
+        displayEvaluations(data.evaluations || []);
+    } catch (error) {
+        displayEvaluations([]);
+        setPageError(error.message);
+    }
+}
+
+function displayEvaluations(evaluations) {
+    const container = document.getElementById('evaluationsList');
+
+    if (!evaluations.length) {
+        container.innerHTML = `
+            <div class="alert">
+                <i class="fas fa-inbox"></i>
+                <span>Aucune évaluation trouvée pour les filtres actuels.</span>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = evaluations.map((evaluation) => {
+        const badgeClass = evaluation.statut === 'validee' ? 'badge-success' : 'badge-warning';
+        const tauxClass = evaluation.pourcentage >= 80 ? 'text-success' : (evaluation.pourcentage >= 60 ? 'text-warning' : 'text-error');
+
+        return `
+            <div class="card bg-base-100 shadow" id="evaluation-${evaluation.id}">
+                <div class="card-body">
+                    <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                        <div class="space-y-2">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <h3 class="card-title">${escapeHtml(evaluation.employe_nom)}</h3>
+                                <span class="badge ${badgeClass}">${escapeHtml(evaluation.statut)}</span>
+                            </div>
+                            <p class="text-sm text-base-content/70">${escapeHtml(evaluation.employe_poste)} · ${escapeHtml(evaluation.base_nom)}</p>
+                            <p class="text-sm">Période: ${formatDate(evaluation.periode_debut)} → ${formatDate(evaluation.periode_fin)}</p>
+                            <div class="grid grid-cols-2 gap-3 pt-2 md:grid-cols-4">
+                                <div class="stat rounded-box bg-base-200 p-3">
+                                    <div class="stat-title text-xs">Score</div>
+                                    <div class="stat-value text-lg ${tauxClass}">${evaluation.score_obtenu}/${evaluation.score_maximum}</div>
+                                </div>
+                                <div class="stat rounded-box bg-base-200 p-3">
+                                    <div class="stat-title text-xs">% réussite</div>
+                                    <div class="stat-value text-lg ${tauxClass}">${formatPercent(evaluation.pourcentage)}</div>
+                                </div>
+                                <div class="stat rounded-box bg-base-200 p-3">
+                                    <div class="stat-title text-xs">Mode</div>
+                                    <div class="stat-value text-lg">${escapeHtml(evaluation.mode_evaluation_label || '-')}</div>
+                                </div>
+                                <div class="stat rounded-box bg-base-200 p-3">
+                                    <div class="stat-title text-xs">Ouvrages</div>
+                                    <div class="stat-value text-lg">${evaluation.nb_ouvrages}</div>
+                                </div>
+                            </div>
+                            <div class="text-sm text-base-content/80">
+                                <div>Synthèse: <strong>${escapeHtml(evaluation.resume_court || '-')}</strong></div>
+                                ${renderFinancialSummary(evaluation)}
+                            </div>
+                            ${evaluation.commentaire ? `<p class="text-sm italic text-base-content/70">${escapeHtml(evaluation.commentaire)}</p>` : ''}
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <button onclick="showEvaluationDetails('${evaluation.id}')" class="btn btn-sm btn-primary">Détails</button>
+                            <button onclick="recalculateEvaluation('${evaluation.id}')" class="btn btn-sm btn-outline">Recalculer</button>
+                            <button onclick="deleteEvaluation('${evaluation.id}')" class="btn btn-sm btn-error">Supprimer</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+async function createEvaluation() {
+    setPageError('');
+
+    const payload = {
+        employe_id: document.getElementById('createEmploye').value,
+        periode_debut: document.getElementById('createPeriodeDebut').value,
+        periode_fin: document.getElementById('createPeriodeFin').value,
+        statut: document.getElementById('createStatut').value,
+        commentaire: document.getElementById('createCommentaire').value,
+    };
+
+    if (!payload.employe_id) {
+        setPageError("Choisissez un employé avant de lancer le calcul.");
+        return;
+    }
+
+    try {
+        const response = await fetch(createEndpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+        if (!data.success) {
+            throw new Error(data.error || 'Création impossible.');
+        }
+
+        document.getElementById('createCommentaire').value = '';
+        await loadEvaluations();
+        await showEvaluationDetails(data.evaluation.id);
+    } catch (error) {
+        setPageError(error.message);
+    }
+}
+
+async function showEvaluationDetails(evaluationId) {
+    setPageError('');
+    try {
+        const response = await fetch(`/employes/api/evaluations-resultats/${evaluationId}/`);
+        const data = await response.json();
+        if (!data.success) {
+            throw new Error(data.error || 'Détail indisponible.');
+        }
+
+        const evaluation = data.evaluation;
+        document.getElementById('detailsTitle').textContent = evaluation.employe_nom;
+        document.getElementById('detailsSubtitle').textContent = `Période ${formatDate(evaluation.periode_debut)} → ${formatDate(evaluation.periode_fin)} · calcul du ${formatDate(evaluation.date_calcul)}`;
+        document.getElementById('detailsSummary').innerHTML = `
+            <div class="stat rounded-box bg-base-200">
+                <div class="stat-title">Score</div>
+                <div class="stat-value text-primary">${evaluation.score_obtenu}/${evaluation.score_maximum}</div>
+            </div>
+            <div class="stat rounded-box bg-base-200">
+                <div class="stat-title">Mode</div>
+                <div class="stat-value text-lg">${escapeHtml(evaluation.mode_evaluation_label || '-')}</div>
+            </div>
+            <div class="stat rounded-box bg-base-200">
+                <div class="stat-title">Synthèse</div>
+                <div class="stat-value text-lg">${escapeHtml(evaluation.resume_court || '-')}</div>
+            </div>
+        `;
+
+        document.getElementById('detailsBody').innerHTML = (data.details || []).map((detail) => `
+            <tr>
+                <td>${escapeHtml(detail.libelle || detail.point_eau_nom || detail.employe_nom || '-')}</td>
+                <td>${escapeHtml(detail.ouvrage_nom || '-')}</td>
+                <td><span class="badge badge-ghost">${escapeHtml(detail.nature_label || detail.type_paiement || '-')}</span></td>
+                <td>${formatDetailExpected(detail)}</td>
+                <td>${formatDetailRealized(detail)}</td>
+                <td>${formatDetailScore(detail)}</td>
+            </tr>
+        `).join('');
+
+        document.getElementById('detailsDialog').showModal();
+    } catch (error) {
+        setPageError(error.message);
+    }
+}
+
+async function recalculateEvaluation(evaluationId) {
+    setPageError('');
+    try {
+        const response = await fetch(`/employes/api/evaluations-resultats/${evaluationId}/update/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify({ recalculate: true }),
+        });
+        const data = await response.json();
+        if (!data.success) {
+            throw new Error(data.error || 'Recalcul impossible.');
+        }
+        await loadEvaluations();
+    } catch (error) {
+        setPageError(error.message);
+    }
+}
+
+async function deleteEvaluation(evaluationId) {
+    if (!confirm('Supprimer cette évaluation ?')) {
+        return;
+    }
+
+    setPageError('');
+    try {
+        const response = await fetch(`/employes/api/evaluations-resultats/${evaluationId}/delete/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+        });
+        const data = await response.json();
+        if (!data.success) {
+            throw new Error(data.error || 'Suppression impossible.');
+        }
+        await loadEvaluations();
+    } catch (error) {
+        setPageError(error.message);
+    }
+}
+
+function renderFinancialSummary(evaluation) {
+    const montantPrevu = Number(evaluation.montant_total_prevu || 0);
+    const montantCollecte = Number(evaluation.montant_total_collecte || 0);
+    if (!montantPrevu && !montantCollecte) {
+        return '';
+    }
+    return `
+        <div>Prévu: <strong>${formatMoney(montantPrevu)}</strong></div>
+        <div>Collecté: <strong>${formatMoney(montantCollecte)}</strong></div>
+    `;
+}
+
+function formatDetailExpected(detail) {
+    if (detail.detail_kind === 'reparation') {
+        return `${detail.score_maximum || 0} réparation(s)`;
+    }
+    if (detail.detail_kind === 'subordonne') {
+        return `${detail.score_maximum || 0} point(s)`;
+    }
+    return formatMoney(detail.montant_prevu);
+}
+
+function formatDetailRealized(detail) {
+    if (detail.detail_kind === 'reparation') {
+        return `${detail.terminees || 0} terminée(s) / ${detail.non_terminees || 0} non terminée(s)`;
+    }
+    if (detail.detail_kind === 'subordonne') {
+        return escapeHtml(detail.resume || `${detail.score_obtenu || 0}/${detail.score_maximum || 0}`);
+    }
+    return formatMoney(detail.montant_paye);
+}
+
+function formatDetailScore(detail) {
+    const score = `${detail.score_obtenu || 0}/${detail.score_maximum || 0}`;
+    if (detail.point_obtenu) {
+        return `<span class="badge badge-success">${score}</span>`;
+    }
+    if (!detail.score_maximum) {
+        return `<span class="badge badge-ghost">${score}</span>`;
+    }
+    return `<span class="badge badge-error">${score}</span>`;
+}
+
+function formatDate(value) {
+    if (!value) {
+        return '-';
+    }
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString('fr-FR');
+}
+
+function formatMoney(value) {
+    return `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(value || 0)} Ar`;
+}
+
+function formatPercent(value) {
+    return `${new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(value || 0)} %`;
+}
+
+function escapeHtml(value) {
+    return String(value || '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === `${name}=`) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+</script>
+{% endblock %}

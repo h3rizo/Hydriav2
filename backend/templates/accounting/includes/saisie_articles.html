@@ -1,0 +1,230 @@
+<style>
+#sa-section { border: 1px solid rgba(100,116,139,.45); border-radius: .75rem; padding: 1rem; margin-top: .5rem; }
+#sa-section .sa-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .75rem; }
+#sa-section .sa-title { font-weight: 700; }
+#sa-section .sa-hint { font-size: .75rem; opacity: .7; }
+#sa-section .sa-row { border: 1px solid rgba(100,116,139,.3); border-radius: .5rem; padding: .75rem; margin-bottom: .5rem; display: grid; gap: .5rem; grid-template-columns: repeat(6, minmax(0, 1fr)); align-items: end; }
+#sa-section .sa-row label { display: block; font-size: .7rem; opacity: .75; margin-bottom: .15rem; }
+#sa-section .sa-row input, #sa-section .sa-row select { width: 100%; border: 1px solid rgba(100,116,139,.5); border-radius: .4rem; padding: .35rem .5rem; font-size: .85rem; background: transparent; color: inherit; }
+#sa-section .sa-wide { grid-column: span 3; }
+#sa-section .sa-mid { grid-column: span 2; }
+#sa-section .sa-btn { border: 1px solid rgba(100,116,139,.6); border-radius: .4rem; padding: .3rem .7rem; font-size: .8rem; cursor: pointer; background: transparent; color: inherit; }
+#sa-section .sa-del { color: #dc2626; border-color: #dc2626; }
+#sa-section .sa-ral { font-size: .85rem; font-weight: 600; padding: .35rem 0; }
+#sa-section .sa-ral.pos { color: #d97706; }
+#sa-section .sa-total { font-size: .85rem; margin-top: .25rem; text-align: right; }
+@media (max-width: 760px) { #sa-section .sa-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } #sa-section .sa-wide, #sa-section .sa-mid { grid-column: span 2; } }
+</style>
+
+<section id="sa-section" style="display:none">
+    <div class="sa-head">
+        <div>
+            <div class="sa-title">Detail des articles (achat)</div>
+            <div class="sa-hint">
+                Stock : l'article entre au stock de la base a la validation. Hors stock : livraison directe a un ouvrage,
+                un employe ou un vehicule (mention dans « Detail » avec le reste a livrer, RAL).
+            </div>
+        </div>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+            <a class="sa-btn" href="{% url 'accounting:restes_a_livrer' %}" target="_blank" rel="noopener" style="text-decoration:none">Restes à livrer</a>
+            <button type="button" class="sa-btn" id="sa-add">+ Ajouter un article</button>
+        </div>
+    </div>
+    <div id="sa-rows"></div>
+    <div class="sa-total" id="sa-total"></div>
+</section>
+
+<script>
+(function () {
+    const URL_DESIGNATIONS = "{% url 'accounting:api_saisie_articles_designations' %}";
+    const URL_DESTINATIONS = "{% url 'accounting:api_saisie_articles_destinations' %}";
+    const PREFIXES = ['218', '601', '602', '605'];
+    const rows = [];
+    let uid = 0;
+    let lastAutoDetail = '';
+
+    const section = document.getElementById('sa-section');
+    const rowsEl = document.getElementById('sa-rows');
+
+    function compteConcerne() {
+        try {
+            const compte = (typeof getSelectedCompte === 'function')
+                ? getSelectedCompte()
+                : COMPTES.find((c) => c.id === document.getElementById('compte_id').value);
+            return !!compte && PREFIXES.some((p) => String(compte.compte || '').startsWith(p));
+        } catch (e) { return false; }
+    }
+
+    function fmt(n) { return (Math.round(n * 100) / 100).toLocaleString('fr-FR'); }
+
+    function triggerValidation() {
+        const field = document.getElementById('description');
+        if (field) field.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    function debounce(fn, ms) {
+        let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+    }
+
+    function el(tag, attrs, children) {
+        const node = document.createElement(tag);
+        Object.entries(attrs || {}).forEach(([k, v]) => { if (k === 'text') node.textContent = v; else node.setAttribute(k, v); });
+        (children || []).forEach((c) => node.appendChild(c));
+        return node;
+    }
+
+    function field(label, input, cls) {
+        const wrap = el('div', cls ? { class: cls } : {});
+        wrap.appendChild(el('label', { text: label }));
+        wrap.appendChild(input);
+        return wrap;
+    }
+
+    async function search(url, params, datalist, store) {
+        const qs = new URLSearchParams(params);
+        try {
+            const response = await fetch(url + '?' + qs.toString(), { credentials: 'same-origin' });
+            const data = await response.json();
+            const list = data.designations || data.items || [];
+            store.length = 0; list.forEach((x) => store.push(x));
+            datalist.innerHTML = '';
+            list.forEach((x) => datalist.appendChild(el('option', { value: x.nom || x.label })));
+        } catch (e) { /* recherche indisponible : on garde la saisie */ }
+    }
+
+    function addRow() {
+        const n = ++uid;
+        const state = { designation: null, destination: null, found: [], foundDest: [] };
+
+        const dlDesig = el('datalist', { id: 'sa-dl-' + n });
+        const dlDest = el('datalist', { id: 'sa-dd-' + n });
+        const iDesig = el('input', { type: 'text', list: 'sa-dl-' + n, placeholder: 'Rechercher une designation', autocomplete: 'off' });
+        const iMode = el('select', {}, [el('option', { value: 'stock', text: 'Entree en stock' }), el('option', { value: 'hors_stock', text: 'Hors stock' })]);
+        const iQte = el('input', { type: 'number', min: '0', step: '0.01', value: '1' });
+        const iRecue = el('input', { type: 'number', min: '0', step: '0.01', value: '1' });
+        const iPrix = el('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Ar' });
+        const ral = el('div', { class: 'sa-ral', text: '0' });
+        const iDestType = el('select', {}, [
+            el('option', { value: 'ouvrage', text: 'Ouvrage / chantier' }),
+            el('option', { value: 'employe', text: 'Employe (equipement)' }),
+            el('option', { value: 'vehicule', text: 'Vehicule' }),
+        ]);
+        const iDest = el('input', { type: 'text', list: 'sa-dd-' + n, placeholder: 'Rechercher la destination', autocomplete: 'off' });
+        const del = el('button', { type: 'button', class: 'sa-btn sa-del', text: 'Retirer' });
+        const hint = el('div', { class: 'sa-hint', text: '' });
+
+        const wDesig = field('Designation', iDesig, 'sa-wide');
+        wDesig.appendChild(dlDesig);
+        const wDestType = field('Destination', iDestType, 'sa-mid');
+        const wDest = field('Ouvrage / employe / vehicule', iDest, 'sa-wide');
+        wDest.appendChild(dlDest);
+
+        const root = el('div', { class: 'sa-row' }, [
+            wDesig, field('Mode', iMode, 'sa-mid'), field('Quantite achetee', iQte),
+            field('Recue / livree', iRecue), field('Prix unitaire', iPrix), field('Reste a livrer (RAL)', ral),
+            wDestType, wDest, el('div', {}, [del]), el('div', { class: 'sa-wide' }, [hint]),
+        ]);
+
+        function refreshMode() {
+            const hors = iMode.value === 'hors_stock';
+            wDestType.style.display = hors ? '' : 'none';
+            wDest.style.display = hors ? '' : 'none';
+            if (!hors) { state.destination = null; iDest.value = ''; }
+        }
+        function refreshRal() {
+            const q = parseFloat(iQte.value) || 0, r = parseFloat(iRecue.value) || 0;
+            const reste = Math.max(0, q - r);
+            ral.textContent = fmt(reste);
+            ral.className = 'sa-ral' + (reste > 0 ? ' pos' : '');
+            refreshTotal();
+        }
+
+        const searchDesig = debounce(() => search(URL_DESIGNATIONS, { q: iDesig.value }, dlDesig, state.found), 250);
+        iDesig.addEventListener('input', () => {
+            const match = state.found.find((d) => d.nom === iDesig.value);
+            state.designation = match || null;
+            if (match) {
+                if (!iPrix.value && match.prix_unitaire !== null) iPrix.value = match.prix_unitaire;
+                hint.textContent = (match.unite ? 'Unite : ' + match.unite + '. ' : '')
+                    + (match.prix_unitaire !== null ? 'Prix actuel : ' + fmt(match.prix_unitaire) + ' Ar' + (match.date_prix ? ' (' + match.date_prix + ')' : '') + '. ' : '')
+                    + 'Le prix saisi remplace le prix de la designation s\'il est plus recent.';
+            } else { hint.textContent = ''; searchDesig(); }
+            triggerValidation();
+        });
+        const searchDest = debounce(() => search(URL_DESTINATIONS, { type: iDestType.value, q: iDest.value }, dlDest, state.foundDest), 250);
+        iDest.addEventListener('input', () => {
+            state.destination = state.foundDest.find((d) => d.label === iDest.value) || null;
+            if (!state.destination) searchDest();
+            triggerValidation();
+        });
+        iDestType.addEventListener('change', () => { state.destination = null; iDest.value = ''; searchDest(); triggerValidation(); });
+        iMode.addEventListener('change', () => {
+            refreshMode();
+            if (iMode.value === 'hors_stock') searchDest();
+            triggerValidation();
+        });
+        iQte.addEventListener('input', () => {
+            // Par defaut tout est recu ; l'operateur abaisse « Recue » pour saisir un reste a livrer.
+            if (parseFloat(iRecue.value) > parseFloat(iQte.value) || iRecue.dataset.touched !== '1') iRecue.value = iQte.value;
+            refreshRal(); triggerValidation();
+        });
+        iRecue.addEventListener('input', () => { iRecue.dataset.touched = '1'; refreshRal(); triggerValidation(); });
+        iPrix.addEventListener('input', () => { refreshTotal(); triggerValidation(); });
+        del.addEventListener('click', () => {
+            rows.splice(rows.indexOf(entry), 1); root.remove(); refreshTotal(); triggerValidation();
+        });
+
+        const entry = { state, iMode, iQte, iRecue, iPrix, iDestType };
+        rows.push(entry);
+        rowsEl.appendChild(root);
+        refreshMode(); refreshRal();
+        searchDesig();
+    }
+
+    function refreshTotal() {
+        const total = rows.reduce((s, r) => s + (parseFloat(r.iQte.value) || 0) * (parseFloat(r.iPrix.value) || 0), 0);
+        document.getElementById('sa-total').textContent = total > 0 ? 'Total des articles : ' + fmt(total) + ' Ar' : '';
+    }
+
+    function refreshVisibility() {
+        const show = compteConcerne();
+        const wasHidden = section.style.display === 'none';
+        section.style.display = show ? '' : 'none';
+        if (show && wasHidden && rows.length === 0) addRow();
+    }
+
+    window.getSaisieArticles = function () {
+        if (!compteConcerne()) return [];
+        return rows.filter((r) => r.state.designation).map((r) => ({
+            designation_id: r.state.designation.id,
+            mode: r.iMode.value,
+            quantite: r.iQte.value,
+            quantite_recue: r.iRecue.value,
+            prix_unitaire: r.iPrix.value,
+            destination_type: r.iMode.value === 'hors_stock' ? r.iDestType.value : '',
+            destination_id: r.iMode.value === 'hors_stock' && r.state.destination ? r.state.destination.id : '',
+        }));
+    };
+
+    // Le champ « detail » reprend la mention hors stock proposee par le serveur, tant que l'operateur n'y a pas touche.
+    window.saisieArticlesApplyDetail = function (suggested) {
+        const input = document.getElementById('detail');
+        if (!input) return;
+        suggested = suggested || '';
+        if (input.value === '' || input.value === lastAutoDetail) {
+            input.value = suggested;
+            lastAutoDetail = suggested;
+        }
+    };
+
+    window.saisieArticlesReset = function () {
+        rows.length = 0; rowsEl.innerHTML = ''; lastAutoDetail = '';
+        document.getElementById('sa-total').textContent = '';
+        refreshVisibility();
+    };
+
+    document.getElementById('sa-add').addEventListener('click', () => { addRow(); triggerValidation(); });
+    setInterval(refreshVisibility, 800);
+    refreshVisibility();
+})();
+</script>

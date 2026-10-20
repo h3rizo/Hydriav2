@@ -1,72 +1,37 @@
-# Application Soakoja
+# Hydria Backend - Django API
 
-Application web de gestion d'eau potable pour Soakoja Madagascar.
+## Configuration
+API Django avec connexion Supabase PostgreSQL pour la gestion des activités d'approvisionnement en eau à Madagascar.
 
-## Installation
+## Commandes
 
-1. **Installer Node.js** (version 16 ou supérieure)
-   - Télécharger depuis https://nodejs.org/
+### Activer l'environnement virtuel
+```powershell
+# PowerShell (recommandé)
+.\venv\Scripts\Activate.ps1
 
-2. **Cloner ou télécharger le projet**
-   
-3. **Installation des dépendances**
-   ```bash
-   npm install
-   ```
+# Command Prompt
+venv\Scripts\activate.bat
 
-4. **Démarrer l'application**
-   ```bash
-   npm start
-   ```
-
-5. **Ouvrir dans le navigateur**
-   - http://localhost:3000
-
-## Comptes de test
-
-- **Administrateur**: admin / admin123 (niveau 4)
-- **Caissière**: marie / marie123 (niveau 2) 
-- **Agent terrain**: jean / jean123 (niveau 1)
-
-## Structure
-
-- `server.js` - Serveur principal
-- `views/` - Templates EJS
-- `public/` - Fichiers statiques (CSS, JS)
-- `database/` - Base de données SQLite
-
-## Fonctionnalités
-
-- ✅ Authentification multi-niveaux
-- ✅ Gestion des plannings d'activités
-- ✅ Suivi des ouvrages d'eau
-- ✅ Gestion des points d'eau
-- ✅ Cartes sociales (tarifs préférentiels)
-- ✅ Interface responsive
-- 🔄 Intégration DiameX (en cours)
-
-## Développement
-
-Pour le mode développement avec rechargement automatique:
-```bash
-npm run dev
+# Git Bash
+source venv/Scripts/activate
 ```
 
-## Déploiement sur Render
+### Installation et lancement
+```bash
+# Installer dépendances
+pip install -r requirements.txt
 
-L'application est configurée pour être déployée facilement sur Render:
+# Migrations
+python manage.py migrate
 
-1. **Préparation au déploiement**
-   ```bash
-   node prepare-render-deploy.js
-   ```
+# Lancer le serveur
+python manage.py runserver
+```
 
-2. **Connecter GitHub à Render**
-   - Créez un compte sur [Render](https://render.com)
-   - Connectez votre dépôt GitHub
-   - Render détectera automatiquement le fichier `render.yaml`
-
-3. **Configuration des variables d'environnement**
-   - Configurez les variables Supabase dans Render
-
-Pour des instructions détaillées, consultez le guide complet dans `documentation/render_deployment_guide.md`
+## Structure
+- `hydria/` - Configuration Django principale
+- `apps/` - Applications Django modulaires
+- `static/` - Fichiers statiques
+- `templates/` - Templates Django
+- `media/` - Fichiers media uploadés

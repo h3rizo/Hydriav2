@@ -1,0 +1,2202 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+{{ postes_data|json_script:"postes-data" }}
+{{ stades_data|json_script:"stades-data" }}
+{{ employes_data|json_script:"employes-data" }}
+{{ bases_data|json_script:"bases-data" }}
+{{ districts_data|json_script:"districts-data" }}
+{{ anciennete_config|json_script:"anciennete-config" }}
+
+<div class="px-4 py-6 max-w-7xl mx-auto" x-data="grillesAutonomieApp()">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+        <div>
+            <h1 class="text-2xl font-bold flex items-center gap-2">
+                <i class="fas fa-chart-line text-primary"></i>
+                Grille Salariale par Stade d'Autonomie
+            </h1>
+            <p class="text-base-content/70 mt-1">
+                Remuneration nette par poste et stade d'autonomie professionnelle, avec primes de resultat configurables.
+            </p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <a href="{% url 'employees:grilles_salariales_list' %}" class="btn btn-outline">
+                <i class="fas fa-layer-group mr-1"></i> Grille par anciennete
+            </a>
+        </div>
+    </div>
+
+    <div class="alert alert-info mb-4 shadow-sm">
+        <i class="fas fa-info-circle"></i>
+        <span>
+            Les modifications restent en brouillon jusqu'a leur validation globale. Seuls les postes dont le
+            mode de reference salariale est "Stade d'autonomie" apparaissent ici (a configurer sur la fiche Poste).
+        </span>
+    </div>
+
+    {% if not can_manage %}
+    <div class="alert alert-warning shadow-sm">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span>Aucune organisation n'est associee a votre compte. Cette page ne peut pas etre utilisee.</span>
+    </div>
+    {% else %}
+
+    <!-- Onglets -->
+    <div role="tablist" class="tabs tabs-boxed mb-6">
+        <a role="tab" class="tab" :class="{'tab-active': activeTab === 'tableau'}" @click="activeTab = 'tableau'">
+            <i class="fas fa-table mr-2"></i>Tableau
+        </a>
+        <a role="tab" class="tab" :class="{'tab-active': activeTab === 'graphique'}" @click="activeTab = 'graphique'; $nextTick(() => renderChart())">
+            <i class="fas fa-chart-line mr-2"></i>Vue graphique
+        </a>
+        <a role="tab" class="tab" :class="{'tab-active': activeTab === 'matrice'}" @click="activeTab = 'matrice'; if (chartData.length === 0) loadGraphiqueData()">
+            <i class="fas fa-th mr-2"></i>Vue matricielle
+        </a>
+        <a role="tab" class="tab" :class="{'tab-active': activeTab === 'regles'}" @click="activeTab = 'regles'; loadRegles()">
+            <i class="fas fa-percent mr-2"></i>Regles de primes
+        </a>
+        <a role="tab" class="tab" :class="{'tab-active': activeTab === 'majorations'}" @click="activeTab = 'majorations'; loadMajorations()">
+            <i class="fas fa-map-marked-alt mr-2"></i>Majorations territoriales
+        </a>
+        <a role="tab" class="tab" :class="{'tab-active': activeTab === 'simulateur'}" @click="activeTab = 'simulateur'">
+            <i class="fas fa-calculator mr-2"></i>Simulateur
+        </a>
+    </div>
+
+    <!-- Bandeau d'alertes de coherence -->
+    <div class="alert alert-warning mb-4 shadow-sm" x-show="alertesCoherence.length > 0" style="display: none;">
+        <i class="fas fa-exclamation-triangle"></i>
+        <div class="flex-1">
+            <p class="font-semibold mb-1" x-text="`${alertesCoherence.length} alerte(s) de coherence detectee(s)`"></p>
+            <ul class="text-sm space-y-1">
+                <template x-for="(alerte, idx) in alertesCoherence" :key="idx">
+                    <li>
+                        <span class="badge badge-xs" :class="alerte.severite === 'error' ? 'badge-error' : 'badge-warning'" x-text="alerte.severite"></span>
+                        <span x-text="alerte.message"></span>
+                    </li>
+                </template>
+            </ul>
+        </div>
+        <button class="btn btn-ghost btn-xs" @click="loadAlertesCoherence()">
+            <i class="fas fa-sync-alt"></i> Rafraichir
+        </button>
+    </div>
+
+    <div class="alert alert-error mb-4 shadow-sm" x-show="errorMessage" style="display: none;">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span x-text="errorMessage"></span>
+    </div>
+    <div class="alert alert-success mb-4 shadow-sm" x-show="successMessage" style="display: none;">
+        <i class="fas fa-check-circle"></i>
+        <span x-text="successMessage"></span>
+    </div>
+
+    <!-- ============ ONGLET TABLEAU ============ -->
+    <div x-show="activeTab === 'tableau'">
+        <div class="card bg-base-100 shadow mb-6">
+            <div class="card-body">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Poste</span></label>
+                        <select class="select select-bordered" x-model="selectedPoste" @change="loadGrilles(); loadPositionnement()">
+                            <option value="">Tous les postes</option>
+                            <template x-for="poste in postes" :key="poste.id">
+                                <option :value="poste.id" x-text="poste.nom_poste"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Statut</span></label>
+                        <select class="select select-bordered" x-model="selectedStatut" @change="loadGrilles()">
+                            <option value="">Tous</option>
+                            <option value="brouillon">Brouillon</option>
+                            <option value="soumise">Soumise</option>
+                            <option value="validee">Validee</option>
+                            <option value="appliquee">Appliquee</option>
+                            <option value="rejetee">Rejetee</option>
+                        </select>
+                    </div>
+                    <div class="form-control justify-end">
+                        <button class="btn btn-outline" @click="loadGrilles(); loadPositionnement()">
+                            <i class="fas fa-sync-alt" :class="{'fa-spin': loading}"></i> Rafraichir
+                        </button>
+                    </div>
+                    <div class="form-control justify-end">
+                        <button class="btn btn-primary" @click="openCreateGrilleModal()">
+                            <i class="fas fa-plus mr-1"></i> Nouvelle grille
+                        </button>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Type de poste</span></label>
+                        <select class="select select-bordered" x-model="selectedTypePoste" @change="loadGrilles()">
+                            <option value="">Tous les types</option>
+                            <template x-for="code in PC.TYPE_ORDER" :key="code">
+                                <option :value="code" x-text="PC.typeLabel(code)"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Niveau</span></label>
+                        <select class="select select-bordered" x-model="selectedNiveauPoste" @change="loadGrilles()">
+                            <option value="">Tous les niveaux</option>
+                            <template x-for="code in PC.NIVEAU_ORDER" :key="code">
+                                <option :value="code" x-text="PC.niveauLabel(code)"></option>
+                            </template>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="overflow-x-auto bg-base-100 rounded-lg shadow">
+            <table class="table table-zebra">
+                <thead>
+                    <tr>
+                        <th>Poste</th>
+                        <th>Stade</th>
+                        <th class="text-right">Salaire net fixe (Ar)</th>
+                        <th class="text-right">Prime cible (Ar)</th>
+                        <th class="text-right">Prime max. (Ar)</th>
+                        <th class="text-right">Remun. cible (K Ar)</th>
+                        <th class="text-right">Remun. max. (K Ar)</th>
+                        <th>Statut</th>
+                        <th class="text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="grille in grilles" :key="grille.id">
+                        <tr>
+                            <td>
+                                <div class="flex items-center gap-1.5 flex-wrap">
+                                    <span x-text="grille.poste_nom"></span>
+                                    <span class="badge badge-ghost badge-xs" x-show="grille.poste_categorie_professionnelle" x-text="grille.poste_categorie_professionnelle"></span>
+                                    <i class="fas fa-info-circle text-base-content/40 text-xs cursor-help"
+                                       x-show="grille.poste_competences_attributions"
+                                       :title="grille.poste_competences_attributions"></i>
+                                </div>
+                                <div class="flex items-center gap-1 mt-1" x-show="grille.poste_type || grille.poste_niveau">
+                                    <span class="badge badge-xs" :class="PC.typeBadgeClass(grille.poste_type)" x-text="PC.typeLabel(grille.poste_type)"></span>
+                                    <span class="badge badge-xs" :class="PC.niveauBadgeClass(grille.poste_type, grille.poste_niveau)" x-text="PC.niveauLabel(grille.poste_niveau)"></span>
+                                </div>
+                            </td>
+                            <td>
+                                <div x-text="grille.stade_nom"></div>
+                                <div class="mt-1" x-show="grilleStadeEligible(grille)">
+                                    <span class="badge badge-xs"
+                                          :class="grille.anciennete_activee ? 'badge-primary' : 'badge-ghost'"
+                                          :title="ancienneteResume(grille)">
+                                        <i class="fas fa-hourglass-half mr-1"></i>
+                                        <span x-text="grille.anciennete_activee ? 'Anciennete ON' : 'Anciennete OFF'"></span>
+                                    </span>
+                                    <span class="text-[10px] text-base-content/50 block" x-text="ancienneteResume(grille)"
+                                          x-show="grille.anciennete_activee"></span>
+                                </div>
+                            </td>
+                            <td class="text-right">
+                                <input type="number" class="input input-bordered input-sm w-32 text-right"
+                                       :value="grille.salaire_net_fixe"
+                                       @change="updateGrilleField(grille, 'salaire_net_fixe', $event.target.value)"
+                                       :disabled="grille.statut === 'appliquee'">
+                            </td>
+                            <td class="text-right">
+                                <input type="number" class="input input-bordered input-sm w-28 text-right"
+                                       :value="grille.prime_cible"
+                                       @change="updateGrilleField(grille, 'prime_cible', $event.target.value)"
+                                       :disabled="grille.statut === 'appliquee'">
+                            </td>
+                            <td class="text-right">
+                                <input type="number" class="input input-bordered input-sm w-28 text-right"
+                                       :value="grille.prime_maximale"
+                                       @change="updateGrilleField(grille, 'prime_maximale', $event.target.value)"
+                                       :disabled="grille.statut === 'appliquee'">
+                            </td>
+                            <td class="text-right" x-text="formatMoney(grille.remuneration_cible)"></td>
+                            <td class="text-right" x-text="formatMoney(grille.remuneration_maximale)"></td>
+                            <td>
+                                <span class="badge badge-sm" :class="statutBadgeClass(grille.statut)" x-text="grille.statut_display"></span>
+                            </td>
+                            <td class="text-right">
+                                <div class="dropdown dropdown-end">
+                                    <label tabindex="0" class="btn btn-ghost btn-xs"><i class="fas fa-ellipsis-v"></i></label>
+                                    <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box shadow z-10 w-48">
+                                        <li x-show="grilleStadeEligible(grille) && grille.statut !== 'appliquee'">
+                                            <a @click="openAncienneteModal(grille)"><i class="fas fa-hourglass-half mr-1"></i>Anciennete…</a>
+                                        </li>
+                                        <li x-show="grille.statut === 'brouillon'"><a @click="workflowAction(grille, 'soumettre')">Soumettre</a></li>
+                                        <li x-show="grille.statut === 'soumise'"><a @click="workflowAction(grille, 'valider')">Valider</a></li>
+                                        <li x-show="grille.statut === 'soumise'"><a @click="workflowAction(grille, 'rejeter')">Rejeter</a></li>
+                                        <li x-show="grille.statut === 'validee'"><a @click="workflowAction(grille, 'appliquer')">Appliquer</a></li>
+                                        <li x-show="grille.statut === 'brouillon'"><a @click="deleteGrille(grille)" class="text-error">Supprimer</a></li>
+                                    </ul>
+                                </div>
+                            </td>
+                        </tr>
+                    </template>
+                    <tr x-show="grilles.length === 0">
+                        <td colspan="9" class="text-center text-base-content/50 py-8">Aucune grille pour ces filtres</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- ============ Positionnement des employes sur la grille ============ -->
+        <div class="card bg-base-100 shadow mt-6">
+            <div class="card-body">
+                <div class="flex flex-wrap items-center justify-between gap-3 mb-2">
+                    <div>
+                        <h3 class="font-semibold flex items-center gap-2">
+                            <i class="fas fa-map-marker-alt text-primary"></i>
+                            Positionnement des employes sur la grille
+                        </h3>
+                        <p class="text-xs text-base-content/60 max-w-2xl">
+                            Estimation automatique: chaque employe est place au stade dont le salaire net fixe
+                            de la grille (appliquee) est le plus proche de son dernier salaire net reellement paye.
+                            Ceci est indicatif — le stade officiel reste celui valide par evaluation.
+                        </p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <label class="label cursor-pointer gap-2">
+                            <span class="label-text text-sm">Ecarts uniquement</span>
+                            <input type="checkbox" class="toggle toggle-sm toggle-warning"
+                                   x-model="positionnementIncoherentsOnly">
+                        </label>
+                        <span class="badge badge-warning badge-sm" x-show="positionnementIncoherentsCount() > 0"
+                              x-text="`${positionnementIncoherentsCount()} ecart(s)`"></span>
+                        <button class="btn btn-ghost btn-xs" @click="loadPositionnement()">
+                            <i class="fas fa-sync-alt" :class="{'fa-spin': positionnementLoading}"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="table table-sm table-zebra">
+                        <thead>
+                            <tr>
+                                <th>Employe</th>
+                                <th>Poste</th>
+                                <th class="text-right">Salaire net reel (K Ar)</th>
+                                <th>Stade estime (salaire)</th>
+                                <th class="text-right">Reference grille (K Ar)</th>
+                                <th class="text-right">Ecart (K Ar)</th>
+                                <th>Stade declare (evaluation)</th>
+                                <th class="text-center">Coherence</th>
+                                <th>Anc. Autonome</th>
+                                <th class="text-right">Net + anc. (K Ar)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="e in positionnementFiltre()" :key="e.employe_id">
+                                <tr>
+                                    <td x-text="e.nom_affichage"></td>
+                                    <td x-text="e.poste_nom"></td>
+                                    <td class="text-right" x-text="formatMoney(e.salaire_net_reel)"></td>
+                                    <td>
+                                        <span class="badge badge-outline badge-sm" x-text="e.stade_estime_nom"></span>
+                                        <span class="badge badge-xs ml-1"
+                                              :class="e.grille_reference_statut === 'appliquee' ? 'badge-ghost' : 'badge-warning badge-outline'"
+                                              :title="e.grille_reference_statut !== 'appliquee' ? 'Reference basee sur une grille non encore appliquee' : ''"
+                                              x-text="statutBadgeLabel(e.grille_reference_statut)"></span>
+                                    </td>
+                                    <td class="text-right text-base-content/70" x-text="formatMoney(e.salaire_grille_reference)"></td>
+                                    <td class="text-right">
+                                        <span class="badge badge-sm" :class="ecartBadgeClass(e.ecart_pct)">
+                                            <span x-text="e.ecart_ariary >= 0 ? '+' : ''"></span><span x-text="formatMoney(e.ecart_ariary)"></span>
+                                            <span x-show="e.ecart_pct !== null"> (<span x-text="e.ecart_pct.toFixed(1)"></span>%)</span>
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span x-show="e.stade_declare_nom" x-text="e.stade_declare_nom"></span>
+                                        <span x-show="!e.stade_declare_nom" class="text-base-content/40 italic">Non evalue</span>
+                                    </td>
+                                    <td class="text-center">
+                                        <i class="fas fa-check-circle text-success" x-show="e.coherent" title="Stade declare = stade estime"></i>
+                                        <i class="fas fa-exclamation-triangle text-warning" x-show="!e.coherent" title="Ecart entre stade declare et stade estime"></i>
+                                    </td>
+                                    <td class="text-xs">
+                                        <span x-show="e.date_debut_anciennete"
+                                              x-text="(e.anciennete_autonomie_annees ?? 0) + ' an(s)'"></span>
+                                        <span class="text-base-content/40 block" x-show="e.date_debut_anciennete"
+                                              x-text="'depuis ' + e.date_debut_anciennete"></span>
+                                        <span class="text-base-content/30 italic" x-show="!e.date_debut_anciennete">-</span>
+                                    </td>
+                                    <td class="text-right">
+                                        <span x-show="e.net_avec_anciennete" class="font-semibold text-primary"
+                                              x-text="formatMoney(e.net_avec_anciennete)"></span>
+                                        <span class="text-base-content/30" x-show="!e.net_avec_anciennete">-</span>
+                                    </td>
+                                </tr>
+                            </template>
+                            <tr x-show="positionnementFiltre().length === 0">
+                                <td colspan="10" class="text-center text-base-content/50 py-8">
+                                    <span x-show="positionnementLoading">Chargement...</span>
+                                    <span x-show="!positionnementLoading">Aucun employe positionnable (poste, grille de reference et salaire paye requis)</span>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ ONGLET VUE GRAPHIQUE ============ -->
+    <div x-show="activeTab === 'graphique'">
+        <div class="card bg-base-100 shadow mb-4">
+            <div class="card-body">
+                <div class="flex flex-wrap items-center gap-4 justify-between mb-4">
+                    <div class="join">
+                        <button class="btn btn-sm join-item" :class="chartMode === 'fixe' ? 'btn-active' : 'btn-outline'" @click="chartMode = 'fixe'; renderChart()">Salaire fixe</button>
+                        <button class="btn btn-sm join-item" :class="chartMode === 'cible' ? 'btn-active' : 'btn-outline'" @click="chartMode = 'cible'; renderChart()">+ Cible</button>
+                        <button class="btn btn-sm join-item" :class="chartMode === 'maximale' ? 'btn-active' : 'btn-outline'" @click="chartMode = 'maximale'; renderChart()">+ Maximale</button>
+                        <button class="btn btn-sm join-item" :class="chartMode === 'tout' ? 'btn-active' : 'btn-outline'" @click="chartMode = 'tout'; renderChart()">Les trois</button>
+                    </div>
+                    <p class="text-xs text-base-content/60">
+                        <i class="fas fa-hand-pointer mr-1"></i>Cliquez sur un point pour saisir une valeur exacte.
+                    </p>
+                </div>
+
+                <div class="rounded-lg border border-base-300 bg-base-200/40 p-3 mb-4"
+                     x-show="pivotStadeOrdre !== null && pivotStadeOrdre !== undefined">
+                    <div class="flex flex-wrap items-center gap-3">
+                        <span class="text-sm font-semibold">
+                            <i class="fas fa-hourglass-half mr-1 text-primary"></i>Projeter l'anciennete
+                        </span>
+                        <input type="range" min="0" max="20" step="1" class="range range-primary range-sm max-w-xs"
+                               x-model.number="chartAncienneteProjection" @change="loadGraphiqueData()">
+                        <span class="badge badge-primary"
+                              x-text="chartAncienneteProjection > 0 ? chartAncienneteProjection + ' an(s)' : 'desactive'"></span>
+                        <span class="text-xs text-base-content/60">
+                            Trace en pointille le salaire net garanti a partir du stade « Autonome 100 % »
+                            apres N annees d'anciennete (majoration anti-plafond).
+                        </span>
+                    </div>
+                </div>
+
+                <div class="rounded-lg border border-base-300 bg-base-200/40 p-3">
+                    <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <div>
+                            <p class="font-semibold text-sm">Postes affiches</p>
+                            <p class="text-xs text-base-content/60">
+                                La couleur du point (voir legende ci-dessous) indique le type de poste.
+                            </p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="badge badge-ghost badge-sm"
+                                  x-text="`${selectedChartPostes.length}/${chartData.length || postes.length}`"></span>
+                            <button type="button" class="btn btn-ghost btn-xs" @click="selectAllChartPostes()">Tout afficher</button>
+                            <button type="button" class="btn btn-ghost btn-xs" @click="clearChartPostes()">Tout masquer</button>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
+                        <template x-for="poste in chartData" :key="poste.poste_id">
+                            <label class="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-base-100 cursor-pointer text-sm">
+                                <input type="checkbox" class="checkbox checkbox-xs"
+                                       :value="poste.poste_id" x-model="selectedChartPostes"
+                                       @change="chartSelectionInitialized = true; renderChart()">
+                                <span class="inline-block w-3 h-3 rounded-full shrink-0"
+                                      :style="`background-color: ${PC.chartColor(poste.type_poste)}`"></span>
+                                <span class="truncate" x-text="poste.poste_nom" :title="poste.poste_nom"></span>
+                                <span class="badge badge-xs ml-auto" :class="PC.typeBadgeClass(poste.type_poste)" x-text="PC.getType(poste.type_poste) ? PC.getType(poste.type_poste).shortLabel : '?'"></span>
+                            </label>
+                        </template>
+                    </div>
+                </div>
+
+                {% include 'employees/partials/_classification_filters.html' %}
+                {% include 'employees/partials/_classification_legend.html' %}
+            </div>
+        </div>
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <div class="alert" x-show="chartData.length > 0 && selectedChartPostes.length === 0" style="display: none;">
+                    <i class="fas fa-eye-slash"></i>
+                    <span>Cochez au moins un poste pour afficher le graphique.</span>
+                </div>
+                <div class="relative" style="height: 500px;" x-show="selectedChartPostes.length > 0">
+                    <canvas id="chartAutonomie"></canvas>
+                </div>
+                <p class="text-xs text-base-content/60 mt-2 flex flex-wrap gap-x-4 gap-y-1"
+                   x-show="pivotStadeOrdre !== null && pivotStadeOrdre !== undefined">
+                    <span><span class="text-indigo-500">▨</span> zone bleutee = stades ou l'anciennete s'applique (a partir d'« Autonome 100 % »)</span>
+                    <span>◆ point en losange = majoration d'anciennete activee sur la grille</span>
+                    <span x-show="(Number(chartAncienneteProjection)||0) > 0">— — — courbe pointillee = salaire net garanti apres <span x-text="chartAncienneteProjection"></span> an(s)</span>
+                </p>
+            </div>
+        </div>
+
+        <div class="flex justify-end mt-4" x-show="grillesBrouillonCount() > 0">
+            <button class="btn btn-primary" @click="soumettreLot()">
+                <i class="fas fa-paper-plane mr-1"></i>
+                Soumettre <span x-text="grillesBrouillonCount()"></span> brouillon(s) pour validation
+            </button>
+        </div>
+    </div>
+
+    <!-- ============ ONGLET VUE MATRICIELLE ============ -->
+    <div x-show="activeTab === 'matrice'">
+        <div class="card bg-base-100 shadow mb-4">
+            <div class="card-body">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h3 class="font-semibold flex items-center gap-2">
+                            <i class="fas fa-th text-primary"></i>
+                            Matrice postes x stades - Salaire net fixe
+                        </h3>
+                        <p class="text-xs text-base-content/60 max-w-2xl">
+                            Chaque cellule affiche le salaire net fixe de la grille (poste, stade), colore selon
+                            le type de poste. Les badges sous le montant sont les employes positionnes sur cette
+                            cellule (anneau orange = ecart avec le stade declare en evaluation).
+                        </p>
+                    </div>
+                    <button class="btn btn-ghost btn-xs" @click="loadGraphiqueData()">
+                        <i class="fas fa-sync-alt"></i> Rafraichir
+                    </button>
+                </div>
+
+                {% include 'employees/partials/_classification_filters.html' %}
+                {% include 'employees/partials/_classification_legend.html' %}
+
+                <div class="rounded-lg border border-base-300 bg-base-200/40 p-3 mt-3"
+                     x-show="pivotStadeOrdre !== null && pivotStadeOrdre !== undefined">
+                    <div class="flex flex-wrap items-center gap-3">
+                        <span class="text-sm font-semibold">
+                            <i class="fas fa-hourglass-half mr-1 text-primary"></i>Projeter l'anciennete
+                        </span>
+                        <input type="range" min="0" max="20" step="1" class="range range-primary range-sm max-w-xs"
+                               x-model.number="chartAncienneteProjection" @change="loadGraphiqueData()">
+                        <span class="badge badge-primary"
+                              x-text="chartAncienneteProjection > 0 ? chartAncienneteProjection + ' an(s)' : 'desactive'"></span>
+                    </div>
+                </div>
+
+                <p class="text-xs text-base-content/50 mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                    <span><span class="text-warning">*</span> = grille non appliquee (brouillon/soumise/validee)</span>
+                    <span><span class="badge badge-xs badge-ghost ring-2 ring-warning ring-offset-1 ring-offset-base-100 align-middle">ex.</span>
+                        = employe en ecart avec son stade declare</span>
+                    <span x-show="pivotStadeOrdre !== null && pivotStadeOrdre !== undefined">
+                        <span class="text-primary">◆</span> = majoration d'anciennete active (colonne sur fond bleute a partir d'« Autonome 100 % »)</span>
+                </p>
+            </div>
+        </div>
+
+        <div class="overflow-x-auto bg-base-100 rounded-lg shadow">
+            <table class="table table-sm table-zebra">
+                <thead>
+                    <tr>
+                        <th class="sticky left-0 bg-base-200 z-10">Poste</th>
+                        <template x-for="stade in stades.slice().sort((a, b) => a.ordre - b.ordre)" :key="stade.id">
+                            <th class="text-center" :class="stadeEligibleAnciennete(stade) ? 'bg-primary/10' : ''">
+                                <div x-text="stade.nom_stade"></div>
+                                <span class="badge badge-primary badge-xs mt-1" x-show="stadeEligibleAnciennete(stade)">
+                                    <i class="fas fa-hourglass-half mr-1"></i>anciennete
+                                </span>
+                            </th>
+                        </template>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="posteEntry in visibleMatricePostes()" :key="posteEntry.poste_id">
+                        <tr>
+                            <td class="sticky left-0 bg-base-100 font-semibold z-10 border-l-4"
+                                :style="`border-left-color: ${PC.chartColor(posteEntry.type_poste)}`">
+                                <div class="flex items-center gap-1.5 flex-wrap">
+                                    <span x-text="posteEntry.poste_nom"></span>
+                                    <span class="badge badge-ghost badge-xs" x-show="posteEntry.categorie_professionnelle" x-text="posteEntry.categorie_professionnelle"></span>
+                                    <i class="fas fa-info-circle text-base-content/40 text-xs cursor-help"
+                                       x-show="posteEntry.competences_attributions"
+                                       :title="posteEntry.competences_attributions"></i>
+                                </div>
+                                <div class="flex items-center gap-1 mt-1" x-show="posteEntry.type_poste || posteEntry.niveau_poste">
+                                    <span class="badge badge-xs" :class="PC.typeBadgeClass(posteEntry.type_poste)" x-text="PC.typeLabel(posteEntry.type_poste)"></span>
+                                    <span class="badge badge-xs" :class="PC.niveauBadgeClass(posteEntry.type_poste, posteEntry.niveau_poste)" x-text="PC.niveauLabel(posteEntry.niveau_poste)"></span>
+                                </div>
+                            </td>
+                            <template x-for="point in posteEntry.points" :key="point.stade_id">
+                                <td class="text-center align-top"
+                                    :class="!point.grille_id ? 'bg-base-200/40' : (point.anciennete_eligible ? 'bg-primary/5' : '')">
+                                    <template x-if="point.salaire_net_fixe !== null">
+                                        <div>
+                                            <div class="font-mono font-semibold cursor-pointer hover:underline inline-flex items-center gap-1"
+                                                 :class="PC.textClass(posteEntry.type_poste)"
+                                                 :title="'Statut grille: ' + statutBadgeLabel(point.statut) + (point.anciennete_activee ? ' - majoration anciennete activee' : '')"
+                                                 @click="onMatriceCellClick(posteEntry, point)">
+                                                <span class="text-primary" x-show="point.anciennete_activee" title="Majoration d'anciennete activee">◆</span>
+                                                <span x-text="formatMoney(point.salaire_net_fixe)"></span>
+                                                <span class="text-warning" x-show="!statutBadgeClass(point.statut).includes('success')" title="Statut non applique">*</span>
+                                            </div>
+                                            <div class="text-[11px] text-primary font-semibold"
+                                                 x-show="point.net_effectif_projete"
+                                                 title="Salaire net garanti avec anciennete projetee">
+                                                → <span x-text="formatMoney(point.net_effectif_projete)"></span>
+                                                <span class="text-base-content/50" x-text="'@ ' + chartAncienneteProjection + ' ans'"></span>
+                                            </div>
+                                            <div class="text-[10px] text-base-content/40"
+                                                 x-show="point.anciennete_eligible && !point.anciennete_activee">
+                                                anciennete off
+                                            </div>
+                                            <div class="flex flex-wrap gap-1 justify-center mt-1" x-show="(point.employes || []).length > 0">
+                                                <template x-for="emp in (point.employes || [])" :key="emp.employe_id">
+                                                    <span class="badge badge-xs"
+                                                          :class="PC.employeeBadgeClass(posteEntry.type_poste, emp.coherent)"
+                                                          :title="emp.nom_affichage + ' - ' + formatMoney(emp.salaire_net_reel) + (emp.coherent ? '' : ' (ecart avec stade declare)')"
+                                                          x-text="emp.surnom || emp.nom_affichage"></span>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </template>
+                                    <template x-if="point.salaire_net_fixe === null">
+                                        <span class="text-base-content/30">-</span>
+                                    </template>
+                                </td>
+                            </template>
+                        </tr>
+                    </template>
+                    <tr x-show="visibleMatricePostes().length === 0">
+                        <td :colspan="stades.length + 1" class="text-center text-base-content/50 py-8">
+                            Aucune donnee pour ces filtres. Cliquez sur Rafraichir ou verifiez que des grilles existent.
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ============ ONGLET REGLES DE PRIMES ============ -->
+    <div x-show="activeTab === 'regles'">
+        <div class="flex justify-between items-center mb-4">
+            <select class="select select-bordered select-sm" x-model="reglesPosteFilter" @change="loadRegles()">
+                <option value="">Tous les postes</option>
+                <template x-for="poste in postes" :key="poste.id">
+                    <option :value="poste.id" x-text="poste.nom_poste"></option>
+                </template>
+            </select>
+            <button class="btn btn-primary btn-sm" @click="openCreateRegleModal()">
+                <i class="fas fa-plus mr-1"></i> Nouvelle regle de prime
+            </button>
+        </div>
+
+        <div class="space-y-3">
+            <template x-for="regle in regles" :key="regle.id">
+                <div class="card bg-base-100 shadow">
+                    <div class="card-body p-4">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <h3 class="font-semibold" x-text="regle.nom_regle"></h3>
+                                <p class="text-sm text-base-content/70">
+                                    <span x-text="regle.poste_nom"></span>
+                                    <span x-show="regle.stade_nom"> - <span x-text="regle.stade_nom"></span></span>
+                                    <span x-show="!regle.stade_nom"> - Tous stades</span>
+                                    - <span x-text="regle.type_calcul_display"></span>
+                                    - <span x-text="regle.periodicite_display"></span>
+                                </p>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="badge badge-sm" :class="statutBadgeClass(regle.statut)" x-text="regle.statut_display"></span>
+                                <div class="dropdown dropdown-end">
+                                    <label tabindex="0" class="btn btn-ghost btn-xs"><i class="fas fa-ellipsis-v"></i></label>
+                                    <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box shadow z-10 w-48">
+                                        <li x-show="regle.statut === 'brouillon'"><a @click="regleWorkflowAction(regle, 'soumettre')">Soumettre</a></li>
+                                        <li x-show="regle.statut === 'soumise'"><a @click="regleWorkflowAction(regle, 'valider')">Valider</a></li>
+                                        <li x-show="regle.statut === 'soumise'"><a @click="regleWorkflowAction(regle, 'rejeter')">Rejeter</a></li>
+                                        <li><a @click="deleteRegle(regle)" class="text-error">Supprimer</a></li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                        <div x-show="regle.type_calcul === 'paliers_resultats' && regle.indicateurs.length > 0" class="mt-2 overflow-x-auto">
+                            <table class="table table-xs">
+                                <thead>
+                                    <tr><th>Indicateur</th><th>Ponderation</th><th>Objectif</th><th>Seuil min.</th><th>Paliers</th></tr>
+                                </thead>
+                                <tbody>
+                                    <template x-for="ind in regle.indicateurs" :key="ind.id">
+                                        <tr>
+                                            <td x-text="ind.nom_indicateur"></td>
+                                            <td x-text="ind.ponderation + '%'"></td>
+                                            <td x-text="ind.objectif + ' ' + (ind.unite || '')"></td>
+                                            <td x-text="ind.seuil_minimum !== null ? ind.seuil_minimum : '-'"></td>
+                                            <td>
+                                                <span class="text-xs" x-text="ind.paliers.map(p => `${p.taux_realisation_min}-${p.taux_realisation_max ?? '∞'}%→${p.taux_prime}%`).join(', ')"></span>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </template>
+            <div class="text-center text-base-content/50 py-8" x-show="regles.length === 0">Aucune regle de prime</div>
+        </div>
+    </div>
+
+    <!-- ============ ONGLET MAJORATIONS TERRITORIALES ============ -->
+    <div x-show="activeTab === 'majorations'">
+        <div class="flex justify-end mb-4">
+            <button class="btn btn-primary btn-sm" @click="openCreateMajorationModal()">
+                <i class="fas fa-plus mr-1"></i> Nouvelle majoration
+            </button>
+        </div>
+        <div class="overflow-x-auto bg-base-100 rounded-lg shadow">
+            <table class="table table-zebra">
+                <thead>
+                    <tr><th>Nom</th><th>Zone</th><th>Type</th><th class="text-right">Montant</th><th>Actif</th><th class="text-right">Actions</th></tr>
+                </thead>
+                <tbody>
+                    <template x-for="m in majorations" :key="m.id">
+                        <tr>
+                            <td x-text="m.nom"></td>
+                            <td x-text="m.base_nom || m.district_nom || '-'"></td>
+                            <td x-text="m.type_montant === 'montant_fixe' ? 'Montant fixe' : 'Pourcentage'"></td>
+                            <td class="text-right" x-text="m.type_montant === 'montant_fixe' ? formatMoney(m.montant_fixe) : (m.pourcentage_salaire + '%')"></td>
+                            <td><span class="badge badge-sm" :class="m.actif ? 'badge-success' : 'badge-ghost'" x-text="m.actif ? 'Actif' : 'Inactif'"></span></td>
+                            <td class="text-right">
+                                <button class="btn btn-ghost btn-xs text-error" @click="deleteMajoration(m)"><i class="fas fa-trash"></i></button>
+                            </td>
+                        </tr>
+                    </template>
+                    <tr x-show="majorations.length === 0">
+                        <td colspan="6" class="text-center text-base-content/50 py-8">Aucune majoration territoriale</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ============ ONGLET SIMULATEUR ============ -->
+    <div x-show="activeTab === 'simulateur'">
+        <div class="card bg-base-100 shadow mb-4">
+            <div class="card-body">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="form-control md:col-span-2 relative" @click.outside="simulateur.suggestionsOpen = false">
+                        <label class="label" for="simulateur-employe-search"><span class="label-text">Employe (surnom)</span></label>
+                        <div class="relative">
+                            <input id="simulateur-employe-search" type="search" class="input input-bordered w-full pr-10"
+                                   placeholder="Saisir un surnom, un nom ou un poste..."
+                                   autocomplete="off"
+                                   x-model="simulateur.employeSearch"
+                                   @focus="simulateur.suggestionsOpen = true"
+                                   @input="onEmployeSearchInput()"
+                                   @keydown.enter.prevent="selectFirstFilteredEmploye()"
+                                   @keydown.escape="simulateur.suggestionsOpen = false">
+                            <button type="button" class="btn btn-ghost btn-sm absolute right-1 top-1/2 -translate-y-1/2"
+                                    x-show="simulateur.employeSearch" @click="clearEmployeSelection()"
+                                    aria-label="Effacer l'employe">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <div role="listbox" class="absolute z-30 left-0 right-0 top-full mt-1 bg-base-100 border border-base-300 rounded-lg shadow-xl max-h-64 overflow-y-auto"
+                             x-show="simulateur.suggestionsOpen" x-transition style="display: none;">
+                            <template x-for="employe in filteredEmployes()" :key="employe.id">
+                                <button type="button" role="option" class="w-full text-left px-3 py-2 hover:bg-base-200 border-b border-base-200 last:border-0"
+                                        @click="selectEmploye(employe)">
+                                    <div class="font-semibold" x-text="employe.surnom || employe.nom_affichage"></div>
+                                    <div class="text-xs text-base-content/60">
+                                        <span x-text="employe.nom_complet"></span>
+                                        <span x-show="employe.poste_nom"> - <span x-text="employe.poste_nom"></span></span>
+                                        <span x-show="employe.base_nom"> - <span x-text="employe.base_nom"></span></span>
+                                    </div>
+                                </button>
+                            </template>
+                            <div class="px-3 py-4 text-sm text-center text-base-content/50" x-show="filteredEmployes().length === 0">
+                                Aucun employe trouve
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Distance annuelle parcourue (km)</span></label>
+                        <input type="number" class="input input-bordered" x-model="simulateur.distanceAnnuelleKm">
+                    </div>
+                </div>
+                <div x-show="simulateur.employe" class="mt-2 text-sm text-base-content/70">
+                    <span x-text="simulateur.employe ? simulateur.employe.nom_affichage : ''"></span> -
+                    <span x-text="simulateur.employe ? simulateur.employe.poste_nom : ''"></span> -
+                    <span x-text="simulateur.employe ? simulateur.employe.stade_nom : ''"></span>
+                    - Points d'eau couverts:
+                    <input type="number" class="input input-bordered input-xs w-20 inline-block"
+                           x-model="simulateur.nombrePointsEauCouverts">
+                    <span class="badge badge-primary badge-sm ml-2"
+                          x-show="simulateur.employe && simulateur.employe.date_debut_anciennete_autonomie"
+                          x-text="'Anciennete Autonome: ' + (simulateur.employe?.anciennete_autonomie_annees ?? 0) + ' an(s) (depuis ' + (simulateur.employe?.date_debut_anciennete_autonomie ?? '') + ')'"></span>
+                </div>
+
+                <div x-show="simulateur.resultatsExistants.length > 0" class="mt-4">
+                    <p class="font-semibold text-sm mb-2">Resultats des indicateurs (pour la simulation)</p>
+                    <table class="table table-xs">
+                        <thead><tr><th>Indicateur</th><th>Objectif</th><th>Valeur realisee (simulation)</th></tr></thead>
+                        <tbody>
+                            <template x-for="res in simulateur.resultatsExistants" :key="res.indicateur_id">
+                                <tr>
+                                    <td x-text="res.nom_indicateur"></td>
+                                    <td x-text="res.objectif + ' ' + (res.unite || '')"></td>
+                                    <td>
+                                        <input type="number" class="input input-bordered input-xs w-32"
+                                               :value="simulateur.resultatsOverride[res.indicateur_id] ?? res.derniere_valeur_realisee ?? ''"
+                                               @change="simulateur.resultatsOverride[res.indicateur_id] = $event.target.value">
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="flex justify-end gap-2 mt-4">
+                    <button class="btn btn-outline" @click="calculerSimulation()" :disabled="!simulateur.employeId">
+                        <i class="fas fa-calculator mr-1"></i> Calculer
+                    </button>
+                    <button class="btn btn-primary" @click="sauvegarderSimulation()" :disabled="!simulateur.resultat">
+                        <i class="fas fa-save mr-1"></i> Sauvegarder la simulation
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bg-base-100 shadow" x-show="simulateur.resultat">
+            <div class="card-body">
+                <h3 class="card-title text-lg">Detail de la remuneration estimee</h3>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mt-2">
+                    <div class="stat bg-base-200 rounded-lg">
+                        <div class="stat-title">Salaire garanti</div>
+                        <div class="stat-value text-lg" x-text="formatMoney(simulateur.resultat?.salaire_garanti)"></div>
+                        <div class="stat-desc leading-tight"
+                             x-show="simulateur.resultat && simulateur.resultat.majoration_anciennete_montant > 0">
+                            socle <span x-text="formatMoney(simulateur.resultat?.salaire_socle)"></span>
+                            + anciennete <span x-text="formatMoney(simulateur.resultat?.majoration_anciennete_montant)"></span>
+                            <span x-text="'(' + (simulateur.resultat?.anciennete_autonomie_annees ?? 0) + ' an(s))'"></span>
+                        </div>
+                        <div class="stat-desc"
+                             x-show="simulateur.resultat && (!simulateur.resultat.majoration_anciennete_montant) && simulateur.resultat.date_debut_anciennete">
+                            anciennete au sommet de grille non majoree sur cette grille
+                        </div>
+                    </div>
+                    <div class="stat bg-base-200 rounded-lg">
+                        <div class="stat-title">Primes de resultat</div>
+                        <div class="stat-value text-lg" x-text="formatMoney(simulateur.resultat?.total_primes_resultat)"></div>
+                    </div>
+                    <div class="stat bg-base-200 rounded-lg">
+                        <div class="stat-title">Majoration territoriale</div>
+                        <div class="stat-value text-lg" x-text="formatMoney(simulateur.resultat?.majoration_territoriale_montant)"></div>
+                        <div class="stat-desc" x-text="simulateur.resultat?.majoration_territoriale_nom || 'Aucune'"></div>
+                    </div>
+                    <div class="stat bg-primary text-primary-content rounded-lg">
+                        <div class="stat-title text-primary-content/80">Remuneration nette totale</div>
+                        <div class="stat-value" x-text="formatMoney(simulateur.resultat?.remuneration_nette_totale)"></div>
+                    </div>
+                </div>
+
+                <div class="mt-4" x-show="simulateur.resultat && simulateur.resultat.detail_primes.length > 0">
+                    <p class="font-semibold text-sm mb-2">Detail par regle de prime</p>
+                    <template x-for="dp in (simulateur.resultat?.detail_primes || [])" :key="dp.regle_id">
+                        <div class="border rounded p-2 mb-2 text-sm">
+                            <div class="flex justify-between">
+                                <span x-text="dp.nom_regle"></span>
+                                <span class="font-semibold" x-text="formatMoney(dp.montant_prime)"></span>
+                            </div>
+                            <template x-for="di in dp.details_indicateurs" :key="di.indicateur_id">
+                                <div class="text-xs text-base-content/60 pl-2">
+                                    <span x-text="di.nom_indicateur"></span>:
+                                    <span x-text="di.sous_seuil ? 'sous seuil' : (di.taux_realisation_pct + '% -> ' + formatMoney(di.montant_part_indicateur))"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ MODAL: Nouvelle grille ============ -->
+    <dialog id="modal_create_grille" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg mb-4">Nouvelle grille par autonomie</h3>
+            <div class="space-y-3">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Poste</span></label>
+                    <select class="select select-bordered" x-model="grilleForm.poste_id">
+                        <option value="">Selectionner</option>
+                        <template x-for="poste in postes" :key="poste.id">
+                            <option :value="poste.id" x-text="poste.nom_poste"></option>
+                        </template>
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Stade d'autonomie</span></label>
+                    <select class="select select-bordered" x-model="grilleForm.stade_id">
+                        <option value="">Selectionner</option>
+                        <template x-for="stade in stades" :key="stade.id">
+                            <option :value="stade.id" x-text="stade.nom_stade"></option>
+                        </template>
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Salaire net fixe (Ar)</span></label>
+                    <input type="number" class="input input-bordered" x-model="grilleForm.salaire_net_fixe">
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Prime cible (Ar)</span></label>
+                        <input type="number" class="input input-bordered" x-model="grilleForm.prime_cible">
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Prime maximale (Ar)</span></label>
+                        <input type="number" class="input input-bordered" x-model="grilleForm.prime_maximale">
+                    </div>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Date de debut de validite</span></label>
+                    <input type="date" class="input input-bordered" x-model="grilleForm.date_debut_validite">
+                </div>
+
+                <div class="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-3"
+                     x-show="grilleFormStadeEligible()">
+                    <label class="label cursor-pointer justify-start gap-2 p-0">
+                        <input type="checkbox" class="toggle toggle-primary toggle-sm" x-model="grilleForm.anciennete_activee">
+                        <span class="label-text font-semibold">Majoration d'anciennete (anti-plafond)</span>
+                    </label>
+                    <p class="text-xs text-base-content/60">
+                        A partir du stade « Autonome 100 % », le salaire net ne plafonne plus : il est majore
+                        selon l'anciennete comptee depuis la date de passage a ce stade.
+                        Champs vides = valeurs par defaut
+                        (<span x-text="ancienneteConfig.taux_defaut_pct ?? '?'"></span>&nbsp;%/an,
+                        plafond <span x-text="ancienneteConfig.plafond_annees_defaut ?? '?'"></span>&nbsp;ans).
+                    </p>
+                    <div class="grid grid-cols-2 gap-3" x-show="grilleForm.anciennete_activee">
+                        <div class="form-control">
+                            <label class="label"><span class="label-text text-xs">Taux annuel (%)</span></label>
+                            <input type="number" step="0.01" class="input input-bordered input-sm"
+                                   :placeholder="ancienneteConfig.taux_defaut_pct ?? ''"
+                                   x-model="grilleForm.anciennete_taux_annuel_pct">
+                        </div>
+                        <div class="form-control">
+                            <label class="label"><span class="label-text text-xs">Capitalisation</span></label>
+                            <select class="select select-bordered select-sm" x-model="grilleForm.anciennete_mode_capitalisation">
+                                <option value="compose">Composee</option>
+                                <option value="simple">Simple</option>
+                            </select>
+                        </div>
+                        <div class="form-control">
+                            <label class="label"><span class="label-text text-xs">Seuil avant majoration (ans)</span></label>
+                            <input type="number" step="0.5" class="input input-bordered input-sm"
+                                   x-model="grilleForm.anciennete_seuil_annees">
+                        </div>
+                        <div class="form-control">
+                            <label class="label"><span class="label-text text-xs">Plafond anciennete (ans)</span></label>
+                            <input type="number" step="0.5" class="input input-bordered input-sm"
+                                   :placeholder="ancienneteConfig.plafond_annees_defaut ?? ''"
+                                   x-model="grilleForm.anciennete_plafond_annees">
+                        </div>
+                        <div class="form-control col-span-2">
+                            <label class="label"><span class="label-text text-xs">Plafond de majoration totale (%) — optionnel</span></label>
+                            <input type="number" step="1" class="input input-bordered input-sm" placeholder="ex: 40"
+                                   x-model="grilleForm.anciennete_plafond_majoration_pct">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-action">
+                <button class="btn btn-ghost" @click="document.getElementById('modal_create_grille').close()">Annuler</button>
+                <button class="btn btn-primary" @click="createGrille()">Creer (brouillon)</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <!-- ============ MODAL: Anciennete d'une grille existante ============ -->
+    <dialog id="modal_anciennete" class="modal">
+        <div class="modal-box" x-show="ancienneteModal.form">
+            <h3 class="font-bold text-lg mb-1">Majoration d'anciennete</h3>
+            <p class="text-sm text-base-content/60 mb-4">
+                <span x-text="ancienneteModal.posteNom"></span> — <span x-text="ancienneteModal.stadeNom"></span>
+            </p>
+            <template x-if="ancienneteModal.form">
+                <div class="space-y-3">
+                    <label class="label cursor-pointer justify-start gap-2 p-0">
+                        <input type="checkbox" class="toggle toggle-primary toggle-sm" x-model="ancienneteModal.form.anciennete_activee">
+                        <span class="label-text font-semibold">Activer la majoration d'anciennete</span>
+                    </label>
+                    <p class="text-xs text-base-content/60">
+                        Champs vides = valeurs par defaut
+                        (<span x-text="ancienneteConfig.taux_defaut_pct ?? '?'"></span>&nbsp;%/an,
+                        plafond <span x-text="ancienneteConfig.plafond_annees_defaut ?? '?'"></span>&nbsp;ans).
+                    </p>
+                    <div class="grid grid-cols-2 gap-3" x-show="ancienneteModal.form.anciennete_activee">
+                        <div class="form-control">
+                            <label class="label"><span class="label-text text-xs">Taux annuel (%)</span></label>
+                            <input type="number" step="0.01" class="input input-bordered input-sm"
+                                   :placeholder="ancienneteConfig.taux_defaut_pct ?? ''"
+                                   x-model="ancienneteModal.form.anciennete_taux_annuel_pct">
+                        </div>
+                        <div class="form-control">
+                            <label class="label"><span class="label-text text-xs">Capitalisation</span></label>
+                            <select class="select select-bordered select-sm" x-model="ancienneteModal.form.anciennete_mode_capitalisation">
+                                <option value="compose">Composee</option>
+                                <option value="simple">Simple</option>
+                            </select>
+                        </div>
+                        <div class="form-control">
+                            <label class="label"><span class="label-text text-xs">Seuil avant majoration (ans)</span></label>
+                            <input type="number" step="0.5" class="input input-bordered input-sm"
+                                   x-model="ancienneteModal.form.anciennete_seuil_annees">
+                        </div>
+                        <div class="form-control">
+                            <label class="label"><span class="label-text text-xs">Plafond anciennete (ans)</span></label>
+                            <input type="number" step="0.5" class="input input-bordered input-sm"
+                                   :placeholder="ancienneteConfig.plafond_annees_defaut ?? ''"
+                                   x-model="ancienneteModal.form.anciennete_plafond_annees">
+                        </div>
+                        <div class="form-control col-span-2">
+                            <label class="label"><span class="label-text text-xs">Plafond de majoration totale (%) — optionnel</span></label>
+                            <input type="number" step="1" class="input input-bordered input-sm" placeholder="ex: 40"
+                                   x-model="ancienneteModal.form.anciennete_plafond_majoration_pct">
+                        </div>
+                    </div>
+                </div>
+            </template>
+            <div class="modal-action">
+                <button class="btn btn-ghost" @click="document.getElementById('modal_anciennete').close()">Annuler</button>
+                <button class="btn btn-primary" @click="saveAnciennete()">Enregistrer</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <!-- ============ MODAL: Saisie exacte depuis le graphique ============ -->
+    <dialog id="modal_edit_point" class="modal">
+        <div class="modal-box max-w-sm">
+            <h3 class="font-bold text-lg mb-2" x-text="editPoint.label"></h3>
+            <p class="text-sm text-base-content/60 mb-4" x-text="editPoint.subLabel"></p>
+            <div class="form-control">
+                <label class="label"><span class="label-text">Montant (Ar)</span></label>
+                <input type="number" class="input input-bordered" x-model="editPoint.value" @keyup.enter="saveEditPoint()">
+            </div>
+            <div class="modal-action">
+                <button class="btn btn-ghost" @click="document.getElementById('modal_edit_point').close()">Annuler</button>
+                <button class="btn btn-primary" @click="saveEditPoint()">Valider</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <!-- ============ MODAL: Nouvelle regle de prime ============ -->
+    <dialog id="modal_create_regle" class="modal">
+        <div class="modal-box max-w-2xl">
+            <h3 class="font-bold text-lg mb-4">Nouvelle regle de prime</h3>
+            <div class="space-y-3">
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Poste</span></label>
+                        <select class="select select-bordered" x-model="regleForm.poste_id">
+                            <option value="">Selectionner</option>
+                            <template x-for="poste in postes" :key="poste.id">
+                                <option :value="poste.id" x-text="poste.nom_poste"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Stade (optionnel)</span></label>
+                        <select class="select select-bordered" x-model="regleForm.stade_id">
+                            <option value="">Tous les stades (generique)</option>
+                            <template x-for="stade in stades" :key="stade.id">
+                                <option :value="stade.id" x-text="stade.nom_stade"></option>
+                            </template>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Nom de la regle</span></label>
+                    <input type="text" class="input input-bordered" x-model="regleForm.nom_regle">
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Type de calcul</span></label>
+                        <select class="select select-bordered" x-model="regleForm.type_calcul">
+                            <option value="montant_fixe">Montant fixe</option>
+                            <option value="pourcentage_salaire">Pourcentage du salaire</option>
+                            <option value="paliers_resultats">Paliers de resultats</option>
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Periodicite</span></label>
+                        <select class="select select-bordered" x-model="regleForm.periodicite">
+                            <option value="mensuelle">Mensuelle</option>
+                            <option value="trimestrielle">Trimestrielle</option>
+                            <option value="semestrielle">Semestrielle</option>
+                            <option value="annuelle">Annuelle</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-control" x-show="regleForm.type_calcul === 'montant_fixe'">
+                    <label class="label"><span class="label-text">Montant fixe (Ar)</span></label>
+                    <input type="number" class="input input-bordered" x-model="regleForm.montant_fixe">
+                </div>
+                <div class="form-control" x-show="regleForm.type_calcul === 'pourcentage_salaire'">
+                    <label class="label"><span class="label-text">Pourcentage du salaire net fixe (%)</span></label>
+                    <input type="number" class="input input-bordered" x-model="regleForm.pourcentage_salaire">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Plafond (Ar, optionnel)</span></label>
+                    <input type="number" class="input input-bordered" x-model="regleForm.plafond">
+                </div>
+
+                <div x-show="regleForm.type_calcul === 'paliers_resultats'">
+                    <div class="flex justify-between items-center mt-2 mb-1">
+                        <p class="font-semibold text-sm">Indicateurs</p>
+                        <button class="btn btn-xs btn-outline" @click="addIndicateur()">
+                            <i class="fas fa-plus mr-1"></i>Ajouter
+                        </button>
+                    </div>
+                    <template x-for="(ind, idx) in regleForm.indicateurs" :key="idx">
+                        <div class="border rounded p-2 mb-2">
+                            <div class="grid grid-cols-4 gap-2">
+                                <input type="text" placeholder="Nom" class="input input-bordered input-xs col-span-2" x-model="ind.nom_indicateur">
+                                <input type="text" placeholder="Unite" class="input input-bordered input-xs" x-model="ind.unite">
+                                <input type="number" placeholder="Ponderation %" class="input input-bordered input-xs" x-model="ind.ponderation">
+                                <input type="number" placeholder="Objectif" class="input input-bordered input-xs" x-model="ind.objectif">
+                                <input type="number" placeholder="Seuil min." class="input input-bordered input-xs" x-model="ind.seuil_minimum">
+                                <button class="btn btn-xs btn-outline btn-error" @click="regleForm.indicateurs.splice(idx, 1)">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                            <div class="mt-1">
+                                <div class="flex justify-between items-center">
+                                    <p class="text-xs text-base-content/60">Paliers (taux realisation -> % prime versee)</p>
+                                    <button class="btn btn-xs btn-ghost" @click="ind.paliers.push({taux_realisation_min: 0, taux_realisation_max: null, taux_prime: 100})">+ palier</button>
+                                </div>
+                                <template x-for="(pal, pidx) in ind.paliers" :key="pidx">
+                                    <div class="grid grid-cols-4 gap-1 mt-1">
+                                        <input type="number" placeholder="Min %" class="input input-bordered input-xs" x-model="pal.taux_realisation_min">
+                                        <input type="number" placeholder="Max % (vide=ouvert)" class="input input-bordered input-xs" x-model="pal.taux_realisation_max">
+                                        <input type="number" placeholder="% prime" class="input input-bordered input-xs" x-model="pal.taux_prime">
+                                        <button class="btn btn-xs btn-ghost btn-error" @click="ind.paliers.splice(pidx, 1)"><i class="fas fa-times"></i></button>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Date de debut de validite</span></label>
+                    <input type="date" class="input input-bordered" x-model="regleForm.date_debut_validite">
+                </div>
+            </div>
+            <div class="modal-action">
+                <button class="btn btn-ghost" @click="document.getElementById('modal_create_regle').close()">Annuler</button>
+                <button class="btn btn-primary" @click="createRegle()">Creer (brouillon)</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <!-- ============ MODAL: Nouvelle majoration territoriale ============ -->
+    <dialog id="modal_create_majoration" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg mb-4">Nouvelle majoration territoriale</h3>
+            <div class="space-y-3">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Nom</span></label>
+                    <input type="text" class="input input-bordered" x-model="majorationForm.nom">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Base</span></label>
+                    <select class="select select-bordered" x-model="majorationForm.base_id"
+                            @change="if (majorationForm.base_id) majorationForm.district_id = ''">
+                        <option value="">Aucune base</option>
+                        <template x-for="base in bases" :key="base.id">
+                            <option :value="base.id"
+                                    x-text="base.organisation_nom ? `${base.nom} - ${base.organisation_nom}` : base.nom"></option>
+                        </template>
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">District</span></label>
+                    <select class="select select-bordered" x-model="majorationForm.district_id"
+                            @change="if (majorationForm.district_id) majorationForm.base_id = ''">
+                        <option value="">Aucun district</option>
+                        <template x-for="district in districts" :key="district.id">
+                            <option :value="district.id"
+                                    x-text="district.region_nom ? `${district.nom} - ${district.region_nom}` : district.nom"></option>
+                        </template>
+                    </select>
+                    <label class="label">
+                        <span class="label-text-alt text-base-content/60">Selectionnez une base ou un district, jamais les deux.</span>
+                    </label>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Type de montant</span></label>
+                    <select class="select select-bordered" x-model="majorationForm.type_montant">
+                        <option value="montant_fixe">Montant fixe</option>
+                        <option value="pourcentage_salaire">Pourcentage du salaire</option>
+                    </select>
+                </div>
+                <div class="form-control" x-show="majorationForm.type_montant === 'montant_fixe'">
+                    <label class="label"><span class="label-text">Montant fixe (Ar)</span></label>
+                    <input type="number" class="input input-bordered" x-model="majorationForm.montant_fixe">
+                </div>
+                <div class="form-control" x-show="majorationForm.type_montant === 'pourcentage_salaire'">
+                    <label class="label"><span class="label-text">Pourcentage (%)</span></label>
+                    <input type="number" class="input input-bordered" x-model="majorationForm.pourcentage_salaire">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Date de debut de validite</span></label>
+                    <input type="date" class="input input-bordered" x-model="majorationForm.date_debut_validite">
+                </div>
+            </div>
+            <div class="modal-action">
+                <button class="btn btn-ghost" @click="document.getElementById('modal_create_majoration').close()">Annuler</button>
+                <button class="btn btn-primary" @click="createMajoration()">Creer</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    {% endif %}
+</div>
+
+<script src="{% static 'js/post_classification.js' %}"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<script>
+function grillesAutonomieApp() {
+    const postesData = JSON.parse(document.getElementById('postes-data').textContent);
+    const stadesData = JSON.parse(document.getElementById('stades-data').textContent);
+    const employesData = JSON.parse(document.getElementById('employes-data').textContent);
+    const basesData = JSON.parse(document.getElementById('bases-data').textContent);
+    const districtsData = JSON.parse(document.getElementById('districts-data').textContent);
+    const ancienneteConfigData = JSON.parse(document.getElementById('anciennete-config').textContent);
+    const buildDefaultGrilleForm = () => ({
+        poste_id: '', stade_id: '', salaire_net_fixe: '', prime_cible: 0, prime_maximale: 0,
+        date_debut_validite: '',
+        anciennete_activee: false,
+        anciennete_taux_annuel_pct: '',
+        anciennete_mode_capitalisation: 'compose',
+        anciennete_seuil_annees: 0,
+        anciennete_plafond_annees: '',
+        anciennete_plafond_majoration_pct: '',
+    });
+    const buildDefaultRegleForm = () => ({
+        poste_id: '', stade_id: '', nom_regle: '', type_calcul: 'paliers_resultats',
+        montant_fixe: '', pourcentage_salaire: '', periodicite: 'mensuelle', plafond: '',
+        date_debut_validite: new Date().toISOString().slice(0, 10),
+        indicateurs: [],
+    });
+
+    // Plugin Chart.js: dessine le surnom de chaque employe au-dessus de son point
+    // sur le dataset scatter "(employes)". Enregistre une seule fois globalement.
+    if (window.Chart && !window.Chart.registry.plugins.get('employeLabels')) {
+        window.Chart.register({
+            id: 'employeLabels',
+            afterDatasetsDraw(chart) {
+                const { ctx } = chart;
+                chart.data.datasets.forEach((dataset, datasetIndex) => {
+                    if (dataset._field !== 'employe') return;
+                    const meta = chart.getDatasetMeta(datasetIndex);
+                    if (meta.hidden) return;
+                    ctx.save();
+                    ctx.font = 'bold 11px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'bottom';
+                    ctx.fillStyle = '#1f2937';
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+                    ctx.lineWidth = 3;
+                    meta.data.forEach((point, index) => {
+                        const emp = dataset._employes[index];
+                        const label = emp ? (emp.surnom || emp.nom_affichage) : '';
+                        if (!label) return;
+                        ctx.strokeText(label, point.x, point.y - 8);
+                        ctx.fillText(label, point.x, point.y - 8);
+                    });
+                    ctx.restore();
+                });
+            },
+        });
+    }
+
+    // Plugin Chart.js: bande verticale "zone anciennete" a partir du stade pivot
+    // (Autonome 100 %). Rendue derriere les donnees.
+    if (window.Chart && !window.Chart.registry.plugins.get('ancienneteBand')) {
+        window.Chart.register({
+            id: 'ancienneteBand',
+            beforeDatasetsDraw(chart, args, opts) {
+                if (!opts || opts.pivotIndex === null || opts.pivotIndex === undefined) return;
+                const { ctx, chartArea, scales } = chart;
+                const x = scales.x;
+                if (!x || !chartArea) return;
+                const labelsCount = chart.data.labels.length;
+                if (opts.pivotIndex >= labelsCount) return;
+                // Bord gauche de la bande = milieu entre pivot-1 et pivot (ou bord gauche).
+                const leftPx = opts.pivotIndex > 0
+                    ? (x.getPixelForValue(opts.pivotIndex - 1) + x.getPixelForValue(opts.pivotIndex)) / 2
+                    : chartArea.left;
+                ctx.save();
+                ctx.fillStyle = 'rgba(99, 102, 241, 0.07)';
+                ctx.fillRect(leftPx, chartArea.top, chartArea.right - leftPx, chartArea.bottom - chartArea.top);
+                ctx.strokeStyle = 'rgba(99, 102, 241, 0.55)';
+                ctx.setLineDash([5, 4]);
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(leftPx, chartArea.top);
+                ctx.lineTo(leftPx, chartArea.bottom);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.fillStyle = 'rgba(79, 70, 229, 0.9)';
+                ctx.font = 'bold 11px sans-serif';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'top';
+                const txt = opts.projAnnees > 0
+                    ? `Zone ancienneté — projection ${opts.projAnnees} an(s) ▸`
+                    : 'Zone ancienneté (anti-plafond) ▸';
+                ctx.fillText(txt, leftPx + 4, chartArea.top + 3);
+                ctx.restore();
+            },
+        });
+    }
+
+    return {
+        postes: Array.isArray(postesData) ? postesData : [],
+        stades: Array.isArray(stadesData) ? stadesData : [],
+        employes: Array.isArray(employesData) ? employesData : [],
+        bases: Array.isArray(basesData) ? basesData : [],
+        districts: Array.isArray(districtsData) ? districtsData : [],
+        activeTab: 'tableau',
+        loading: false,
+        errorMessage: '',
+        successMessage: '',
+
+        // Classification transversale des postes (Type x Niveau) - source unique window.PostClassification
+        PC: window.PostClassification,
+
+        // Tableau
+        grilles: [],
+        selectedPoste: '',
+        selectedStatut: '',
+        selectedTypePoste: '',
+        selectedNiveauPoste: '',
+        grilleForm: buildDefaultGrilleForm(),
+        pivotStadeOrdre: ancienneteConfigData ? ancienneteConfigData.pivot_stade_ordre : null,
+        ancienneteConfig: ancienneteConfigData || { taux_defaut_pct: null, plafond_annees_defaut: null, pivot_stade_ordre: null },
+        ancienneteModal: { grilleId: null, posteNom: '', stadeNom: '', form: null },
+
+        // Positionnement des employes (cartographie salaire reel -> stade estime)
+        positionnement: [],
+        positionnementLoading: false,
+        positionnementIncoherentsOnly: false,
+
+        // Graphique
+        chartMode: 'tout',
+        chartAncienneteProjection: 0,
+        selectedChartPostes: [],
+        chartSelectionInitialized: false,
+        chartData: [],
+        chartInstance: null,
+        chartFilterType: '',
+        chartFilterNiveau: '',
+        editPoint: { grilleId: null, field: null, label: '', subLabel: '', value: '' },
+
+        // Regles de primes
+        regles: [],
+        reglesPosteFilter: '',
+        regleForm: buildDefaultRegleForm(),
+
+        // Majorations
+        majorations: [],
+        majorationForm: { nom: '', base_id: '', district_id: '', type_montant: 'montant_fixe', montant_fixe: '', pourcentage_salaire: '', date_debut_validite: '' },
+
+        // Controles de coherence
+        alertesCoherence: [],
+
+        // Simulateur
+        simulateur: {
+            employeId: '',
+            employeSearch: '',
+            suggestionsOpen: false,
+            employe: null,
+            distanceAnnuelleKm: '',
+            nombrePointsEauCouverts: '',
+            resultatsExistants: [],
+            resultatsOverride: {},
+            resultat: null,
+        },
+
+        urls: {
+            grillesList: "{% url 'employees:api_grilles_autonomie_list' %}",
+            grillesCreate: "{% url 'employees:api_grilles_autonomie_create' %}",
+            grilleUpdateTpl: "{% url 'employees:api_grilles_autonomie_update' grille_id='00000000-0000-0000-0000-000000000000' %}",
+            grilleDeleteTpl: "{% url 'employees:api_grilles_autonomie_delete' grille_id='00000000-0000-0000-0000-000000000000' %}",
+            grilleSoumettreTpl: "{% url 'employees:api_grilles_autonomie_soumettre' grille_id='00000000-0000-0000-0000-000000000000' %}",
+            grilleValiderTpl: "{% url 'employees:api_grilles_autonomie_valider' grille_id='00000000-0000-0000-0000-000000000000' %}",
+            grilleRejeterTpl: "{% url 'employees:api_grilles_autonomie_rejeter' grille_id='00000000-0000-0000-0000-000000000000' %}",
+            grilleAppliquerTpl: "{% url 'employees:api_grilles_autonomie_appliquer' grille_id='00000000-0000-0000-0000-000000000000' %}",
+            soumettreLot: "{% url 'employees:api_grilles_autonomie_soumettre_lot' %}",
+            graphiqueDonnees: "{% url 'employees:api_graphique_autonomie_donnees' %}",
+            graphiqueSave: "{% url 'employees:api_graphique_autonomie_save' %}",
+            positionnementEmployes: "{% url 'employees:api_positionnement_employes_autonomie' %}",
+            reglesList: "{% url 'employees:api_regles_primes_list' %}",
+            reglesCreate: "{% url 'employees:api_regles_primes_create' %}",
+            regleDeleteTpl: "{% url 'employees:api_regles_primes_delete' regle_id='00000000-0000-0000-0000-000000000000' %}",
+            regleSoumettreTpl: "{% url 'employees:api_regles_primes_soumettre' regle_id='00000000-0000-0000-0000-000000000000' %}",
+            regleValiderTpl: "{% url 'employees:api_regles_primes_valider' regle_id='00000000-0000-0000-0000-000000000000' %}",
+            regleRejeterTpl: "{% url 'employees:api_regles_primes_rejeter' regle_id='00000000-0000-0000-0000-000000000000' %}",
+            majorationsList: "{% url 'employees:api_majorations_territoriales_list' %}",
+            majorationsCreate: "{% url 'employees:api_majorations_territoriales_create' %}",
+            majorationDeleteTpl: "{% url 'employees:api_majorations_territoriales_delete' majoration_id='00000000-0000-0000-0000-000000000000' %}",
+            controlesCoherence: "{% url 'employees:api_controles_coherence' %}",
+            simulateurDonneesTpl: "{% url 'employees:api_simulateur_donnees_employe' employe_id='00000000-0000-0000-0000-000000000000' %}",
+            simulateurCalculer: "{% url 'employees:api_simulateur_calculer' %}",
+            simulateurSauvegarder: "{% url 'employees:api_simulateur_sauvegarder' %}",
+        },
+
+        init() {
+            this.loadGrilles();
+            this.loadAlertesCoherence();
+            this.loadPositionnement();
+        },
+
+        defaultRegleForm: buildDefaultRegleForm,
+
+        getCsrfToken() {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, 10) === 'csrftoken=') {
+                        cookieValue = decodeURIComponent(cookie.substring(10));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        },
+
+        async apiFetch(url, options = {}) {
+            const headers = Object.assign({
+                'Content-Type': 'application/json',
+                'X-CSRFToken': this.getCsrfToken(),
+            }, options.headers || {});
+            const response = await fetch(url, Object.assign({}, options, { headers }));
+            const data = await response.json();
+            if (!response.ok || data.success === false) {
+                throw new Error(data.error || 'Erreur inconnue');
+            }
+            return data;
+        },
+
+        showError(message) {
+            this.errorMessage = message;
+            this.successMessage = '';
+            setTimeout(() => { this.errorMessage = ''; }, 6000);
+        },
+
+        showSuccess(message) {
+            this.successMessage = message;
+            this.errorMessage = '';
+            setTimeout(() => { this.successMessage = ''; }, 4000);
+        },
+
+        formatMoney(value) {
+            if (value === null || value === undefined || value === '') return '-';
+            return Math.round(Number(value) / 1000).toLocaleString('fr-FR') + ' K Ar';
+        },
+
+        statutBadgeClass(statut) {
+            return {
+                'brouillon': 'badge-ghost',
+                'soumise': 'badge-info',
+                'validee': 'badge-warning',
+                'appliquee': 'badge-success',
+                'rejetee': 'badge-error',
+            }[statut] || 'badge-ghost';
+        },
+
+        statutBadgeLabel(statut) {
+            return {
+                'brouillon': 'brouillon',
+                'soumise': 'soumise',
+                'validee': 'validee',
+                'appliquee': 'appliquee',
+                'rejetee': 'rejetee',
+            }[statut] || (statut || '');
+        },
+
+        // ============ Tableau / Grilles ============
+
+        async loadGrilles() {
+            this.loading = true;
+            try {
+                const params = new URLSearchParams();
+                if (this.selectedPoste) params.set('poste_id', this.selectedPoste);
+                if (this.selectedStatut) params.set('statut', this.selectedStatut);
+                if (this.selectedTypePoste) params.set('type_poste', this.selectedTypePoste);
+                if (this.selectedNiveauPoste) params.set('niveau_poste', this.selectedNiveauPoste);
+                const data = await this.apiFetch(`${this.urls.grillesList}?${params.toString()}`);
+                this.grilles = data.grilles;
+                if (data.pivot_stade_ordre !== undefined) this.pivotStadeOrdre = data.pivot_stade_ordre;
+            } catch (e) {
+                this.showError(e.message);
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        grillesBrouillonCount() {
+            return this.grilles.filter(g => g.statut === 'brouillon').length;
+        },
+
+        // ============ Positionnement des employes ============
+
+        async loadPositionnement() {
+            this.positionnementLoading = true;
+            try {
+                const params = new URLSearchParams();
+                if (this.selectedPoste) params.set('poste_id', this.selectedPoste);
+                const data = await this.apiFetch(`${this.urls.positionnementEmployes}?${params.toString()}`);
+                this.positionnement = data.employes;
+            } catch (e) {
+                this.showError(e.message);
+            } finally {
+                this.positionnementLoading = false;
+            }
+        },
+
+        positionnementFiltre() {
+            if (!this.positionnementIncoherentsOnly) return this.positionnement;
+            return this.positionnement.filter(e => !e.coherent);
+        },
+
+        positionnementIncoherentsCount() {
+            return this.positionnement.filter(e => !e.coherent).length;
+        },
+
+        ecartBadgeClass(ecartPct) {
+            if (ecartPct === null || ecartPct === undefined) return 'badge-ghost';
+            const abs = Math.abs(ecartPct);
+            if (abs <= 3) return 'badge-success';
+            if (abs <= 10) return 'badge-warning';
+            return 'badge-error';
+        },
+
+        openCreateGrilleModal() {
+            this.grilleForm = buildDefaultGrilleForm();
+            this.grilleForm.poste_id = this.selectedPoste || '';
+            this.grilleForm.date_debut_validite = new Date().toISOString().slice(0, 10);
+            document.getElementById('modal_create_grille').showModal();
+        },
+
+        async createGrille() {
+            try {
+                await this.apiFetch(this.urls.grillesCreate, { method: 'POST', body: JSON.stringify(this.grilleForm) });
+                document.getElementById('modal_create_grille').close();
+                this.showSuccess('Grille creee (brouillon)');
+                this.loadGrilles();
+            } catch (e) {
+                this.showError(e.message);
+            }
+        },
+
+        // ============ Anciennete (anti-plafond) ============
+
+        stadeOrdreById(stadeId) {
+            const stade = this.stades.find(s => s.id === stadeId);
+            return stade ? stade.ordre : null;
+        },
+
+        grilleFormStadeEligible() {
+            if (this.pivotStadeOrdre === null || this.pivotStadeOrdre === undefined) return false;
+            const ordre = this.stadeOrdreById(this.grilleForm.stade_id);
+            return ordre !== null && ordre >= this.pivotStadeOrdre;
+        },
+
+        grilleStadeEligible(grille) {
+            if (this.pivotStadeOrdre === null || this.pivotStadeOrdre === undefined) return false;
+            return grille.stade_ordre !== null && grille.stade_ordre !== undefined
+                && grille.stade_ordre >= this.pivotStadeOrdre;
+        },
+
+        stadeEligibleAnciennete(stade) {
+            if (this.pivotStadeOrdre === null || this.pivotStadeOrdre === undefined) return false;
+            return stade && stade.ordre >= this.pivotStadeOrdre;
+        },
+
+        ancienneteResume(grille) {
+            if (!this.grilleStadeEligible(grille)) return '';
+            if (!grille.anciennete_activee) return 'Anciennete inactive';
+            const taux = grille.anciennete_taux_annuel_pct != null
+                ? grille.anciennete_taux_annuel_pct
+                : (this.ancienneteConfig.taux_defaut_pct ?? '?');
+            const plafond = grille.anciennete_plafond_annees != null
+                ? grille.anciennete_plafond_annees
+                : (this.ancienneteConfig.plafond_annees_defaut ?? '?');
+            const mode = grille.anciennete_mode_capitalisation === 'simple' ? 'simple' : 'compose';
+            return `+${taux}%/an (${mode}), plafond ${plafond} ans`;
+        },
+
+        openAncienneteModal(grille) {
+            this.ancienneteModal = {
+                grilleId: grille.id,
+                posteNom: grille.poste_nom,
+                stadeNom: grille.stade_nom,
+                form: {
+                    anciennete_activee: !!grille.anciennete_activee,
+                    anciennete_taux_annuel_pct: grille.anciennete_taux_annuel_pct ?? '',
+                    anciennete_mode_capitalisation: grille.anciennete_mode_capitalisation || 'compose',
+                    anciennete_seuil_annees: grille.anciennete_seuil_annees ?? 0,
+                    anciennete_plafond_annees: grille.anciennete_plafond_annees ?? '',
+                    anciennete_plafond_majoration_pct: grille.anciennete_plafond_majoration_pct ?? '',
+                },
+            };
+            document.getElementById('modal_anciennete').showModal();
+        },
+
+        async saveAnciennete() {
+            try {
+                const url = this.urls.grilleUpdateTpl.replace('00000000-0000-0000-0000-000000000000', this.ancienneteModal.grilleId);
+                const data = await this.apiFetch(url, { method: 'POST', body: JSON.stringify(this.ancienneteModal.form) });
+                const idx = this.grilles.findIndex(g => g.id === data.grille.id);
+                if (idx !== -1) Object.assign(this.grilles[idx], data.grille);
+                document.getElementById('modal_anciennete').close();
+                this.showSuccess('Parametres d\'anciennete enregistres');
+                this.loadAlertesCoherence();
+            } catch (e) {
+                this.showError(e.message);
+            }
+        },
+
+        async updateGrilleField(grille, field, value) {
+            try {
+                const url = this.urls.grilleUpdateTpl.replace('00000000-0000-0000-0000-000000000000', grille.id);
+                const payload = {}; payload[field] = value;
+                const data = await this.apiFetch(url, { method: 'POST', body: JSON.stringify(payload) });
+                Object.assign(grille, data.grille);
+                this.loadAlertesCoherence();
+            } catch (e) {
+                this.showError(e.message);
+                this.loadGrilles();
+            }
+        },
+
+        async deleteGrille(grille) {
+            if (!confirm('Supprimer cette grille brouillon ?')) return;
+            try {
+                const url = this.urls.grilleDeleteTpl.replace('00000000-0000-0000-0000-000000000000', grille.id);
+                await this.apiFetch(url, { method: 'POST' });
+                this.loadGrilles();
+            } catch (e) {
+                this.showError(e.message);
+            }
+        },
+
+        async workflowAction(grille, action) {
+            const urlMap = {
+                soumettre: this.urls.grilleSoumettreTpl,
+                valider: this.urls.grilleValiderTpl,
+                rejeter: this.urls.grilleRejeterTpl,
+                appliquer: this.urls.grilleAppliquerTpl,
+            };
+            let commentaire = '';
+            if (action === 'rejeter') {
+                commentaire = prompt('Motif du rejet :') || '';
+            }
+            try {
+                const url = urlMap[action].replace('00000000-0000-0000-0000-000000000000', grille.id);
+                await this.apiFetch(url, { method: 'POST', body: JSON.stringify({ commentaire }) });
+                this.showSuccess('Action effectuee');
+                this.loadGrilles();
+                this.loadAlertesCoherence();
+            } catch (e) {
+                this.showError(e.message);
+            }
+        },
+
+        async soumettreLot() {
+            const ids = this.grilles.filter(g => g.statut === 'brouillon').map(g => g.id);
+            if (ids.length === 0) return;
+            try {
+                const data = await this.apiFetch(this.urls.soumettreLot, { method: 'POST', body: JSON.stringify({ grille_ids: ids }) });
+                this.showSuccess(`${data.soumises.length} grille(s) soumise(s)`);
+                this.loadGrilles();
+                this.loadGraphiqueData();
+            } catch (e) {
+                this.showError(e.message);
+            }
+        },
+
+        // ============ Graphique ============
+
+        async loadGraphiqueData() {
+            try {
+                const proj = Number(this.chartAncienneteProjection) || 0;
+                const data = await this.apiFetch(`${this.urls.graphiqueDonnees}?avec_employes=1&anciennete_projection=${proj}`);
+                this.chartData = data.postes;
+                if (data.pivot_stade_ordre !== undefined) this.pivotStadeOrdre = data.pivot_stade_ordre;
+                const idsDisponibles = new Set(this.chartData.map(poste => poste.poste_id));
+                if (!this.chartSelectionInitialized) {
+                    this.selectedChartPostes = this.chartData.map(poste => poste.poste_id);
+                    this.chartSelectionInitialized = true;
+                } else {
+                    this.selectedChartPostes = this.selectedChartPostes.filter(id => idsDisponibles.has(id));
+                }
+                this.renderChart();
+            } catch (e) {
+                this.showError(e.message);
+            }
+        },
+
+        chartColor(posteId) {
+            const poste = this.chartData.find(p => p.poste_id === posteId);
+            return poste ? this.PC.chartColor(poste.type_poste) : this.PC.chartColor(null);
+        },
+
+        /** Index du poste au sein des postes visibles PARTAGEANT LE MEME TYPE (pour varier le style de trait). */
+        dashIndexWithinType(posteEntry, postesVisibles) {
+            const sameType = postesVisibles.filter(p => p.type_poste === posteEntry.type_poste);
+            return sameType.findIndex(p => p.poste_id === posteEntry.poste_id);
+        },
+
+        selectAllChartPostes() {
+            this.selectedChartPostes = this.chartData.map(poste => poste.poste_id);
+            this.chartSelectionInitialized = true;
+            this.$nextTick(() => this.renderChart());
+        },
+
+        clearChartPostes() {
+            this.selectedChartPostes = [];
+            this.chartSelectionInitialized = true;
+            if (this.chartInstance) {
+                this.chartInstance.destroy();
+                this.chartInstance = null;
+            }
+        },
+
+        matchesClassificationFilter(poste) {
+            if (this.chartFilterType && poste.type_poste !== this.chartFilterType) return false;
+            if (this.chartFilterNiveau && poste.niveau_poste !== this.chartFilterNiveau) return false;
+            return true;
+        },
+
+        visibleChartPostes() {
+            const selection = new Set(this.selectedChartPostes);
+            return this.chartData.filter(poste => selection.has(poste.poste_id) && this.matchesClassificationFilter(poste));
+        },
+
+        visibleMatricePostes() {
+            return this.chartData.filter(poste => this.matchesClassificationFilter(poste));
+        },
+
+        renderChart() {
+            if (this.chartData.length === 0 && this.activeTab === 'graphique') {
+                this.loadGraphiqueData();
+                return;
+            }
+
+            const canvas = document.getElementById('chartAutonomie');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const postesVisibles = this.visibleChartPostes();
+
+            if (postesVisibles.length === 0) {
+                if (this.chartInstance) {
+                    this.chartInstance.destroy();
+                    this.chartInstance = null;
+                }
+                return;
+            }
+
+            const stadesTries = this.stades.slice().sort((a, b) => a.ordre - b.ordre);
+            const labels = stadesTries.map(s => s.nom_stade);
+            const datasets = [];
+
+            // Index (dans l'axe X trie) du 1er stade eligible a l'anciennete.
+            let pivotIndex = null;
+            if (this.pivotStadeOrdre !== null && this.pivotStadeOrdre !== undefined) {
+                const idx = stadesTries.findIndex(s => s.ordre >= this.pivotStadeOrdre);
+                if (idx !== -1) pivotIndex = idx;
+            }
+            const projAnneesGlobal = Number(this.chartAncienneteProjection) || 0;
+
+            postesVisibles.forEach((posteEntry) => {
+                // Couleur = TYPE de poste (identique pour tous les postes du meme type).
+                // Style de trait = variable par poste au sein d'un meme type (distinction visuelle).
+                // Taille/contour des points = NIVEAU (Management plus marque que Execution).
+                const color = this.PC.chartColor(posteEntry.type_poste);
+                const dash = this.PC.lineDashPattern(this.dashIndexWithinType(posteEntry, postesVisibles));
+                const pointStyle = this.PC.chartPointStyle(posteEntry.niveau_poste);
+                const fixePoints = posteEntry.points.map(p => p.salaire_net_fixe);
+                // Les stades ou la majoration d'anciennete est active sont marques
+                // par un point en losange, legerement plus gros.
+                const perPointStyle = posteEntry.points.map(p => p.anciennete_activee ? 'rectRot' : 'circle');
+                const perPointRadius = posteEntry.points.map(p => p.anciennete_activee ? pointStyle.radius + 2 : pointStyle.radius);
+
+                datasets.push({
+                    type: 'line',
+                    label: posteEntry.poste_nom,
+                    data: fixePoints,
+                    borderColor: color,
+                    backgroundColor: color,
+                    borderDash: dash,
+                    pointStyle: perPointStyle,
+                    pointRadius: perPointRadius,
+                    pointHoverRadius: pointStyle.hoverRadius,
+                    pointBorderWidth: pointStyle.borderWidth,
+                    spanGaps: true,
+                    tension: 0,
+                    _posteId: posteEntry.poste_id,
+                    _field: 'salaire_net_fixe',
+                    _points: posteEntry.points,
+                });
+
+                // Projection anciennete : salaire net garanti a N ans d'anciennete,
+                // pour les stades >= pivot dont la majoration est activee.
+                const projAnnees = Number(this.chartAncienneteProjection) || 0;
+                if (projAnnees > 0) {
+                    const projPoints = posteEntry.points.map(p => p.net_effectif_projete ?? null);
+                    if (projPoints.some(v => v !== null)) {
+                        datasets.push({
+                            type: 'line',
+                            label: `${posteEntry.poste_nom} (anciennete ${projAnnees} ans)`,
+                            data: projPoints,
+                            borderColor: color,
+                            backgroundColor: 'transparent',
+                            borderDash: [2, 3],
+                            borderWidth: 2,
+                            pointRadius: 3,
+                            pointStyle: 'rectRot',
+                            spanGaps: false,
+                            tension: 0,
+                            _posteId: posteEntry.poste_id,
+                            _field: 'net_effectif_projete',
+                            _points: posteEntry.points,
+                        });
+                    }
+                }
+
+                // Positionnement des employes: un point par employe, place au stade
+                // estime (axe X, categoriel comme le reste du graphique) et a son
+                // salaire net reellement paye (axe Y), pour visualiser l'ecart avec
+                // la courbe de grille du poste. L'axe x etant categoriel (labels de
+                // stades), on fournit le libelle du stade comme abscisse (pas un
+                // index numerique) pour que Chart.js positionne correctement le point.
+                // Taille/contour selon le NIVEAU du poste (partage par tous ses employes).
+                const employesPoints = [];
+                const employesMeta = [];
+                posteEntry.points.forEach((p) => {
+                    const employesStade = p.employes || [];
+                    employesStade.forEach((emp) => {
+                        employesPoints.push({ x: p.stade_nom, y: emp.salaire_net_reel });
+                        employesMeta.push(emp);
+                    });
+                });
+                if (employesPoints.length > 0) {
+                    datasets.push({
+                        type: 'scatter',
+                        label: posteEntry.poste_nom + ' (employes)',
+                        data: employesPoints,
+                        backgroundColor: employesMeta.map(e => e.coherent ? color : '#f59e0b'),
+                        borderColor: '#1f2937',
+                        borderWidth: pointStyle.borderWidth,
+                        pointStyle: employesMeta.map(e => e.coherent ? 'circle' : 'triangle'),
+                        pointRadius: pointStyle.radius,
+                        pointHoverRadius: pointStyle.hoverRadius,
+                        showLine: false,
+                        _posteId: posteEntry.poste_id,
+                        _field: 'employe',
+                        _employes: employesMeta,
+                        _typePoste: posteEntry.type_poste,
+                        _niveauPoste: posteEntry.niveau_poste,
+                    });
+                }
+
+                if (this.chartMode === 'cible' || this.chartMode === 'tout') {
+                    datasets.push({
+                        type: 'bar',
+                        label: posteEntry.poste_nom + ' (cible)',
+                        data: posteEntry.points.map(p => p.salaire_net_fixe !== null ? [p.salaire_net_fixe, p.remuneration_cible] : null),
+                        backgroundColor: color + '55',
+                        borderColor: color,
+                        borderWidth: 1,
+                        barPercentage: 0.15,
+                        _posteId: posteEntry.poste_id,
+                        _field: 'prime_cible',
+                        _points: posteEntry.points,
+                    });
+                }
+                if (this.chartMode === 'maximale' || this.chartMode === 'tout') {
+                    datasets.push({
+                        type: 'bar',
+                        label: posteEntry.poste_nom + ' (maximale)',
+                        data: posteEntry.points.map(p => p.salaire_net_fixe !== null ? [p.salaire_net_fixe, p.remuneration_maximale] : null),
+                        backgroundColor: color + '22',
+                        borderColor: color,
+                        borderWidth: 1,
+                        barPercentage: 0.08,
+                        _posteId: posteEntry.poste_id,
+                        _field: 'prime_maximale',
+                        _points: posteEntry.points,
+                    });
+                }
+            });
+
+            if (this.chartInstance) {
+                this.chartInstance.destroy();
+            }
+
+            const self = this;
+            this.chartInstance = new Chart(ctx, {
+                data: { labels, datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'nearest', intersect: true },
+                    onClick: (evt, elements) => self.onChartClick(evt, elements),
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: (context) => self.buildTooltipLabel(context),
+                            },
+                        },
+                        ancienneteBand: { pivotIndex: pivotIndex, projAnnees: projAnneesGlobal },
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            title: { display: true, text: 'Remuneration nette mensuelle (K Ar)' },
+                            ticks: { callback: (v) => Math.round(Number(v) / 1000).toLocaleString('fr-FR') },
+                        },
+                        x: { title: { display: true, text: "Stade d'autonomie" } },
+                    },
+                },
+            });
+        },
+
+        buildTooltipLabel(context) {
+            const dataset = context.dataset;
+
+            if (dataset._field === 'employe') {
+                const emp = dataset._employes[context.dataIndex];
+                if (!emp) return dataset.label;
+                const sign = emp.ecart_ariary >= 0 ? '+' : '';
+                const lines = [
+                    emp.nom_affichage,
+                    `Type: ${this.PC.typeLabel(dataset._typePoste)}`,
+                    `Niveau: ${this.PC.niveauLabel(dataset._niveauPoste)}`,
+                    `Stade d'autonomie: ${emp.stade_estime_nom}`,
+                    `Salaire net reel: ${this.formatMoney(emp.salaire_net_reel)}`,
+                    `Reference grille (${emp.stade_estime_nom}): ${this.formatMoney(emp.salaire_grille_reference)}`,
+                    `Ecart vs grille: ${sign}${this.formatMoney(emp.ecart_ariary)}${emp.ecart_pct !== null ? ` (${sign}${emp.ecart_pct.toFixed(1)}%)` : ''}`,
+                ];
+                lines.push(emp.stade_declare_nom
+                    ? `Stade declare (evaluation): ${emp.stade_declare_nom}${emp.coherent ? ' (coherent)' : ' (different)'}`
+                    : 'Stade declare (evaluation): non evalue');
+                return lines;
+            }
+
+            const points = dataset._points;
+            if (!points) return context.dataset.label;
+            const point = points[context.dataIndex];
+            if (!point || point.salaire_net_fixe === null) return 'Pas de grille pour ce stade';
+
+            if (dataset._field === 'net_effectif_projete') {
+                const proj = Number(this.chartAncienneteProjection) || 0;
+                return [
+                    `${dataset.label}`,
+                    `Stade d'autonomie: ${point.stade_nom}`,
+                    `Salaire net socle: ${this.formatMoney(point.salaire_net_fixe)}`,
+                    `Salaire net a ${proj} ans: ${this.formatMoney(point.net_effectif_projete)}`,
+                    `Majoration anciennete: +${this.formatMoney(point.majoration_anciennete_projete)}`,
+                ];
+            }
+
+            const posteEntry = this.chartData.find(p => p.poste_id === dataset._posteId);
+            const lines = [
+                `${dataset.label.replace(' (cible)', '').replace(' (maximale)', '')}`,
+                `Type: ${this.PC.typeLabel(posteEntry ? posteEntry.type_poste : null)}`,
+                `Niveau: ${this.PC.niveauLabel(posteEntry ? posteEntry.niveau_poste : null)}`,
+                `Stade d'autonomie: ${point.stade_nom}`,
+                `Salaire net fixe: ${this.formatMoney(point.salaire_net_fixe)}`,
+                `Prime cible: ${this.formatMoney(point.prime_cible)}`,
+                `Prime maximale: ${this.formatMoney(point.prime_maximale)}`,
+                `Remuneration cible: ${this.formatMoney(point.remuneration_cible)}`,
+                `Remuneration maximale: ${this.formatMoney(point.remuneration_maximale)}`,
+            ];
+            if (point.evolution_ariary_vs_precedent !== null) {
+                const sign = point.evolution_ariary_vs_precedent >= 0 ? '+' : '';
+                lines.push(`Evolution: ${sign}${this.formatMoney(point.evolution_ariary_vs_precedent)} (${sign}${point.evolution_pct_vs_precedent.toFixed(1)}%)`);
+            }
+            if (point.anciennete_activee) {
+                lines.push('◆ Anciennete activee (le salaire ne plafonne plus a ce stade)');
+                if (point.net_effectif_projete) {
+                    const proj = Number(this.chartAncienneteProjection) || 0;
+                    lines.push(`  → a ${proj} ans: ${this.formatMoney(point.net_effectif_projete)} (+${this.formatMoney(point.majoration_anciennete_projete)})`);
+                }
+            } else if (point.anciennete_eligible) {
+                lines.push('Stade eligible a l\'anciennete (majoration non activee sur cette grille)');
+            }
+            return lines;
+        },
+
+        onMatriceCellClick(posteEntry, point) {
+            if (!point || !point.grille_id) return;
+            this.editPoint = {
+                grilleId: point.grille_id,
+                field: 'salaire_net_fixe',
+                label: 'Salaire net fixe',
+                subLabel: `${posteEntry.poste_nom} - ${point.stade_nom}`,
+                value: point.salaire_net_fixe,
+            };
+            document.getElementById('modal_edit_point').showModal();
+        },
+
+        onChartClick(evt, elements) {
+            if (!elements || elements.length === 0) return;
+            const el = elements[0];
+            const dataset = this.chartInstance.data.datasets[el.datasetIndex];
+            if (dataset._field === 'employe' || dataset._field === 'net_effectif_projete') return;
+            const point = dataset._points[el.index];
+            if (!point || !point.grille_id) return;
+
+            const fieldLabels = { salaire_net_fixe: 'Salaire net fixe', prime_cible: 'Prime cible', prime_maximale: 'Prime maximale' };
+            const field = dataset._field;
+            this.editPoint = {
+                grilleId: point.grille_id,
+                field: field,
+                label: fieldLabels[field] || field,
+                subLabel: `${dataset.label} - ${point.stade_nom}`,
+                value: point[field],
+            };
+            document.getElementById('modal_edit_point').showModal();
+        },
+
+        async saveEditPoint() {
+            try {
+                const payload = { grille_id: this.editPoint.grilleId };
+                payload[this.editPoint.field] = this.editPoint.value;
+                await this.apiFetch(this.urls.graphiqueSave, { method: 'POST', body: JSON.stringify(payload) });
+                document.getElementById('modal_edit_point').close();
+                this.showSuccess('Valeur mise a jour (brouillon)');
+                this.loadGraphiqueData();
+                this.loadGrilles();
+                this.loadAlertesCoherence();
+            } catch (e) {
+                this.showError(e.message);
+            }
+        },
+
+        // ============ Regles de primes ============
+
+        async loadRegles() {
+            try {
+                const params = new URLSearchParams();
+                if (this.reglesPosteFilter) params.set('poste_id', this.reglesPosteFilter);
+                const data = await this.apiFetch(`${this.urls.reglesList}?${params.toString()}`);
+                this.regles = data.regles;
+            } catch (e) {
+                this.showError(e.message);
+            }
+        },
+
+        openCreateRegleModal() {
+            this.regleForm = this.defaultRegleForm();
+            if (this.reglesPosteFilter) this.regleForm.poste_id = this.reglesPosteFilter;
+            document.getElementById('modal_create_regle').showModal();
+        },
+
+        addIndicateur() {
+            this.regleForm.indicateurs.push({
+                nom_indicateur: '', unite: '', ponderation: 0, objectif: 0, seuil_minimum: '',
+                paliers: [{ taux_realisation_min: 0, taux_realisation_max: 80, taux_prime: 50 }, { taux_realisation_min: 80, taux_realisation_max: null, taux_prime: 100 }],
+            });
+        },
+
+        async createRegle() {
+            try {
+                await this.apiFetch(this.urls.reglesCreate, { method: 'POST', body: JSON.stringify(this.regleForm) });
+                document.getElementById('modal_create_regle').close();
+                this.showSuccess('Regle de prime creee (brouillon)');
+                this.loadRegles();
+            } catch (e) {
+                this.showError(e.message);
+            }
+        },
+
+        async deleteRegle(regle) {
+            if (!confirm('Supprimer cette regle de prime ?')) return;
+            try {
+                const url = this.urls.regleDeleteTpl.replace('00000000-0000-0000-0000-000000000000', regle.id);
+                await this.apiFetch(url, { method: 'POST' });
+                this.loadRegles();
+            } catch (e) {
+                this.showError(e.message);
+            }
+        },
+
+        async regleWorkflowAction(regle, action) {
+            const urlMap = { soumettre: this.urls.regleSoumettreTpl, valider: this.urls.regleValiderTpl, rejeter: this.urls.regleRejeterTpl };
+            let commentaire = '';
+            if (action === 'rejeter') commentaire = prompt('Motif du rejet :') || '';
+            try {
+                const url = urlMap[action].replace('00000000-0000-0000-0000-000000000000', regle.id);
+                await this.apiFetch(url, { method: 'POST', body: JSON.stringify({ commentaire }) });
+                this.showSuccess('Action effectuee');
+                this.loadRegles();
+                this.loadAlertesCoherence();
+            } catch (e) {
+                this.showError(e.message);
+            }
+        },
+
+        // ============ Majorations territoriales ============
+
+        async loadMajorations() {
+            try {
+                const data = await this.apiFetch(this.urls.majorationsList);
+                this.majorations = data.majorations;
+            } catch (e) {
+                this.showError(e.message);
+            }
+        },
+
+        openCreateMajorationModal() {
+            this.majorationForm = { nom: '', base_id: '', district_id: '', type_montant: 'montant_fixe', montant_fixe: '', pourcentage_salaire: '', date_debut_validite: new Date().toISOString().slice(0, 10) };
+            document.getElementById('modal_create_majoration').showModal();
+        },
+
+        async createMajoration() {
+            try {
+                await this.apiFetch(this.urls.majorationsCreate, { method: 'POST', body: JSON.stringify(this.majorationForm) });
+                document.getElementById('modal_create_majoration').close();
+                this.showSuccess('Majoration territoriale creee');
+                this.loadMajorations();
+            } catch (e) {
+                this.showError(e.message);
+            }
+        },
+
+        async deleteMajoration(m) {
+            if (!confirm('Supprimer cette majoration territoriale ?')) return;
+            try {
+                const url = this.urls.majorationDeleteTpl.replace('00000000-0000-0000-0000-000000000000', m.id);
+                await this.apiFetch(url, { method: 'POST' });
+                this.loadMajorations();
+            } catch (e) {
+                this.showError(e.message);
+            }
+        },
+
+        // ============ Controles de coherence ============
+
+        async loadAlertesCoherence() {
+            try {
+                const data = await this.apiFetch(this.urls.controlesCoherence);
+                this.alertesCoherence = data.alertes;
+            } catch (e) {
+                // silencieux : ne pas bloquer l'affichage si les controles echouent
+            }
+        },
+
+        // ============ Simulateur ============
+
+        normaliseRecherche(value) {
+            return String(value || '')
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .toLocaleLowerCase('fr-FR')
+                .trim();
+        },
+
+        filteredEmployes() {
+            const recherche = this.normaliseRecherche(this.simulateur.employeSearch);
+            const liste = recherche
+                ? this.employes.filter(employe => this.normaliseRecherche([
+                    employe.surnom,
+                    employe.nom_affichage,
+                    employe.nom_complet,
+                    employe.poste_nom,
+                    employe.base_nom,
+                ].join(' ')).includes(recherche))
+                : this.employes;
+            return liste.slice(0, 20);
+        },
+
+        onEmployeSearchInput() {
+            this.simulateur.suggestionsOpen = true;
+            this.simulateur.employeId = '';
+            this.simulateur.employe = null;
+            this.simulateur.resultatsExistants = [];
+            this.simulateur.resultatsOverride = {};
+            this.simulateur.resultat = null;
+        },
+
+        selectEmploye(employe) {
+            this.simulateur.employeId = employe.id;
+            this.simulateur.employeSearch = employe.surnom || employe.nom_affichage;
+            this.simulateur.suggestionsOpen = false;
+            this.loadSimulateurDonnees();
+        },
+
+        selectFirstFilteredEmploye() {
+            const premier = this.filteredEmployes()[0];
+            if (premier) this.selectEmploye(premier);
+        },
+
+        clearEmployeSelection() {
+            this.simulateur.employeId = '';
+            this.simulateur.employeSearch = '';
+            this.simulateur.suggestionsOpen = true;
+            this.simulateur.employe = null;
+            this.simulateur.resultatsExistants = [];
+            this.simulateur.resultatsOverride = {};
+            this.simulateur.resultat = null;
+        },
+
+        async loadSimulateurDonnees() {
+            if (!this.simulateur.employeId) return;
+            try {
+                const url = this.urls.simulateurDonneesTpl.replace('00000000-0000-0000-0000-000000000000', this.simulateur.employeId);
+                const data = await this.apiFetch(url);
+                this.simulateur.employe = data.employe;
+                this.simulateur.nombrePointsEauCouverts = data.nombre_points_eau_couverts;
+                this.simulateur.resultatsExistants = data.resultats_existants;
+                this.simulateur.resultatsOverride = {};
+                this.simulateur.resultat = null;
+            } catch (e) {
+                this.showError(e.message);
+                this.simulateur.employe = null;
+            }
+        },
+
+        async calculerSimulation() {
+            try {
+                const payload = {
+                    employe_id: this.simulateur.employeId,
+                    distance_annuelle_km: this.simulateur.distanceAnnuelleKm,
+                    nombre_points_eau_couverts: this.simulateur.nombrePointsEauCouverts,
+                    resultats_indicateurs: this.simulateur.resultatsOverride,
+                };
+                const data = await this.apiFetch(this.urls.simulateurCalculer, { method: 'POST', body: JSON.stringify(payload) });
+                this.simulateur.resultat = data;
+            } catch (e) {
+                this.showError(e.message);
+            }
+        },
+
+        async sauvegarderSimulation() {
+            try {
+                const payload = {
+                    employe_id: this.simulateur.employeId,
+                    distance_annuelle_km: this.simulateur.distanceAnnuelleKm,
+                    nombre_points_eau_couverts: this.simulateur.nombrePointsEauCouverts,
+                    resultats_indicateurs: this.simulateur.resultatsOverride,
+                };
+                await this.apiFetch(this.urls.simulateurSauvegarder, { method: 'POST', body: JSON.stringify(payload) });
+                this.showSuccess('Simulation sauvegardee');
+            } catch (e) {
+                this.showError(e.message);
+            }
+        },
+    };
+}
+</script>
+{% endblock %}

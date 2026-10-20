@@ -1,0 +1,316 @@
+{% extends 'base.html' %}
+
+{% block title %}Diagramme des ouvrages - Hydria{% endblock %}
+
+{% block extra_css %}
+<style>
+  .sk-page { --sk-forfait:#3b82f6; --sk-volume:#14b8a6; --sk-mixte:#8b5cf6; --sk-sans_tarif:#f59e0b;
+             --sk-passe:#ef4444; --sk-courant:#eab308; --sk-a_jour:#22c55e; }
+  .sk-kpi { border-left: 6px solid var(--c, #64748b); }
+  .sk-canvas { overflow-x: auto; }
+  .sk-canvas svg { display: block; min-width: 860px; width: 100%; height: auto; }
+  .sk-node rect { rx: 6; cursor: pointer; transition: filter .15s, opacity .15s; }
+  .sk-node:hover rect { filter: brightness(1.15) drop-shadow(0 2px 6px rgba(0,0,0,.35)); }
+  .sk-link { fill-opacity: .38; transition: fill-opacity .15s; }
+  .sk-link:hover { fill-opacity: .7; }
+  .sk-label { font-size: 13px; font-weight: 600; fill: oklch(var(--bc)); paint-order: stroke; stroke: oklch(var(--b1)); stroke-width: 3px; stroke-linejoin: round; pointer-events: none; }
+  .sk-label small { font-weight: 400; }
+  .sk-sub { font-size: 11px; font-weight: 400; opacity: .75; }
+  .sk-colhead { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; opacity: .6; font-weight: 700; fill: oklch(var(--bc)); }
+  .sk-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px; align-items: start; }
+  .sk-ouv { border: 1px solid oklch(var(--bc) / .15); border-left: 5px solid var(--c, #64748b); border-radius: 10px; background: oklch(var(--b2)); color: oklch(var(--bc)); }
+  .sk-ouv[open] { grid-column: 1 / -1; background: oklch(var(--b1)); box-shadow: 0 2px 10px oklch(var(--bc) / .15); }
+  .sk-ouv > summary { cursor: pointer; list-style: none; padding: 6px 10px; font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .sk-ouv > summary::-webkit-details-marker { display: none; }
+  .sk-ouv > summary::after { content: '\25B8'; opacity: .6; transition: transform .15s; }
+  .sk-ouv[open] > summary::after { transform: rotate(90deg); }
+  .sk-ouv > summary:hover { background: oklch(var(--bc) / .06); border-radius: 9px; }
+  .sk-ouv-body { padding: 4px 10px 10px; font-size: 12.5px; }
+  .sk-sec { border-top: 1px solid oklch(var(--bc) / .12); }
+  .sk-sec > summary { cursor: pointer; padding: 6px 2px; font-weight: 700; font-size: 12px; display: flex; gap: 8px; align-items: center; }
+  .sk-sec > summary .badge { font-weight: 600; }
+  .sk-sec ul { margin: 0 0 8px 4px; padding: 0; list-style: none; }
+  .sk-sec li { padding: 3px 0; border-bottom: 1px dashed oklch(var(--bc) / .1); }
+  .sk-sec li small { opacity: .7; display: block; }
+  .sk-ouv-meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="sk-page space-y-5">
+  <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+    <div>
+      <h1 class="text-3xl font-bold"><i class="fas fa-diagram-project mr-2 text-primary"></i>Diagramme des ouvrages</h1>
+      <p class="text-sm opacity-70">Ouvrages avec point d'eau → modalité → factures non pointées → réparations / réhabilitations. La hauteur de chaque case est proportionnelle au nombre d'ouvrages ou de points d'eau (bouton ci-contre) ; chaque étiquette affiche les deux.</p>
+    </div>
+    <div class="flex flex-wrap gap-2 items-center">
+      <div class="join" role="group" aria-label="Unité du diagramme">
+        <button type="button" class="btn btn-sm join-item btn-primary" id="modeOuvrages">Ouvrages</button>
+        <button type="button" class="btn btn-sm join-item" id="modePoints">Points d'eau</button>
+      </div>
+      <select id="fOrganisation" class="select select-bordered select-sm"></select>
+      <select id="fRegion" class="select select-bordered select-sm"><option value="all">Toutes les régions</option></select>
+      <select id="fDistrict" class="select select-bordered select-sm"><option value="all">Tous les districts</option></select>
+      <select id="fCommune" class="select select-bordered select-sm"><option value="all">Toutes les communes</option></select>
+    </div>
+  </div>
+
+  <div id="skKpis" class="grid grid-cols-2 lg:grid-cols-6 gap-3"></div>
+
+  <div class="card bg-base-100 shadow-lg">
+    <div class="card-body p-3 md:p-5">
+      <div id="skStatus" class="text-center opacity-70 py-10">Chargement…</div>
+      <div class="sk-canvas"><svg id="skSvg" role="img" aria-label="Diagramme de flux des ouvrages"></svg></div>
+      <div id="skNote" class="text-xs opacity-60 mt-2"></div>
+    </div>
+  </div>
+
+  <div id="skDetail" class="card bg-base-100 shadow-lg hidden">
+    <div class="card-body p-4">
+      <h2 class="card-title text-base" id="skDetailTitle"></h2>
+      <div id="skDetailBody"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  const FILTRES_URL = '{% url "core:api_widget_filtres" %}';
+  const DIAGRAMME_URL = '{% url "core:api_widget_diagramme" %}';
+  const OUVRAGE_URL = '{% url "core:api_widget_ouvrage_detail" ouvrage_id="00000000-0000-0000-0000-000000000000" %}'.replace('00000000-0000-0000-0000-000000000000', '__ID__');
+  const COLORS = { forfait: '#3b82f6', volume: '#14b8a6', mixte: '#8b5cf6', sans_tarif: '#f59e0b',
+                   passe: '#ef4444', courant: '#eab308', a_jour: '#22c55e', root: '#64748b' };
+  const MOD_LABELS = { forfait: 'Forfait', volume: 'Volume', mixte: 'Mixte', sans_tarif: 'Sans tarif' };
+  const fmt = n => Number(n || 0).toLocaleString('fr-FR');
+  const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const $ = id => document.getElementById(id);
+  let filtres = null;
+
+  function params() {
+    const p = new URLSearchParams();
+    [['organisation', 'fOrganisation'], ['region_id', 'fRegion'], ['district_id', 'fDistrict'], ['commune_id', 'fCommune']].forEach(([k, id]) => {
+      const v = $(id).value; if (v && v !== 'all') p.set(k, v);
+    });
+    return p;
+  }
+
+  function fillSelect(id, items, allLabel) {
+    const cur = $(id).value;
+    $(id).innerHTML = (allLabel ? `<option value="all">${allLabel}</option>` : '') +
+      items.map(i => `<option value="${i.id}">${esc(i.nom)}</option>`).join('');
+    if ([...$(id).options].some(o => o.value === cur)) $(id).value = cur;
+  }
+
+  function refreshGeoSelects() {
+    if (!filtres) return;
+    const region = $('fRegion').value, district = $('fDistrict').value;
+    fillSelect('fRegion', filtres.regions, 'Toutes les régions');
+    $('fRegion').value = region;
+    const districts = filtres.districts.filter(d => region === 'all' || d.region_id === region);
+    fillSelect('fDistrict', districts, 'Tous les districts');
+    if (![...$('fDistrict').options].some(o => o.value === district)) $('fDistrict').value = 'all';
+    const dsel = $('fDistrict').value;
+    const communes = filtres.communes.filter(c => (dsel === 'all' ? districts.some(d => d.id === c.district_id) : c.district_id === dsel));
+    fillSelect('fCommune', communes, 'Toutes les communes');
+  }
+
+  async function loadFiltres(keepOrg) {
+    const p = new URLSearchParams(); if (keepOrg && $('fOrganisation').value) p.set('organisation', $('fOrganisation').value);
+    const r = await fetch(`${FILTRES_URL}?${p}`, { credentials: 'same-origin' });
+    filtres = await r.json();
+    if (!keepOrg) {
+      fillSelect('fOrganisation', filtres.organisations);
+      if (filtres.default_organisation_id) $('fOrganisation').value = filtres.default_organisation_id;
+    }
+    refreshGeoSelects();
+  }
+
+  // ---------- Sankey ----------
+  let mode = 'ouvrages';       // 'ouvrages' | 'points'
+  let lastData = null;
+  const val = x => (mode === 'points' ? x.p : x.o);
+
+  function buildGraph(tree) {
+    const periodes = { passe: 'Mois passés', courant: 'Mois en cours', a_jour: 'À jour' };
+    const nodes = {}; const links = [];
+    const leaves = [];
+    tree.children.forEach(m => (m.children || []).forEach(pn => (pn.children || []).forEach(l => {
+      const per = l.key.includes('_a_jour_') ? 'a_jour' : l.key.includes('_passe_') ? 'passe' : 'courant';
+      leaves.push({ mod: m.key, per, avec: l.key.endsWith('_avec'), o: l.value, p: l.points || 0, ouvrages: l.ouvrages });
+    })));
+    const add = (key, col, label, color, order) => { nodes[key] = { key, col, label, color, order, o: 0, p: 0, ouvrages: [], out: [], inn: [] }; };
+    add('root', 0, tree.label, COLORS.root, 0);
+    ['forfait', 'volume', 'mixte', 'sans_tarif'].forEach((m, i) => { if (tree.children.some(c => c.key === m)) add('m_' + m, 1, MOD_LABELS[m], COLORS[m], i); });
+    ['passe', 'courant', 'a_jour'].forEach((p, i) => add('p_' + p, 2, 'Factures non pointées · ' + periodes[p].toLowerCase(), COLORS[p], i));
+    nodes['p_a_jour'].label = 'Aucune facture non pointée';
+    ['passe', 'courant', 'a_jour'].forEach((p, i) => [true, false].forEach((avec, j) =>
+      add(`l_${p}_${avec ? 'avec' : 'sans'}`, 3, avec ? 'Avec réparation / réhabilitation' : 'Sans réparation ni réhabilitation', COLORS[p], i * 2 + j)));
+    const acc = {};
+    const flow = (a, b, color, o, p) => {
+      const k = a + '>' + b;
+      if (!acc[k]) { acc[k] = { a: nodes[a], b: nodes[b], color, o: 0, p: 0 }; }
+      acc[k].o += o; acc[k].p += p;
+    };
+    tree.children.forEach(m => flow('root', 'm_' + m.key, COLORS[m.key], m.value, m.points || 0));
+    leaves.forEach(l => {
+      const lk = `l_${l.per}_${l.avec ? 'avec' : 'sans'}`;
+      flow('m_' + l.mod, 'p_' + l.per, COLORS[l.mod], l.o, l.p);
+      flow('p_' + l.per, lk, COLORS[l.per], l.o, l.p);
+      const named = l.ouvrages.map(x => ({ id: x.id, n: x.nom, p: x.points || 0, mod: l.mod }));
+      [nodes['root'], nodes['m_' + l.mod], nodes['p_' + l.per], nodes[lk]].forEach(nd => { nd.ouvrages.push(...named); nd.o += l.o; nd.p += l.p; });
+    });
+    Object.values(acc).forEach(lk => { if (lk.o > 0 || lk.p > 0) { links.push(lk); lk.a.out.push(lk); lk.b.inn.push(lk); } });
+    return { nodes: Object.values(nodes).filter(n => n.o > 0), links };
+  }
+
+  function drawSankey(data) {
+    const { nodes, links } = buildGraph(data.tree);
+    const totalVal = mode === 'points' ? (data.tree.points || 0) : data.tree.value;
+    const W = 1180, H = 660, padTop = 34, nodeW = 20, gap = 14, labelRoom = 330, minH = 16;
+    const cols = [0, 1, 2, 3].map(c => nodes.filter(n => n.col === c).sort((a, b) => a.order - b.order));
+    const usable = H - padTop - 10;
+    const maxN = Math.max(...cols.map(c => c.length));
+    const k = (usable - gap * (maxN - 1)) / Math.max(totalVal, 1);
+    const xs = c => c * ((W - labelRoom - nodeW) / 3);
+    cols.forEach((col, ci) => {
+      const heights = col.map(n => Math.max(val(n) * k, minH));
+      const total = heights.reduce((a, b) => a + b, 0) + gap * (col.length - 1);
+      let y = padTop + Math.max(0, (usable - total) / 2);
+      col.forEach((n, i) => { n.x = xs(ci); n.y = y; n.h = heights[i]; n.w = nodeW; y += heights[i] + gap; });
+    });
+    nodes.forEach(n => {
+      let so = 0; n.out.sort((a, b) => a.b.y - b.b.y).forEach(l => { l.w = val(l) * k; l.sy = n.y + so; so += l.w; });
+      let to = 0; n.inn.sort((a, b) => a.a.y - b.a.y).forEach(l => { l.ty = n.y + to; to += val(l) * k; });
+    });
+    const unit = mode === 'points' ? 'points d’eau' : 'ouvrages';
+    const heads = ['Ouvrages avec point d’eau', 'Modalité', 'Factures non pointées', 'Réparations / réhabilitations'];
+    let svg = '<defs>';
+    links.forEach((l, i) => { svg += `<linearGradient id="g${i}" x1="0" x2="1"><stop offset="0" stop-color="${l.color}"/><stop offset="1" stop-color="${l.b.color}"/></linearGradient>`; });
+    svg += '</defs>';
+    cols.forEach((col, ci) => { svg += `<text class="sk-colhead" x="${xs(ci)}" y="16">${esc(heads[ci])}</text>`; });
+    const both = x => `${fmt(x.o)} ouvrage${x.o > 1 ? 's' : ''} · ${fmt(x.p)} point${x.p > 1 ? 's' : ''} d’eau`;
+    links.forEach((l, i) => {
+      const x0 = l.a.x + nodeW, x1 = l.b.x, mx = (x0 + x1) / 2;
+      const y0 = l.sy, y1 = l.ty, w = l.w;
+      svg += `<path class="sk-link" fill="url(#g${i})" d="M${x0},${y0} C${mx},${y0} ${mx},${y1} ${x1},${y1} L${x1},${y1 + w} C${mx},${y1 + w} ${mx},${y0 + w} ${x0},${y0 + w} Z"><title>${esc(l.a.label)} → ${esc(l.b.label)} : ${both(l)}</title></path>`;
+    });
+    nodes.forEach(n => {
+      const labelX = n.x + nodeW + 8;
+      const pct = totalVal ? Math.round(val(n) * 100 / totalVal) : 0;
+      const main = mode === 'points'
+        ? `<tspan font-size="15" font-weight="800">${fmt(n.p)}</tspan><tspan class="sk-sub"> pts d’eau · ${fmt(n.o)} ouvr. · ${pct} %</tspan>`
+        : `<tspan font-size="15" font-weight="800">${fmt(n.o)}</tspan><tspan class="sk-sub"> ouvr. · ${fmt(n.p)} pts d’eau · ${pct} %</tspan>`;
+      svg += `<g class="sk-node" data-key="${n.key}"><rect x="${n.x}" y="${n.y}" width="${nodeW}" height="${n.h}" fill="${n.color}"><title>${esc(n.label)} : ${both(n)}</title></rect>
+        <text class="sk-label" x="${labelX}" y="${n.y + n.h / 2 - 2}">${esc(n.label)}</text>
+        <text class="sk-label" x="${labelX}" y="${n.y + n.h / 2 + 15}">${main}</text></g>`;
+    });
+    $('skSvg').setAttribute('viewBox', `0 0 ${W} ${H}`);
+    $('skSvg').innerHTML = svg;
+    $('skSvg').setAttribute('aria-label', `Diagramme de flux, tailles en ${unit}`);
+    $('skSvg').querySelectorAll('.sk-node').forEach(g => {
+      g.addEventListener('click', () => showDetail(nodes.find(n => n.key === g.dataset.key)));
+    });
+  }
+
+  function setMode(m) {
+    mode = m;
+    $('modeOuvrages').classList.toggle('btn-primary', m === 'ouvrages');
+    $('modePoints').classList.toggle('btn-primary', m === 'points');
+    if (lastData) { $('skDetail').classList.add('hidden'); drawSankey(lastData); }
+  }
+
+  function showDetail(node) {
+    $('skDetail').classList.remove('hidden');
+    $('skDetailTitle').innerHTML = `${esc(node.label)} <span class="badge badge-primary">${fmt(node.o)} ouvrage${node.o > 1 ? 's' : ''}</span> <span class="badge badge-secondary">${fmt(node.p)} point${node.p > 1 ? 's' : ''} d’eau</span>`;
+    const seen = new Set();
+    const sorted = node.ouvrages.filter(o => !seen.has(o.id) && seen.add(o.id)).sort((a, b) => a.n.localeCompare(b.n, 'fr'));
+    $('skDetailBody').innerHTML = sorted.length
+      ? `<div class="sk-list">${sorted.map(o => `<details class="sk-ouv" style="--c:${COLORS[o.mod]}" data-id="${o.id}"><summary><span>${esc(o.n)}</span><small class="opacity-60 ml-auto">${fmt(o.p)} pt${o.p > 1 ? 's' : ''}</small></summary><div class="sk-ouv-body"><span class="loading loading-dots loading-sm"></span></div></details>`).join('')}</div>`
+      : '<span class="opacity-60">Aucun ouvrage</span>';
+    $('skDetailBody').querySelectorAll('.sk-ouv').forEach(d => d.addEventListener('toggle', () => { if (d.open) loadOuvrage(d); }));
+    $('skDetail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  const ouvrageCache = {};
+  async function loadOuvrage(d) {
+    const body = d.querySelector('.sk-ouv-body');
+    if (d.dataset.loaded) return;
+    try {
+      const id = d.dataset.id;
+      if (!ouvrageCache[id]) {
+        const r = await fetch(`${OUVRAGE_URL.replace('__ID__', id)}?${params()}`, { credentials: 'same-origin' });
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error || 'Erreur');
+        ouvrageCache[id] = data.ouvrage;
+      }
+      body.innerHTML = renderOuvrage(ouvrageCache[id]);
+      d.dataset.loaded = '1';
+    } catch (e) {
+      body.innerHTML = `<span class="text-error">Erreur de chargement : ${esc(e.message)}</span>`;
+    }
+  }
+
+  function renderOuvrage(o) {
+    const st = o.stats || {};
+    const meta = [['Type', o.type], ['Réalisé en', o.annee_realisation], ['Intervenant', o.intervenant], [o.saisonnier ? 'Saisonnier' : '', o.saisonnier ? 'oui' : '']]
+      .filter(([k, v]) => k && v).map(([k, v]) => `<span class="badge badge-ghost">${esc(k)} : ${esc(v)}</span>`).join('');
+    const counts = [['Points d’eau', st.points_eau], ['Équipements', st.equipements], ['Compteurs', st.compteurs], ['Plannings', st.plannings]]
+      .map(([k, v]) => `<span class="badge badge-outline">${k} ${fmt(v)}</span>`).join('');
+    const sec = (title, items, open) => items && items.length
+      ? `<details class="sk-sec" ${open ? 'open' : ''}><summary>${title} <span class="badge badge-sm">${items.length}</span></summary><ul>${items.map(i => `<li>${i}</li>`).join('')}</ul></details>` : '';
+    const line = (main, ...subs) => `${esc(main)}${subs.filter(Boolean).length ? `<small>${subs.filter(Boolean).map(esc).join(' · ')}</small>` : ''}`;
+    const loc = (o.localisations || []).map(l => line(l.commune, l.district, l.region, (l.villages || []).join(', ')));
+    const mod = (o.modalites || []).map(m => line(m.type_gestion, m.gestionnaire, m.paiement, m.statut));
+    const tar = (o.tarifs || []).map(x => line(x.type_point_eau, `Abonnement ${fmt(x.prix_abonnement)} Ar`, (x.tranches || []).map(t => `≤ ${t.seuil} m³ : ${fmt(t.tarif)} Ar/m³`).join(' · ')));
+    const pts = (o.points_eau || []).map(p => line(p.nom || p.code || 'Point d’eau', p.code, p.type, p.village));
+    const eq = (o.equipements || []).map(e => line(e.nom, e.code, e.type, e.statut, e.volume_m3 ? e.volume_m3 + ' m³' : ''));
+    const rep = (o.reparations_non_terminees || []).map(r => line(r.titre, r.statut, r.date, r.priorite, r.responsable));
+    const pay = arr => (arr || []).map(x => line(x.point_eau || 'Point d’eau', x.type, x.date, `${fmt(x.montant)} Ar`));
+    return `<div class="sk-ouv-meta">${meta}${counts}</div>`
+      + sec('Réparations non terminées', rep, true)
+      + sec('Factures échues non pointées', pay(o.paiements_echus_non_pointes), true)
+      + sec('Prochains paiements', pay(o.prochains_paiements), false)
+      + sec('Localisation', loc, false) + sec('Gestion', mod, false) + sec('Tarifs', tar, false)
+      + sec('Points d’eau', pts, false) + sec('Équipements', eq, false)
+      + (o.full_url ? `<div class="mt-2"><a class="btn btn-xs btn-primary" href="${esc(o.full_url)}" target="_blank" rel="noopener">Ouvrir la fiche complète</a></div>` : '');
+  }
+
+  function drawKpis(data) {
+    const wc = data.widget_counts;
+    const cards = [['forfait', 'Forfait', wc.forfait], ['volume', 'Volume', wc.volume], ['mixte', 'Mixte', wc.mixte],
+      ['sans_tarif', 'Sans tarif', wc.sans_tarif]].map(([k, l, v]) => `
+      <div class="sk-kpi card bg-base-100 shadow p-3" style="--c:${COLORS[k]}"><div class="text-xs opacity-60">${l}</div><div class="text-2xl font-extrabold">${fmt(v)}</div><div class="text-[11px] opacity-50">chiffre du widget</div></div>`).join('');
+    $('skKpis').innerHTML = cards + `
+      <div class="sk-kpi card bg-base-100 shadow p-3" style="--c:${COLORS.root}"><div class="text-xs opacity-60">Avec point d'eau</div><div class="text-2xl font-extrabold">${fmt(data.tree.value)}</div><div class="text-[11px] opacity-50">dans le diagramme</div></div>
+      <div class="sk-kpi card bg-base-100 shadow p-3" style="--c:${COLORS.root}"><div class="text-xs opacity-60">Leurs points d'eau</div><div class="text-2xl font-extrabold">${fmt(data.tree.points)}</div><div class="text-[11px] opacity-50">dans le diagramme</div></div>`;
+    $('skNote').textContent = `Chaque ouvrage n'apparaît qu'une fois : s'il a des factures non pointées sur les mois passés et sur le mois en cours (${data.mois_facture_courant_label}), il est classé en « mois passés ». `
+      + (data.sans_point_eau ? `${fmt(data.sans_point_eau)} ouvrage(s) sans point d'eau sont comptés « Sans tarif » dans le widget mais n'apparaissent pas ici.` : '');
+  }
+
+  async function load() {
+    $('skStatus').style.display = ''; $('skStatus').textContent = 'Chargement…'; $('skSvg').innerHTML = '';
+    $('skDetail').classList.add('hidden');
+    try {
+      const r = await fetch(`${DIAGRAMME_URL}?${params()}`, { credentials: 'same-origin' });
+      const data = await r.json();
+      if (!data.success) throw new Error(data.error || 'Erreur');
+      if (!data.tree.value) { $('skStatus').textContent = 'Aucun ouvrage avec point d’eau dans ce périmètre.'; return; }
+      $('skStatus').style.display = 'none';
+      lastData = data;
+      drawKpis(data); drawSankey(data);
+    } catch (e) {
+      $('skStatus').textContent = 'Erreur de chargement : ' + e.message;
+    }
+  }
+
+  $('modeOuvrages').addEventListener('click', () => setMode('ouvrages'));
+  $('modePoints').addEventListener('click', () => setMode('points'));
+  ['fRegion', 'fDistrict'].forEach(id => $(id).addEventListener('change', () => { refreshGeoSelects(); load(); }));
+  $('fCommune').addEventListener('change', load);
+  $('fOrganisation').addEventListener('change', async () => { $('fRegion').value = 'all'; $('fDistrict').value = 'all'; $('fCommune').value = 'all'; await loadFiltres(true); load(); });
+  loadFiltres(false).then(load).catch(() => load());
+})();
+</script>
+{% endblock %}

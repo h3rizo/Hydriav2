@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Gestionnaire de Fichiers{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <!-- En-tête -->
+    <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-8">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content mb-2">
+                <i class="fas fa-folder-open mr-3"></i>Gestionnaire de Fichiers
+            </h1>
+            <p class="text-base-content/70">Uploadez, taguez et retrouvez vos documents.</p>
+        </div>
+        <div class="mt-4 lg:mt-0">
+            <button class="btn btn-accent btn-sm" onclick="upload_modal.showModal()">
+                <i class="fas fa-upload mr-2"></i>Uploader un fichier
+            </button>
+        </div>
+    </div>
+
+    <!-- Filtres et recherche -->
+    <div class="bg-base-200 rounded-lg p-4 mb-8 border border-base-300">
+        <div class="form-control">
+            <label class="label">
+                <span class="label-text font-semibold"><i class="fas fa-tags mr-2"></i>Rechercher par tags</span>
+            </label>
+            <input type="text" id="search-tags" placeholder="Ex: rapport, mensuel, 2025..." class="input input-bordered w-full" oninput="filterFiles()">
+            <label class="label">
+                <span class="label-text-alt">Séparez les tags par une virgule.</span>
+            </label>
+        </div>
+    </div>
+
+    <!-- Tableau des fichiers -->
+    <div class="bg-base-100 rounded-lg shadow-sm border border-base-300">
+        <div class="overflow-x-auto">
+            <table class="table w-full">
+                <thead>
+                    <tr>
+                        <th>Nom du fichier</th>
+                        <th>Tags</th>
+                        <th>Taille</th>
+                        <th>Date d'upload</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="files-tbody">
+                    <!-- Contenu généré par JavaScript -->
+                </tbody>
+            </table>
+            <div id="loading-spinner" class="text-center py-8 hidden">
+                <span class="loading loading-spinner loading-lg"></span>
+            </div>
+            <div id="no-files-message" class="text-center py-8 hidden">
+                <p class="text-base-content/70">Aucun fichier trouvé.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal d'upload -->
+<dialog id="upload_modal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4"><i class="fas fa-upload mr-2"></i>Uploader un nouveau fichier</h3>
+        <form id="upload-form" class="space-y-4">
+            <div class="form-control">
+                <label class="label"><span class="label-text">Fichier *</span></label>
+                <input type="file" id="file-input" name="file" class="file-input file-input-bordered w-full" required>
+            </div>
+            <div class="form-control">
+                <label class="label"><span class="label-text">Tags</span></label>
+                <input type="text" id="tags-input" name="tags" placeholder="facture, client_x, urgent" class="input input-bordered w-full">
+                <label class="label"><span class="label-text-alt">Séparez les tags par une virgule.</span></label>
+            </div>
+        </form>
+        <div class="modal-action">
+            <form method="dialog">
+                <button class="btn">Annuler</button>
+            </form>
+            <button type="button" class="btn btn-accent" onclick="handleUpload()">
+                <span id="upload-btn-text">Uploader</span>
+                <span id="upload-spinner" class="loading loading-spinner loading-sm hidden"></span>
+            </button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    loadFiles();
+});
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+async function loadFiles(tags = '') {
+    const tbody = document.getElementById('files-tbody');
+    const spinner = document.getElementById('loading-spinner');
+    const noFilesMsg = document.getElementById('no-files-message');
+
+    spinner.classList.remove('hidden');
+    tbody.innerHTML = '';
+    noFilesMsg.classList.add('hidden');
+
+    try {
+        const url = `{% url 'filemanager:api_files' %}?tags=${encodeURIComponent(tags)}`;
+        const response = await fetch(url);
+        const files = await response.json();
+
+        if (files.length === 0) {
+            noFilesMsg.classList.remove('hidden');
+        } else {
+            tbody.innerHTML = files.map(file => createFileRow(file)).join('');
+        }
+    } catch (error) {
+        console.error('Erreur lors du chargement des fichiers:', error);
+        noFilesMsg.classList.remove('hidden');
+        noFilesMsg.textContent = 'Erreur de chargement des fichiers.';
+    } finally {
+        spinner.classList.add('hidden');
+    }
+}
+
+function createFileRow(file) {
+    const tagsHtml = file.tags.map(tag => 
+        `<div class="badge badge-outline cursor-pointer hover:badge-accent" onclick="searchByTag('${tag}')">${tag}</div>`
+    ).join(' ');
+
+    return `
+        <tr class="hover">
+            <td class="font-medium">${file.original_filename}</td>
+            <td><div class="flex flex-wrap gap-1">${tagsHtml}</div></td>
+            <td>${formatBytes(file.file_size)}</td>
+            <td>${new Date(file.uploaded_at).toLocaleString('fr-FR')}</td>
+            <td>
+                <div class="flex gap-1">
+                    <button class="btn btn-ghost btn-xs" title="Télécharger"><i class="fas fa-download"></i></button>
+                    <button class="btn btn-ghost btn-xs text-error" title="Supprimer" onclick="event.stopPropagation(); deleteFile(${file.id}, '${file.original_filename}')"><i class="fas fa-trash"></i></button>
+                </div>
+            </td>
+        </tr>
+    `;
+}
+
+function filterFiles() {
+    const searchInput = document.getElementById('search-tags');
+    loadFiles(searchInput.value);
+}
+
+function searchByTag(tag) {
+    const searchInput = document.getElementById('search-tags');
+    searchInput.value = tag;
+    filterFiles();
+}
+
+async function deleteFile(fileId, filename) {
+    if (!confirm(`Êtes-vous sûr de vouloir supprimer le fichier "${filename}" ?\nCette action est irréversible.`)) {
+        return;
+    }
+
+    const url = `{% url 'filemanager:api_file_destroy' pk=0 %}`.replace('0', fileId);
+    const csrfToken = getCookie('csrftoken');
+
+    try {
+        const response = await fetch(url, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRFToken': csrfToken,
+            },
+        });
+
+        if (response.status === 204) {
+            showToast('Fichier supprimé avec succès.', 'success');
+            loadFiles(document.getElementById('search-tags').value); // Rafraîchir la liste
+        } else {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Une erreur est survenue.');
+        }
+    } catch (error) {
+        console.error('Erreur lors de la suppression du fichier:', error);
+        showToast(`Erreur: ${error.message}`, 'error');
+    }
+}
+
+async function handleUpload() {
+    const form = document.getElementById('upload-form');
+    const fileInput = document.getElementById('file-input');
+    const uploadBtn = document.querySelector('.btn-accent[onclick="handleUpload()"]');
+    const btnText = document.getElementById('upload-btn-text');
+    const spinner = document.getElementById('upload-spinner');
+
+    if (!fileInput.files[0]) {
+        showToast('Veuillez sélectionner un fichier.', 'warning');
+        return;
+    }
+
+    const formData = new FormData(form);
+    
+    btnText.classList.add('hidden');
+    spinner.classList.remove('hidden');
+    uploadBtn.disabled = true;
+
+    try {
+        const response = await fetch("{% url 'filemanager:api_upload' %}", {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: formData,
+        });
+
+        if (response.ok) {
+            showToast('Fichier uploadé avec succès!', 'success');
+            document.getElementById('upload_modal').close();
+            form.reset();
+            loadFiles();
+        } else {
+            const errorData = await response.json();
+            console.error('Erreur d\'upload:', errorData);
+            showToast(`Erreur: ${Object.values(errorData).join(', ')}`, 'error');
+        }
+    } catch (error) {
+        console.error('Erreur réseau:', error);
+        showToast('Erreur réseau lors de l\'upload.', 'error');
+    } finally {
+        btnText.classList.remove('hidden');
+        spinner.classList.add('hidden');
+        uploadBtn.disabled = false;
+    }
+}
+
+function formatBytes(bytes, decimals = 2) {
+    if (bytes === 0 || !bytes) return '0 Bytes';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+}
+
+function showToast(message, type = 'info') {
+    const toastContainer = document.body;
+    const toast = document.createElement('div');
+    toast.className = `toast toast-top toast-end`;
+    toast.innerHTML = `<div class="alert alert-${type}"><span>${message}</span></div>`;
+    toastContainer.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
+</script>
+{% endblock %}

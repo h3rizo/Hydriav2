@@ -1,0 +1,673 @@
+{% extends "accounting/base.html" %}
+{% load humanize %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex justify-between items-center">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">
+                <i class="fas fa-search-dollar mr-2 text-primary"></i>
+                Reconstitution DiameX - Salaires
+            </h1>
+            <p class="text-base-content/70 mt-1">
+                Remplir automatiquement les champs DiameX manquants en analysant BaseDiameX
+            </p>
+        </div>
+        <div class="flex gap-2">
+            <button onclick="reconstitutionBatch()" class="btn btn-primary">
+                <i class="fas fa-magic mr-2"></i>
+                Reconstitution Automatique (Batch)
+            </button>
+        </div>
+    </div>
+
+    <!-- Instructions -->
+    <div class="alert alert-info">
+        <i class="fas fa-info-circle"></i>
+        <div>
+            <h3 class="font-bold">Comment ça fonctionne ?</h3>
+            <p class="text-sm mt-1">
+                Le système cherche dans la table <strong>BaseDiameX</strong> en utilisant :
+            </p>
+            <ul class="text-sm mt-2 ml-6 list-disc">
+                <li><strong>Salaire</strong> : Description contenant "Salaire_YYYY MM" + Detail avec surnom employé</li>
+                <li><strong>IRSA</strong> : Description contenant "IRSA_YYYY MM" + Detail avec surnom</li>
+                <li><strong>CNaPS</strong> : Description contenant "CNaPS_YYYY MM" + Detail avec surnom</li>
+                <li><strong>FMFP</strong> : Description contenant "FMFP_YYYY MM" + Detail avec surnom</li>
+                <li><strong>Mutuelle</strong> : Description contenant "OSIEF" ou "AMIT" + "YYYY MM" + Detail avec surnom</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <h2 class="card-title mb-4">
+                <i class="fas fa-filter mr-2 text-primary"></i>
+                Filtres
+            </h2>
+            <form method="GET" class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Mois</span>
+                    </label>
+                    <select name="mois" class="select select-bordered w-full">
+                        <option value="">Tous les mois</option>
+                        {% for mois in mois_disponibles %}
+                            <option value="{{ mois|date:'Y-m' }}" {% if filter_mois == mois|date:'Y-m' %}selected{% endif %}>
+                                {{ mois|date:'F Y' }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Zone / Base</span>
+                    </label>
+                    <select name="zone" class="select select-bordered w-full">
+                        <option value="">Toutes les zones</option>
+                        {% for zone in zones_list %}
+                            <option value="{{ zone.id }}" {% if filter_zone == zone.id|stringformat:'s' %}selected{% endif %}>
+                                {{ zone.nom_base }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Poste</span>
+                    </label>
+                    <select name="poste" class="select select-bordered w-full">
+                        <option value="">Tous les postes</option>
+                        {% for poste in postes_list %}
+                            <option value="{{ poste.id }}" {% if filter_poste == poste.id|stringformat:'s' %}selected{% endif %}>
+                                {{ poste.nom_poste }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control justify-end">
+                    <label class="label"><span class="label-text">&nbsp;</span></label>
+                    <div class="flex gap-2">
+                        <button type="submit" class="btn btn-primary flex-1">
+                            <i class="fas fa-filter mr-2"></i>Filtrer
+                        </button>
+                        <a href="{% url 'accounting:reconstitution_diamex_salaires' %}" class="btn btn-ghost">
+                            <i class="fas fa-times"></i>
+                        </a>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Statistiques globales -->
+    <div class="stats stats-vertical lg:stats-horizontal shadow w-full bg-base-100">
+        <div class="stat">
+            <div class="stat-figure">
+                <div class="radial-progress text-primary" style="--value:{{ taux_remplissage }}; --size:4rem; --thickness:4px;" role="progressbar">
+                    {{ taux_remplissage }}%
+                </div>
+            </div>
+            <div class="stat-title">Taux de remplissage</div>
+            <div class="stat-value text-primary">{{ taux_remplissage }}%</div>
+            <div class="stat-desc">{{ total_cases_remplies|intcomma }} / {{ total_cases|intcomma }} cases</div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-figure text-info">
+                <i class="fas fa-database text-4xl"></i>
+            </div>
+            <div class="stat-title">Total salaires</div>
+            <div class="stat-value text-info">{{ total_salaires|intcomma }}</div>
+            <div class="stat-desc">{{ total_cases|intcomma }} cases DiameX</div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-figure text-success">
+                <i class="fas fa-check-circle text-4xl"></i>
+            </div>
+            <div class="stat-title">Cases remplies</div>
+            <div class="stat-value text-success">{{ total_cases_remplies|intcomma }}</div>
+            <div class="stat-desc">Champs DiameX complétés</div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-figure text-warning">
+                <i class="fas fa-exclamation-triangle text-4xl"></i>
+            </div>
+            <div class="stat-title">Cases vides</div>
+            <div class="stat-value text-warning">{{ total_cases_vides|intcomma }}</div>
+            <div class="stat-desc">{{ total }} salaires incomplets</div>
+        </div>
+    </div>
+
+    <!-- Statistiques par champ -->
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <h2 class="card-title mb-4">
+                <i class="fas fa-chart-bar mr-2 text-primary"></i>
+                Taux de remplissage par champ
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                {% for stat in stats_par_champ %}
+                <div class="stat bg-base-200 rounded-lg p-4">
+                    <div class="stat-figure">
+                        <div class="radial-progress {% if stat.taux >= 80 %}text-success{% elif stat.taux >= 50 %}text-warning{% else %}text-error{% endif %}"
+                             style="--value:{{ stat.taux }}; --size:3rem; --thickness:3px;" role="progressbar">
+                            {{ stat.taux }}%
+                        </div>
+                    </div>
+                    <div class="stat-title text-sm">{{ stat.nom }}</div>
+                    <div class="stat-value text-lg">{{ stat.remplis|intcomma }}</div>
+                    <div class="stat-desc">{{ stat.vides|intcomma }} vides</div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Compteurs de session -->
+    <div class="stats stats-vertical lg:stats-horizontal shadow w-full bg-base-200">
+        <div class="stat">
+            <div class="stat-figure text-info">
+                <i class="fas fa-search text-3xl"></i>
+            </div>
+            <div class="stat-title">Recherches (session)</div>
+            <div class="stat-value text-info" id="nb-recherches">0</div>
+            <div class="stat-desc">Correspondances cherchées</div>
+        </div>
+        <div class="stat">
+            <div class="stat-figure text-success">
+                <i class="fas fa-save text-3xl"></i>
+            </div>
+            <div class="stat-title">Champs remplis (session)</div>
+            <div class="stat-value text-success" id="nb-remplis">0</div>
+            <div class="stat-desc">DiameX complétés</div>
+        </div>
+    </div>
+
+    <!-- Liste des salaires incomplets -->
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <div class="flex flex-wrap justify-between items-center gap-4">
+                <h2 class="card-title">
+                    <i class="fas fa-list mr-2 text-primary"></i>
+                    Salaires avec champs DiameX manquants (100 premiers)
+                </h2>
+                <div class="flex items-center gap-2">
+                    <span class="text-sm">Grouper par :</span>
+                    <select id="groupBy" class="select select-bordered select-sm" onchange="regrouperTableau()">
+                        <option value="">-- Aucun --</option>
+                        <option value="base" {% if grouper_par == 'base' %}selected{% endif %}>Base</option>
+                        <option value="poste" {% if grouper_par == 'poste' %}selected{% endif %}>Poste</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Légende des badges -->
+            <div class="flex flex-wrap gap-4 mt-4 text-sm">
+                <div class="flex items-center gap-2">
+                    <span class="badge badge-success badge-sm">OK</span>
+                    <span class="text-base-content/70">Numéro DiameX renseigné</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="badge badge-warning badge-sm">Trouvé</span>
+                    <span class="text-base-content/70">Correspondance trouvée dans DiameX (cliquer sur Rechercher pour appliquer)</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="badge badge-error badge-sm">Absent</span>
+                    <span class="text-base-content/70">Aucune correspondance dans DiameX</span>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto mt-4">
+                <table class="table table-zebra table-sm" id="tableauSalaires">
+                    <thead>
+                        <tr>
+                            <th>Employé</th>
+                            <th>Base</th>
+                            <th>Poste</th>
+                            <th>Date paiement</th>
+                            <th>Salaire</th>
+                            <th>IRSA</th>
+                            <th>CNaPS</th>
+                            <th>FMFP</th>
+                            <th>Mutuelle</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for salaire in salaires_incomplets %}
+                            <tr id="row-{{ salaire.id }}"
+                                data-base="{{ salaire.grille_salaire.contrat.employe.base.nom_base|default:'' }}"
+                                data-poste="{{ salaire.grille_salaire.contrat.poste.nom_poste|default:'' }}">
+                                <td class="font-semibold">
+                                    {{ salaire.grille_salaire.contrat.employe.surnom|default:salaire.grille_salaire.contrat.employe.surnom|default:employe.nom }}
+                                    {{ salaire.grille_salaire.contrat.employe.nom }}
+                                </td>
+                                <td class="text-sm">
+                                    {{ salaire.grille_salaire.contrat.employe.base.nom_base|default:"-" }}
+                                </td>
+                                <td class="text-sm">
+                                    {{ salaire.grille_salaire.contrat.poste.nom_poste|default:"-" }}
+                                </td>
+                                <td class="font-mono text-sm">
+                                    {{ salaire.date_paiement|date:"d/m/Y" }}
+                                </td>
+                                <td class="text-center">
+                                    {% if salaire.statuts_correspondance.salaire == 'rempli' %}
+                                        <span class="badge badge-success badge-sm" title="{{ salaire.numero_diamex_salaire }}">OK</span>
+                                    {% elif salaire.statuts_correspondance.salaire == 'trouve' %}
+                                        <span class="badge badge-warning badge-sm" title="Correspondance trouvée dans DiameX">Trouvé</span>
+                                    {% else %}
+                                        <span class="badge badge-error badge-sm" title="Aucune correspondance dans DiameX">Absent</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if salaire.statuts_correspondance.irsa == 'rempli' %}
+                                        <span class="badge badge-success badge-sm" title="{{ salaire.numero_diamex_irsa }}">OK</span>
+                                    {% elif salaire.statuts_correspondance.irsa == 'trouve' %}
+                                        <span class="badge badge-warning badge-sm" title="Correspondance trouvée dans DiameX">Trouvé</span>
+                                    {% else %}
+                                        <span class="badge badge-error badge-sm" title="Aucune correspondance dans DiameX">Absent</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if salaire.statuts_correspondance.cnaps == 'rempli' %}
+                                        <span class="badge badge-success badge-sm" title="{{ salaire.numero_diamex_cnaps }}">OK</span>
+                                    {% elif salaire.statuts_correspondance.cnaps == 'trouve' %}
+                                        <span class="badge badge-warning badge-sm" title="Correspondance trouvée dans DiameX">Trouvé</span>
+                                    {% else %}
+                                        <span class="badge badge-error badge-sm" title="Aucune correspondance dans DiameX">Absent</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if salaire.statuts_correspondance.fmfp == 'rempli' %}
+                                        <span class="badge badge-success badge-sm" title="{{ salaire.numero_diamex_fmfp }}">OK</span>
+                                    {% elif salaire.statuts_correspondance.fmfp == 'trouve' %}
+                                        <span class="badge badge-warning badge-sm" title="Correspondance trouvée dans DiameX">Trouvé</span>
+                                    {% else %}
+                                        <span class="badge badge-error badge-sm" title="Aucune correspondance dans DiameX">Absent</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if salaire.statuts_correspondance.mutuelle == 'rempli' %}
+                                        <span class="badge badge-success badge-sm" title="{{ salaire.numero_diamex_mutuelle_sante }}">OK</span>
+                                    {% elif salaire.statuts_correspondance.mutuelle == 'trouve' %}
+                                        <span class="badge badge-warning badge-sm" title="Correspondance trouvée dans DiameX">Trouvé</span>
+                                    {% else %}
+                                        <span class="badge badge-error badge-sm" title="Aucune correspondance dans DiameX">Absent</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="flex gap-1">
+                                        <button onclick="rechercherCorrespondances('{{ salaire.id }}')"
+                                                class="btn btn-info btn-xs"
+                                                title="Rechercher correspondances">
+                                            <i class="fas fa-search"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        {% empty %}
+                            <tr>
+                                <td colspan="10" class="text-center py-8 text-base-content/50">
+                                    <i class="fas fa-check-circle text-4xl mb-2"></i>
+                                    <p>Aucun salaire avec champs DiameX manquants !</p>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Résultats de recherche -->
+<dialog id="modalResultats" class="modal">
+    <div class="modal-box w-11/12 max-w-4xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-search-dollar text-primary mr-2"></i>
+            Correspondances trouvées
+        </h3>
+
+        <!-- Indicateur de chargement -->
+        <div id="loading-recherche" class="hidden">
+            <div class="flex flex-col items-center justify-center py-8">
+                <span class="loading loading-spinner loading-lg text-primary"></span>
+                <p class="mt-4 text-lg font-semibold">Recherche en cours dans BaseDiameX...</p>
+                <p class="text-sm text-base-content/70 mt-2">Analyse des correspondances pour les champs manquants</p>
+            </div>
+        </div>
+
+        <div id="resultats-container">
+            <!-- Rempli dynamiquement -->
+        </div>
+
+        <div class="modal-action">
+            <button onclick="document.getElementById('modalResultats').close()" class="btn btn-ghost">
+                <i class="fas fa-times mr-2"></i>Fermer
+            </button>
+            <button id="btn-appliquer" onclick="appliquerCorrespondances()" class="btn btn-primary">
+                <i class="fas fa-save mr-2"></i>Appliquer les correspondances
+            </button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>Fermer</button>
+    </form>
+</dialog>
+
+<script>
+let currentSalaireId = null;
+let currentCorrespondances = null;
+
+async function rechercherCorrespondances(salaireId) {
+    currentSalaireId = salaireId;
+
+    // Ouvrir le modal immédiatement avec le chargement
+    document.getElementById('modalResultats').showModal();
+    document.getElementById('loading-recherche').classList.remove('hidden');
+    document.getElementById('resultats-container').classList.add('hidden');
+
+    try {
+        const response = await fetch('{% url "accounting:api_rechercher_correspondances" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                salaire_id: salaireId
+            })
+        });
+
+        const data = await response.json();
+
+        // Masquer le chargement, afficher les résultats
+        document.getElementById('loading-recherche').classList.add('hidden');
+        document.getElementById('resultats-container').classList.remove('hidden');
+
+        if (data.success) {
+            currentCorrespondances = data.correspondances;
+            afficherResultats(data);
+
+            // Incrémenter compteur
+            const nbRecherches = document.getElementById('nb-recherches');
+            nbRecherches.textContent = parseInt(nbRecherches.textContent) + 1;
+        } else {
+            alert('Erreur: ' + data.error);
+            document.getElementById('modalResultats').close();
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        document.getElementById('loading-recherche').classList.add('hidden');
+        alert('Erreur réseau: ' + error.message);
+        document.getElementById('modalResultats').close();
+    }
+}
+
+function afficherResultats(data) {
+    const container = document.getElementById('resultats-container');
+    const correspondances = data.correspondances;
+
+    // Compter les différents statuts
+    let nbDejaRempli = 0;
+    let nbTrouve = 0;
+    let nbNonTrouve = 0;
+
+    Object.values(correspondances).forEach(corr => {
+        if (corr.statut === 'deja_rempli') nbDejaRempli++;
+        else if (corr.statut === 'trouve') nbTrouve++;
+        else if (corr.statut === 'non_trouve') nbNonTrouve++;
+    });
+
+    let html = `
+        <div class="mb-4 p-4 bg-base-200 rounded-lg">
+            <p><strong>Employé:</strong> ${data.employe.nom_complet} (${data.employe.surnom})</p>
+            <p><strong>Date:</strong> ${data.date}</p>
+            <div class="flex gap-4 mt-3 text-sm">
+                <span class="badge badge-success">✓ ${nbDejaRempli} déjà rempli(s)</span>
+                <span class="badge badge-primary">🔍 ${nbTrouve} trouvé(s)</span>
+                <span class="badge badge-error">✗ ${nbNonTrouve} non trouvé(s)</span>
+            </div>
+        </div>
+    `;
+
+    const types = [
+        {key: 'salaire', label: 'Salaire', color: 'primary'},
+        {key: 'irsa', label: 'IRSA', color: 'secondary'},
+        {key: 'cnaps', label: 'CNaPS', color: 'accent'},
+        {key: 'fmfp', label: 'FMFP', color: 'info'},
+        {key: 'mutuelle_sante', label: 'Mutuelle Santé', color: 'success'}
+    ];
+
+    html += '<div class="space-y-3">';
+
+    types.forEach(type => {
+        const corr = correspondances[type.key];
+
+        if (corr.statut === 'deja_rempli') {
+            // Champ déjà rempli - afficher les valeurs existantes
+            html += `
+                <div class="card bg-success/10 shadow border-2 border-success">
+                    <div class="card-body p-4">
+                        <h4 class="card-title text-success">
+                            <i class="fas fa-check-double mr-2"></i>${type.label}
+                        </h4>
+                        <div class="text-sm space-y-1">
+                            <p class="font-semibold text-success">✓ Déjà rempli dans la base de données</p>
+                            <p><strong>N° DiameX existant:</strong> <span class="badge badge-success">${corr.numero_existant}</span></p>
+                            ${corr.base_existante ? `<p><strong>Base DiameX:</strong> ${corr.base_existante}</p>` : ''}
+                            <p class="text-xs text-base-content/60 mt-2">Pas besoin de recherche, ce champ est déjà complet.</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else if (corr.statut === 'trouve' && corr.data) {
+            // Correspondance trouvée dans BaseDiameX
+            html += `
+                <div class="card bg-${type.color}/10 shadow border-2 border-${type.color}">
+                    <div class="card-body p-4">
+                        <h4 class="card-title text-${type.color}">
+                            <i class="fas fa-search-plus mr-2"></i>${type.label}
+                        </h4>
+                        <div class="text-sm space-y-1">
+                            <p class="font-semibold text-${type.color}">🔍 Correspondance trouvée dans BaseDiameX</p>
+                            <p><strong>ID:</strong> ${corr.data.id}</p>
+                            <p><strong>Prog:</strong> ${corr.data.prog}</p>
+                            <p><strong>Description:</strong> ${corr.data.description}</p>
+                            <p><strong>Detail:</strong> ${corr.data.detail}</p>
+                            <p><strong>Montant OUT:</strong> ${corr.data.montant_out.toLocaleString('fr-FR')} Ar</p>
+                            ${corr.data.type_mutuelle ? `<p><strong>Type:</strong> <span class="badge badge-${type.color} badge-sm">${corr.data.type_mutuelle}</span></p>` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else {
+            // Aucune correspondance trouvée
+            html += `
+                <div class="card bg-base-200 shadow">
+                    <div class="card-body p-4">
+                        <h4 class="card-title text-base-content/50">
+                            <i class="fas fa-times-circle mr-2"></i>${type.label}
+                        </h4>
+                        <p class="text-sm text-error">✗ Aucune correspondance trouvée dans BaseDiameX</p>
+                        <p class="text-xs text-base-content/60 mt-2">Vérifiez que les données existent bien dans BaseDiameX pour cet employé et cette période.</p>
+                    </div>
+                </div>
+            `;
+        }
+    });
+
+    html += '</div>';
+
+    container.innerHTML = html;
+
+    // Activer/désactiver le bouton Appliquer selon s'il y a des correspondances à appliquer
+    // Ne compter que les correspondances "trouve" (pas les "deja_rempli")
+    const aAppliquer = Object.values(correspondances).filter(c => c.statut === 'trouve').length;
+    document.getElementById('btn-appliquer').disabled = aAppliquer === 0;
+
+    if (aAppliquer === 0) {
+        document.getElementById('btn-appliquer').textContent = 'Aucune correspondance à appliquer';
+    } else {
+        document.getElementById('btn-appliquer').innerHTML = `<i class="fas fa-save mr-2"></i>Appliquer ${aAppliquer} correspondance(s)`;
+    }
+}
+
+async function appliquerCorrespondances() {
+    if (!currentSalaireId || !currentCorrespondances) return;
+
+    const btnAppliquer = document.getElementById('btn-appliquer');
+    btnAppliquer.disabled = true;
+
+    try {
+        const response = await fetch('{% url "accounting:api_appliquer_correspondances" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                salaire_id: currentSalaireId,
+                correspondances: currentCorrespondances
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(data.message);
+
+            // Mettre à jour le compteur
+            const nbRemplis = document.getElementById('nb-remplis');
+            nbRemplis.textContent = parseInt(nbRemplis.textContent) + data.nb_champs_remplis;
+
+            // Fermer modal et recharger page
+            document.getElementById('modalResultats').close();
+            location.reload();
+        } else {
+            alert('Erreur: ' + data.error);
+            btnAppliquer.disabled = false;
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+        btnAppliquer.disabled = false;
+    }
+}
+
+async function reconstitutionBatch() {
+    if (!confirm('Lancer la reconstitution automatique pour 50 salaires ?\n\nCela peut prendre quelques secondes.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('{% url "accounting:api_reconstitution_batch" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            let message = data.message;
+            if (data.erreurs && data.erreurs.length > 0) {
+                message += '\n\nErreurs:\n' + data.erreurs.join('\n');
+            }
+            alert(message);
+
+            // Mettre à jour les compteurs
+            document.getElementById('nb-recherches').textContent = parseInt(document.getElementById('nb-recherches').textContent) + data.nb_salaires_traites;
+            document.getElementById('nb-remplis').textContent = parseInt(document.getElementById('nb-remplis').textContent) + data.nb_champs_remplis;
+
+            // Recharger la page
+            location.reload();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+function regrouperTableau() {
+    const groupBy = document.getElementById('groupBy').value;
+    const tbody = document.querySelector('#tableauSalaires tbody');
+    const rows = Array.from(tbody.querySelectorAll('tr[id^="row-"]'));
+
+    // Supprimer les lignes de groupe existantes
+    tbody.querySelectorAll('.row-group-header').forEach(el => el.remove());
+
+    if (!groupBy) {
+        // Pas de regroupement - remettre toutes les lignes visibles
+        rows.forEach(row => row.classList.remove('hidden'));
+        return;
+    }
+
+    // Grouper les lignes par la valeur du data-attribute
+    const groups = {};
+    rows.forEach(row => {
+        const value = row.dataset[groupBy] || '(Non défini)';
+        if (!groups[value]) groups[value] = [];
+        groups[value].push(row);
+    });
+
+    // Trier les noms de groupes
+    const sortedGroupNames = Object.keys(groups).sort();
+
+    // Reconstruire le tbody avec les en-têtes de groupe
+    tbody.innerHTML = '';
+    sortedGroupNames.forEach(groupName => {
+        // Ajouter l'en-tête de groupe
+        const headerRow = document.createElement('tr');
+        headerRow.className = 'row-group-header bg-primary/20';
+        headerRow.innerHTML = `
+            <td colspan="10" class="font-bold text-primary py-3">
+                <i class="fas ${groupBy === 'base' ? 'fa-map-marker-alt' : 'fa-user-tie'} mr-2"></i>
+                ${groupName}
+                <span class="badge badge-primary badge-sm ml-2">${groups[groupName].length}</span>
+            </td>
+        `;
+        tbody.appendChild(headerRow);
+
+        // Ajouter les lignes du groupe
+        groups[groupName].forEach(row => {
+            row.classList.remove('hidden');
+            tbody.appendChild(row);
+        });
+    });
+}
+
+// Appliquer le regroupement au chargement si sélectionné
+document.addEventListener('DOMContentLoaded', function() {
+    const groupBy = document.getElementById('groupBy');
+    if (groupBy && groupBy.value) {
+        regrouperTableau();
+    }
+});
+</script>
+{% endblock %}

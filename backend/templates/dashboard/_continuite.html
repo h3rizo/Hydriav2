@@ -1,0 +1,252 @@
+{% comment %}
+Tuiles « Continuité de service » du dashboard principal : ouvrages avec / sans coupure d'eau et panne,
+points d'eau ayant connu une coupure. Données : /api/dashboard/continuite/ (mêmes filtres que le dashboard).
+Chaque tuile ouvre une modale listant les ouvrages (ou points d'eau) concernés.
+{% endcomment %}
+<div class="mb-8" id="continuite-section">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <h2 class="text-xl font-bold flex items-center">
+            <i class="fas fa-heartbeat mr-2 text-primary"></i>Continuité de service
+            <span class="badge badge-ghost badge-sm ml-3" id="continuite-periode-label"></span>
+            <span class="loading loading-spinner loading-sm ml-3 hidden" id="continuite-loading"></span>
+        </h2>
+        <label class="flex items-center gap-2 text-sm">
+            <span class="opacity-70">Période observée</span>
+            <select id="continuite-periode" class="select select-bordered select-sm">
+                <option value="annee">Année sélectionnée</option>
+                <option value="cumul">Cumul jusqu'à l'année sélectionnée</option>
+            </select>
+        </label>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="continuite-tuiles">
+        <button type="button" class="stat-card card bg-base-100 shadow hover:shadow-lg text-left" data-cont="sans_coupure">
+            <div class="card-body p-4"><p class="text-sm text-base-content/70">Ouvrages sans coupure d'eau</p>
+                <p class="text-3xl font-bold text-success" data-val>-</p><p class="text-xs text-base-content/60" data-sub></p></div>
+        </button>
+        <button type="button" class="stat-card card bg-base-100 shadow hover:shadow-lg text-left" data-cont="sans_panne">
+            <div class="card-body p-4"><p class="text-sm text-base-content/70">Ouvrages sans panne</p>
+                <p class="text-3xl font-bold text-success" data-val>-</p><p class="text-xs text-base-content/60" data-sub></p></div>
+        </button>
+        <button type="button" class="stat-card card bg-base-100 shadow hover:shadow-lg text-left" data-cont="sans_les_deux">
+            <div class="card-body p-4"><p class="text-sm text-base-content/70">Sans coupure ni panne</p>
+                <p class="text-3xl font-bold text-success" data-val>-</p><p class="text-xs text-base-content/60" data-sub></p></div>
+        </button>
+        <button type="button" class="stat-card card bg-base-100 shadow hover:shadow-lg text-left" data-cont="points_coupes">
+            <div class="card-body p-4"><p class="text-sm text-base-content/70">Points d'eau ayant connu une coupure</p>
+                <p class="text-3xl font-bold text-error" data-val>-</p><p class="text-xs text-base-content/60" data-sub></p></div>
+        </button>
+        <button type="button" class="stat-card card bg-base-100 shadow hover:shadow-lg text-left" data-cont="avec_coupure">
+            <div class="card-body p-4"><p class="text-sm text-base-content/70">Ouvrages avec coupure d'eau</p>
+                <p class="text-3xl font-bold text-error" data-val>-</p><p class="text-xs text-base-content/60" data-sub></p></div>
+        </button>
+        <button type="button" class="stat-card card bg-base-100 shadow hover:shadow-lg text-left" data-cont="avec_panne">
+            <div class="card-body p-4"><p class="text-sm text-base-content/70">Ouvrages avec panne</p>
+                <p class="text-3xl font-bold text-warning" data-val>-</p><p class="text-xs text-base-content/60" data-sub></p></div>
+        </button>
+        <button type="button" class="stat-card card bg-base-100 shadow hover:shadow-lg text-left" data-cont="avec_les_deux_ou">
+            <div class="card-body p-4"><p class="text-sm text-base-content/70">Avec coupure ou panne</p>
+                <p class="text-3xl font-bold text-error" data-val>-</p><p class="text-xs text-base-content/60" data-sub></p></div>
+        </button>
+    </div>
+</div>
+
+<dialog id="continuite-modal" class="modal">
+    <div class="modal-box w-11/12 max-w-6xl">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" aria-label="Fermer">✕</button>
+        </form>
+        <h3 class="font-bold text-lg" id="cont-modal-titre"></h3>
+        <p class="text-sm text-base-content/70 mb-3" id="cont-modal-sous-titre"></p>
+        <input type="search" id="cont-modal-recherche" class="input input-bordered input-sm w-full mb-3" placeholder="Filtrer par nom, type, IDXLS...">
+        <div class="overflow-x-auto max-h-[60vh]">
+            <table class="table table-sm table-zebra table-pin-rows">
+                <thead id="cont-modal-entete"></thead>
+                <tbody id="cont-modal-corps"></tbody>
+            </table>
+        </div>
+        <p class="text-xs text-base-content/60 mt-2" id="cont-modal-pied"></p>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>fermer</button></form>
+</dialog>
+
+<dialog id="continuite-detail-modal" class="modal">
+    <div class="modal-box w-11/12 max-w-4xl">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" aria-label="Fermer">✕</button>
+        </form>
+        <h3 class="font-bold text-lg" id="cont-detail-titre"></h3>
+        <p class="text-sm text-base-content/70 mb-3" id="cont-detail-sous-titre"></p>
+        <div id="cont-detail-corps" class="space-y-4 max-h-[65vh] overflow-y-auto"></div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>fermer</button></form>
+</dialog>
+
+<script>
+(function () {
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+    const fmt = n => Number(n || 0).toLocaleString('fr-FR');
+    const val = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+    let donnees = null;
+    let rang = 0;
+    let vueCourante = null;
+
+    // Chaque tuile = un filtre sur les ouvrages (ou la liste des points d'eau)
+    const VUES = {
+        sans_coupure: {titre: "Ouvrages sans coupure d'eau", fn: o => !o.coupure, compteur: 'sans_coupure'},
+        sans_panne: {titre: 'Ouvrages sans panne', fn: o => !o.panne, compteur: 'sans_panne'},
+        sans_les_deux: {titre: 'Ouvrages sans coupure ni panne', fn: o => !o.coupure && !o.panne, compteur: 'sans_coupure_ni_panne'},
+        avec_coupure: {titre: "Ouvrages ayant eu une coupure d'eau", fn: o => o.coupure, compteur: 'avec_coupure'},
+        avec_panne: {titre: 'Ouvrages ayant eu une panne', fn: o => o.panne, compteur: 'avec_panne'},
+        avec_les_deux_ou: {titre: 'Ouvrages avec coupure ou panne', fn: o => o.coupure || o.panne, compteur: 'avec_coupure_ou_panne'},
+        points_coupes: {titre: "Points d'eau ayant connu une coupure", points: true},
+    };
+
+    function url() {
+        const p = new URLSearchParams();
+        const annee = val('anneeSelect'), org = val('organisationSelect');
+        if (annee) p.set('annee', annee);
+        if (org) p.set('organisation_id', org);
+        const v = val('villageSelect'), f = val('fokontanySelect'), c = val('communeSelect'), d = val('districtSelect'), r = val('regionSelect');
+        if (v) p.set('village_id', v); else if (f) p.set('fokontany_id', f); else if (c) p.set('commune_id', c);
+        else if (d) p.set('district_id', d); else if (r) p.set('region_id', r);
+        p.set('periode', val('continuite-periode') || 'annee');
+        return '/api/dashboard/continuite/?' + p.toString();
+    }
+
+    function libellePeriode() {
+        const per = donnees.periode;
+        if (per.mode === 'cumul') return `Cumul jusqu'au ${per.fin}`;
+        return `${per.debut} → ${per.fin}`;
+    }
+
+    function afficherTuiles() {
+        const c = donnees.compteurs, tot = c.total_ouvrages || 0;
+        const pct = n => tot ? ` · ${(Math.round(n / tot * 1000) / 10).toLocaleString('fr-FR')} %` : '';
+        document.getElementById('continuite-periode-label').textContent = libellePeriode();
+        document.querySelectorAll('#continuite-tuiles [data-cont]').forEach(t => {
+            const cle = t.dataset.cont, vue = VUES[cle];
+            const valeur = vue.points ? c.points_eau_coupes : c[vue.compteur];
+            t.querySelector('[data-val]').textContent = fmt(valeur);
+            t.querySelector('[data-sub]').textContent = vue.points
+                ? `dans ${fmt(c.avec_coupure)} ouvrage(s) sur ${fmt(tot)} · ${fmt(c.points_eau_total)} points d'eau au total`
+                : `sur ${fmt(tot)} ouvrages${pct(valeur)}`;
+        });
+    }
+
+    async function charger() {
+        const mon = ++rang;
+        const spin = document.getElementById('continuite-loading');
+        spin.classList.remove('hidden');
+        try {
+            const r = await fetch(url(), {credentials: 'same-origin'});
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const d = await r.json();
+            if (mon !== rang) return;          // une requête plus récente est partie
+            donnees = d;
+            afficherTuiles();
+        } catch (e) {
+            if (mon === rang) document.getElementById('continuite-periode-label').textContent = 'Erreur de chargement';
+        } finally {
+            if (mon === rang) spin.classList.add('hidden');
+        }
+    }
+
+    function rendreModale() {
+        const vue = VUES[vueCourante];
+        const q = (document.getElementById('cont-modal-recherche').value || '').trim().toLowerCase();
+        const entete = document.getElementById('cont-modal-entete');
+        const corps = document.getElementById('cont-modal-corps');
+        document.getElementById('cont-modal-titre').textContent = vue.titre;
+        document.getElementById('cont-modal-sous-titre').textContent = 'Période : ' + libellePeriode();
+        let lignes, html;
+        if (vue.points) {
+            entete.innerHTML = '<tr><th>Point d\'eau</th><th>IDXLS</th><th>Ouvrage</th><th class="text-right">Coupures</th><th>Dernière coupure</th><th></th></tr>';
+            lignes = donnees.points_coupes.filter(p => !q || [p.nom, p.idxls, p.ouvrage].join(' ').toLowerCase().includes(q));
+            html = lignes.map(p => `<tr><td>${esc(p.nom)}</td><td>${esc(p.idxls)}</td><td>${esc(p.ouvrage)}</td>
+                <td class="text-right">${p.nb_coupures}</td><td>${esc(p.derniere_coupure) || '<span class="opacity-40">-</span>'}</td>
+                <td>${p.depuis_avant ? '<span class="badge badge-warning badge-sm" title="Déjà coupé avant le début de la période">coupé dès le début</span>' : ''}</td></tr>`).join('');
+            document.getElementById('cont-modal-pied').textContent = `${fmt(lignes.length)} point(s) d'eau`;
+        } else {
+            entete.innerHTML = '<tr><th>Ouvrage</th><th>Type</th><th class="text-right">Points</th><th class="text-right">Points coupés</th><th class="text-right">Coupures</th><th>Dernière coupure</th><th class="text-right">Pannes</th><th>Dernière panne</th></tr>';
+            lignes = donnees.ouvrages.filter(vue.fn).filter(o => !q || [o.nom, o.type].join(' ').toLowerCase().includes(q));
+            html = lignes.map(o => `<tr class="hover cursor-pointer" data-ouvrage="${esc(o.id)}" title="Voir pourquoi cet ouvrage figure dans la liste"><td class="font-semibold"><i class="fas fa-search-plus text-primary mr-2"></i>${esc(o.nom)}</td><td>${esc(o.type)}</td><td class="text-right">${o.nb_points}</td>
+                <td class="text-right ${o.nb_points_coupes ? 'text-error font-bold' : ''}">${o.nb_points_coupes}</td>
+                <td class="text-right">${o.nb_coupures}</td>
+                <td>${esc(o.derniere_coupure) || (o.coupure_depuis_avant ? '<span class="badge badge-warning badge-sm">dès le début</span>' : '<span class="opacity-40">-</span>')}</td>
+                <td class="text-right ${o.nb_pannes ? 'text-warning font-bold' : ''}">${o.nb_pannes}</td>
+                <td>${esc(o.derniere_panne) || '<span class="opacity-40">-</span>'}</td></tr>`).join('');
+            document.getElementById('cont-modal-pied').textContent = `${fmt(lignes.length)} ouvrage(s) sur ${fmt(donnees.compteurs.total_ouvrages)}`;
+        }
+        corps.innerHTML = html || `<tr><td colspan="8" class="text-center text-base-content/50 py-6">Aucun résultat</td></tr>`;
+    }
+
+    const LIB_EVT = {coupure: 'Coupure', remise: 'Remise en eau'};
+
+    function ouvrirDetail(ouvrageId) {
+        const o = donnees.ouvrages.find(x => x.id === ouvrageId);
+        if (!o) return;
+        const pts = donnees.points_coupes.filter(p => p.ouvrage_id === ouvrageId);
+        document.getElementById('cont-detail-titre').textContent = o.nom + (o.type ? ' · ' + o.type : '');
+        document.getElementById('cont-detail-sous-titre').textContent = 'Période : ' + libellePeriode();
+        let h = '';
+        // Résumé : la raison de la présence dans la liste
+        const raisons = [];
+        if (o.coupure) raisons.push(`<b>${fmt(o.nb_points_coupes)}</b> point(s) d'eau sur ${fmt(o.nb_points)} ont connu une coupure (${fmt(o.nb_coupures)} coupure(s) comptée(s) sur la période)`);
+        if (o.coupure_depuis_avant) raisons.push('au moins un point était déjà coupé au début de la période et n\'a pas été remis en eau');
+        if (o.panne) raisons.push(`<b>${fmt(o.nb_pannes)}</b> intervention(s) de panne planifiée(s) sur l'ouvrage`);
+        h += `<div class="alert ${raisons.length ? 'alert-warning' : 'alert-success'} text-sm"><div>
+            <p class="font-semibold mb-1">${raisons.length ? 'Pourquoi cet ouvrage est dans la liste' : 'Aucune coupure ni panne sur la période'}</p>
+            ${raisons.length ? '<ul class="list-disc ml-5">' + raisons.map(r => `<li>${r}</li>`).join('') + '</ul>' : ''}</div></div>`;
+        // Points d'eau coupés + chronologie des événements
+        if (pts.length) {
+            h += '<div><p class="font-semibold mb-2">Points d\'eau concernés</p>';
+            pts.forEach(p => {
+                const evts = (p.evenements || []).map(e => `<tr class="${e.compte ? '' : 'opacity-60'}">
+                    <td>${esc(e.date) || '-'}</td>
+                    <td>${e.type === 'coupure' ? '<span class="badge badge-error badge-sm">Coupure</span>' : '<span class="badge badge-success badge-sm">' + esc(LIB_EVT[e.type] || e.type) + '</span>'}</td>
+                    <td class="text-xs">${e.compte ? 'comptée dans la période' : (e.avant_periode ? 'avant la période (détermine l\'état au début)' : 'hors décompte')}</td></tr>`).join('');
+                const src = p.source === 'legacy'
+                    ? `Aucun événement enregistré : repli sur la date d'arrêt de branchement (${esc(p.date_arret_branchement) || '-'}).`
+                    : 'Source : historique des coupures/remises en eau.';
+                h += `<div class="border border-base-300 rounded-lg p-3 mb-2">
+                    <div class="flex flex-wrap justify-between gap-2 mb-1"><span class="font-semibold">${esc(p.nom)} <span class="opacity-60 text-xs">IDXLS ${esc(p.idxls) || '-'}</span></span>
+                    <span class="text-sm">${p.nb_coupures} coupure(s)${p.depuis_avant ? ' <span class="badge badge-warning badge-sm">coupé dès le début</span>' : ''}</span></div>
+                    <p class="text-xs opacity-70 mb-2">${src}</p>
+                    <table class="table table-xs"><thead><tr><th>Date</th><th>Événement</th><th>Rôle dans le calcul</th></tr></thead><tbody>${evts}</tbody></table></div>`;
+            });
+            h += '</div>';
+        }
+        // Pannes
+        if ((o.pannes_detail || []).length) {
+            h += `<div><p class="font-semibold mb-2">Pannes (plannings non annulés)</p>
+                <table class="table table-xs"><thead><tr><th>Date</th><th>Activité</th></tr></thead><tbody>
+                ${o.pannes_detail.map(x => `<tr><td>${esc(x.date)}</td><td>${esc(x.activite)}</td></tr>`).join('')}</tbody></table></div>`;
+        }
+        document.getElementById('cont-detail-corps').innerHTML = h;
+        document.getElementById('continuite-detail-modal').showModal();
+    }
+
+    document.getElementById('cont-modal-corps').addEventListener('click', e => {
+        const tr = e.target.closest('tr[data-ouvrage]');
+        if (tr) ouvrirDetail(tr.dataset.ouvrage);
+    });
+
+    function ouvrir(cle) {
+        if (!donnees) return;
+        vueCourante = cle;
+        document.getElementById('cont-modal-recherche').value = '';
+        rendreModale();
+        document.getElementById('continuite-modal').showModal();
+    }
+
+    document.getElementById('continuite-tuiles').addEventListener('click', e => {
+        const t = e.target.closest('[data-cont]');
+        if (t) ouvrir(t.dataset.cont);
+    });
+    document.getElementById('cont-modal-recherche').addEventListener('input', rendreModale);
+    document.getElementById('continuite-periode').addEventListener('change', charger);
+    window.loadContinuite = charger;
+    document.addEventListener('DOMContentLoaded', charger);
+})();
+</script>

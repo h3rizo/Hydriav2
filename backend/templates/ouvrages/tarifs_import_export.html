@@ -1,0 +1,211 @@
+{% extends ouvrages_shell_base_template %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex justify-between items-center">
+        <h1 class="text-3xl font-bold text-base-content">{{ title }}</h1>
+        <a href="{% url 'ouvrages:home' %}" class="btn btn-ghost btn-sm">
+            ← Retour aux ouvrages
+        </a>
+    </div>
+
+    <!-- Section Import/Export -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Export Excel -->
+        <div class="card bg-success text-success-content shadow-md">
+            <div class="card-body">
+                <h2 class="card-title">📥 Exporter vers Excel</h2>
+                <p class="opacity-90">Télécharger tous les tarifs volumétriques avec leurs tranches au format Excel</p>
+                <div class="card-actions justify-end mt-4">
+                    <a href="{% url 'ouvrages:export_tarifs_excel' %}" class="btn btn-outline">
+                        <i class="fas fa-download mr-2"></i>Télécharger Excel
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Import Excel -->
+        <div class="card bg-info text-info-content shadow-md">
+            <div class="card-body">
+                <h2 class="card-title">📤 Importer depuis Excel</h2>
+                <p class="opacity-90">Importer ou mettre à jour des tarifs volumétriques depuis un fichier Excel</p>
+                <div class="card-actions justify-end mt-4">
+                    <label for="import-file" class="btn btn-outline cursor-pointer">
+                        <i class="fas fa-upload mr-2"></i>Sélectionner fichier
+                    </label>
+                    <input type="file" id="import-file" class="hidden" accept=".xlsx,.xls" />
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Résultats d'import -->
+    <div id="import-results" class="hidden">
+        <div class="alert shadow-lg mb-4" id="import-alert">
+            <div>
+                <span id="import-message"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Instructions -->
+    <div class="card bg-base-200 shadow-md">
+        <div class="card-body">
+            <h2 class="card-title">📋 Format du fichier Excel</h2>
+            <div class="space-y-3 opacity-90">
+                <p><strong>Colonnes requises :</strong></p>
+                <ul class="list-disc list-inside space-y-1 ml-4">
+                    <li><strong>ID Tarif</strong> : UUID du tarif (laisser vide pour créer un nouveau tarif)</li>
+                    <li><strong>Ouvrage</strong> : Nom exact de l'ouvrage (obligatoire)</li>
+                    <li><strong>Date Début</strong> : Format AAAA-MM-JJ (obligatoire)</li>
+                    <li><strong>Date Fin</strong> : Format AAAA-MM-JJ (optionnel)</li>
+                    <li><strong>Prix Abonnement</strong> : Prix en Ariary</li>
+                    <li><strong>Actif</strong> : Oui/Non</li>
+                    <li><strong>Tranche Supérieure (m³)</strong> : Volume maximum de la tranche</li>
+                    <li><strong>Tarif (Ar/m³)</strong> : Prix unitaire de la tranche</li>
+                </ul>
+                <div class="alert alert-warning mt-4">
+                    <i class="fas fa-info-circle"></i>
+                    <span>Un tarif peut avoir plusieurs tranches. Utilisez plusieurs lignes avec le même ID Tarif pour définir plusieurs tranches.</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Aperçu des tarifs récents -->
+    <div class="card bg-base-200 shadow-md">
+        <div class="card-body">
+            <h2 class="card-title">📊 Aperçu des Tarifs Récents (50 derniers)</h2>
+
+            {% if tarifs %}
+            <div class="overflow-x-auto">
+                <table class="table table-zebra w-full">
+                    <thead>
+                        <tr>
+                            <th>Ouvrage</th>
+                            <th>Date Début</th>
+                            <th>Date Fin</th>
+                            <th>Prix Abonnement</th>
+                            <th>Tranches</th>
+                            <th>Actif</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for tarif in tarifs %}
+                        <tr class="hover">
+                            <td class="font-semibold">{{ tarif.ouvrage.nom }}</td>
+                            <td>{{ tarif.datedebuttarif|date:"d/m/Y" }}</td>
+                            <td>{{ tarif.datefintarif|date:"d/m/Y"|default:"-" }}</td>
+                            <td>{{ tarif.prixabonnement }} Ar</td>
+                            <td>
+                                {% if tarif.tranches.count > 0 %}
+                                <span class="badge badge-success">{{ tarif.tranches.count }} tranche{{ tarif.tranches.count|pluralize }}</span>
+                                {% else %}
+                                <span class="badge badge-ghost">Aucune</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if tarif.actif %}
+                                <span class="badge badge-success">Actif</span>
+                                {% else %}
+                                <span class="badge badge-ghost">Inactif</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-8">
+                <div class="text-gray-400 text-4xl mb-4">
+                    <i class="fas fa-chart-line"></i>
+                </div>
+                <p class="text-gray-500 mb-4">Aucun tarif volumétrique enregistré.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const fileInput = document.getElementById('import-file');
+    const resultsDiv = document.getElementById('import-results');
+    const alertDiv = document.getElementById('import-alert');
+    const messageSpan = document.getElementById('import-message');
+
+    fileInput.addEventListener('change', async function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        // Vérifier l'extension du fichier
+        if (!file.name.match(/\.(xlsx|xls)$/i)) {
+            showResult('error', 'Veuillez sélectionner un fichier Excel (.xlsx ou .xls)');
+            return;
+        }
+
+        // Créer un FormData avec le fichier
+        const formData = new FormData();
+        formData.append('file', file);
+
+        // Afficher un loader
+        showResult('info', 'Import en cours...');
+
+        try {
+            // Envoyer la requête d'import
+            const response = await fetch('{% url "ouvrages:import_tarifs_excel" %}', {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                let message = `Import réussi ! ${data.imported} tarif(s) importé(s), ${data.updated} tarif(s) mis à jour.`;
+
+                if (data.errors && data.errors.length > 0) {
+                    message += `<br><br><strong>Avertissements :</strong><br>${data.errors.join('<br>')}`;
+                    showResult('warning', message);
+                } else {
+                    showResult('success', message);
+                    // Recharger la page après 2 secondes pour voir les nouvelles données
+                    setTimeout(() => location.reload(), 2000);
+                }
+            } else {
+                showResult('error', `Erreur lors de l'import : ${data.error || 'Erreur inconnue'}`);
+            }
+        } catch (error) {
+            showResult('error', `Erreur lors de l'import : ${error.message}`);
+        }
+
+        // Réinitialiser l'input file
+        fileInput.value = '';
+    });
+
+    function showResult(type, message) {
+        resultsDiv.classList.remove('hidden');
+
+        // Définir les classes selon le type
+        alertDiv.className = 'alert shadow-lg mb-4';
+
+        switch(type) {
+            case 'success':
+                alertDiv.classList.add('alert-success');
+                break;
+            case 'error':
+                alertDiv.classList.add('alert-error');
+                break;
+            case 'warning':
+                alertDiv.classList.add('alert-warning');
+                break;
+            case 'info':
+                alertDiv.classList.add('alert-info');
+                break;
+        }
+
+        messageSpan.innerHTML = message;
+    }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,1996 @@
+{% extends "accounting/base.html" %}
+{% load static %}
+{% load humanize %}
+{% load pagination_tags %}
+
+{% block title %}Recoupement Relevés - Comptabilité{% endblock %}
+
+{% block content %}
+<div class="hydria-v1-page container mx-auto px-4 py-8">
+    <!-- Header -->
+    <header class="mb-6">
+        <h1 class="hydria-v1-page-title text-3xl font-bold mb-2">
+            <i class="fas fa-balance-scale mr-2 text-primary"></i>
+            Recoupement Relevés - Comptabilité
+        </h1>
+        <p class="text-base-content/70">
+            Vérification de la cohérence entre les relevés de facturation et la comptabilité DiameX
+        </p>
+    </header>
+
+    <!-- Navigation entre toutes les pages de recoupement -->
+    {% include 'accounting/includes/recoupement_nav.html' with current_page='releves' %}
+
+    <!-- Filtres -->
+    <div class="hydria-v1-filter-card card bg-base-200 shadow-md mb-6">
+        <div class="card-body">
+            <h3 class="card-title text-sm mb-4"><i class="fas fa-filter mr-2"></i>Filtres</h3>
+            <form method="GET" class="hydria-v1-compact-filters grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Status</span></label>
+                    <select name="status" class="select select-bordered select-sm">
+                        <option value="">Tous les status</option>
+                        <option value="ok" {% if request.GET.status == 'ok' %}selected{% endif %}>✓ OK</option>
+                        <option value="warning" {% if request.GET.status == 'warning' %}selected{% endif %}>⚠ Attention</option>
+                        <option value="error" {% if request.GET.status == 'error' %}selected{% endif %}>✗ Erreur</option>
+                        <option value="missing" {% if request.GET.status == 'missing' %}selected{% endif %}>? Manquant</option>
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Point d'Eau</span></label>
+                    <select name="point_eau" class="select select-bordered select-sm">
+                        <option value="">Tous les points d'eau</option>
+                        {% for pe in points_eau_list %}
+                        <option value="{{ pe }}" {% if request.GET.point_eau == pe %}selected{% endif %}>{{ pe }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Base DiameX</span></label>
+                    <select name="base" class="select select-bordered select-sm">
+                        <option value="">Toutes les bases</option>
+                        {% for base in bases_list %}
+                        <option value="{{ base }}" {% if request.GET.base == base %}selected{% endif %}>{{ base }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mois</span></label>
+                    <input type="month" name="mois" value="{{ request.GET.mois }}" class="input input-bordered input-sm" />
+                </div>
+
+                <div class="form-control flex flex-row gap-2 items-end">
+                    <button type="submit" class="btn btn-primary btn-sm flex-1"><i class="fas fa-search mr-2"></i>Filtrer</button>
+                    <a href="{% url 'accounting:recoupement_releves' %}" class="btn btn-ghost btn-sm"><i class="fas fa-times"></i></a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Statistics Dashboard (cliquables pour filtrer) -->
+    <div class="hydria-v1-kpi-grid grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
+        <!-- Total -->
+        <a href="{% query_string status='' %}" class="hydria-v1-stat hydria-v1-tone-primary stat bg-base-200 rounded-lg p-4 shadow hover:shadow-lg transition-shadow cursor-pointer">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-list text-3xl"></i>
+            </div>
+            <div class="stat-title">Total</div>
+            <div class="stat-value text-primary">{{ stats.total|intcomma }}</div>
+            <div class="stat-desc">couples (Num, Base) DiameX</div>
+        </a>
+
+        <!-- OK -->
+        <a href="{% query_string status='ok' %}" class="hydria-v1-stat hydria-v1-tone-success stat bg-success/10 rounded-lg p-4 shadow hover:shadow-lg transition-shadow cursor-pointer">
+            <div class="stat-figure text-success">
+                <i class="fas fa-check-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">OK</div>
+            <div class="stat-value text-success">{{ stats_global.ok|intcomma }}</div>
+            <div class="stat-desc">Écart &lt; 0.01 Ar</div>
+        </a>
+
+        <!-- Warning -->
+        <a href="{% query_string status='warning' %}" class="hydria-v1-stat hydria-v1-tone-warning stat bg-warning/10 rounded-lg p-4 shadow hover:shadow-lg transition-shadow cursor-pointer">
+            <div class="stat-figure text-warning">
+                <i class="fas fa-exclamation-triangle text-3xl"></i>
+            </div>
+            <div class="stat-title">Attention</div>
+            <div class="stat-value text-warning">{{ stats_global.warning|intcomma }}</div>
+            <div class="stat-desc">Écart &lt; 100 Ar</div>
+        </a>
+
+        <!-- Error -->
+        <a href="{% query_string status='error' %}" class="hydria-v1-stat hydria-v1-tone-error stat bg-error/10 rounded-lg p-4 shadow hover:shadow-lg transition-shadow cursor-pointer">
+            <div class="stat-figure text-error">
+                <i class="fas fa-times-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Erreur</div>
+            <div class="stat-value text-error">{{ stats_global.error|intcomma }}</div>
+            <div class="stat-desc">Écart ≥ 100 Ar</div>
+        </a>
+
+        <!-- Missing -->
+        <a href="{% query_string status='missing' %}" class="hydria-v1-stat hydria-v1-tone-secondary stat bg-base-300 rounded-lg p-4 shadow hover:shadow-lg transition-shadow cursor-pointer">
+            <div class="stat-figure text-base-content/50">
+                <i class="fas fa-question-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Manquant</div>
+            <div class="stat-value text-base-content/50">{{ stats_global.missing|intcomma }}</div>
+            <div class="stat-desc">Non trouvé en compta</div>
+        </a>
+    </div>
+
+    <!-- Navigation buttons -->
+    <div class="flex gap-3 mb-6" id="verification-normale">
+        <a href="#verification-inverse" class="btn btn-secondary btn-sm">
+            <i class="fas fa-arrow-down mr-2"></i>
+            Aller à la vérification inverse
+        </a>
+        <a href="#verification-par-ouvrage" class="btn btn-accent btn-sm">
+            <i class="fas fa-arrow-down mr-2"></i>
+            Aller au 3e recoupement (par ouvrage)
+        </a>
+        <button onclick="collapseAllBases()" class="btn btn-ghost btn-sm">
+            <i class="fas fa-compress-alt mr-2"></i>
+            Tout plier
+        </button>
+        <button onclick="expandAllBases()" class="btn btn-ghost btn-sm">
+            <i class="fas fa-expand-alt mr-2"></i>
+            Tout déplier
+        </button>
+    </div>
+
+    <!-- Results Table - Grouped by Base DiameX -->
+    {% if recoupements_par_base %}
+        <!-- Affichage regroupé par Base DiameX -->
+        {% for base_id, base_groupe in recoupements_par_base.items %}
+    <div class="hydria-v1-table-card card bg-base-100 shadow-xl mb-8 base-card">
+            <div class="card-body">
+                <div class="flex items-center justify-between mb-6">
+                    <h1 class="text-2xl font-bold flex items-center gap-3">
+                        <i class="fas fa-database text-info"></i>
+                        {{ base_groupe.base_nom }}
+                        <span class="badge badge-info badge-lg">{{ base_groupe.total_recoupements }} recoupement(s)</span>
+                        <span class="badge badge-success badge-sm">{{ base_groupe.ok }} OK</span>
+                        <span class="badge badge-warning badge-sm">{{ base_groupe.warning }} Warning</span>
+                        <span class="badge badge-error badge-sm">{{ base_groupe.error }} Error</span>
+                        <span class="badge badge-ghost badge-sm">{{ base_groupe.missing }} Missing</span>
+                    </h1>
+                    <button onclick="toggleBase(this)" class="btn btn-sm btn-ghost">
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                </div>
+
+                <div class="base-content" style="display: none;">
+                    <div class="overflow-x-auto">
+                        <table class="table table-zebra w-full">
+                            <thead>
+                                <tr>
+                                    <th class="bg-base-200">Numéro DiameX</th>
+                                    <th class="bg-base-200">Base DiameX</th>
+                                    <th class="bg-base-200">Point d'Eau</th>
+                                    <th class="bg-base-200">Date Relevé</th>
+                                    <th class="bg-base-200 text-center">Scan</th>
+                                    <th class="bg-base-200 text-center">Nb</th>
+                                    <th class="bg-base-200 text-right">Total Relevés (Ar)</th>
+                                    <th class="bg-base-200 text-right">Compta IN (Ar)</th>
+                                    <th class="bg-base-200 text-right">Écart (Ar)</th>
+                                    <th class="bg-base-200 text-center">Status</th>
+                                    <th class="bg-base-200 text-center">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for rec in base_groupe.recoupements %}
+                        <tr>
+                            <td class="font-mono">{{ rec.numero_diamex }}</td>
+                            <td class="font-semibold">{{ rec.base_diamex }}</td>
+                            <td>
+                                {% if rec.point_eau %}
+                                    <span class="badge badge-sm badge-outline">{{ rec.point_eau.nom }}</span>
+                                {% else %}
+                                    <span class="text-base-content/50">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if rec.date_releve %}
+                                    {{ rec.date_releve|date:"d/m/Y" }}
+                                {% else %}
+                                    <span class="text-base-content/50">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                {% if rec.scan %}
+                                    <button onclick="openFileViaServer('{{ rec.scan|escapejs }}')"
+                                            class="btn btn-xs btn-success gap-1" title="Ouvrir le scan">
+                                        <i class="fas fa-file-pdf"></i>
+                                    </button>
+                                {% else %}
+                                    <span class="text-base-content/50 text-xs">—</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                <span class="badge badge-sm badge-info">{{ rec.nb_releves }}</span>
+                            </td>
+                            <td class="text-right font-mono text-success">{{ rec.total_releves|floatformat:2|intcomma }}</td>
+                            <td class="text-right font-mono text-sm">
+                                {% if rec.comptabilite_in is not None %}
+                                    {{ rec.comptabilite_in|floatformat:2|intcomma }}
+                                {% else %}
+                                    <span class="text-base-content/50">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-right font-mono font-bold
+                                {% if rec.status == 'ok' %}text-success
+                                {% elif rec.status == 'warning' %}text-warning
+                                {% elif rec.status == 'error' %}text-error
+                                {% else %}text-base-content/50{% endif %}">
+                                {% if rec.ecart is not None %}
+                                    {{ rec.ecart|floatformat:2|intcomma }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                {% if rec.status == 'ok' %}
+                                    <span class="badge badge-success gap-2">
+                                        <i class="fas fa-check"></i> OK
+                                    </span>
+                                {% elif rec.status == 'warning' %}
+                                    <span class="badge badge-warning gap-2">
+                                        <i class="fas fa-exclamation-triangle"></i> Attention
+                                    </span>
+                                {% elif rec.status == 'error' %}
+                                    <span class="badge badge-error gap-2">
+                                        <i class="fas fa-times"></i> Erreur
+                                    </span>
+                                {% else %}
+                                    <span class="badge badge-ghost gap-2">
+                                        <i class="fas fa-question"></i> Manquant
+                                    </span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                <div class="flex gap-1 justify-center">
+                                    <button class="btn btn-sm btn-outline btn-info"
+                                            onclick="toggleDetails('details-{{ forloop.counter }}')"
+                                            title="Voir les détails">
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                    {% if rec.ouvrage and rec.date_releve %}
+                                    <button class="btn btn-sm btn-primary"
+                                            onclick="openReleveModal('{{ rec.ouvrage.id }}', '{{ rec.date_releve|date:'Y' }}', '{{ rec.date_releve|date:'m' }}')"
+                                            title="Modifier les relevés">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        <!-- Details Row (hidden by default) -->
+                        <tr id="details-{{ forloop.counter }}" class="hidden">
+                            <td colspan="11" class="bg-base-200/50">
+                                <div class="p-4">
+                                    <h4 class="font-semibold mb-3">
+                                        <i class="fas fa-list mr-2"></i>
+                                        Détails des relevés ({{ rec.releves|length }} relevé{{ rec.releves|length|pluralize }})
+                                    </h4>
+
+                                    <div class="overflow-x-auto">
+                                        <table class="table table-sm w-full">
+                                            <thead>
+                                                <tr>
+                                                    <th>Date Relevé</th>
+                                                    <th>Point d'Eau</th>
+                                                    <th class="text-right">Ancien Index</th>
+                                                    <th class="text-right">Nouvel Index</th>
+                                                    <th class="text-right">Consommation (m³)</th>
+                                                    <th class="text-right">Montant (Ar)</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {% for releve in rec.releves %}
+                                                <tr>
+                                                    <td>{{ releve.datereleve|date:"d/m/Y" }}</td>
+                                                    <td>
+                                                        {% if releve.point_eau %}
+                                                            <span class="badge badge-sm badge-info">{{ releve.point_eau.code_point_eau }}</span>
+                                                        {% else %}
+                                                            <span class="text-base-content/50">-</span>
+                                                        {% endif %}
+                                                    </td>
+                                                    <td class="text-right font-mono text-sm">{{ releve.ancienindex|floatformat:2 }}</td>
+                                                    <td class="text-right font-mono text-sm">{{ releve.nouvelindex|floatformat:2 }}</td>
+                                                    <td class="text-right font-mono text-sm">{{ releve.consommation|floatformat:2 }}</td>
+                                                    <td class="text-right font-mono font-semibold">{{ releve.montant|floatformat:2|intcomma }}</td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                            <tfoot>
+                                                <tr class="font-bold bg-primary/10">
+                                                    <td colspan="5" class="text-right">Total Relevés</td>
+                                                    <td class="text-right text-primary">{{ rec.total_releves|floatformat:2|intcomma }}</td>
+                                                </tr>
+                                            </tfoot>
+                                        </table>
+                                    </div>
+
+                                    {% if rec.comptabilite_entry %}
+                                    <div class="mt-4 p-3 bg-info/10 rounded-lg">
+                                        <h5 class="font-semibold mb-2">
+                                            <i class="fas fa-calculator mr-2"></i>
+                                            Entrée comptabilité correspondante
+                                        </h5>
+                                        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                                            <div>
+                                                <span class="text-base-content/70">ID:</span>
+                                                <span class="font-mono ml-2">{{ rec.comptabilite_entry.id_access }}</span>
+                                            </div>
+                                            <div>
+                                                <span class="text-base-content/70">Prog:</span>
+                                                <span class="font-mono ml-2">{{ rec.comptabilite_entry.prog }}</span>
+                                            </div>
+                                            <div>
+                                                <span class="text-base-content/70">IN:</span>
+                                                <span class="font-mono ml-2">{{ rec.comptabilite_entry.montant_in|floatformat:2|intcomma }}</span>
+                                            </div>
+                                            <div>
+                                                <span class="text-base-content/70">OUT:</span>
+                                                <span class="font-mono ml-2">{{ rec.comptabilite_entry.montant_out|floatformat:2|intcomma }}</span>
+                                            </div>
+                                            <div class="md:col-span-4">
+                                                <span class="text-base-content/70">Description:</span>
+                                                <span class="ml-2">{{ rec.comptabilite_entry.description|default:"-" }}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% else %}
+                                    <div class="mt-4 p-3 bg-warning/10 rounded-lg">
+                                        <i class="fas fa-exclamation-triangle mr-2 text-warning"></i>
+                                        <span class="text-warning font-semibold">Aucune entrée comptabilité trouvée pour ce couple (ID={{ rec.numero_diamex }}, Prog={{ rec.base_diamex }})</span>
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                                {% endfor %}  <!-- End recoupements loop -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>  <!-- end base-content -->
+            </div>
+        </div>
+        {% endfor %}  <!-- End base loop -->
+
+    {% else %}
+<div class="hydria-v1-panel card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <div class="text-center py-12">
+                    <i class="fas fa-inbox text-6xl text-base-content/20 mb-4"></i>
+                    <p class="text-lg text-base-content/50">
+                        Aucun Relevé avec numeroDiameX et baseDiameX trouvé.
+                    </p>
+                    <p class="text-sm text-base-content/40 mt-2">
+                        Assurez-vous que les champs numeroDiameX et baseDiameX sont renseignés dans vos relevés.
+                    </p>
+                </div>
+            </div>
+        </div>
+    {% endif %}
+
+    <!-- Pagination (désactivée avec regroupement hiérarchique) -->
+    {% comment %}
+            {% if page_obj.has_other_pages %}
+            <div class="card-body border-t border-base-300">
+                <div class="flex justify-between items-center">
+                    <p class="text-sm text-base-content/70">
+                        Page {{ page_obj.number }} sur {{ page_obj.paginator.num_pages }}
+                        ({{ page_obj.paginator.count|intcomma }} recoupement{{ page_obj.paginator.count|pluralize }})
+                    </p>
+                    <div class="join">
+                        {% if page_obj.has_previous %}
+                            <a href="{% query_string page=1 %}" class="join-item btn btn-sm">«</a>
+                            <a href="{% query_string page=page_obj.previous_page_number %}" class="join-item btn btn-sm">‹</a>
+                        {% else %}
+                            <button class="join-item btn btn-sm btn-disabled">«</button>
+                            <button class="join-item btn btn-sm btn-disabled">‹</button>
+                        {% endif %}
+
+                        <button class="join-item btn btn-sm btn-active">{{ page_obj.number }}</button>
+
+                        {% if page_obj.has_next %}
+                            <a href="{% query_string page=page_obj.next_page_number %}" class="join-item btn btn-sm">›</a>
+                            <a href="{% query_string page=page_obj.paginator.num_pages %}" class="join-item btn btn-sm">»</a>
+                        {% else %}
+                            <button class="join-item btn btn-sm btn-disabled">›</button>
+                            <button class="join-item btn btn-sm btn-disabled">»</button>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+    {% endcomment %}
+
+    <!-- Legend -->
+    <div class="mt-6 p-4 bg-base-200 rounded-lg">
+        <h3 class="font-semibold mb-3">
+            <i class="fas fa-info-circle mr-2"></i>
+            Légende
+        </h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+            <div>
+                <span class="badge badge-success mr-2">OK</span>
+                <span>Écart inférieur à 0.01 Ar (négligeable)</span>
+            </div>
+            <div>
+                <span class="badge badge-warning mr-2">Attention</span>
+                <span>Écart entre 0.01 et 100 Ar</span>
+            </div>
+            <div>
+                <span class="badge badge-error mr-2">Erreur</span>
+                <span>Écart supérieur ou égal à 100 Ar</span>
+            </div>
+            <div>
+                <span class="badge badge-ghost mr-2">Manquant</span>
+                <span>Aucune entrée comptabilité correspondante</span>
+            </div>
+        </div>
+        <div class="mt-3 text-xs text-base-content/60">
+            <p>
+                <i class="fas fa-lightbulb mr-1"></i>
+                <strong>Note:</strong> Le recoupement compare les montants des relevés de facturation avec les entrées comptables DiameX.
+            </p>
+        </div>
+    </div>
+
+    <!-- ========================== VÉRIFICATION INVERSE ========================== -->
+    <div class="mt-12" id="verification-inverse">
+        <div class="divider"></div>
+
+        <div class="flex items-center justify-between mb-6">
+            <div>
+                <h1 class="text-3xl font-bold flex items-center gap-3">
+                    <i class="fas fa-exchange-alt mr-2 text-secondary"></i>
+                    Vérification Inverse : DiameX → Application
+                    <span class="badge badge-secondary badge-lg">{{ stats_inverses.total|intcomma }} transaction(s)</span>
+                </h1>
+                <p class="text-base-content/70 mt-2">
+                    Pour chaque ligne DiameX (comptes relevés), vérifier si elle existe dans les Relevés de l'application
+                </p>
+            </div>
+            <a href="#verification-normale" class="btn btn-primary btn-sm">
+                <i class="fas fa-arrow-up mr-2"></i>
+                Retour à la vérification normale
+            </a>
+        </div>
+
+        <!-- Navigation buttons -->
+        <div class="flex gap-3 mb-6">
+            <button onclick="collapseAllProgs()" class="btn btn-ghost btn-sm">
+                <i class="fas fa-compress-alt mr-2"></i>
+                Tout plier
+            </button>
+            <button onclick="expandAllProgs()" class="btn btn-ghost btn-sm">
+                <i class="fas fa-expand-alt mr-2"></i>
+                Tout déplier
+            </button>
+        </div>
+
+        <!-- Statistics Dashboard Inverse -->
+    <div class="hydria-v1-kpi-grid grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            <div class="stat bg-base-200 rounded-lg p-4 shadow">
+                <div class="stat-figure text-info">
+                    <i class="fas fa-database text-3xl"></i>
+                </div>
+                <div class="stat-title">Entrées DiameX</div>
+                <div class="stat-value text-info">{{ stats_inverses.total|intcomma }}</div>
+                <div class="stat-desc">Total analysées</div>
+            </div>
+
+            <div class="stat bg-success/10 rounded-lg p-4 shadow">
+                <div class="stat-figure text-success">
+                    <i class="fas fa-check-circle text-3xl"></i>
+                </div>
+                <div class="stat-title">Trouvées</div>
+                <div class="stat-value text-success">{{ stats_inverses.trouves|intcomma }}</div>
+                <div class="stat-desc">Avec correspondance</div>
+            </div>
+
+            <div class="stat bg-error/10 rounded-lg p-4 shadow">
+                <div class="stat-figure text-error">
+                    <i class="fas fa-exclamation-triangle text-3xl"></i>
+                </div>
+                <div class="stat-title">Non trouvées</div>
+                <div class="stat-value text-error">{{ stats_inverses.non_trouves|intcomma }}</div>
+                <div class="stat-desc">Sans correspondance (anomalies)</div>
+            </div>
+
+            <div class="stat bg-warning/10 rounded-lg p-4 shadow">
+                <div class="stat-figure text-warning">
+                    <i class="fas fa-calculator text-3xl"></i>
+                </div>
+                <div class="stat-title">Écart Total</div>
+                <div class="stat-value text-warning">{{ stats_inverses.ecart_total|floatformat:0|intcomma }}</div>
+                <div class="stat-desc">Ariary non enregistrés</div>
+            </div>
+        </div>
+
+        <!-- Filtres vérification inverse -->
+        <div class="card bg-base-200 shadow-md mb-6">
+            <div class="card-body">
+                <h3 class="card-title text-sm mb-4">
+                    <i class="fas fa-filter mr-2"></i>
+                    Filtres Vérification Inverse
+                </h3>
+    <form method="GET" class="hydria-v1-compact-filters grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <!-- Preserve existing filters -->
+                    {% if request.GET.status %}<input type="hidden" name="status" value="{{ request.GET.status }}">{% endif %}
+                    {% if request.GET.point_eau %}<input type="hidden" name="point_eau" value="{{ request.GET.point_eau }}">{% endif %}
+                    {% if request.GET.base %}<input type="hidden" name="base" value="{{ request.GET.base }}">{% endif %}
+                    {% if request.GET.mois %}<input type="hidden" name="mois" value="{{ request.GET.mois }}">{% endif %}
+
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text font-semibold"><i class="fas fa-code-branch mr-1"></i>Prog</span>
+                        </label>
+                        <select name="prog_inverse" class="select select-bordered select-sm">
+                            <option value="">Tous les progs</option>
+                            {% for prog in progs_list_inverse %}
+                            <option value="{{ prog }}" {% if filter_prog_inverse == prog %}selected{% endif %}>{{ prog }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text font-semibold"><i class="fas fa-calendar mr-1"></i>Mois</span>
+                        </label>
+                        <input type="month" name="mois_inverse" value="{{ filter_mois_inverse }}" class="input input-bordered input-sm" />
+                    </div>
+
+                    <div class="form-control flex flex-row gap-2 items-end">
+                        <button type="submit" class="btn btn-secondary btn-sm flex-1">
+                            <i class="fas fa-search mr-2"></i>Filtrer
+                        </button>
+                        <a href="{% url 'accounting:recoupement_releves' %}" class="btn btn-ghost btn-sm">
+                            <i class="fas fa-times"></i>
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Results by Prog -->
+        {% if recoupements_inverses_par_prog %}
+        {% for prog_id, prog_groupe in recoupements_inverses_par_prog.items %}
+    <div class="hydria-v1-table-card card bg-base-100 shadow-xl mb-8 prog-card">
+            <div class="card-body">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-2xl font-bold flex items-center gap-3">
+                        <i class="fas fa-code-branch text-secondary"></i>
+                        Prog: {{ prog_groupe.prog }}
+                        <span class="badge badge-secondary badge-lg">{{ prog_groupe.total_recoupements }} transaction(s)</span>
+                        <span class="badge badge-success badge-sm">{{ prog_groupe.ok }} OK</span>
+                        <span class="badge badge-warning badge-sm">{{ prog_groupe.warning }} Warning</span>
+                        <span class="badge badge-error badge-sm">{{ prog_groupe.error }} Error</span>
+                        <span class="badge badge-ghost badge-sm">{{ prog_groupe.missing }} Missing</span>
+                    </h2>
+                    <button onclick="toggleProg(this)" class="btn btn-sm btn-ghost">
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                </div>
+
+                <div class="prog-content" style="display: none;">
+                    <div class="overflow-x-auto">
+                        <table class="table table-zebra w-full">
+                            <thead>
+                                <tr>
+                                    <th class="bg-base-200">ID DiameX</th>
+                                    <th class="bg-base-200">Prog</th>
+                                    <th class="bg-base-200">Cat (Compte)</th>
+                                    <th class="bg-base-200">Description</th>
+                                    <th class="bg-base-200 text-center">Scan</th>
+                                    <th class="bg-base-200">Date</th>
+                                    <th class="bg-base-200 text-right">DiameX IN (Ar)</th>
+                                    <th class="bg-base-200 text-right">DiameX OUT (Ar)</th>
+                                    <th class="bg-base-200 text-right">App Total (Ar)</th>
+                                    <th class="bg-base-200 text-right">Écart (Ar)</th>
+                                    <th class="bg-base-200 text-center">Status</th>
+                                    <th class="bg-base-200 text-center">Détails</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for rec in prog_groupe.recoupements %}
+                                <tr>
+                                    <td class="font-mono">{{ rec.id_diamex }}</td>
+                                    <td class="font-semibold">{{ rec.prog }}</td>
+                                    <td>
+                                        <span class="badge badge-sm badge-outline">{{ rec.compte_code }}</span>
+                                    </td>
+                                    <td class="text-sm">{{ rec.description|truncatewords:5 }}</td>
+                                    <td class="text-center">
+                                        {% if rec.scan %}
+                                            <button class="btn btn-xs btn-success gap-1" onclick="openFileViaServer('{{ rec.scan|escapejs }}')">
+                                                <i class="fas fa-file-pdf"></i> Ouvrir
+                                            </button>
+                                        {% else %}
+                                            <span class="text-base-content/50 text-xs">Aucun</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if rec.date_m %}
+                                            {{ rec.date_m|date:"d/m/Y" }}
+                                        {% else %}
+                                            <span class="text-base-content/50">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-right font-mono text-sm">
+                                        {% if rec.montant_in is not None %}
+                                            {{ rec.montant_in|floatformat:2|intcomma }}
+                                        {% else %}
+                                            <span class="text-base-content/50">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-right font-mono text-sm">
+                                        {% if rec.montant_out is not None %}
+                                            {{ rec.montant_out|floatformat:2|intcomma }}
+                                        {% else %}
+                                            <span class="text-base-content/50">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-right font-mono text-primary">{{ rec.total_application_in|floatformat:2|intcomma }}</td>
+                                    <td class="text-right font-mono">
+                                        {% if rec.ecart_in is not None %}
+                                            {% if rec.status == 'error' %}
+                                                <span class="text-error font-semibold">{{ rec.ecart_in|floatformat:2|intcomma }}</span>
+                                            {% elif rec.status == 'warning' %}
+                                                <span class="text-warning">{{ rec.ecart_in|floatformat:2|intcomma }}</span>
+                                            {% elif rec.status == 'ok' %}
+                                                <span class="text-success">0.00</span>
+                                            {% else %}
+                                                <span>{{ rec.ecart_in|floatformat:2|intcomma }}</span>
+                                            {% endif %}
+                                        {% else %}
+                                            <span class="text-base-content/50">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-center">
+                                        {% if rec.status == 'ok' %}
+                                            <span class="badge badge-success gap-2"><i class="fas fa-check"></i>OK</span>
+                                        {% elif rec.status == 'warning' %}
+                                            <span class="badge badge-warning gap-2"><i class="fas fa-exclamation-triangle"></i>Attention</span>
+                                        {% elif rec.status == 'error' %}
+                                            <span class="badge badge-error gap-2"><i class="fas fa-times"></i>Erreur</span>
+                                        {% else %}
+                                            <span class="badge badge-ghost gap-2"><i class="fas fa-question"></i>Manquant</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-center">
+                                        {% if rec.application_records %}
+                                        <button class="btn btn-sm btn-outline btn-secondary" onclick="toggleDetailsInverse('details-inv-{{ rec.id_diamex }}')">
+                                            <i class="fas fa-eye"></i> Voir ({{ rec.application_records|length }})
+                                        </button>
+                                        {% elif rec.status == 'missing' %}
+                                        <button class="btn btn-sm btn-primary" onclick="ouvrirRecoupementIntelligent('{{ rec.id_diamex }}', '{{ rec.id_access }}', '{{ rec.prog }}', '{{ rec.description|escapejs }}')">
+                                            <i class="fas fa-magic"></i> Recouper
+                                        </button>
+                                        {% else %}
+                                        <span class="text-base-content/50 text-xs">Aucun</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                <!-- Details Row (hidden by default) -->
+                                <tr id="details-inv-{{ rec.id_diamex }}" class="hidden">
+                                    <td colspan="11" class="bg-base-200/50">
+                                        <div class="p-4">
+                                            <h4 class="font-semibold mb-3">
+                                                <i class="fas fa-list mr-2"></i>
+                                                Relevés trouvés dans l'application ({{ rec.application_records|length }})
+                                            </h4>
+                                            <div class="overflow-x-auto">
+                                                <table class="table table-sm w-full">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>Type</th>
+                                                            <th>Point d'Eau</th>
+                                                            <th>Date Relevé</th>
+                                                            <th class="text-right">Index</th>
+                                                            <th class="text-right">Volume (m³)</th>
+                                                            <th class="text-right">Montant (Ar)</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {% for app_rec in rec.application_records %}
+                                                        <tr>
+                                                            <td><span class="badge badge-sm badge-info">{{ app_rec.type }}</span></td>
+                                                            <td>{{ app_rec.point_eau }}</td>
+                                                            <td>{{ app_rec.date_releve|date:"d/m/Y" }}</td>
+                                                            <td class="text-right font-mono text-sm">{{ app_rec.nouvel_index|floatformat:2 }}</td>
+                                                            <td class="text-right font-mono text-sm">{{ app_rec.volume|floatformat:2 }}</td>
+                                                            <td class="text-right font-mono font-semibold">{{ app_rec.montant|floatformat:2|intcomma }}</td>
+                                                        </tr>
+                                                        {% endfor %}
+                                                    </tbody>
+                                                    <tfoot>
+                                                        <tr class="font-bold bg-secondary/10">
+                                                            <td colspan="5" class="text-right">Total Application</td>
+                                                            <td class="text-right text-secondary">{{ rec.total_application_out|floatformat:2|intcomma }}</td>
+                                                        </tr>
+                                                    </tfoot>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+        {% else %}
+<div class="hydria-v1-panel card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <div class="text-center py-12">
+                    <i class="fas fa-inbox text-6xl text-base-content/20 mb-4"></i>
+                    <p class="text-lg text-base-content/50">
+                        Aucune transaction DiameX trouvée pour les comptes relevés.
+                    </p>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- ========================== 3e RECOUPEMENT : Par Ouvrage ========================== -->
+    <div class="mt-12" id="verification-par-ouvrage">
+        <div class="divider"></div>
+
+        <div class="flex items-center justify-between mb-6">
+            <div>
+                <h1 class="text-3xl font-bold flex items-center gap-3">
+                    <i class="fas fa-building mr-2 text-accent"></i>
+                    3e Recoupement : Relevés par Ouvrage vs DiameX 707401
+                    <span class="badge badge-accent badge-lg">{{ stats_3e.total|intcomma }} groupe(s)</span>
+                </h1>
+                <p class="text-base-content/70 mt-2">
+                    Comparer le total des montants de facture par ouvrage/mois dans Relevé avec les recettes DiameX du compte 707401 (Paiement au volume)
+                </p>
+            </div>
+            <a href="#verification-inverse" class="btn btn-secondary btn-sm">
+                <i class="fas fa-arrow-up mr-2"></i>
+                Retour à la vérification inverse
+            </a>
+        </div>
+
+        <!-- Statistics Dashboard 3e recoupement -->
+    <div class="hydria-v1-kpi-grid grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            <div class="stat bg-base-200 rounded-lg p-4 shadow">
+                <div class="stat-figure text-accent">
+                    <i class="fas fa-layer-group text-3xl"></i>
+                </div>
+                <div class="stat-title">Total groupes</div>
+                <div class="stat-value text-accent">{{ stats_3e.total|intcomma }}</div>
+                <div class="stat-desc">Ouvrage × Mois</div>
+            </div>
+
+            <div class="stat bg-success/10 rounded-lg p-4 shadow">
+                <div class="stat-figure text-success">
+                    <i class="fas fa-check-circle text-3xl"></i>
+                </div>
+                <div class="stat-title">OK</div>
+                <div class="stat-value text-success">{{ stats_3e.ok|intcomma }}</div>
+                <div class="stat-desc">Écart &lt; 0.01 Ar</div>
+            </div>
+
+            <div class="stat bg-warning/10 rounded-lg p-4 shadow">
+                <div class="stat-figure text-warning">
+                    <i class="fas fa-exclamation-triangle text-3xl"></i>
+                </div>
+                <div class="stat-title">Attention</div>
+                <div class="stat-value text-warning">{{ stats_3e.warning|intcomma }}</div>
+                <div class="stat-desc">Écart &lt; 100 Ar</div>
+            </div>
+
+            <div class="stat bg-error/10 rounded-lg p-4 shadow">
+                <div class="stat-figure text-error">
+                    <i class="fas fa-times-circle text-3xl"></i>
+                </div>
+                <div class="stat-title">Erreur</div>
+                <div class="stat-value text-error">{{ stats_3e.error|intcomma }}</div>
+                <div class="stat-desc">Écart ≥ 100 Ar</div>
+            </div>
+        </div>
+
+        <!-- Filtres 3e recoupement -->
+        <div class="card bg-base-200 shadow-md mb-6">
+            <div class="card-body">
+                <h3 class="card-title text-sm mb-4">
+                    <i class="fas fa-filter mr-2"></i>
+                    Filtres 3e Recoupement
+                </h3>
+                <form method="GET" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <!-- Preserve existing filters -->
+                    {% if request.GET.status %}<input type="hidden" name="status" value="{{ request.GET.status }}">{% endif %}
+                    {% if request.GET.point_eau %}<input type="hidden" name="point_eau" value="{{ request.GET.point_eau }}">{% endif %}
+                    {% if request.GET.base %}<input type="hidden" name="base" value="{{ request.GET.base }}">{% endif %}
+                    {% if request.GET.mois %}<input type="hidden" name="mois" value="{{ request.GET.mois }}">{% endif %}
+                    {% if request.GET.prog_inverse %}<input type="hidden" name="prog_inverse" value="{{ request.GET.prog_inverse }}">{% endif %}
+                    {% if request.GET.mois_inverse %}<input type="hidden" name="mois_inverse" value="{{ request.GET.mois_inverse }}">{% endif %}
+
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text font-semibold"><i class="fas fa-building mr-1"></i>Ouvrage</span>
+                        </label>
+                        <select name="ouvrage_3e" class="select select-bordered select-sm">
+                            <option value="">Tous les ouvrages</option>
+                            {% for ouvrage in ouvrages_avec_releves %}
+                            <option value="{{ ouvrage.id }}" {% if filter_ouvrage_3e == ouvrage.id|stringformat:"s" %}selected{% endif %}>
+                                {{ ouvrage.nom_ouvrage }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text font-semibold"><i class="fas fa-calendar mr-1"></i>Mois</span>
+                        </label>
+                        <input type="month" name="mois_3e" value="{{ filter_mois_3e }}" class="input input-bordered input-sm" />
+                    </div>
+
+                    <div class="form-control flex flex-row gap-2 items-end">
+                        <button type="submit" class="btn btn-accent btn-sm flex-1">
+                            <i class="fas fa-search mr-2"></i>Filtrer
+                        </button>
+                        <a href="{% url 'accounting:recoupement_releves' %}" class="btn btn-ghost btn-sm">
+                            <i class="fas fa-times"></i>
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Navigation buttons -->
+        <div class="flex gap-3 mb-6">
+            <button onclick="collapseAllOuvrages()" class="btn btn-ghost btn-sm">
+                <i class="fas fa-compress-alt mr-2"></i>
+                Tout plier
+            </button>
+            <button onclick="expandAllOuvrages()" class="btn btn-ghost btn-sm">
+                <i class="fas fa-expand-alt mr-2"></i>
+                Tout déplier
+            </button>
+        </div>
+
+        <!-- Results grouped by Ouvrage -->
+        {% if recoupements_3e %}
+        <!-- Regrouper par ouvrage_id pour éviter les doublons -->
+        {% regroup recoupements_3e by ouvrage_id as ouvrages_groupes %}
+
+        {% for ouvrage_groupe in ouvrages_groupes %}
+    <div class="hydria-v1-table-card card bg-base-100 shadow-xl mb-8 ouvrage-card" data-ouvrage-id="{{ ouvrage_groupe.grouper }}">
+            <div class="card-body">
+                <!-- En-tête avec nom ouvrage et bouton toggle -->
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-2xl font-bold flex items-center gap-3">
+                        <i class="fas fa-building text-accent"></i>
+                        <a href="{% url 'core:search_detail' 'ouvrage' ouvrage_groupe.grouper %}" class="link link-primary">
+                            {{ ouvrage_groupe.list.0.ouvrage_nom }}
+                        </a>
+                        <span class="badge badge-accent badge-lg">{{ ouvrage_groupe.list|length }} période(s)</span>
+                    </h2>
+                    <button onclick="toggleOuvrage(this)" class="btn btn-sm btn-ghost">
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                </div>
+
+                <!-- Statistiques en-tête (toujours visibles) -->
+    <div class="hydria-v1-kpi-grid grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                    <!-- Total Relevés -->
+                    <div class="stat bg-success/10 rounded-lg border border-success/20">
+                        <div class="stat-title text-success">Total Relevés</div>
+                        <div class="stat-value text-success text-xl header-total-releves">0</div>
+                        <div class="stat-desc text-success/70">Ar</div>
+                    </div>
+
+                    <!-- Total DiameX -->
+                    <div class="stat bg-primary/10 rounded-lg border border-primary/20">
+                        <div class="stat-title text-primary">Total DiameX</div>
+                        <div class="stat-value text-primary text-xl header-total-diamex">0</div>
+                        <div class="stat-desc text-primary/70">Ar</div>
+                    </div>
+
+                    <!-- Écart -->
+                    <div class="stat bg-base-200 rounded-lg border border-base-300">
+                        <div class="stat-title">Écart</div>
+                        <div class="stat-value text-xl header-ecart">0</div>
+                        <div class="stat-desc">Ar</div>
+                    </div>
+
+                    <!-- Taux de recouvrement -->
+                    <div class="stat bg-base-200 rounded-lg border border-base-300">
+                        <div class="stat-title">Taux Recouvrement</div>
+                        <div class="stat-value text-xl header-taux">
+                            <span class="badge badge-lg badge-ghost">0%</span>
+                        </div>
+                        <div class="stat-desc">Performance</div>
+                    </div>
+                </div>
+
+                <div class="ouvrage-content" style="display: none;">
+                    <div class="overflow-x-auto">
+                        <table class="table table-zebra w-full">
+                            <thead>
+                                <tr>
+                                    <th class="bg-base-200">Période</th>
+                                    <th class="bg-base-200 text-center">Nb Relevés</th>
+                                    <th class="bg-base-200 text-right">Total Relevés (Ar)</th>
+                                    <th class="bg-base-200 text-center">Nb Trans. DiameX</th>
+                                    <th class="bg-base-200 text-right">Total DiameX 707401 (Ar)</th>
+                                    <th class="bg-base-200 text-right">Écart (Ar)</th>
+                                    <th class="bg-base-200 text-center">Taux Recouvr.</th>
+                                    <th class="bg-base-200 text-center">Status</th>
+                                    <th class="bg-base-200 text-center">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for rec in ouvrage_groupe.list %}
+                                <tr>
+                                    <td class="font-mono">
+                                        {% if rec.annee and rec.mois %}
+                                            {{ rec.mois|stringformat:"02d" }}/{{ rec.annee }}
+                                        {% else %}
+                                            <span class="text-base-content/50">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-center">
+                                        <span class="badge badge-sm badge-info">{{ rec.nb_releves }}</span>
+                                    </td>
+                                    <td class="text-right font-mono text-success font-semibold">
+                                        {{ rec.total_releves|floatformat:0|intcomma }}
+                                    </td>
+                                    <td class="text-center">
+                                        <span class="badge badge-sm badge-primary">{{ rec.nb_transactions_diamex }}</span>
+                                    </td>
+                                    <td class="text-right font-mono text-primary font-semibold">
+                                        {{ rec.total_diamex|floatformat:0|intcomma }}
+                                    </td>
+                                    <td class="text-right font-mono font-bold
+                                        {% if rec.status == 'ok' %}text-success
+                                        {% elif rec.status == 'warning' %}text-warning
+                                        {% elif rec.status == 'error' %}text-error
+                                        {% else %}text-base-content/50{% endif %}">
+                                        {{ rec.ecart|floatformat:0|intcomma }}
+                                    </td>
+                                    <td class="text-center">
+                                        <div class="flex items-center gap-2">
+                                            <div class="radial-progress
+                                                {% if rec.taux_recouvrement >= 95 %}text-success
+                                                {% elif rec.taux_recouvrement >= 80 %}text-warning
+                                                {% else %}text-error{% endif %}"
+                                                style="--value:{{ rec.taux_recouvrement }}; --size:3rem; --thickness:4px;"
+                                                role="progressbar">
+                                                <span class="text-xs font-bold">{{ rec.taux_recouvrement }}%</span>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td class="text-center">
+                                        {% if rec.status == 'ok' %}
+                                            <span class="badge badge-success gap-2">
+                                                <i class="fas fa-check"></i> OK
+                                            </span>
+                                        {% elif rec.status == 'warning' %}
+                                            <span class="badge badge-warning gap-2">
+                                                <i class="fas fa-exclamation-triangle"></i> Attention
+                                            </span>
+                                        {% elif rec.status == 'error' %}
+                                            <span class="badge badge-error gap-2">
+                                                <i class="fas fa-times"></i> Erreur
+                                            </span>
+                                        {% else %}
+                                            <span class="badge badge-ghost gap-2">
+                                                <i class="fas fa-question"></i> Inconnu
+                                            </span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-center">
+                                        <button onclick="openDetailsModal3e('{{ rec.ouvrage_id }}', {{ rec.annee }}, {{ rec.mois }})" class="btn btn-sm btn-ghost btn-circle" title="Voir les détails">
+                                            <i class="fas fa-eye"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                            <tfoot class="bg-base-200 font-bold">
+                                {% comment %}Calculer les totaux pour cet ouvrage{% endcomment %}
+                                {% widthratio 0 1 0 as total_releves_ouvrage %}
+                                {% widthratio 0 1 0 as total_diamex_ouvrage %}
+                                {% widthratio 0 1 0 as total_ecart_ouvrage %}
+                                {% for rec in ouvrage_groupe.list %}
+                                    {% widthratio total_releves_ouvrage 1 1 as temp %}
+                                    {% widthratio temp 1 1 as old_total %}
+                                    {% widthratio rec.total_releves 1 1 as rec_total %}
+                                    {% widthratio old_total|add:rec_total 1 1 as total_releves_ouvrage %}
+
+                                    {% widthratio total_diamex_ouvrage 1 1 as temp2 %}
+                                    {% widthratio temp2 1 1 as old_total2 %}
+                                    {% widthratio rec.total_diamex 1 1 as rec_total2 %}
+                                    {% widthratio old_total2|add:rec_total2 1 1 as total_diamex_ouvrage %}
+
+                                    {% widthratio total_ecart_ouvrage 1 1 as temp3 %}
+                                    {% widthratio temp3 1 1 as old_total3 %}
+                                    {% widthratio rec.ecart 1 1 as rec_total3 %}
+                                    {% widthratio old_total3|add:rec_total3 1 1 as total_ecart_ouvrage %}
+                                {% endfor %}
+                                <tr class="text-lg">
+                                    <th>TOTAL {{ ouvrage_groupe.list.0.ouvrage_nom }}</th>
+                                    <th colspan="1" class="text-center">
+                                        <span class="badge badge-accent">{{ ouvrage_groupe.list|length }}</span>
+                                    </th>
+                                    <th class="text-right text-success">
+                                        {{ total_releves_ouvrage|floatformat:0|intcomma }} Ar
+                                    </th>
+                                    <th colspan="1"></th>
+                                    <th class="text-right text-primary">
+                                        {{ total_diamex_ouvrage|floatformat:0|intcomma }} Ar
+                                    </th>
+                                    <th class="text-right {% if total_ecart_ouvrage >= 0 %}text-success{% else %}text-error{% endif %}">
+                                        {{ total_ecart_ouvrage|floatformat:0|intcomma }} Ar
+                                    </th>
+                                    <th class="text-center">
+                                        {% if total_releves_ouvrage > 0 %}
+                                            {% widthratio total_diamex_ouvrage total_releves_ouvrage 100 as taux_ouvrage %}
+                                            <span class="badge badge-lg
+                                            {% if taux_ouvrage >= 95 %}badge-success
+                                            {% elif taux_ouvrage >= 80 %}badge-warning
+                                            {% else %}badge-error{% endif %}">
+                                                {{ taux_ouvrage }}%
+                                            </span>
+                                        {% else %}
+                                            <span class="badge badge-lg badge-ghost">0%</span>
+                                        {% endif %}
+                                    </th>
+                                    <th colspan="2"></th>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>  <!-- end ouvrage-content -->
+            </div>
+        </div>
+        {% endfor %}  <!-- End ouvrage_groupe loop -->
+        {% else %}
+<div class="hydria-v1-panel card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <div class="text-center py-12">
+                    <i class="fas fa-inbox text-6xl text-base-content/20 mb-4"></i>
+                    <p class="text-lg text-base-content/50">
+                        Aucun recoupement par ouvrage trouvé.
+                    </p>
+                    <p class="text-sm text-base-content/40 mt-2">
+                        Assurez-vous que les relevés ont des montants renseignés et que les transactions DiameX 707401 contiennent les noms d'ouvrages.
+                    </p>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Legend -->
+        <div class="mt-6 p-4 bg-base-200 rounded-lg">
+            <h3 class="font-semibold mb-3">
+                <i class="fas fa-info-circle mr-2"></i>
+                À propos du 3e recoupement
+            </h3>
+            <div class="text-sm text-base-content/70 space-y-2">
+                <p>
+                    <strong>Objectif :</strong> Vérifier que les recettes volumétriques enregistrées dans DiameX (compte 707401) correspondent aux montants facturés dans les relevés.
+                </p>
+                <p>
+                    <strong>Méthode :</strong> On extrait le nom de l'ouvrage depuis la description DiameX (ex: "Paiement au volume Ambanja BP 01/03/2025") et on compare avec la somme des montants de facture des relevés pour le même ouvrage et le même mois.
+                </p>
+                <p>
+                    <strong>Paiements multi-segments :</strong> Les paiements DiameX contenant plusieurs ouvrages/périodes (format avec <code>;</code>) sont automatiquement segmentés. Chaque segment est attribué à la bonne période et au bon ouvrage.
+                </p>
+                <p>
+                    <strong>Interprétation :</strong>
+                </p>
+                <ul class="list-disc list-inside ml-4">
+                    <li><span class="badge badge-success badge-sm">OK</span> : Écart inférieur à 0.01 Ar (cohérence parfaite)</li>
+                    <li><span class="badge badge-warning badge-sm">Attention</span> : Écart entre 0.01 et 100 Ar (à vérifier)</li>
+                    <li><span class="badge badge-error badge-sm">Erreur</span> : Écart supérieur ou égal à 100 Ar (anomalie significative)</li>
+                </ul>
+                <div class="alert alert-info mt-3">
+                    <i class="fas fa-filter"></i>
+                    <span>
+                        <strong>Note importante :</strong> Ce recoupement affiche uniquement les données à partir de <strong>2025</strong> (inclus).
+                        Les années antérieures appartiennent à une autre comptabilité et ne sont pas incluses dans cette vérification.
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Modifier Relevés -->
+<dialog id="releves_modal" class="modal">
+    <div class="modal-box w-11/12 max-w-6xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-edit mr-2 text-primary"></i>
+            Modifier les relevés - <span id="modal_title"></span>
+        </h3>
+
+        <div id="modal_loading" class="flex justify-center items-center py-8">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+        </div>
+
+        <div id="modal_content" class="hidden">
+            <div class="overflow-x-auto max-h-96">
+                <table class="table table-zebra table-sm">
+                    <thead class="bg-base-200 sticky top-0">
+                        <tr>
+                            <th class="w-12">
+                                <label>
+                                    <input type="checkbox" class="checkbox checkbox-sm" id="check_all" onchange="toggleAllChecks(this.checked)" />
+                                </label>
+                            </th>
+                            <th>IDxls</th>
+                            <th>Point d'Eau</th>
+                            <th>Date</th>
+                            <th class="text-right">Index</th>
+                            <th class="text-right">Volume (m³)</th>
+                            <th class="text-right">Montant (Ar)</th>
+                            <th>Numéro DiameX</th>
+                            <th>Base DiameX</th>
+                            <th class="text-center">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="releves_tbody">
+                        <!-- Filled by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="alert alert-info mt-4 text-xs">
+                <i class="fas fa-info-circle"></i>
+                <span>Les modifications sont enregistrées individuellement lors du clic sur le bouton "Enregistrer".</span>
+            </div>
+
+            <!-- Compteur de factures cochées -->
+            <div class="stats shadow mt-4 w-full">
+                <div class="stat">
+                    <div class="stat-figure text-primary">
+                        <i class="fas fa-check-circle text-3xl"></i>
+                    </div>
+                    <div class="stat-title">Factures vérifiées</div>
+                    <div class="stat-value text-primary"><span id="checked_count">0</span> / <span id="total_count">0</span></div>
+                    <div class="stat-desc">Cases cochées</div>
+                </div>
+
+                <div class="stat">
+                    <div class="stat-figure text-success">
+                        <i class="fas fa-receipt text-3xl"></i>
+                    </div>
+                    <div class="stat-title">Montant Relevé vérifié</div>
+                    <div class="stat-value text-success text-xl"><span id="checked_amount">0</span> Ar</div>
+                    <div class="stat-desc">Total : <span id="total_amount">0</span> Ar</div>
+                </div>
+
+                <div class="stat">
+                    <div class="stat-figure text-info">
+                        <i class="fas fa-database text-3xl"></i>
+                    </div>
+                    <div class="stat-title">Montant DATA (In)</div>
+                    <div class="stat-value text-info text-xl"><span id="data_in_amount">0</span> Ar</div>
+                    <div class="stat-desc">Valeur constante comptabilité</div>
+                </div>
+
+                <div class="stat">
+                    <div class="stat-figure text-warning">
+                        <i class="fas fa-balance-scale text-3xl"></i>
+                    </div>
+                    <div class="stat-title">Écart (Relevé - DATA)</div>
+                    <div class="stat-value text-warning text-xl"><span id="ecart_amount">0</span> Ar</div>
+                    <div class="stat-desc">Différence vérifiée</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-action">
+            <button type="button" class="btn" onclick="document.getElementById('releves_modal').close()">
+                Fermer
+            </button>
+        </div>
+    </div>
+</dialog>
+
+<script>
+function toggleDetails(detailsId) {
+    const detailsRow = document.getElementById(detailsId);
+    if (detailsRow.classList.contains('hidden')) {
+        detailsRow.classList.remove('hidden');
+    } else {
+        detailsRow.classList.add('hidden');
+    }
+}
+
+function openFileViaServer(filePath) {
+    const formData = new FormData();
+    formData.append('file_path', filePath);
+
+    fetch('{% url "accounting:open_file_windows" %}', {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-CSRFToken': getCookie('csrftoken')
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.success) {
+            alert('Erreur: ' + (data.error || 'Impossible d\'ouvrir le fichier'));
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        alert('Erreur réseau lors de l\'ouverture du fichier');
+    });
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+async function openReleveModal(ouvrageId, annee, mois) {
+    const modal = document.getElementById('releves_modal');
+    const modalTitle = document.getElementById('modal_title');
+    const modalLoading = document.getElementById('modal_loading');
+    const modalContent = document.getElementById('modal_content');
+    const tbody = document.getElementById('releves_tbody');
+
+    // Réinitialiser
+    modalTitle.textContent = `Chargement...`;
+    modalLoading.classList.remove('hidden');
+    modalContent.classList.add('hidden');
+    tbody.innerHTML = '';
+
+    // Ouvrir la modal
+    modal.showModal();
+
+    try {
+        const response = await fetch(`{% url "accounting:api_get_releves_ouvrage_mois" %}?ouvrage_id=${ouvrageId}&annee=${annee}&mois=${mois}`);
+        const data = await response.json();
+
+        if (data.success) {
+            // Mettre à jour le titre avec le nom de l'ouvrage
+            modalTitle.textContent = `${data.ouvrage_nom} - ${mois}/${annee}`;
+
+
+            // Afficher les relevés
+            data.releves.forEach(releve => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>
+                        <label>
+                            <input type="checkbox" class="checkbox checkbox-sm releve-check"
+                                   data-releve-id="${releve.id}"
+                                   data-montant="${releve.montant}"
+                                   data-montant-data="${releve.montant_data_in || 0}" />
+                        </label>
+                    </td>
+                    <td class="font-mono text-xs text-center">${releve.idxls || '—'}</td>
+                    <td class="font-semibold text-sm">${releve.point_eau_nom}</td>
+                    <td class="text-sm">${new Date(releve.date_releve).toLocaleDateString('fr-FR')}</td>
+                    <td class="text-right font-mono text-sm">${releve.nouvel_index.toFixed(2)}</td>
+                    <td class="text-right font-mono text-sm">${releve.volume_facture.toFixed(2)}</td>
+                    <td class="text-right font-mono text-sm">${releve.montant.toLocaleString('fr-FR')}</td>
+                    <td>
+                        <input type="text" class="input input-xs input-bordered w-full font-mono"
+                               id="numero_${releve.id}" value="${releve.numero_diamex || ''}"
+                               placeholder="Numéro">
+                    </td>
+                    <td>
+                        <input type="text" class="input input-xs input-bordered w-full font-mono"
+                               id="base_${releve.id}" value="${releve.base_diamex || ''}"
+                               placeholder="Base">
+                    </td>
+                    <td class="text-center">
+                        <button onclick="saveReleve('${releve.id}')" class="btn btn-xs btn-success">
+                            <i class="fas fa-save"></i>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+
+            // Calculer les montants totaux
+            const totalAmount = data.releves.reduce((sum, r) => sum + r.montant, 0);
+
+            // Montant DATA (In) : constant, prendre le premier relevé (tous partagent le même)
+            const dataInAmount = data.releves.length > 0 ? (data.releves[0].montant_data_in || 0) : 0;
+
+            // Mettre à jour les compteurs
+            document.getElementById('total_count').textContent = data.releves.length;
+            document.getElementById('checked_count').textContent = '0';
+            document.getElementById('total_amount').textContent = totalAmount.toLocaleString('fr-FR');
+            document.getElementById('checked_amount').textContent = '0';
+            document.getElementById('data_in_amount').textContent = dataInAmount.toLocaleString('fr-FR');
+
+            // Écart initial (total - DATA)
+            const ecartInitial = totalAmount - dataInAmount;
+            document.getElementById('ecart_amount').textContent = ecartInitial.toLocaleString('fr-FR');
+
+            // Ajouter les listeners pour mettre à jour les compteurs
+            document.querySelectorAll('.releve-check').forEach(checkbox => {
+                checkbox.addEventListener('change', updateCheckedCount);
+            });
+
+            modalLoading.classList.add('hidden');
+            modalContent.classList.remove('hidden');
+        } else {
+            console.error('Erreur API:', data);
+            alert('Erreur: ' + data.error + (data.traceback ? '\n\nVoir console pour détails' : ''));
+            if (data.traceback) {
+                console.error('Traceback:', data.traceback);
+            }
+            modal.close();
+        }
+    } catch (error) {
+        console.error('Erreur complète:', error);
+        alert('Erreur réseau lors du chargement des relevés.\nVérifiez la console (F12) pour plus de détails.');
+        modal.close();
+    }
+}
+
+async function saveReleve(releveId) {
+    const numeroInput = document.getElementById(`numero_${releveId}`);
+    const baseInput = document.getElementById(`base_${releveId}`);
+
+    const data = {
+        releve_id: releveId,
+        numero_diamex: numeroInput.value.trim(),
+        base_diamex: baseInput.value.trim()
+    };
+
+    try {
+        const response = await fetch('{% url "accounting:api_update_releve_diamex" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            // Feedback visuel
+            numeroInput.classList.add('input-success');
+            baseInput.classList.add('input-success');
+            setTimeout(() => {
+                numeroInput.classList.remove('input-success');
+                baseInput.classList.remove('input-success');
+            }, 1000);
+
+            // Toast notification
+            const toast = document.createElement('div');
+            toast.className = 'toast toast-top toast-end';
+            toast.innerHTML = `
+                <div class="alert alert-success">
+                    <span><i class="fas fa-check-circle mr-2"></i>Relevé mis à jour</span>
+                </div>
+            `;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2000);
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau lors de la sauvegarde');
+    }
+}
+
+function toggleAllChecks(checked) {
+    document.querySelectorAll('.releve-check').forEach(checkbox => {
+        checkbox.checked = checked;
+    });
+    updateCheckedCount();
+}
+
+function updateCheckedCount() {
+    const checkboxes = document.querySelectorAll('.releve-check');
+    let checkedCount = 0;
+    let checkedAmount = 0;
+
+    checkboxes.forEach(checkbox => {
+        if (checkbox.checked) {
+            checkedCount++;
+            checkedAmount += parseFloat(checkbox.dataset.montant || 0);
+        }
+    });
+
+    // Le montant DATA (In) reste constant
+    const dataInAmount = parseFloat(document.getElementById('data_in_amount').textContent.replace(/\s/g, '') || 0);
+
+    // Calculer l'écart : Montant vérifié - DATA (In)
+    const ecart = checkedAmount - dataInAmount;
+
+    document.getElementById('checked_count').textContent = checkedCount;
+    document.getElementById('checked_amount').textContent = checkedAmount.toLocaleString('fr-FR');
+    document.getElementById('ecart_amount').textContent = ecart.toLocaleString('fr-FR');
+}
+
+// Functions for Base DiameX grouping toggle
+function toggleBase(button) {
+    const card = button.closest('.base-card');
+    const content = card.querySelector('.base-content');
+    const icon = button.querySelector('i');
+
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        icon.classList.remove('fa-chevron-down');
+        icon.classList.add('fa-chevron-up');
+    } else {
+        content.style.display = 'none';
+        icon.classList.remove('fa-chevron-up');
+        icon.classList.add('fa-chevron-down');
+    }
+}
+
+function collapseAllBases() {
+    const baseCards = document.querySelectorAll('.base-card');
+    baseCards.forEach(card => {
+        const content = card.querySelector('.base-content');
+        const icon = card.querySelector('.btn i');
+        if (content && icon) {
+            content.style.display = 'none';
+            icon.classList.remove('fa-chevron-up');
+            icon.classList.add('fa-chevron-down');
+        }
+    });
+}
+
+function expandAllBases() {
+    const baseCards = document.querySelectorAll('.base-card');
+    baseCards.forEach(card => {
+        const content = card.querySelector('.base-content');
+        const icon = card.querySelector('.btn i');
+        if (content && icon) {
+            content.style.display = 'block';
+            icon.classList.remove('fa-chevron-down');
+            icon.classList.add('fa-chevron-up');
+        }
+    });
+}
+
+// Functions for Prog grouping toggle (inverse verification)
+function toggleProg(button) {
+    const card = button.closest('.prog-card');
+    const content = card.querySelector('.prog-content');
+    const icon = button.querySelector('i');
+
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        icon.classList.remove('fa-chevron-down');
+        icon.classList.add('fa-chevron-up');
+    } else {
+        content.style.display = 'none';
+        icon.classList.remove('fa-chevron-up');
+        icon.classList.add('fa-chevron-down');
+    }
+}
+
+function collapseAllProgs() {
+    const progCards = document.querySelectorAll('.prog-card');
+    progCards.forEach(card => {
+        const content = card.querySelector('.prog-content');
+        const icon = card.querySelector('.btn i');
+        if (content && icon) {
+            content.style.display = 'none';
+            icon.classList.remove('fa-chevron-up');
+            icon.classList.add('fa-chevron-down');
+        }
+    });
+}
+
+function expandAllProgs() {
+    const progCards = document.querySelectorAll('.prog-card');
+    progCards.forEach(card => {
+        const content = card.querySelector('.prog-content');
+        const icon = card.querySelector('.btn i');
+        if (content && icon) {
+            content.style.display = 'block';
+            icon.classList.remove('fa-chevron-down');
+            icon.classList.add('fa-chevron-up');
+        }
+    });
+}
+
+// Toggle details for inverse verification
+function toggleDetailsInverse(detailsId) {
+    const detailsRow = document.getElementById(detailsId);
+    if (detailsRow) {
+        detailsRow.classList.toggle('hidden');
+    }
+}
+
+// Ouvrir un fichier scan via le serveur Django (bypass navigateur)
+function openFileViaServer(filePath) {
+    const formData = new FormData();
+    formData.append('file_path', filePath);
+
+    fetch('{% url "accounting:open_file_windows" %}', {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-CSRFToken': getCookie('csrftoken')
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Afficher une notification discrète
+            const toast = document.createElement('div');
+            toast.className = 'toast toast-top toast-end';
+            toast.innerHTML = `
+                <div class="alert alert-success">
+                    <i class="fas fa-check"></i>
+                    <span>${data.message}</span>
+                </div>
+            `;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        } else {
+            // L'API retourne 'error' au lieu de 'message' en cas d'erreur
+            alert(`Erreur : ${data.error || 'Erreur inconnue'}`);
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    });
+}
+
+// Helper pour récupérer le CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Functions for Ouvrage grouping toggle (3e recoupement)
+function toggleOuvrage(button) {
+    const card = button.closest('.ouvrage-card');
+    const content = card.querySelector('.ouvrage-content');
+    const icon = button.querySelector('i');
+
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        icon.classList.remove('fa-chevron-down');
+        icon.classList.add('fa-chevron-up');
+    } else {
+        content.style.display = 'none';
+        icon.classList.remove('fa-chevron-up');
+        icon.classList.add('fa-chevron-down');
+    }
+}
+
+function collapseAllOuvrages() {
+    const ouvrageCards = document.querySelectorAll('.ouvrage-card');
+    ouvrageCards.forEach(card => {
+        const content = card.querySelector('.ouvrage-content');
+        const icon = card.querySelector('.btn i');
+        if (content && icon) {
+            content.style.display = 'none';
+            icon.classList.remove('fa-chevron-up');
+            icon.classList.add('fa-chevron-down');
+        }
+    });
+}
+
+function expandAllOuvrages() {
+    const ouvrageCards = document.querySelectorAll('.ouvrage-card');
+    ouvrageCards.forEach(card => {
+        const content = card.querySelector('.ouvrage-content');
+        const icon = card.querySelector('.btn i');
+        if (content && icon) {
+            content.style.display = 'block';
+            icon.classList.remove('fa-chevron-down');
+            icon.classList.add('fa-chevron-up');
+        }
+    });
+}
+
+// Fonction pour ouvrir le modal de détails du 3e recoupement
+async function openDetailsModal3e(ouvrageId, annee, mois) {
+    const modal = document.getElementById('modal-details-3e');
+    const loadingSpinner = document.getElementById('loading-details-3e');
+    const contentDiv = document.getElementById('content-details-3e');
+
+    // Afficher le modal et le spinner
+    modal.showModal();
+    loadingSpinner.classList.remove('hidden');
+    contentDiv.classList.add('hidden');
+
+    try {
+        const url = `{% url 'accounting:api_details_recoupement_3e' %}?ouvrage_id=${ouvrageId}&annee=${annee}&mois=${mois}`;
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error || 'Erreur lors du chargement des détails');
+        }
+
+        // Mettre à jour le titre du modal
+        document.getElementById('modal-titre-ouvrage').textContent = data.ouvrage.nom;
+        document.getElementById('modal-titre-periode').textContent = data.periode.label;
+
+        // Remplir le tableau des transactions DiameX
+        const tbodyDiamex = document.getElementById('tbody-transactions-diamex');
+        tbodyDiamex.innerHTML = '';
+
+        if (data.transactions_diamex.length === 0) {
+            tbodyDiamex.innerHTML = '<tr><td colspan="5" class="text-center text-base-content/50 italic py-4">Aucune transaction DiameX pour cette période</td></tr>';
+        } else {
+            data.transactions_diamex.forEach(trans => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td class="text-sm">${trans.date_rec}</td>
+                    <td class="text-sm max-w-xs">
+                        ${trans.description}
+                        ${trans.is_segment ? '<span class="badge badge-info badge-xs ml-2">Segment</span>' : ''}
+                    </td>
+                    <td class="text-right font-mono">${trans.montant_in.toLocaleString('fr-FR')} Ar</td>
+                    <td class="text-sm text-center">${trans.prog}</td>
+                    <td class="text-center">
+                        ${trans.scan_path ? `
+                            <button onclick="openScanViaServer('${trans.scan_path.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}')" class="btn btn-xs btn-success btn-circle" title="Ouvrir le scan">
+                                <i class="fas fa-file-pdf"></i>
+                            </button>
+                        ` : '<span class="text-base-content/30">-</span>'}
+                    </td>
+                `;
+                tbodyDiamex.appendChild(row);
+            });
+        }
+
+        // Remplir le tableau des relevés
+        const tbodyReleves = document.getElementById('tbody-releves');
+        tbodyReleves.innerHTML = '';
+
+        if (data.releves.length === 0) {
+            tbodyReleves.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/50 italic py-4">Aucun relevé pour cette période</td></tr>';
+        } else {
+            data.releves.forEach(releve => {
+                // Déterminer l'icône selon le type de point d'eau
+                let icon = '';
+                const type = releve.type_point_eau || '';
+                if (type.toLowerCase() === 'kiosque') {
+                    icon = '<i class="fas fa-store text-info mr-1" title="Kiosque"></i>';
+                } else if (type.toLowerCase() === 'bi volume') {
+                    icon = '<i class="fas fa-faucet text-primary mr-1" title="BI volume"></i>';
+                } else if (type.toLowerCase() === 'bp') {
+                    icon = '<i class="fas fa-home text-success mr-1" title="BP"></i>';
+                }
+
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td class="text-sm">${releve.idxls}</td>
+                    <td class="text-sm">${icon}${releve.nom_abonne}</td>
+                    <td class="text-sm">${releve.datereleve}</td>
+                    <td class="text-right font-mono">${releve.index_ancien} → ${releve.nouvelindex}</td>
+                    <td class="text-right font-mono">${releve.consommation.toFixed(2)} m³</td>
+                    <td class="text-right font-mono">${releve.montant.toLocaleString('fr-FR')} Ar</td>
+                `;
+                tbodyReleves.appendChild(row);
+            });
+        }
+
+        // Mettre à jour les statistiques
+        document.getElementById('stat-nb-transactions').textContent = data.stats.nb_transactions;
+        document.getElementById('stat-total-diamex').textContent = data.stats.total_diamex.toLocaleString('fr-FR') + ' Ar';
+        document.getElementById('stat-nb-releves').textContent = data.stats.nb_releves;
+        document.getElementById('stat-total-releves').textContent = data.stats.total_releves.toLocaleString('fr-FR') + ' Ar';
+
+        const ecart = data.stats.ecart;
+        const ecartSpan = document.getElementById('stat-ecart');
+        ecartSpan.textContent = ecart.toLocaleString('fr-FR') + ' Ar';
+
+        // Colorier l'écart
+        if (ecart === 0) {
+            ecartSpan.className = 'text-success font-bold';
+        } else if (Math.abs(ecart) < 1000) {
+            ecartSpan.className = 'text-warning font-bold';
+        } else {
+            ecartSpan.className = 'text-error font-bold';
+        }
+
+        // Masquer le spinner et afficher le contenu
+        loadingSpinner.classList.add('hidden');
+        contentDiv.classList.remove('hidden');
+
+    } catch (error) {
+        console.error('Erreur:', error);
+        loadingSpinner.classList.add('hidden');
+        contentDiv.innerHTML = `
+            <div class="alert alert-error">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span>Erreur lors du chargement des détails : ${error.message}</span>
+            </div>
+        `;
+        contentDiv.classList.remove('hidden');
+    }
+}
+
+// Fonction pour récupérer le cookie CSRF
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Fonction pour ouvrir scan via serveur
+function openScanViaServer(filePath) {
+    const formData = new FormData();
+    formData.append('file_path', filePath);
+
+    fetch('{% url "accounting:open_file_windows" %}', {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-CSRFToken': getCookie('csrftoken')
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Toast notification simple
+            const toast = document.createElement('div');
+            toast.className = 'toast toast-top toast-end';
+            toast.innerHTML = `
+                <div class="alert alert-success">
+                    <span><i class="fas fa-check-circle mr-2"></i>Fichier ouvert</span>
+                </div>
+            `;
+            document.body.appendChild(toast);
+            setTimeout(() => {
+                toast.remove();
+            }, 3000);
+        } else {
+            alert('Erreur: ' + (data.error || 'Impossible d\'ouvrir le fichier'));
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    });
+}
+
+// Fonction pour calculer et afficher les totaux dans les en-têtes de groupe
+function calculateGroupHeaderStats() {
+    // Pour chaque carte d'ouvrage
+    document.querySelectorAll('.ouvrage-card').forEach(card => {
+        let totalReleves = 0;
+        let totalDiamex = 0;
+        let totalEcart = 0;
+
+        // Parcourir toutes les lignes du tableau de cet ouvrage
+        const tbody = card.querySelector('tbody');
+        if (tbody) {
+            tbody.querySelectorAll('tr').forEach(row => {
+                const cells = row.querySelectorAll('td');
+                if (cells.length >= 6) {
+                    // Extraire les montants (en supprimant les espaces et virgules)
+                    const relevesText = cells[2].textContent.trim().replace(/\s/g, '').replace(/,/g, '');
+                    const diamexText = cells[4].textContent.trim().replace(/\s/g, '').replace(/,/g, '');
+                    const ecartText = cells[5].textContent.trim().replace(/\s/g, '').replace(/,/g, '');
+
+                    totalReleves += parseFloat(relevesText) || 0;
+                    totalDiamex += parseFloat(diamexText) || 0;
+                    totalEcart += parseFloat(ecartText) || 0;
+                }
+            });
+        }
+
+        // Mettre à jour l'en-tête
+        const headerTotalReleves = card.querySelector('.header-total-releves');
+        const headerTotalDiamex = card.querySelector('.header-total-diamex');
+        const headerEcart = card.querySelector('.header-ecart');
+        const headerTaux = card.querySelector('.header-taux');
+
+        if (headerTotalReleves) {
+            headerTotalReleves.textContent = Math.round(totalReleves).toLocaleString('fr-FR');
+        }
+
+        if (headerTotalDiamex) {
+            headerTotalDiamex.textContent = Math.round(totalDiamex).toLocaleString('fr-FR');
+        }
+
+        if (headerEcart) {
+            headerEcart.textContent = Math.round(totalEcart).toLocaleString('fr-FR');
+            // Colorer l'écart
+            if (totalEcart >= 0) {
+                headerEcart.classList.add('text-success');
+                headerEcart.classList.remove('text-error');
+            } else {
+                headerEcart.classList.add('text-error');
+                headerEcart.classList.remove('text-success');
+            }
+        }
+
+        if (headerTaux) {
+            // Calculer le taux de recouvrement
+            const taux = totalReleves > 0 ? Math.round((totalDiamex / totalReleves) * 100) : 0;
+
+            // Déterminer la classe du badge
+            let badgeClass = 'badge badge-lg ';
+            if (taux >= 95) {
+                badgeClass += 'badge-success';
+            } else if (taux >= 80) {
+                badgeClass += 'badge-warning';
+            } else {
+                badgeClass += 'badge-error';
+            }
+
+            headerTaux.innerHTML = `<span class="${badgeClass}">${taux}%</span>`;
+        }
+    });
+}
+
+// Appeler la fonction au chargement de la page
+document.addEventListener('DOMContentLoaded', function() {
+    calculateGroupHeaderStats();
+});
+
+</script>
+
+<!-- Modal Détails 3e Recoupement -->
+<dialog id="modal-details-3e" class="modal">
+    <div class="modal-box w-11/12 max-w-7xl">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+        </form>
+
+        <h3 class="font-bold text-lg mb-4">
+            Détails du recoupement - <span id="modal-titre-ouvrage" class="text-primary"></span>
+            <span class="text-base-content/60">(<span id="modal-titre-periode"></span>)</span>
+        </h3>
+
+        <!-- Spinner de chargement -->
+        <div id="loading-details-3e" class="flex justify-center items-center py-12">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+            <span class="ml-3">Chargement des détails...</span>
+        </div>
+
+        <!-- Contenu du modal -->
+        <div id="content-details-3e" class="hidden">
+            <!-- Grille 2 colonnes -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Colonne GAUCHE : Transactions DiameX -->
+                <div class="border border-base-300 rounded-lg p-4">
+                    <h4 class="font-semibold text-md mb-3 flex items-center">
+                        <i class="fas fa-file-invoice-dollar text-info mr-2"></i>
+                        Transactions DiameX (707401)
+                    </h4>
+
+                    <div class="overflow-x-auto max-h-96">
+                        <table class="table table-xs table-zebra">
+                            <thead class="sticky top-0 bg-base-200 z-10">
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Description</th>
+                                    <th class="text-right">Montant</th>
+                                    <th class="text-center">Prog</th>
+                                    <th class="text-center">Scan</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tbody-transactions-diamex">
+                                <!-- Rempli dynamiquement par JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Colonne DROITE : Relevés -->
+                <div class="border border-base-300 rounded-lg p-4">
+                    <h4 class="font-semibold text-md mb-3 flex items-center">
+                        <i class="fas fa-tachometer-alt text-success mr-2"></i>
+                        Relevés de compteurs
+                    </h4>
+
+                    <div class="overflow-x-auto max-h-96">
+                        <table class="table table-xs table-zebra">
+                            <thead class="sticky top-0 bg-base-200 z-10">
+                                <tr>
+                                    <th>IDXLS</th>
+                                    <th>Nom Abonné</th>
+                                    <th>Date</th>
+                                    <th class="text-right">Index</th>
+                                    <th class="text-right">Conso.</th>
+                                    <th class="text-right">Montant</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tbody-releves">
+                                <!-- Rempli dynamiquement par JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Statistiques -->
+            <div class="divider"></div>
+
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                <div class="stat bg-info/10 rounded-lg">
+                    <div class="stat-title text-xs">Nb Trans. DiameX</div>
+                    <div class="stat-value text-info text-2xl" id="stat-nb-transactions">0</div>
+                </div>
+
+                <div class="stat bg-info/10 rounded-lg">
+                    <div class="stat-title text-xs">Total DiameX</div>
+                    <div class="stat-value text-info text-lg" id="stat-total-diamex">0 Ar</div>
+                </div>
+
+                <div class="stat bg-success/10 rounded-lg">
+                    <div class="stat-title text-xs">Nb Relevés</div>
+                    <div class="stat-value text-success text-2xl" id="stat-nb-releves">0</div>
+                </div>
+
+                <div class="stat bg-success/10 rounded-lg">
+                    <div class="stat-title text-xs">Total Relevés</div>
+                    <div class="stat-value text-success text-lg" id="stat-total-releves">0 Ar</div>
+                </div>
+
+                <div class="stat bg-base-200 rounded-lg">
+                    <div class="stat-title text-xs">Écart</div>
+                    <div class="stat-value text-2xl" id="stat-ecart">0 Ar</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <form method="dialog" class="modal-backdrop">
+        <button>Fermer</button>
+    </form>
+</dialog>
+
+<!-- Modal Recoupement Intelligent -->
+{% include 'accounting/recoupement_releves_modal_intelligent.html' %}
+
+{% endblock %}

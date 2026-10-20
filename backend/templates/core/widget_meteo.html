@@ -1,0 +1,2204 @@
+{% load static %}
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Météo Hydria</title>
+<meta name="theme-color" content="#2c5aa0">
+<link rel="manifest" href="{% url 'core:widget_manifest' %}">
+<link rel="apple-touch-icon" href="{% static 'images/icons/icon-192x192.png' %}">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%;
+    min-height: 100%;
+  }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    background: linear-gradient(160deg, #3a7bd5, #2c5aa0);
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 24px 16px;
+    overflow-y: auto;
+  }
+
+  /* ---------- Liquid Glass ---------- */
+  #widget {
+    width: 100%;
+    max-width: none;
+    border-radius: 24px;
+    padding: 20px 22px 18px;
+    color: #fff;
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+
+    background: linear-gradient(
+      165deg,
+      rgba(255,255,255,0.22),
+      rgba(255,255,255,0.06) 40%,
+      rgba(255,255,255,0.10) 100%
+    );
+    -webkit-backdrop-filter: blur(28px) saturate(160%);
+    backdrop-filter: blur(28px) saturate(160%);
+
+    border: 1px solid rgba(255,255,255,0.35);
+    box-shadow:
+      0 12px 34px rgba(0,0,0,0.35),
+      inset 0 1px 0 rgba(255,255,255,0.5),
+      inset 0 0 0 1px rgba(255,255,255,0.06);
+  }
+
+  #widget::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background: linear-gradient(
+      120deg,
+      rgba(255,255,255,0.35) 0%,
+      rgba(255,255,255,0.08) 22%,
+      rgba(255,255,255,0) 45%
+    );
+    mix-blend-mode: screen;
+  }
+
+  #widget::after {
+    content: '';
+    position: absolute;
+    left: -20%; right: -20%; bottom: -40%;
+    height: 60%;
+    z-index: -1;
+    filter: blur(30px);
+    opacity: 0.55;
+    background: radial-gradient(ellipse at center, var(--accent, #4facfe) 0%, transparent 70%);
+    transition: background 0.6s ease;
+  }
+
+  #widget.clear   { --accent: #4facfe; }
+  #widget.cloudy  { --accent: #9aa5b1; }
+  #widget.rain    { --accent: #4d7ea8; }
+  #widget.storm   { --accent: #6b5b95; }
+  #widget.snow    { --accent: #cfe8ff; }
+  #widget.night   { --accent: #3f5efb; }
+
+  #controls {
+    position: absolute;
+    top: 14px; right: 14px;
+    z-index: 3;
+    display: flex;
+    gap: 6px;
+  }
+  #controls button, #controls a {
+    background: rgba(255,255,255,0.16);
+    border: 1px solid rgba(255,255,255,0.25);
+    color: inherit;
+    text-decoration: none;
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 26px;
+    text-align: center;
+    display: block;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  #controls button:hover, #controls a:hover { background: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.4); }
+
+  .content { position: relative; z-index: 2; }
+
+  .city-block { padding-right: 70px; margin-bottom: 12px; }
+  .city-name {
+    font-size: 21px;
+    font-weight: 700;
+    line-height: 1.15;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.35);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .city-region {
+    font-size: 12px;
+    opacity: 0.8;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .updated { font-size: 10.5px; opacity: 0.6; margin-bottom: 2px; }
+
+  .source-badge {
+    font-size: 10px;
+    opacity: 0.75;
+    margin-bottom: 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+  }
+  .source-badge.gps { color: #b9ffcb; }
+  .source-badge.ip { color: #ffe0a3; }
+  .source-badge u { text-decoration: underline dotted; }
+
+  .main-row { display: flex; align-items: center; gap: 14px; }
+  .icon { font-size: 58px; line-height: 1; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.25)); }
+  .temp { font-size: 48px; font-weight: 300; line-height: 1; text-shadow: 0 1px 6px rgba(0,0,0,0.25); }
+  .temp sup { font-size: 21px; font-weight: 300; opacity: 0.9; }
+  .desc { font-size: 14px; opacity: 0.92; margin-top: 2px; text-transform: capitalize; }
+  .feels { font-size: 12px; opacity: 0.7; margin-top: 1px; }
+
+  .details {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(255,255,255,0.2);
+    font-size: 12px;
+  }
+  .details .item { text-align: center; opacity: 0.9; }
+  .details .item .label { font-size: 9.5px; opacity: 0.65; text-transform: uppercase; letter-spacing: 0.5px; }
+  .details .item .value { font-weight: 600; margin-top: 2px; }
+
+  #status { font-size: 13px; opacity: 0.9; padding: 50px 0; text-align: center; }
+
+  #errorBox {
+    display: none;
+    font-size: 11px;
+    background: rgba(0,0,0,0.25);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-top: 10px;
+    line-height: 1.4;
+  }
+  #errorBox button {
+    margin-top: 6px;
+    background: rgba(255,255,255,0.25);
+    border: none;
+    color: inherit;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 11px;
+  }
+
+  #installBanner {
+    display: none;
+    max-width: none;
+    width: 100%;
+    margin-top: 12px;
+    padding: 10px 14px;
+    border-radius: 14px;
+    background: rgba(255,255,255,0.14);
+    border: 1px solid rgba(255,255,255,0.25);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    color: #fff;
+    font-size: 12.5px;
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  #installBanner button {
+    background: rgba(255,255,255,0.28);
+    border: none;
+    color: #fff;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .android-download {
+    width: 100%;
+    max-width: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 13px 16px;
+    border-radius: 14px;
+    color: #fff;
+    text-decoration: none;
+    background: rgba(255,255,255,0.16);
+    border: 1px solid rgba(255,255,255,0.3);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.16);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    transition: background 0.15s ease, transform 0.15s ease;
+  }
+  .android-download:hover {
+    background: rgba(255,255,255,0.27);
+    transform: translateY(-1px);
+  }
+  .android-download strong { display: block; font-size: 13px; }
+  .android-download small { display: block; margin-top: 2px; font-size: 10.5px; opacity: 0.75; }
+  .android-download-icon { font-size: 24px; line-height: 1; }
+
+  .wrap {
+    width: min(100%, 1440px);
+    margin-inline: auto;
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    align-items: start;
+    gap: 14px;
+  }
+
+  #widget { grid-column: span 4; }
+
+  /* ---------- Carte stats Hydria (même verre, sans halo météo) ---------- */
+  #hydriaCard {
+    width: 100%;
+    max-width: none;
+    grid-column: span 8;
+    border-radius: 24px;
+    padding: 16px 18px 14px;
+    color: #fff;
+    position: relative;
+    overflow: hidden;
+
+    background: linear-gradient(
+      165deg,
+      rgba(255,255,255,0.18),
+      rgba(255,255,255,0.05) 40%,
+      rgba(255,255,255,0.08) 100%
+    );
+    -webkit-backdrop-filter: blur(24px) saturate(150%);
+    backdrop-filter: blur(24px) saturate(150%);
+    border: 1px solid rgba(255,255,255,0.3);
+    box-shadow:
+      0 10px 28px rgba(0,0,0,0.3),
+      inset 0 1px 0 rgba(255,255,255,0.4);
+  }
+
+  #hydriaCard .hydria-title {
+    font-size: 13px;
+    font-weight: 700;
+    opacity: 0.9;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  #hydriaRefreshBtn {
+    margin-left: auto;
+    border: 1px solid rgba(255,255,255,0.28);
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+    border-radius: 9px;
+    min-height: 32px;
+    padding: 5px 10px;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  #hydriaRefreshBtn:hover { background: rgba(255,255,255,0.22); }
+  #hydriaRefreshBtn:disabled { cursor: wait; opacity: 0.6; }
+
+  .widget-gallery {
+    width: 100%;
+    max-width: none;
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .widget-gallery-heading { grid-column: 1 / -1; padding: 4px 3px 0; color: #fff; }
+  .widget-gallery-heading strong { display: block; font-size: 14px; }
+  .widget-gallery-heading span { display: block; margin-top: 3px; font-size: 10.5px; opacity: 0.68; line-height: 1.4; }
+  .operational-widget {
+    border-radius: 21px;
+    padding: 15px;
+    color: #fff;
+    background: linear-gradient(155deg, rgba(14,42,55,.92), rgba(8,24,34,.88));
+    border: 1px solid rgba(255,255,255,.22);
+    box-shadow: 0 10px 28px rgba(0,0,0,.25), inset 0 1px rgba(255,255,255,.25);
+    backdrop-filter: blur(22px) saturate(140%);
+    min-width: 0;
+  }
+  .operational-widget-header { display: flex; align-items: start; justify-content: space-between; gap: 12px; margin-bottom: 11px; }
+  .operational-widget-kicker { font-size: 9px; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; color: #72c7b3; }
+  .operational-widget h2 { margin: 4px 0 0; font-size: 17px; letter-spacing: -.025em; line-height: 1.1; }
+  .operational-total { font-size: 25px; font-weight: 750; line-height: 1; font-variant-numeric: tabular-nums; color: #72c7b3; }
+  .operational-widget .stat-grid { gap: 7px; }
+  .operational-widget .stat-tile { min-height: 68px; padding: 9px 10px; border-radius: 11px; }
+  .operational-widget .stat-tile .stat-value { font-size: 19px; }
+  .operational-actions { display: flex; justify-content: space-between; align-items: center; gap: 9px; margin-top: 11px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.12); }
+  .operational-actions span { font-size: 9.5px; opacity: .64; }
+  .operational-install { color: #aee7da; font-size: 10px; font-weight: 750; text-decoration: none; }
+  .operational-install:hover { text-decoration: underline; }
+  .operational-downloads { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+  .consumption-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+  .consumption-stat { padding: 9px 10px; border-radius: 11px; background: rgba(255,255,255,.075); border: 1px solid rgba(255,255,255,.14); }
+  .consumption-stat strong { display: block; font-size: 17px; font-variant-numeric: tabular-nums; }
+  .consumption-stat span { display: block; margin-top: 3px; font-size: 9px; opacity: .65; }
+  .mini-chart { margin-top: 8px; padding: 8px 8px 5px; border-radius: 10px; background: rgba(0,0,0,.12); }
+  .mini-chart-title { margin-bottom: 5px; font-size: 8.5px; opacity: .7; }
+  .mini-bars { height: 48px; display: flex; align-items: end; gap: 3px; }
+  .mini-bars i { position: relative; flex: 1; min-height: 2px; border-radius: 2px 2px 0 0; background: #72c7b3; opacity: .82; }
+  .mini-bars i em { position: absolute; left: 50%; top: -10px; transform: translateX(-50%); color: #fff; font-size: 6px; font-style: normal; white-space: nowrap; }
+  .mini-line { width: 100%; height: 50px; display: block; overflow: visible; }
+  .intervention-monitor { border-color: rgba(114,199,179,.48); }
+  .intervention-skeleton { display: grid; gap: 8px; }
+  .intervention-skeleton i { display: block; height: 12px; border-radius: 8px; background: rgba(255,255,255,.1); }
+  .intervention-skeleton i:nth-child(2) { width: 72%; }
+  .intervention-skeleton i:nth-child(3) { width: 48%; }
+  .intervention-empty { padding: 20px 12px; text-align: center; border-radius: 12px; background: rgba(255,255,255,.07); color: rgba(255,255,255,.74); font-size: 11px; line-height: 1.5; }
+  .intervention-meta { display: grid; gap: 4px; margin-bottom: 10px; }
+  .intervention-activity { font-size: 16px; font-weight: 760; line-height: 1.2; }
+  .intervention-ouvrage { color: #aee7da; font-size: 12px; font-weight: 700; }
+  .intervention-byline, .intervention-date { font-size: 10px; color: rgba(255,255,255,.68); line-height: 1.4; }
+  .intervention-note { margin: 9px 0; padding: 9px 10px; border-radius: 11px; background: rgba(0,0,0,.16); font-size: 10.5px; line-height: 1.45; white-space: pre-wrap; }
+  .intervention-photo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
+  .intervention-photo { position: relative; aspect-ratio: 1; overflow: hidden; padding: 0; border: 1px solid rgba(255,255,255,.2); border-radius: 11px; background: rgba(0,0,0,.2); cursor: zoom-in; }
+  .intervention-photo img, .intervention-photo video { width: 100%; height: 100%; display: block; object-fit: cover; }
+  .intervention-photo:focus-visible, .intervention-seen:focus-visible { outline: 2px solid #aee7da; outline-offset: 2px; }
+  .intervention-seen { width: 100%; margin-top: 12px; padding: 10px 12px; border: 0; border-radius: 11px; background: #72c7b3; color: #08212b; font: inherit; font-size: 11px; font-weight: 800; cursor: pointer; transition: transform .1s ease, background .15s ease; }
+  .intervention-seen:hover { background: #8ed7c6; }
+  .intervention-seen:active { transform: scale(.98); }
+  .intervention-seen:disabled { cursor: wait; opacity: .6; }
+  .intervention-error { padding: 12px; border-radius: 11px; background: rgba(190,58,58,.2); color: #ffd1d1; font-size: 10.5px; }
+  .intervention-photo-view { width: 100%; max-height: 70vh; display: block; object-fit: contain; border-radius: 12px; background: #071219; }
+
+  .stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .stat-section { margin-top: 12px; }
+  .hydria-sections {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .hydria-sections .stat-section { min-width: 0; margin-top: 0; }
+  .hydria-sections.hydria-ops { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat-section-title {
+    margin: 0 2px 6px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    opacity: 0.72;
+  }
+  .stat-tile {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 14px;
+    padding: 10px 12px;
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    color: inherit;
+    transition: background 0.15s ease, transform 0.1s ease;
+  }
+  .stat-tile:hover { background: rgba(255,255,255,0.15); }
+  .stat-tile:active { transform: scale(0.98); }
+  .stat-tile .stat-value {
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1.1;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.25);
+  }
+  .stat-tile .stat-label {
+    font-size: 10px;
+    opacity: 0.75;
+    margin-top: 3px;
+    line-height: 1.25;
+  }
+  .stat-tile .stat-amount {
+    margin-top: 4px;
+    font-size: 11px;
+    font-weight: 750;
+    color: #b9f3df;
+    line-height: 1.2;
+  }
+  .stat-tile .stat-scope {
+    margin-top: 4px;
+    font-size: 11px;
+    line-height: 1.3;
+    opacity: .85;
+  }
+  .stat-tile .stat-scope strong { font-size: 12px; font-weight: 800; opacity: 1; }
+  .stat-tile.wide { grid-column: span 2; display: flex; align-items: center; justify-content: space-between; }
+  .stat-tile.wide .stat-value { font-size: 20px; }
+  .stat-tile.alert .stat-value { color: #ffd27a; }
+
+  #hydriaStatus { font-size: 12px; opacity: 0.85; padding: 10px 0; text-align: center; }
+  #hydriaImportStatus { font-size: 11px; color: #b9f3df; padding: 2px 0 8px; text-align: center; }
+  #hydriaStatus a { color: #fff; text-decoration: underline; }
+
+  /* ---------- Filtres pliables ---------- */
+  #filtresToggle {
+    width: 100%;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 12px;
+    padding: 8px 12px;
+    color: inherit;
+    font-family: inherit;
+    font-size: 11.5px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  #filtresPanel {
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 10px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 12px;
+  }
+  #filtresPanel.open { display: flex; }
+  #filtresPanel select {
+    width: 100%;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 8px;
+    padding: 6px 8px;
+    color: #fff;
+    font-size: 12px;
+  }
+  #filtresPanel select option { color: #1b1b1b; }
+  #filtresPanel label { font-size: 10px; opacity: 0.7; margin-bottom: 2px; display: block; }
+
+  /* ---------- Widgets Calendrier planning / Activites du jour ---------- */
+  #planningFiltresPanel {
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 10px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 12px;
+  }
+  #planningFiltresPanel.open { display: flex; }
+  #planningFiltresPanel select {
+    width: 100%;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 8px;
+    padding: 6px 8px;
+    color: #fff;
+    font-size: 12px;
+  }
+  #planningFiltresPanel select[multiple] { min-height: 64px; }
+  #planningFiltresPanel select option { color: #1b1b1b; }
+  #planningFiltresPanel label { font-size: 10px; opacity: 0.7; margin-bottom: 2px; display: block; }
+
+  .planning-calendar-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; gap: 6px; }
+  .planning-calendar-nav button {
+    background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25); color: #fff;
+    border-radius: 8px; padding: 4px 9px; font-size: 12px; cursor: pointer;
+  }
+  .planning-calendar-nav button:hover { background: rgba(255,255,255,.22); }
+  .planning-calendar-title { font-size: 12.5px; font-weight: 700; text-transform: capitalize; }
+  .planning-calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+  .planning-calendar-weekday { font-size: 8.5px; text-align: center; opacity: .6; padding-bottom: 2px; }
+  .planning-calendar-day {
+    aspect-ratio: 1; border-radius: 8px; background: rgba(255,255,255,.06); border: 1px solid transparent;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    font-size: 10.5px; cursor: pointer; padding: 2px;
+  }
+  .planning-calendar-day:hover { background: rgba(255,255,255,.14); }
+  .planning-calendar-day.outside { opacity: .28; cursor: default; }
+  .planning-calendar-day.today { border-color: #72c7b3; }
+  .planning-calendar-day .planning-day-count {
+    min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: #72c7b3; color: #063027;
+    font-size: 8.5px; font-weight: 800; display: flex; align-items: center; justify-content: center;
+  }
+  .planning-agenda-list { display: grid; gap: 8px; max-height: 260px; overflow-y: auto; }
+  .planning-agenda-item {
+    padding: 9px 10px; border-radius: 11px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+    display: grid; gap: 3px;
+  }
+  .planning-agenda-heure { font-size: 10px; color: #72c7b3; font-weight: 700; }
+  .planning-agenda-activite { font-size: 13px; font-weight: 700; }
+  .planning-agenda-meta { font-size: 10px; color: rgba(255,255,255,.68); line-height: 1.4; }
+  .planning-day-detail-list { display: grid; gap: 8px; }
+  .planning-agenda-item { cursor: pointer; border-left: 3px solid rgba(255,255,255,.25); transition: background .15s ease; }
+  .planning-agenda-item:hover { background: rgba(255,255,255,.12); }
+  .planning-agenda-item.termine { border-left-color: #72c7b3; }
+  .planning-agenda-item.en-cours { border-left-color: #e0a33e; }
+  .planning-day-count.all-done { background: #72c7b3; }
+  .planning-day-count.has-pending { background: #e0a33e; color: #241800; }
+  .planning-status-badge {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 700;
+    padding: 4px 9px; border-radius: 999px; margin-top: 2px;
+  }
+  .planning-status-badge.termine { background: rgba(114,199,179,.22); color: #9fe8d6; }
+  .planning-status-badge.en-cours { background: rgba(224,163,62,.22); color: #ffd58f; }
+  .planning-editor-field { display: grid; gap: 4px; margin-bottom: 12px; }
+  .planning-editor-field label { font-size: 10px; opacity: .7; }
+  .planning-editor-field select, .planning-editor-field input {
+    width: 100%; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.25);
+    border-radius: 8px; padding: 7px 9px; color: #fff; font-size: 13px;
+  }
+  .planning-editor-field select option { color: #1b1b1b; }
+  .planning-editor-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+  .planning-editor-actions button {
+    flex: 1; min-width: 120px; padding: 9px 12px; border-radius: 10px; font-size: 12.5px; font-weight: 700;
+    cursor: pointer; border: 1px solid rgba(255,255,255,.25);
+  }
+  .planning-editor-save { background: #72c7b3; color: #063027; }
+  .planning-editor-toggle { background: rgba(255,255,255,.1); color: #fff; }
+  .planning-editor-error { color: #ffd1d1; font-size: 11px; margin-top: 8px; }
+
+  /* ---------- Modal détail (mini-tableau au clic sur une stat) ---------- */
+  #detailOverlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 50;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  #detailOverlay.open { display: flex; }
+  #detailModal {
+    width: 100%;
+    max-width: 360px;
+    max-height: 80vh;
+    overflow-y: auto;
+    border-radius: 20px;
+    padding: 16px 18px;
+    background: linear-gradient(165deg, rgba(40,60,90,0.92), rgba(20,35,55,0.96));
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255,255,255,0.25);
+    color: #fff;
+  }
+  #detailModal .detail-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  #detailModal .detail-title { flex: 1; min-width: 0; font-size: 14px; font-weight: 700; }
+  #detailModal .detail-back-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 10px;
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 10px;
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    transition: background 0.2s ease, transform 0.2s ease;
+  }
+  #detailModal .detail-back-button:hover { background: rgba(255,255,255,0.22); }
+  #detailModal .detail-back-button:active { transform: scale(0.98); }
+  #detailModal .detail-back-button:focus-visible,
+  #detailModal .detail-close:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  #detailModal .detail-close {
+    background: rgba(255,255,255,0.15);
+    border: none;
+    color: #fff;
+    width: 44px; height: 44px;
+    flex: 0 0 44px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  #detailModal .detail-row {
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    font-size: 12.5px;
+  }
+  #detailModal .detail-row:last-child { border-bottom: none; }
+  #detailModal .detail-row .row-label { font-weight: 600; }
+  #detailModal .detail-group-header { position: sticky; top: 0; padding: 6px 0 4px; margin-top: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; opacity: .85; border-bottom: 1px solid rgba(255,255,255,0.25); background: inherit; }
+  #detailModal .detail-group-header span { opacity: .7; font-weight: 400; }
+  #detailModal .detail-row .row-sub { font-size: 11px; opacity: 0.7; margin-top: 2px; }
+  #detailModal .detail-row.row-clickable {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 -6px;
+    padding-left: 6px;
+    padding-right: 6px;
+    border-radius: 8px;
+    transition: background 120ms ease;
+  }
+  #detailModal .detail-row.row-clickable:hover,
+  #detailModal .detail-row.row-clickable:active { background: rgba(255,255,255,0.08); }
+  #detailModal .detail-row .row-link-icon { opacity: 0.55; font-size: 11px; flex-shrink: 0; }
+  #detailModal .detail-empty { text-align: center; opacity: 0.7; font-size: 12px; padding: 20px 0; }
+  #detailModal .detail-footer { font-size: 10.5px; opacity: 0.6; text-align: center; margin-top: 10px; }
+  #detailModal .detail-total { font-size: 11px; opacity: 0.65; margin-bottom: 10px; }
+  .geo-district { margin-bottom: 6px; }
+  .geo-district-toggle {
+    width: 100%;
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 10px;
+    padding: 8px 10px;
+    color: inherit;
+    font-family: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .geo-district-toggle:hover { background: rgba(255,255,255,0.12); }
+  .geo-count { font-size: 11px; opacity: 0.75; display: inline-flex; align-items: center; gap: 4px; }
+  .geo-caret { transition: transform 0.15s ease; display: inline-block; }
+  .geo-district-toggle.open .geo-caret { transform: rotate(180deg); }
+  .geo-communes { display: none; flex-direction: column; padding: 4px 0 4px 12px; }
+  .geo-communes.open { display: flex; }
+  .geo-commune-row {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    padding: 7px 6px;
+    color: inherit;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    text-align: left;
+  }
+  .geo-commune-row:hover { background: rgba(255,255,255,0.08); }
+  .geo-commune-row:last-child { border-bottom: none; }
+
+  #installBanner,
+  .android-download { grid-column: 1 / -1; }
+
+  @media (max-width: 1120px) {
+    #widget,
+    #hydriaCard { grid-column: span 6; }
+    .hydria-sections { grid-template-columns: 1fr; }
+    .widget-gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  @media (max-width: 720px) {
+    body { padding: 14px 12px calc(20px + env(safe-area-inset-bottom)); }
+    .wrap { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+    #widget,
+    #hydriaCard,
+    .widget-gallery,
+    #installBanner,
+    .android-download { grid-column: 1; }
+    .widget-gallery { grid-template-columns: minmax(0, 1fr); }
+    .widget-gallery-heading { grid-column: 1; }
+  }
+
+  @media (max-width: 360px) {
+    #widget { padding-inline: 16px; }
+    #hydriaCard { padding-inline: 14px; }
+    .operational-widget { padding: 13px; }
+    .operational-actions { align-items: flex-start; flex-direction: column; }
+    .operational-downloads { justify-content: flex-start; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div id="widget">
+    <div id="controls">
+      <button type="button" id="refreshBtn" title="Actualiser">⟳</button>
+      <a href="{% url 'home_launcher' %}" title="Retour à Hydria">🏠</a>
+    </div>
+
+    <div class="content" id="content">
+      <div id="status">Localisation en cours…</div>
+    </div>
+  </div>
+
+  <div id="hydriaCard">
+    <div class="hydria-title">
+      <span>💧 Hydria, mon périmètre</span>
+      <button type="button" id="hydriaRefreshBtn" title="Actualiser les statistiques Hydria">↻ Actualiser</button>
+    </div>
+
+    <button type="button" id="filtresToggle">
+      <span>🔎 Filtres</span>
+      <span id="filtresToggleIcon">▾</span>
+    </button>
+    <div id="filtresPanel">
+    <div>
+      <label for="filtreOrganisation">Organisation</label>
+      <select id="filtreOrganisation"></select>
+    </div>
+    <div>
+      <label for="filtreEmploye">Employé responsable</label>
+      <select id="filtreEmploye"><option value="all">Tous les agents de recouvrement</option></select>
+    </div>
+    <div>
+        <label for="filtreRegion">Région</label>
+        <select id="filtreRegion"><option value="all">Toutes</option></select>
+      </div>
+      <div>
+        <label for="filtreDistrict">District</label>
+        <select id="filtreDistrict"><option value="all">Tous</option></select>
+      </div>
+      <div>
+        <label for="filtreCommune">Commune</label>
+        <select id="filtreCommune"><option value="all">Toutes</option></select>
+      </div>
+    </div>
+
+    <div id="hydriaContent">
+      <div id="hydriaStatus">Chargement…</div>
+    </div>
+  </div>
+
+  <button type="button" id="planningFiltresToggle" style="background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:12px;padding:9px 12px;font-size:12px;display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:8px;cursor:pointer;">
+    <span>🔎 Filtres planning (calendrier &amp; activités du jour)</span>
+    <span id="planningFiltresToggleIcon">▾</span>
+  </button>
+  <div id="planningFiltresPanel">
+    <div>
+      <label for="filtrePlanningEmploye">Personne</label>
+      <select id="filtrePlanningEmploye"><option value="all">Moi-même et mes subordonnés</option></select>
+    </div>
+    <div>
+      <label for="filtrePlanningBase">Base</label>
+      <select id="filtrePlanningBase"><option value="all">Toutes</option></select>
+    </div>
+    <div>
+      <label for="filtrePlanningRegion">Région</label>
+      <select id="filtrePlanningRegion"><option value="all">Toutes</option></select>
+    </div>
+    <div>
+      <label for="filtrePlanningDistrict">District</label>
+      <select id="filtrePlanningDistrict"><option value="all">Tous</option></select>
+    </div>
+    <div>
+      <label for="filtrePlanningCommune">Commune</label>
+      <select id="filtrePlanningCommune"><option value="all">Toutes</option></select>
+    </div>
+    <div>
+      <label for="filtrePlanningType">Type d'activité (plusieurs choix possibles)</label>
+      <select id="filtrePlanningType" multiple></select>
+    </div>
+  </div>
+
+  <section class="widget-gallery" aria-labelledby="widgetGalleryTitle">
+    <div class="widget-gallery-heading">
+      <strong id="widgetGalleryTitle">Sept widgets opérationnels séparés</strong>
+      <span>Aperçus interactifs. Touchez une statistique pour afficher les ouvrages concernés.</span>
+    </div>
+    <article class="operational-widget" aria-labelledby="metersWidgetTitle">
+      <header class="operational-widget-header">
+        <div><div class="operational-widget-kicker">Widget 01</div><h2 id="metersWidgetTitle">Compteurs de tête</h2></div>
+        <div class="operational-total" id="metersWidgetTotal">-</div>
+      </header>
+      <div id="metersWidgetContent"><div id="hydriaStatus">Chargement…</div></div>
+      <footer class="operational-actions"><span>Écarts du réseau</span><a class="operational-install" href="{% static 'downloads/android/hydria-compteurs-widget.apk' %}" download>Installer sur Android</a></footer>
+    </article>
+    <article class="operational-widget" aria-labelledby="flowsWidgetTitle">
+      <header class="operational-widget-header">
+        <div><div class="operational-widget-kicker">Widget 02</div><h2 id="flowsWidgetTitle">Débits de source</h2></div>
+        <div class="operational-total" id="flowsWidgetTotal">-</div>
+      </header>
+      <div id="flowsWidgetContent"><div id="hydriaStatus">Chargement…</div></div>
+      <footer class="operational-actions"><span>Évolution des ouvrages</span><a class="operational-install" href="{% static 'downloads/android/hydria-debits-widget.apk' %}" download>Installer sur Android</a></footer>
+    </article>
+    <article class="operational-widget" aria-labelledby="consumptionWidgetTitle">
+      <header class="operational-widget-header">
+        <div><div class="operational-widget-kicker">Widget 03</div><h2 id="consumptionWidgetTitle">Analyse consommation</h2></div>
+        <div class="operational-total" id="consumptionWidgetYear">-</div>
+      </header>
+      <div id="consumptionWidgetContent"><div id="hydriaStatus">Chargement…</div></div>
+      <footer class="operational-actions"><span>Filtres repliables · 2 graphiques</span><a class="operational-install" href="{% static 'downloads/android/hydria-consommation-widget.apk' %}" download>Installer sur Android</a></footer>
+    </article>
+    <article class="operational-widget intervention-monitor" aria-labelledby="interventionWidgetTitle">
+      <header class="operational-widget-header">
+        <div><div class="operational-widget-kicker">Widget 05</div><h2 id="interventionWidgetTitle">Dernières réparations</h2></div>
+        <div class="operational-total" id="interventionWidgetTotal" aria-label="Publications saisies cette semaine">0</div>
+      </header>
+      <div id="interventionWidgetContent" aria-live="polite">
+        <div class="intervention-skeleton" aria-label="Chargement"><i></i><i></i><i></i></div>
+      </div>
+      <footer class="operational-actions">
+        <span>Le nombre indique les publications saisies depuis lundi</span>
+        <span class="operational-downloads">
+          <a class="operational-install" href="{% static 'downloads/android/hydria-interventions-widget-v1.2.apk' %}" download>Android 1.2</a>
+          <a class="operational-install" href="{% static 'downloads/android/hydria-interventions-widget-windows-weekly.zip' %}" download>Windows</a>
+          <a class="operational-install" href="{% url 'core:interventions_recentes' %}">Fil complet</a>
+        </span>
+      </footer>
+    </article>
+    <article class="operational-widget" aria-labelledby="planningCalendarWidgetTitle">
+      <header class="operational-widget-header">
+        <div><div class="operational-widget-kicker">Widget 06</div><h2 id="planningCalendarWidgetTitle">Calendrier planning</h2></div>
+        <div class="operational-total" id="planningCalendarWidgetTotal" aria-label="Activités ce mois-ci">-</div>
+      </header>
+      <div id="planningCalendarWidgetContent"><div id="hydriaStatus">Chargement…</div></div>
+      <footer class="operational-actions">
+        <span>Recouvrement forfaitaire, réparations et autres activités planifiées</span>
+        <span class="operational-downloads">
+          <a class="operational-install" href="{% static 'downloads/android/hydria-planning-calendrier-widget.apk' %}" download>Android</a>
+          <a class="operational-install" href="{% static 'downloads/android/hydria-planning-calendrier-widget-windows.zip' %}" download>Windows</a>
+        </span>
+      </footer>
+    </article>
+    <article class="operational-widget" aria-labelledby="planningTodayWidgetTitle">
+      <header class="operational-widget-header">
+        <div><div class="operational-widget-kicker">Widget 07</div><h2 id="planningTodayWidgetTitle">Activités du jour</h2></div>
+        <div class="operational-total" id="planningTodayWidgetTotal" aria-label="Activités aujourd'hui">0</div>
+      </header>
+      <div id="planningTodayWidgetContent"><div id="hydriaStatus">Chargement…</div></div>
+      <footer class="operational-actions">
+        <span>Mêmes filtres que le calendrier planning, limité à aujourd'hui</span>
+        <span class="operational-downloads">
+          <a class="operational-install" href="{% static 'downloads/android/hydria-planning-du-jour-widget.apk' %}" download>Android</a>
+          <a class="operational-install" href="{% static 'downloads/android/hydria-planning-du-jour-widget-windows.zip' %}" download>Windows</a>
+        </span>
+      </footer>
+    </article>
+  </section>
+
+  <div id="installBanner">
+    <span>📲 Installer ce widget sur cet appareil</span>
+    <button type="button" id="installBtn">Installer</button>
+  </div>
+
+  <a class="android-download" href="{% static 'downloads/android/index.html' %}">
+    <span>
+      <strong>Installer Hydria sur Android ou Linux</strong>
+      <small>APK Android et procédure Linux avec Waydroid</small>
+    </span>
+    <span class="android-download-icon" aria-hidden="true">🤖🐧</span>
+  </a>
+</div>
+
+<div id="detailOverlay" aria-hidden="true">
+  <div id="detailModal" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
+    <div class="detail-header">
+      <button type="button" class="detail-back-button" id="detailBack" aria-label="Retour aux widgets">← <span>Retour</span></button>
+      <div class="detail-title" id="detailTitle">Détail</div>
+      <button type="button" class="detail-close" id="detailClose" aria-label="Fermer les détails">✕</button>
+    </div>
+    <div id="detailBody"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const widget = document.getElementById('widget');
+  const content = document.getElementById('content');
+
+  document.getElementById('refreshBtn').addEventListener('click', () => { init(); loadAllStats(); });
+
+  // ---------- Installation PWA ----------
+  let deferredPrompt = null;
+  const installBanner = document.getElementById('installBanner');
+  const installBtn = document.getElementById('installBtn');
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    installBanner.style.display = 'flex';
+  });
+
+  installBtn.addEventListener('click', async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    await deferredPrompt.userChoice;
+    deferredPrompt = null;
+    installBanner.style.display = 'none';
+  });
+
+  window.addEventListener('appinstalled', () => {
+    installBanner.style.display = 'none';
+  });
+
+  // ---------- Service Worker (offline basique) ----------
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('{% url "core:widget_service_worker" %}', { scope: '/widget/' })
+      .catch((e) => console.warn('[Widget Météo] Service worker non enregistré:', e));
+  }
+
+  // ---------- Weather code mapping (Open-Meteo WMO codes) ----------
+  function mapWeather(code, isDay) {
+    const table = {
+      0:  { desc: 'Ciel dégagé',        icon: isDay ? '☀️' : '🌙', cls: isDay ? 'clear' : 'night' },
+      1:  { desc: 'Plutôt dégagé',      icon: isDay ? '🌤️' : '🌙', cls: isDay ? 'clear' : 'night' },
+      2:  { desc: 'Partiellement nuageux', icon: '⛅', cls: 'cloudy' },
+      3:  { desc: 'Couvert',            icon: '☁️', cls: 'cloudy' },
+      45: { desc: 'Brouillard',         icon: '🌫️', cls: 'cloudy' },
+      48: { desc: 'Brouillard givrant',  icon: '🌫️', cls: 'cloudy' },
+      51: { desc: 'Bruine légère',      icon: '🌦️', cls: 'rain' },
+      53: { desc: 'Bruine',             icon: '🌦️', cls: 'rain' },
+      55: { desc: 'Bruine dense',       icon: '🌧️', cls: 'rain' },
+      61: { desc: 'Pluie légère',       icon: '🌧️', cls: 'rain' },
+      63: { desc: 'Pluie',              icon: '🌧️', cls: 'rain' },
+      65: { desc: 'Forte pluie',        icon: '🌧️', cls: 'rain' },
+      66: { desc: 'Pluie verglaçante',  icon: '🌨️', cls: 'rain' },
+      67: { desc: 'Pluie verglaçante forte', icon: '🌨️', cls: 'rain' },
+      71: { desc: 'Neige légère',       icon: '🌨️', cls: 'snow' },
+      73: { desc: 'Neige',              icon: '🌨️', cls: 'snow' },
+      75: { desc: 'Forte neige',        icon: '❄️', cls: 'snow' },
+      77: { desc: 'Grains de neige',    icon: '❄️', cls: 'snow' },
+      80: { desc: 'Averses légères',    icon: '🌦️', cls: 'rain' },
+      81: { desc: 'Averses',            icon: '🌧️', cls: 'rain' },
+      82: { desc: 'Averses violentes',  icon: '⛈️', cls: 'storm' },
+      85: { desc: 'Averses de neige',   icon: '🌨️', cls: 'snow' },
+      86: { desc: 'Fortes averses de neige', icon: '❄️', cls: 'snow' },
+      95: { desc: 'Orage',              icon: '⛈️', cls: 'storm' },
+      96: { desc: 'Orage avec grêle',   icon: '⛈️', cls: 'storm' },
+      99: { desc: 'Orage violent',      icon: '⛈️', cls: 'storm' }
+    };
+    return table[code] || { desc: 'Inconnu', icon: '❓', cls: 'cloudy' };
+  }
+
+  function setThemeClass(cls) {
+    widget.classList.remove('clear', 'cloudy', 'rain', 'storm', 'snow', 'night');
+    widget.classList.add(cls);
+  }
+
+  function showStatus(msg) {
+    content.innerHTML = '<div id="status">' + msg + '</div>';
+  }
+
+  async function reverseGeocode(lat, lon) {
+    try {
+      const r = await fetch(
+        `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=fr`
+      );
+      const d = await r.json();
+      const cityName = d.city || d.locality || d.principalSubdivision;
+      if (cityName) {
+        return {
+          city: cityName,
+          region: [d.principalSubdivision, d.countryName].filter(Boolean).join(', ')
+        };
+      }
+    } catch (e) {}
+
+    try {
+      const r2 = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=fr`,
+        { headers: { 'Accept': 'application/json' } }
+      );
+      const d2 = await r2.json();
+      const addr = d2.address || {};
+      const cityName = addr.city || addr.town || addr.village || addr.suburb || addr.county;
+      if (cityName) {
+        return {
+          city: cityName,
+          region: [addr.state, addr.country].filter(Boolean).join(', ')
+        };
+      }
+    } catch (e) {}
+
+    return { city: `${lat.toFixed(2)}, ${lon.toFixed(2)}`, region: '' };
+  }
+
+  async function fetchWeather(lat, lon) {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,is_day` +
+      `&timezone=auto`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('Réponse API invalide');
+    return r.json();
+  }
+
+  function render(place, w, source) {
+    const cur = w.current;
+    const info = mapWeather(cur.weather_code, cur.is_day === 1);
+    setThemeClass(info.cls);
+
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+    const sourceLabel = source === 'gps'
+      ? '📡 Position GPS précise'
+      : '🌐 Position approximative (IP), cliquer pour réessayer le GPS';
+    const sourceCls = source === 'gps' ? 'gps' : 'ip';
+
+    content.innerHTML = `
+      <div class="city-block">
+        <div class="city-name">📍 ${place.city}</div>
+        ${place.region ? `<div class="city-region">${place.region}</div>` : ''}
+      </div>
+      <div class="updated">Mis à jour à ${timeStr}</div>
+      <div class="source-badge ${sourceCls}" id="sourceBadge"><u>${sourceLabel}</u></div>
+      <div class="main-row">
+        <div class="icon">${info.icon}</div>
+        <div>
+          <div class="temp">${Math.round(cur.temperature_2m)}<sup>°C</sup></div>
+          <div class="desc">${info.desc}</div>
+          <div class="feels">Ressenti ${Math.round(cur.apparent_temperature)}°C</div>
+        </div>
+      </div>
+      <div class="details">
+        <div class="item">
+          <div class="label">Humidité</div>
+          <div class="value">${cur.relative_humidity_2m}%</div>
+        </div>
+        <div class="item">
+          <div class="label">Vent</div>
+          <div class="value">${Math.round(cur.wind_speed_10m)} km/h</div>
+        </div>
+      </div>
+    `;
+  }
+
+  async function loadForCoords(lat, lon, source) {
+    showStatus('Chargement de la météo…');
+    const [place, weather] = await Promise.all([
+      reverseGeocode(lat, lon),
+      fetchWeather(lat, lon)
+    ]);
+    render(place, weather, source);
+    const badge = document.getElementById('sourceBadge');
+    if (badge) badge.addEventListener('click', () => init(true));
+    try {
+      localStorage.setItem('weather-widget-lastcoords', JSON.stringify({ lat, lon }));
+    } catch (e) {}
+  }
+
+  async function ipFallback(reason) {
+    if (reason) console.warn('[Widget Météo] GPS indisponible, repli sur IP. Raison:', reason);
+    showStatus('Localisation via IP…');
+    try {
+      const r = await fetch('https://ipapi.co/json/');
+      const d = await r.json();
+      if (d && d.latitude && d.longitude) {
+        await loadForCoords(d.latitude, d.longitude, 'ip');
+        return;
+      }
+      throw new Error('IP lookup vide');
+    } catch (e) {
+      try {
+        const cached = JSON.parse(localStorage.getItem('weather-widget-lastcoords'));
+        if (cached) { await loadForCoords(cached.lat, cached.lon, 'ip'); return; }
+      } catch (e2) {}
+      await loadForCoords(-18.8792, 47.5079, 'ip'); // Antananarivo (secours ultime)
+    }
+  }
+
+  function geoErrorReason(err) {
+    if (!err) return 'inconnue';
+    if (err.code === 1) return 'permission refusée';
+    if (err.code === 2) return 'position indisponible';
+    if (err.code === 3) return 'délai dépassé';
+    return err.message || 'inconnue';
+  }
+
+  function init(forceGps) {
+    if (!navigator.geolocation) { ipFallback('API geolocation absente'); return; }
+
+    showStatus('Localisation GPS en cours…');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => loadForCoords(pos.coords.latitude, pos.coords.longitude, 'gps').catch((e) => ipFallback('échec chargement météo: ' + e)),
+      (err) => ipFallback(geoErrorReason(err)),
+      { timeout: 8000, maximumAge: forceGps ? 0 : 600000, enableHighAccuracy: !!forceGps }
+    );
+  }
+
+  init();
+  setInterval(() => init(), 15 * 60 * 1000);
+
+  // ---------- Stats Hydria (périmètre de l'utilisateur connecté) ----------
+  const hydriaContent = document.getElementById('hydriaContent');
+  const STATS_URL = '{% url "core:api_widget_stats" %}';
+  const COMPTEURS_TETE_URL = '{% url "core:api_widget_compteurs_tete" %}';
+  const DEBITS_SOURCE_URL = '{% url "core:api_widget_debits_source" %}';
+  const ANALYSE_CONSOMMATION_URL = '{% url "core:api_widget_analyse_consommation" %}';
+  const FILTRES_URL = '{% url "core:api_widget_filtres" %}';
+  const INTERVENTIONS_URL = '{% url "core:api_widget_interventions" %}';
+  const PLANNING_FILTRES_URL = '{% url "core:api_widget_planning_filtres" %}';
+  const PLANNING_ACTIVITES_URL = '{% url "core:api_widget_planning_activites" %}';
+  const PLANNING_DEFAULT_TYPES = ['Collecte paiement', 'Réparation'];
+  let planningCalendarMonth = new Date();
+  planningCalendarMonth.setDate(1);
+  const INTERVENTION_SEEN_URL = '{% url "core:api_widget_intervention_mark_seen" %}';
+  const DETAILS_URL_TEMPLATE = '{% url "core:api_widget_details" stat_type="__TYPE__" %}';
+  const GROUPES_URL_TEMPLATE = '{% url "core:api_widget_groupes" stat_type="__TYPE__" %}';
+  const DASHBOARD_VOLUME_URL = '{% url "accounting:dashboard_paiements_volume" %}';
+  const DASHBOARD_FORFAITAIRE_URL = '{% url "accounting:dashboard_paiements_forfaitaire" %}';
+  const GROUPABLE_TYPES = new Set([
+    'ouvrages', 'points_eau',
+    'factures_volumetriques_mises_a_jour_mois_courant_non_pointees',
+    'factures_volumetriques_non_mises_a_jour_mois_courant_non_pointees',
+    'factures_forfaitaires_mises_a_jour_mois_courant_non_pointees',
+    'factures_forfaitaires_non_mises_a_jour_mois_courant_non_pointees',
+    'factures_volumetriques_mois_courant_non_pointees',
+    'factures_volumetriques_mois_passes_non_pointees',
+    'factures_forfaitaires_mois_courant_non_pointees',
+    'factures_forfaitaires_mois_passes_non_pointees'
+  ]);
+
+  // scope: 'facture' = "N ouvrages · M points d'eau" (clés <key>_ouvrages / <key>_points_eau) ;
+  // 'ouvrages' = seulement le nombre d'ouvrages ; breakdown = décomposition forfait / volume.
+  const GENERAL_STAT_DEFS = [
+    { key: 'ouvrages', icon: '🏗️', label: 'Ouvrages', detailType: 'ouvrages', wide: false,
+      breakdown: [['Forfait', 'ouvrages_forfaitaires'], ['Volume', 'ouvrages_volumetriques'], ['Mixte', 'ouvrages_mixtes'], ['Sans tarif', 'ouvrages_sans_tarif']] },
+    // Points d'eau = actifs uniquement ; coupés et sans date de branchement affichés à part
+    { key: 'points_eau', icon: '🚰', label: "Points d'eau actifs", detailType: 'points_eau', wide: false,
+      breakdown: [['Forfait', 'points_eau_forfaitaires'], ['Volume', 'points_eau_volumetriques'], ['Coupés', 'points_eau_coupes'], ['Sans date', 'points_eau_sans_date']] },
+  ];
+  const VOLUME_STAT_DEFS = [
+    { key: 'estimation_impayee_volumetrique_mois_courant', icon: '≈', label: 'Impayé estimé · {MOIS}', amountOnly: true, wide: false, alertIfPositive: true },
+    { key: 'estimation_impayee_volumetrique_mois_anciens', icon: '≈', label: 'Impayé estimé · avant {MOIS}', amountOnly: true, wide: false, alertIfPositive: true },
+    { key: 'factures_volumetriques_mois_courant_non_pointees', scope: 'facture', icon: '💧', label: 'Volumes non pointés · {MOIS}', detailType: 'factures_volumetriques_mois_courant_non_pointees', wide: false, alertIfPositive: true },
+    { key: 'factures_volumetriques_mois_passes_non_pointees', scope: 'facture', icon: '💧', label: 'Volumes non pointés · avant {MOIS}', detailType: 'factures_volumetriques_mois_passes_non_pointees', wide: false, alertIfPositive: true },
+    { key: 'diamex_707401_sans_scan_non_pointes', icon: '📷', label: 'DiameX volume sans scan · à scanner', detailType: 'diamex_707401_sans_scan_non_pointes', wide: false, alertIfPositive: true },
+    { key: 'diamex_707401_avec_scan_non_pointes', icon: '🧾', label: 'DiameX volume avec scan · à pointer', detailType: 'diamex_707401_avec_scan_non_pointes', wide: false, alertIfPositive: true },
+  ];
+  const FORFAIT_STAT_DEFS = [
+    { key: 'estimation_impayee_forfaitaire_mois_courant', icon: '≈', label: 'Impayé estimé · {MOIS}', amountOnly: true, wide: false, alertIfPositive: true },
+    { key: 'estimation_impayee_forfaitaire_mois_anciens', icon: '≈', label: 'Impayé estimé · avant {MOIS}', amountOnly: true, wide: false, alertIfPositive: true },
+    { key: 'factures_forfaitaires_mois_courant_non_pointees', scope: 'facture', icon: '💰', label: 'Forfaits non pointés · {MOIS}', detailType: 'factures_forfaitaires_mois_courant_non_pointees', wide: false, alertIfPositive: true },
+    { key: 'factures_forfaitaires_mois_passes_non_pointees', scope: 'facture', icon: '💰', label: 'Forfaits non pointés · avant {MOIS}', detailType: 'factures_forfaitaires_mois_passes_non_pointees', wide: false, alertIfPositive: true },
+    { key: 'diamex_748411_sans_scan_non_pointes', icon: '📷', label: 'DiameX forfaitaire sans scan · à scanner', detailType: 'diamex_748411_sans_scan_non_pointes', wide: false, alertIfPositive: true },
+    { key: 'diamex_748411_avec_scan_non_pointes', icon: '🧾', label: 'DiameX forfaitaire avec scan · à pointer', detailType: 'diamex_748411_avec_scan_non_pointes', wide: false, alertIfPositive: true },
+    { key: 'rbf_points_depassement_plafond', icon: '🚨', label: 'Indemnités RBF · au-dessus du plafond annuel', detailType: 'rbf_points_depassement_plafond', wide: false, alertIfPositive: true },
+    { key: 'rbf_points_sans_paiement_effectif', icon: '🚫', label: 'Indemnités RBF · sans paiement effectif', detailType: 'rbf_points_sans_paiement_effectif', wide: false, alertIfPositive: true },
+    { key: 'factures_forfaitaires_a_collecter_aujourdhui', scope: 'facture', icon: '📅', label: 'Forfait à collecter aujourd\'hui', detailType: 'factures_forfaitaires_jour', wide: false, alertIfPositive: true },
+  ];
+  const REPARATIONS_STAT_DEFS = [
+    { key: 'reparations_echues', scope: 'ouvrages', icon: '⚠️', label: 'Réparations · échues', short: 'Échues', detailType: 'reparations_echues', wide: false, alertIfPositive: true },
+    { key: 'reparations_a_venir', scope: 'ouvrages', icon: '🔧', label: 'Réparations · à venir', short: 'À venir', detailType: 'reparations_a_venir', wide: false, alertIfPositive: false },
+  ];
+  const REHABILITATIONS_STAT_DEFS = [
+    { key: 'rehabilitations_echues', scope: 'ouvrages', icon: '⚠️', label: 'Réhabilitations · échues', short: 'Échues', detailType: 'rehabilitations_echues', wide: false, alertIfPositive: true },
+    { key: 'rehabilitations_a_venir', scope: 'ouvrages', icon: '🏗️', label: 'Réhabilitations · à venir', short: 'À venir', detailType: 'rehabilitations_a_venir', wide: false, alertIfPositive: false },
+  ];
+  const INSTALLATIONS_STAT_DEFS = [
+    { key: 'installations_echues', scope: 'ouvrages', icon: '⚠️', label: 'Installations · échues', short: 'Échues', detailType: 'installations_echues', wide: false, alertIfPositive: true },
+    { key: 'installations_a_venir', scope: 'ouvrages', icon: '🚰', label: 'Installations · à venir', short: 'À venir', detailType: 'installations_a_venir', wide: false, alertIfPositive: false },
+  ];
+  const AUTRES_ACTIVITES_STAT_DEFS = [
+    { key: 'autres_activites_echues', scope: 'ouvrages', icon: '❗', label: 'Autres activités · échues', short: 'Échues', detailType: 'autres_activites_echues', wide: false, alertIfPositive: true },
+    { key: 'autres_activites_a_venir', scope: 'ouvrages', icon: '📆', label: 'Autres activités · à venir', short: 'À venir', detailType: 'autres_activites_a_venir', wide: false, alertIfPositive: false },
+  ];
+  const COMPTEURS_TETE_STAT_DEFS = [
+    { key: 'good', icon: '✓', label: 'Réseau bon · < 5 %', status: 'good' },
+    { key: 'acceptable', icon: '≈', label: 'Écart tolérable · 5-10 %', status: 'acceptable' },
+    { key: 'investigate', icon: '!', label: 'À investiguer · 10-20 %', status: 'investigate', alertIfPositive: true },
+    { key: 'critical', icon: '▲', label: 'Anormaux · > 20 %', status: 'critical', alertIfPositive: true },
+    { key: 'non_mesure', icon: '-', label: 'Sans relevé exploitable', status: 'non_mesure' },
+    { key: 'hors_service', icon: '×', label: 'Hors service', status: 'hors_service', alertIfPositive: true },
+  ];
+  const DEBITS_SOURCE_STAT_DEFS = [
+    { key: 'critique', icon: '▲', label: 'Évolution critique', status: 'critique', alertIfPositive: true },
+    { key: 'baisse', icon: '↘', label: 'En baisse', status: 'baisse', alertIfPositive: true },
+    { key: 'stable', icon: '→', label: 'Stable', status: 'stable' },
+    { key: 'non_mesure', icon: '-', label: 'Non mesuré', status: 'non_mesure' },
+    { key: 'hausse', icon: '↗', label: 'En hausse', status: 'hausse' },
+    { key: 'surveille', icon: '◉', label: 'À surveiller', status: 'surveille', alertIfPositive: true },
+    { key: 'normal', icon: '✓', label: 'Normal', status: 'normal' },
+    { key: 'inconnu', icon: '?', label: 'Évolution inconnue', status: 'inconnu' },
+  ];
+
+  function currentFiltreParams() {
+    const params = new URLSearchParams();
+    const org = document.getElementById('filtreOrganisation')?.value;
+    const employe = document.getElementById('filtreEmploye')?.value;
+    const region = document.getElementById('filtreRegion')?.value;
+    const district = document.getElementById('filtreDistrict')?.value;
+    const commune = document.getElementById('filtreCommune')?.value;
+    if (org && org !== 'all') params.set('organisation', org);
+    if (employe && employe !== 'all') params.set('employe_id', employe);
+    if (region && region !== 'all') params.set('region_id', region);
+    if (district && district !== 'all') params.set('district_id', district);
+    if (commune && commune !== 'all') params.set('commune_id', commune);
+    return params;
+  }
+
+  function renderHydriaStats(stats, lastDiamexImport) {
+    const splitStatsAvailable = Object.prototype.hasOwnProperty.call(stats, 'factures_volumetriques_mises_a_jour_mois_courant_non_pointees')
+      && Object.prototype.hasOwnProperty.call(stats, 'diamex_707401_avec_scan_non_pointes')
+      && Object.prototype.hasOwnProperty.call(stats, 'diamex_748411_sans_scan_non_pointes');
+    const visibleDefs = defs => defs.filter(def => Number(stats[def.key] || 0) > 0);
+    const moisCourantLabel = stats.mois_facture_courant_label || 'ce mois-ci';
+    const resolveLabel = label => String(label || '').replace(/\{MOIS\}/g, moisCourantLabel);
+    const formatKAr = value => `${(Number(value || 0) / 1000).toLocaleString('fr-FR', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 1,
+    })} K Ar`;
+    const has = key => Object.prototype.hasOwnProperty.call(stats, key);
+    const fmt = value => Number(value || 0).toLocaleString('fr-FR');
+    const plural = (n, one, many) => `${fmt(n)} ${Number(n) > 1 ? many : one}`;
+    // Ligne « périmètre » d'une tuile : l'ouvrage d'abord (repère principal), puis les points d'eau.
+    const scopeHtml = def => {
+      if (def.breakdown) {
+        const parts = def.breakdown.filter(([, key]) => has(key) && Number(stats[key]) > 0).map(([label, key]) => `${label} <strong>${fmt(stats[key])}</strong>`);
+        return parts.length ? `<div class="stat-scope">${parts.join(' · ')}</div>` : '';
+      }
+      if (!def.scope || def.amountOnly) return '';
+      const ouvrageKey = `${def.key}_ouvrages`;
+      if (!has(ouvrageKey)) return '';
+      const parts = [`🏗️ <strong>${plural(stats[ouvrageKey], 'ouvrage', 'ouvrages')}</strong>`];
+      const pointKey = `${def.key}_points_eau`;
+      if (def.scope === 'facture' && has(pointKey)) parts.push(`🚰 ${plural(stats[pointKey], "point d'eau", "points d'eau")}`);
+      return `<div class="stat-scope">${parts.join(' · ')}</div>`;
+    };
+    const renderTiles = defs => {
+      const items = visibleDefs(defs);
+      if (!items.length) return '';
+      return `
+      <div class="stat-grid">
+        ${items.map(def => `
+          <button type="button" class="stat-tile ${def.wide ? 'wide' : ''} ${def.alertIfPositive && stats[def.key] > 0 ? 'alert' : ''}" data-detail="${def.detailType || ''}" data-label="${def.icon} ${resolveLabel(def.label)}">
+            <div class="stat-value">${def.amountOnly ? formatKAr(stats[def.key]) : (has(def.key) ? (stats[def.key] || 0).toLocaleString('fr-FR') : '-')}</div>
+            <div class="stat-text">
+              <div class="stat-label">${def.icon} ${resolveLabel(def.short || def.label)}</div>
+              ${scopeHtml(def)}
+              ${!def.amountOnly && has(`${def.key}_montant`) ? `<div class="stat-amount">${formatKAr(stats[`${def.key}_montant`])}</div>` : ''}
+            </div>
+          </button>
+        `).join('')}
+      </div>
+      `;
+    };
+    const renderSection = (title, defs) => (
+      visibleDefs(defs).length
+        ? `<section class="stat-section"><div class="stat-section-title">${title}</div>${renderTiles(defs)}</section>`
+        : ''
+    );
+    hydriaContent.innerHTML = `
+      <div id="hydriaImportStatus">Dernière importation DiameX : ${lastDiamexImport || 'inconnue'}</div>
+      <a class="stat-tile wide" id="hydriaDiagrammeBtn" href="{% url 'core:widget_diagramme' %}" target="_blank" rel="noopener" style="width:100%;text-decoration:none;color:inherit"><div class="stat-value">📊</div><div class="stat-text"><div class="stat-label">Diagramme des ouvrages</div><div class="stat-scope">Modalité → factures non pointées → réparations</div></div></a>
+      ${renderTiles(GENERAL_STAT_DEFS)}
+      <div class="hydria-sections">
+        ${renderSection('Volumétrique', VOLUME_STAT_DEFS)}
+        ${renderSection('Forfaitaire', FORFAIT_STAT_DEFS)}
+        </div>
+      <div class="hydria-sections hydria-ops">
+        ${renderSection('Réparations', REPARATIONS_STAT_DEFS)}
+        ${renderSection('Réhabilitations', REHABILITATIONS_STAT_DEFS)}
+        ${renderSection('Installations', INSTALLATIONS_STAT_DEFS)}
+        ${renderSection('Autres activités', AUTRES_ACTIVITES_STAT_DEFS)}
+      </div>
+      ${splitStatsAvailable ? '' : '<div id="hydriaStatus">Mise à jour du serveur Hydria requise</div>'}
+    `;
+    hydriaContent.querySelectorAll('.stat-tile[data-detail]:not([data-detail=""])').forEach(tile => {
+      tile.addEventListener('click', () => openDetail(tile.dataset.detail, tile.dataset.label));
+    });
+  }
+
+  async function loadHydriaStats() {
+    try {
+      const params = currentFiltreParams();
+      const r = await fetch(`${STATS_URL}?${params.toString()}`, { credentials: 'same-origin' });
+      if (r.status === 401 || r.status === 403 || r.redirected) {
+        hydriaContent.innerHTML = '<div id="hydriaStatus">Session expirée, <a href="{% url "home_launcher" %}">se reconnecter</a></div>';
+        return;
+      }
+      const data = await r.json();
+      if (data.success) {
+        renderHydriaStats(data.stats, data.derniere_importation_diamex_relative);
+      } else {
+        hydriaContent.innerHTML = '<div id="hydriaStatus">Données indisponibles</div>';
+      }
+    } catch (e) {
+      hydriaContent.innerHTML = '<div id="hydriaStatus">Hors ligne, données Hydria indisponibles</div>';
+    }
+  }
+
+  document.getElementById('hydriaRefreshBtn').addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = '↻ Actualisation…';
+    try {
+      await loadHydriaStats();
+    } finally {
+      button.disabled = false;
+      button.textContent = '↻ Actualiser';
+    }
+  });
+
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>'"]/g, character => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+    })[character]);
+  }
+
+  function renderOperationalWidget(contentId, totalId, definitions, data, endpointName) {
+    document.getElementById(totalId).textContent = (data.stats.total || 0).toLocaleString('fr-FR');
+    const container = document.getElementById(contentId);
+    container.innerHTML = `<div class="stat-grid">${definitions.map(definition => `
+      <button type="button" class="stat-tile ${definition.alertIfPositive && data.stats[definition.key] > 0 ? 'alert' : ''}"
+        data-operational-endpoint="${endpointName}" data-operational-status="${definition.status}" data-label="${definition.icon} ${definition.label}">
+        <div class="stat-value">${(data.stats[definition.key] || 0).toLocaleString('fr-FR')}</div>
+        <div class="stat-label">${definition.icon} ${definition.label}</div>
+      </button>`).join('')}</div>`;
+    container.querySelectorAll('.stat-tile').forEach(tile => {
+      tile.addEventListener('click', () => openOperationalDetail(
+        tile.dataset.operationalEndpoint,
+        tile.dataset.operationalStatus,
+        tile.dataset.label,
+      ));
+    });
+  }
+
+  function renderConsumptionWidget(data) {
+    document.getElementById('consumptionWidgetYear').textContent = data.annee;
+    const stats = data.stats || {};
+    const volumes = data.charts?.volumes || [];
+    const conso = data.charts?.conso_hab || [];
+    const maxVolume = Math.max(...volumes, 1);
+    const maxConso = Math.max(...conso, 1);
+    const lineCoords = conso.map((value, index) => {
+      const x = conso.length > 1 ? index * 100 / (conso.length - 1) : 0;
+      const y = 46 - (Number(value) / maxConso * 40);
+      return { x, y, value: Number(value) };
+    });
+    const points = lineCoords.map(point => `${point.x},${point.y}`).join(' ');
+    document.getElementById('consumptionWidgetContent').innerHTML = `
+      <div class="consumption-stats">
+        <div class="consumption-stat"><strong>${Number(stats.nb_ouvrages || 0).toLocaleString('fr-FR')}</strong><span>Ouvrages</span></div>
+        <div class="consumption-stat"><strong>${Number(stats.population || 0).toLocaleString('fr-FR')}</strong><span>Population</span></div>
+        <div class="consumption-stat"><strong>${Number(stats.volume_consomme || 0).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} m³</strong><span>Volume consommé</span></div>
+        <div class="consumption-stat"><strong>${Number(stats.conso_hab_jour || 0).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} L</strong><span>Par habitant / jour</span></div>
+      </div>
+      <div class="mini-chart"><div class="mini-chart-title">Volume consommé par mois</div><div class="mini-bars">${volumes.map(value => `<i style="height:${Math.max(3, Number(value) / maxVolume * 100)}%"><em>${Number(value).toLocaleString('fr-FR',{maximumFractionDigits:1})}</em></i>`).join('')}</div></div>
+      <div class="mini-chart"><div class="mini-chart-title">Consommation par habitant par jour</div><svg class="mini-line" viewBox="0 0 100 50" preserveAspectRatio="none" aria-label="Courbe mensuelle"><polyline points="${points}" fill="none" stroke="#d9b56f" stroke-width="2" vector-effect="non-scaling-stroke" />${lineCoords.map(point => `<circle cx="${point.x}" cy="${point.y}" r="1.5" fill="#d9b56f"/><text x="${point.x}" y="${Math.max(5,point.y-3)}" text-anchor="middle" fill="#fff" font-size="4">${point.value.toLocaleString('fr-FR',{maximumFractionDigits:1})}</text>`).join('')}</svg></div>`;
+  }
+
+  function renderInterventionWidget(data) {
+    const weeklyTotal = Number(data.week_count ?? data.unseen_count ?? 0);
+    const unseenTotal = Number(data.unseen_count || 0);
+    const totalElement = document.getElementById('interventionWidgetTotal');
+    totalElement.textContent = weeklyTotal.toLocaleString('fr-FR');
+    totalElement.setAttribute('aria-label', `${weeklyTotal} publication(s) saisie(s) cette semaine`);
+    const container = document.getElementById('interventionWidgetContent');
+    const post = data.current;
+    if (!post) {
+      container.innerHTML = '<div class="intervention-empty"><strong>Tout est vu</strong><br>Aucune nouvelle saisie de réparation en attente.</div>';
+      return;
+    }
+    const photos = (post.photos || []).map(photo => `
+      <button type="button" class="intervention-photo" data-photo-url="${escapeHtml(photo.url)}" data-photo-type="${escapeHtml(photo.type)}" data-photo-name="${escapeHtml(photo.name)}" aria-label="Agrandir ${escapeHtml(photo.name)}">
+        ${photo.is_video
+          ? `<video src="${escapeHtml(photo.url)}" muted playsinline preload="metadata"></video>`
+          : `<img src="${escapeHtml(photo.url)}" loading="lazy" alt="${escapeHtml(photo.name)}">`}
+      </button>
+    `).join('');
+    container.innerHTML = `
+      <div class="intervention-meta">
+        <div class="intervention-activity">${escapeHtml(post.activite)}</div>
+        <div class="intervention-ouvrage">${escapeHtml(post.ouvrage)}</div>
+        <div class="intervention-byline">Saisie par ${escapeHtml(post.employe)}${post.base ? `, base ${escapeHtml(post.base)}` : ''}</div>
+        <div class="intervention-date">Saisie le ${escapeHtml(post.date_saisie)}${post.date_intervention ? `, intervention du ${escapeHtml(post.date_intervention)}` : ''}</div>
+      </div>
+      ${post.remarque ? `<div class="intervention-note">${escapeHtml(post.remarque)}</div>` : ''}
+      ${photos ? `<div class="intervention-photo-grid">${photos}</div>` : ''}
+      <div class="intervention-date">${unseenTotal.toLocaleString('fr-FR')} publication(s) non vue(s) dans votre file</div>
+      <button type="button" class="intervention-seen" data-planning-id="${escapeHtml(post.id)}">J'ai vu, afficher la suivante</button>
+    `;
+    container.querySelectorAll('.intervention-photo').forEach(button => {
+      button.addEventListener('click', () => openInterventionPhoto(
+        button.dataset.photoUrl,
+        button.dataset.photoType,
+        button.dataset.photoName,
+      ));
+    });
+    container.querySelector('.intervention-seen').addEventListener('click', event => {
+      markInterventionSeen(event.currentTarget);
+    });
+  }
+
+  async function loadInterventionWidget() {
+    const container = document.getElementById('interventionWidgetContent');
+    try {
+      const response = await fetch(INTERVENTIONS_URL, { credentials: 'same-origin' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || 'Données indisponibles');
+      renderInterventionWidget(data);
+    } catch (error) {
+      container.innerHTML = '<div class="intervention-error">Impossible de charger les dernières réparations. Touchez Actualiser pour réessayer.</div>';
+    }
+  }
+
+  async function markInterventionSeen(button) {
+    button.disabled = true;
+    button.textContent = 'Enregistrement...';
+    try {
+      const response = await fetch(INTERVENTION_SEEN_URL, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planning_id: button.dataset.planningId }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Action refusée');
+      renderInterventionWidget(data);
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = "J'ai vu, afficher la suivante";
+      const container = document.getElementById('interventionWidgetContent');
+      const message = document.createElement('div');
+      message.className = 'intervention-error';
+      message.textContent = error.message || "L'action n'a pas été enregistrée";
+      container.prepend(message);
+    }
+  }
+
+  function openInterventionPhoto(url, type, name) {
+    detailTitle.textContent = name || 'Photo de la réparation';
+    detailBody.innerHTML = type && type.startsWith('video/')
+      ? `<video class="intervention-photo-view" src="${escapeHtml(url)}" controls autoplay playsinline></video>`
+      : `<img class="intervention-photo-view" src="${escapeHtml(url)}" alt="${escapeHtml(name || 'Photo de la réparation')}">`;
+    detailOverlay.classList.add('open');
+  }
+
+  async function loadOperationalWidgets() {
+    const params = currentFiltreParams().toString();
+    const metersContent = document.getElementById('metersWidgetContent');
+    const flowsContent = document.getElementById('flowsWidgetContent');
+    const consumptionContent = document.getElementById('consumptionWidgetContent');
+    try {
+      const [metersResponse, flowsResponse, consumptionResponse] = await Promise.all([
+        fetch(`${COMPTEURS_TETE_URL}?${params}`, { credentials: 'same-origin' }),
+        fetch(`${DEBITS_SOURCE_URL}?${params}`, { credentials: 'same-origin' }),
+        fetch(`${ANALYSE_CONSOMMATION_URL}?${params}`, { credentials: 'same-origin' }),
+      ]);
+      const [metersData, flowsData, consumptionData] = await Promise.all([metersResponse.json(), flowsResponse.json(), consumptionResponse.json()]);
+      if (metersData.success) renderOperationalWidget('metersWidgetContent', 'metersWidgetTotal', COMPTEURS_TETE_STAT_DEFS, metersData, 'meters');
+      else metersContent.innerHTML = '<div id="hydriaStatus">Données indisponibles</div>';
+      if (flowsData.success) renderOperationalWidget('flowsWidgetContent', 'flowsWidgetTotal', DEBITS_SOURCE_STAT_DEFS, flowsData, 'flows');
+      else flowsContent.innerHTML = '<div id="hydriaStatus">Données indisponibles</div>';
+      if (consumptionData.success) renderConsumptionWidget(consumptionData);
+      else consumptionContent.innerHTML = '<div id="hydriaStatus">Données indisponibles</div>';
+    } catch (error) {
+      metersContent.innerHTML = '<div id="hydriaStatus">Widget indisponible</div>';
+      flowsContent.innerHTML = '<div id="hydriaStatus">Widget indisponible</div>';
+      consumptionContent.innerHTML = '<div id="hydriaStatus">Widget indisponible</div>';
+    }
+  }
+
+  function loadAllStats() {
+    loadHydriaStats();
+    loadOperationalWidgets();
+    loadInterventionWidget();
+    loadPlanningCalendarWidget();
+    loadPlanningTodayWidget();
+  }
+
+  // ---------- Widget Calendrier planning ----------
+  function formatIsoDate(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  function planningActiviteMeta(a) {
+    const parts = [a.employe];
+    if (a.base) parts.push(`base ${a.base}`);
+    if (a.ouvrage) parts.push(a.ouvrage);
+    if (a.commune) parts.push(a.commune);
+    return parts.filter(Boolean).join(' · ');
+  }
+
+  function planningAgendaItemHtml(a) {
+    const statusClass = a.termine ? 'termine' : 'en-cours';
+    return `
+      <div class="planning-agenda-item ${statusClass}" data-planning-id="${escapeHtml(a.id)}">
+        ${a.heure ? `<div class="planning-agenda-heure">${escapeHtml(a.heure)}</div>` : ''}
+        <div class="planning-agenda-activite">${escapeHtml(a.type_activite || a.activite)}</div>
+        <div class="planning-agenda-meta">${escapeHtml(planningActiviteMeta(a))}</div>
+        ${a.remarque ? `<div class="planning-agenda-meta">${escapeHtml(a.remarque)}</div>` : ''}
+        <span class="planning-status-badge ${statusClass}">${a.termine ? '✅ Terminé' : '🕗 En cours'}${a.termine_auto ? ' · auto' : ''}</span>
+      </div>
+    `;
+  }
+
+  function wirePlanningAgendaClicks(container, activitesById) {
+    container.querySelectorAll('.planning-agenda-item').forEach(item => {
+      item.addEventListener('click', () => openPlanningActiviteEditor(activitesById[item.dataset.planningId]));
+    });
+  }
+
+  function openPlanningDayDetail(dateIso, activites) {
+    const dateLabel = new Date(dateIso + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+    detailTitle.textContent = dateLabel;
+    if (!activites.length) {
+      detailBody.innerHTML = '<div class="intervention-empty">Aucune activité ce jour-là.</div>';
+    } else {
+      detailBody.innerHTML = `<div class="planning-day-detail-list">${activites.map(planningAgendaItemHtml).join('')}</div>`;
+      const byId = {};
+      activites.forEach(a => { byId[a.id] = a; });
+      wirePlanningAgendaClicks(detailBody, byId);
+    }
+    setDetailBackAction(null);
+    showDetailOverlay();
+  }
+
+  // ---------- Editeur d'activite (personne / date / termine) ----------
+  function openPlanningActiviteEditor(activite) {
+    if (!activite) return;
+    const employes = (window._planningFiltresData && window._planningFiltresData.employes) || [];
+    detailTitle.textContent = activite.type_activite || activite.activite;
+    const statusBlock = activite.termine_auto
+      ? `<div class="planning-editor-field">
+           <label>Statut</label>
+           <span class="planning-status-badge ${activite.termine ? 'termine' : 'en-cours'}">
+             ${activite.termine ? '✅ Terminé' : '🕗 En cours'} · calculé automatiquement d'après le pointage
+           </span>
+         </div>`
+      : `<div class="planning-editor-field">
+           <label>Statut</label>
+           <button type="button" id="planningEditorToggleTermine" class="planning-editor-toggle" data-termine="${activite.termine ? '1' : '0'}">
+             ${activite.termine ? '✅ Terminé — cliquer pour repasser en cours' : '🕗 En cours — cliquer pour marquer terminé'}
+           </button>
+         </div>`;
+    detailBody.innerHTML = `
+      <div class="planning-editor-field">
+        <label for="planningEditorEmploye">Personne assignée</label>
+        <select id="planningEditorEmploye">
+          ${employes.map(e => `<option value="${e.id}" ${e.id === activite.employe_id ? 'selected' : ''}>${e.nom}</option>`).join('')}
+        </select>
+      </div>
+      <div class="planning-editor-field">
+        <label for="planningEditorDate">Date</label>
+        <input type="date" id="planningEditorDate" value="${activite.date}">
+      </div>
+      ${statusBlock}
+      <div class="planning-agenda-meta">${escapeHtml(planningActiviteMeta(activite))}</div>
+      <div id="planningEditorError" class="planning-editor-error" style="display:none;"></div>
+      <div class="planning-editor-actions">
+        <button type="button" id="planningEditorSave" class="planning-editor-save">Enregistrer</button>
+      </div>
+    `;
+    let pendingTermine = activite.termine;
+    const toggleBtn = document.getElementById('planningEditorToggleTermine');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', () => {
+        pendingTermine = !pendingTermine;
+        toggleBtn.dataset.termine = pendingTermine ? '1' : '0';
+        toggleBtn.textContent = pendingTermine
+          ? '✅ Terminé — cliquer pour repasser en cours'
+          : '🕗 En cours — cliquer pour marquer terminé';
+      });
+    }
+    document.getElementById('planningEditorSave').addEventListener('click', async () => {
+      const saveBtn = document.getElementById('planningEditorSave');
+      const errorBox = document.getElementById('planningEditorError');
+      errorBox.style.display = 'none';
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Enregistrement…';
+      const body = {
+        employe_id: document.getElementById('planningEditorEmploye').value,
+        date: document.getElementById('planningEditorDate').value,
+      };
+      if (!activite.termine_auto) body.termine = pendingTermine;
+      try {
+        const response = await fetch(`${PLANNING_ACTIVITES_URL}${activite.id}/`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Échec de l\'enregistrement');
+        hideDetailOverlay(false);
+        loadPlanningCalendarWidget();
+        loadPlanningTodayWidget();
+      } catch (error) {
+        errorBox.textContent = error.message;
+        errorBox.style.display = 'block';
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Enregistrer';
+      }
+    });
+    setDetailBackAction(null);
+    showDetailOverlay();
+  }
+
+  async function loadPlanningCalendarWidget() {
+    const container = document.getElementById('planningCalendarWidgetContent');
+    const totalEl = document.getElementById('planningCalendarWidgetTotal');
+    const monthStart = new Date(planningCalendarMonth.getFullYear(), planningCalendarMonth.getMonth(), 1);
+    const monthEnd = new Date(planningCalendarMonth.getFullYear(), planningCalendarMonth.getMonth() + 1, 0);
+    const params = currentPlanningFiltreParams();
+    params.set('debut', formatIsoDate(monthStart));
+    params.set('fin', formatIsoDate(monthEnd));
+    try {
+      const r = await fetch(`${PLANNING_ACTIVITES_URL}?${params.toString()}`, { credentials: 'same-origin' });
+      const data = await r.json();
+      if (!data.success) throw new Error(data.error || 'Données indisponibles');
+      totalEl.textContent = data.activites.length.toLocaleString('fr-FR');
+
+      const byDate = {};
+      data.activites.forEach(a => { (byDate[a.date] = byDate[a.date] || []).push(a); });
+
+      // Grille lundi -> dimanche, semaines completes autour du mois affiche.
+      const firstWeekday = (monthStart.getDay() + 6) % 7; // 0 = lundi
+      const gridStart = new Date(monthStart);
+      gridStart.setDate(gridStart.getDate() - firstWeekday);
+      const todayIso = formatIsoDate(new Date());
+      const weekdayLabels = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+
+      const cells = [];
+      for (let i = 0; i < 42; i++) {
+        const cellDate = new Date(gridStart);
+        cellDate.setDate(cellDate.getDate() + i);
+        if (cellDate > monthEnd && cellDate.getDay() === 1 && i > 27) break; // arrete apres la derniere semaine utile
+        const iso = formatIsoDate(cellDate);
+        const outside = cellDate.getMonth() !== monthStart.getMonth();
+        const dayActivites = byDate[iso] || [];
+        const count = dayActivites.length;
+        const allDone = count > 0 && dayActivites.every(a => a.termine);
+        cells.push({ iso, day: cellDate.getDate(), outside, count, allDone, isToday: iso === todayIso });
+      }
+
+      container.innerHTML = `
+        <div class="planning-calendar-nav">
+          <button type="button" id="planningCalPrev">‹</button>
+          <span class="planning-calendar-title">${monthStart.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</span>
+          <button type="button" id="planningCalNext">›</button>
+        </div>
+        <div class="planning-calendar-grid">
+          ${weekdayLabels.map(w => `<div class="planning-calendar-weekday">${w}</div>`).join('')}
+          ${cells.map(c => `
+            <div class="planning-calendar-day ${c.outside ? 'outside' : ''} ${c.isToday ? 'today' : ''}" data-date="${c.iso}">
+              <span>${c.day}</span>
+              ${c.count ? `<span class="planning-day-count ${c.allDone ? 'all-done' : 'has-pending'}">${c.count}</span>` : ''}
+            </div>
+          `).join('')}
+        </div>
+      `;
+      container.querySelector('#planningCalPrev').addEventListener('click', () => {
+        planningCalendarMonth.setMonth(planningCalendarMonth.getMonth() - 1);
+        loadPlanningCalendarWidget();
+      });
+      container.querySelector('#planningCalNext').addEventListener('click', () => {
+        planningCalendarMonth.setMonth(planningCalendarMonth.getMonth() + 1);
+        loadPlanningCalendarWidget();
+      });
+      container.querySelectorAll('.planning-calendar-day').forEach(cell => {
+        cell.addEventListener('click', () => openPlanningDayDetail(cell.dataset.date, byDate[cell.dataset.date] || []));
+      });
+    } catch (error) {
+      container.innerHTML = '<div class="intervention-error">Calendrier planning indisponible. Touchez Actualiser pour réessayer.</div>';
+    }
+  }
+
+  // ---------- Widget Activités du jour ----------
+  async function loadPlanningTodayWidget() {
+    const container = document.getElementById('planningTodayWidgetContent');
+    const totalEl = document.getElementById('planningTodayWidgetTotal');
+    const todayIso = formatIsoDate(new Date());
+    const params = currentPlanningFiltreParams();
+    params.set('debut', todayIso);
+    params.set('fin', todayIso);
+    try {
+      const r = await fetch(`${PLANNING_ACTIVITES_URL}?${params.toString()}`, { credentials: 'same-origin' });
+      const data = await r.json();
+      if (!data.success) throw new Error(data.error || 'Données indisponibles');
+      totalEl.textContent = data.activites.length.toLocaleString('fr-FR');
+      if (!data.activites.length) {
+        container.innerHTML = '<div class="intervention-empty">Aucune activité planifiée aujourd\'hui.</div>';
+        return;
+      }
+      container.innerHTML = `<div class="planning-agenda-list">${data.activites.map(planningAgendaItemHtml).join('')}</div>`;
+      const byId = {};
+      data.activites.forEach(a => { byId[a.id] = a; });
+      wirePlanningAgendaClicks(container, byId);
+    } catch (error) {
+      container.innerHTML = '<div class="intervention-error">Activités du jour indisponibles. Touchez Actualiser pour réessayer.</div>';
+    }
+  }
+
+  // ---------- Filtres pliables ----------
+  const filtresToggle = document.getElementById('filtresToggle');
+  const filtresPanel = document.getElementById('filtresPanel');
+  const filtresToggleIcon = document.getElementById('filtresToggleIcon');
+
+  filtresToggle.addEventListener('click', () => {
+    filtresPanel.classList.toggle('open');
+    filtresToggleIcon.textContent = filtresPanel.classList.contains('open') ? '▴' : '▾';
+  });
+
+  async function loadFiltres() {
+    try {
+      const r = await fetch(FILTRES_URL, { credentials: 'same-origin' });
+      const data = await r.json();
+      if (!data.success) return;
+
+      const orgSelect = document.getElementById('filtreOrganisation');
+      orgSelect.innerHTML = data.organisations.map(o =>
+        `<option value="${o.id}" ${o.id === data.default_organisation_id ? 'selected' : ''}>${o.nom}</option>`
+      ).join('') || '<option value="all">Toutes</option>';
+
+      const employeSelect = document.getElementById('filtreEmploye');
+      employeSelect.innerHTML = '<option value="all">Tous les agents de recouvrement</option>' +
+        (data.employes || []).map(e => `<option value="${e.id}">${e.nom}${e.poste ? ` · ${e.poste}` : ''}</option>`).join('');
+
+      const regionSelect = document.getElementById('filtreRegion');
+      regionSelect.innerHTML = '<option value="all">Toutes les régions</option>' +
+        data.regions.map(r => `<option value="${r.id}">${r.nom}</option>`).join('');
+
+      window._widgetDistricts = data.districts;
+      window._widgetCommunes = data.communes;
+
+      const districtSelect = document.getElementById('filtreDistrict');
+      districtSelect.innerHTML = '<option value="all">Tous les districts</option>' +
+        data.districts.map(d => `<option value="${d.id}">${d.nom}</option>`).join('');
+
+      const communeSelect = document.getElementById('filtreCommune');
+      communeSelect.innerHTML = '<option value="all">Toutes les communes</option>' +
+        data.communes.map(c => `<option value="${c.id}">${c.nom}</option>`).join('');
+
+      [orgSelect, employeSelect, regionSelect, districtSelect, communeSelect].forEach(sel => {
+        sel.addEventListener('change', loadAllStats);
+      });
+
+      // Cascade région -> district -> commune (filtrage visuel des options)
+      regionSelect.addEventListener('change', () => {
+        const regionId = regionSelect.value;
+        const filtered = regionId === 'all' ? data.districts : data.districts.filter(d => d.region_id === regionId);
+        districtSelect.innerHTML = '<option value="all">Tous les districts</option>' +
+          filtered.map(d => `<option value="${d.id}">${d.nom}</option>`).join('');
+        communeSelect.innerHTML = '<option value="all">Toutes les communes</option>' +
+          data.communes.map(c => `<option value="${c.id}">${c.nom}</option>`).join('');
+      });
+
+      districtSelect.addEventListener('change', () => {
+        const districtId = districtSelect.value;
+        const filtered = districtId === 'all' ? data.communes : data.communes.filter(c => c.district_id === districtId);
+        communeSelect.innerHTML = '<option value="all">Toutes les communes</option>' +
+          filtered.map(c => `<option value="${c.id}">${c.nom}</option>`).join('');
+      });
+    } catch (e) {
+      console.warn('[Widget Météo] Filtres Hydria indisponibles:', e);
+    }
+  }
+
+  // ---------- Filtres planning (Calendrier planning / Activités du jour) ----------
+  const planningFiltresToggle = document.getElementById('planningFiltresToggle');
+  const planningFiltresPanel = document.getElementById('planningFiltresPanel');
+  const planningFiltresToggleIcon = document.getElementById('planningFiltresToggleIcon');
+
+  planningFiltresToggle.addEventListener('click', () => {
+    planningFiltresPanel.classList.toggle('open');
+    planningFiltresToggleIcon.textContent = planningFiltresPanel.classList.contains('open') ? '▴' : '▾';
+  });
+
+  function currentPlanningFiltreParams() {
+    const params = new URLSearchParams();
+    const employe = document.getElementById('filtrePlanningEmploye')?.value;
+    const base = document.getElementById('filtrePlanningBase')?.value;
+    const region = document.getElementById('filtrePlanningRegion')?.value;
+    const district = document.getElementById('filtrePlanningDistrict')?.value;
+    const commune = document.getElementById('filtrePlanningCommune')?.value;
+    const typeSelect = document.getElementById('filtrePlanningType');
+    if (employe && employe !== 'all') params.set('employe_id', employe);
+    if (base && base !== 'all') params.set('base_id', base);
+    if (region && region !== 'all') params.set('region_id', region);
+    if (district && district !== 'all') params.set('district_id', district);
+    if (commune && commune !== 'all') params.set('commune_id', commune);
+    if (typeSelect) {
+      Array.from(typeSelect.selectedOptions).forEach(option => params.append('type_activite_id', option.value));
+    }
+    return params;
+  }
+
+  async function loadPlanningFiltres() {
+    try {
+      const r = await fetch(PLANNING_FILTRES_URL, { credentials: 'same-origin' });
+      const data = await r.json();
+      if (!data.success) return;
+      window._planningFiltresData = data;
+
+      const employeSelect = document.getElementById('filtrePlanningEmploye');
+      employeSelect.innerHTML = '<option value="all">Moi-même et mes subordonnés</option>' +
+        (data.employes || []).map(e => `<option value="${e.id}">${e.nom}</option>`).join('');
+
+      const baseSelect = document.getElementById('filtrePlanningBase');
+      baseSelect.innerHTML = '<option value="all">Toutes</option>' +
+        (data.bases || []).map(b => `<option value="${b.id}">${b.nom}</option>`).join('');
+
+      const regionSelect = document.getElementById('filtrePlanningRegion');
+      regionSelect.innerHTML = '<option value="all">Toutes les régions</option>' +
+        data.regions.map(r => `<option value="${r.id}">${r.nom}</option>`).join('');
+
+      window._planningDistricts = data.districts;
+      window._planningCommunes = data.communes;
+
+      const districtSelect = document.getElementById('filtrePlanningDistrict');
+      districtSelect.innerHTML = '<option value="all">Tous les districts</option>' +
+        data.districts.map(d => `<option value="${d.id}">${d.nom}</option>`).join('');
+
+      const communeSelect = document.getElementById('filtrePlanningCommune');
+      communeSelect.innerHTML = '<option value="all">Toutes les communes</option>' +
+        data.communes.map(c => `<option value="${c.id}">${c.nom}</option>`).join('');
+
+      const typeSelect = document.getElementById('filtrePlanningType');
+      typeSelect.innerHTML = (data.types_activite || []).map(t =>
+        `<option value="${t.id}" ${PLANNING_DEFAULT_TYPES.includes(t.nom) ? 'selected' : ''}>${t.nom}</option>`
+      ).join('');
+
+      const reloadPlanningWidgets = () => { loadPlanningCalendarWidget(); loadPlanningTodayWidget(); };
+      [employeSelect, baseSelect, regionSelect, districtSelect, communeSelect, typeSelect].forEach(sel => {
+        sel.addEventListener('change', reloadPlanningWidgets);
+      });
+
+      regionSelect.addEventListener('change', () => {
+        const regionId = regionSelect.value;
+        const filtered = regionId === 'all' ? data.districts : data.districts.filter(d => d.region_id === regionId);
+        districtSelect.innerHTML = '<option value="all">Tous les districts</option>' +
+          filtered.map(d => `<option value="${d.id}">${d.nom}</option>`).join('');
+        communeSelect.innerHTML = '<option value="all">Toutes les communes</option>' +
+          data.communes.map(c => `<option value="${c.id}">${c.nom}</option>`).join('');
+      });
+
+      districtSelect.addEventListener('change', () => {
+        const districtId = districtSelect.value;
+        const filtered = districtId === 'all' ? data.communes : data.communes.filter(c => c.district_id === districtId);
+        communeSelect.innerHTML = '<option value="all">Toutes les communes</option>' +
+          filtered.map(c => `<option value="${c.id}">${c.nom}</option>`).join('');
+      });
+    } catch (e) {
+      console.warn('[Widget Météo] Filtres planning indisponibles:', e);
+    }
+  }
+
+  // ---------- Modal détail ----------
+  const detailOverlay = document.getElementById('detailOverlay');
+  const detailTitle = document.getElementById('detailTitle');
+  const detailBody = document.getElementById('detailBody');
+  const detailBack = document.getElementById('detailBack');
+  const detailClose = document.getElementById('detailClose');
+  let detailBackAction = null;
+  let detailHistoryActive = false;
+
+  function setDetailBackAction(action) {
+    detailBackAction = action || null;
+    detailBack.setAttribute('aria-label', detailBackAction ? 'Retour à la liste précédente' : 'Retour aux widgets');
+  }
+
+  function showDetailOverlay() {
+    if (!detailOverlay.classList.contains('open')) {
+      detailOverlay.classList.add('open');
+      detailOverlay.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      history.pushState({ hydriaWidgetDetail: true }, '', window.location.href);
+      detailHistoryActive = true;
+    }
+    detailBack.focus({ preventScroll: true });
+  }
+
+  function hideDetailOverlay(fromHistory) {
+    detailOverlay.classList.remove('open');
+    detailOverlay.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+    setDetailBackAction(null);
+
+    if (!fromHistory && detailHistoryActive) {
+      detailHistoryActive = false;
+      history.back();
+    } else {
+      detailHistoryActive = false;
+    }
+  }
+
+
+  async function openDetail(detailType, label) {
+    const cleanLabel = label.replace(/^[^\s]+\s/, '');
+    detailTitle.textContent = cleanLabel;
+    detailBody.innerHTML = '<div class="detail-empty">Chargement…</div>';
+    setDetailBackAction(null);
+    showDetailOverlay();
+
+    if (GROUPABLE_TYPES.has(detailType)) {
+      showGroupeView(detailType, cleanLabel);
+    } else {
+      showDetailList(detailType, cleanLabel, {});
+    }
+  }
+
+  async function openOperationalDetail(endpoint, status, label) {
+    detailTitle.textContent = label.replace(/^[^\s]+\s/, '');
+    detailBody.innerHTML = '<div class="detail-empty">Chargement…</div>';
+    setDetailBackAction(null);
+    showDetailOverlay();
+    try {
+      const params = currentFiltreParams();
+      params.set('status', status);
+      const url = endpoint === 'meters' ? COMPTEURS_TETE_URL : DEBITS_SOURCE_URL;
+      const response = await fetch(`${url}?${params.toString()}`, { credentials: 'same-origin' });
+      const data = await response.json();
+      if (!data.success || !data.rows.length) {
+        detailBody.innerHTML = '<div class="detail-empty">Aucun élément</div>';
+        return;
+      }
+      detailBody.innerHTML = data.rows.map(row => `
+        <div class="detail-row"><div class="row-label">${escapeHtml(row.label)}</div>${row.sub ? `<div class="row-sub">${escapeHtml(row.sub)}</div>` : ''}</div>
+      `).join('') + `<div class="detail-footer">${data.shown} sur ${data.total.toLocaleString('fr-FR')}</div>`;
+    } catch (error) {
+      detailBody.innerHTML = '<div class="detail-empty">Erreur de chargement</div>';
+    }
+  }
+
+  // Vue groupée District → Commune, dépliable. Cliquer sur une commune
+  // affiche la vraie liste (showDetailList) filtrée sur cette commune.
+  async function showGroupeView(detailType, label) {
+    detailTitle.textContent = label;
+    setDetailBackAction(null);
+    try {
+      const params = currentFiltreParams();
+      const url = GROUPES_URL_TEMPLATE.replace('__TYPE__', detailType);
+      const r = await fetch(`${url}?${params.toString()}`, { credentials: 'same-origin' });
+      const data = await r.json();
+      if (!data.success || data.districts.length === 0) {
+        detailBody.innerHTML = '<div class="detail-empty">Aucun élément</div>';
+        return;
+      }
+      detailBody.innerHTML = `
+        <div class="detail-total">${data.total.toLocaleString('fr-FR')} au total</div>
+        ${data.districts.map((d, di) => `
+          <div class="geo-district">
+            <button type="button" class="geo-district-toggle" data-district-idx="${di}">
+              <span>📍 ${d.district}</span>
+              <span class="geo-count">${d.total.toLocaleString('fr-FR')} <span class="geo-caret">▾</span></span>
+            </button>
+            <div class="geo-communes" id="geoCommunes${di}">
+              ${d.communes.map(c => `
+                <button type="button" class="geo-commune-row" data-detail-type="${detailType}" data-commune-id="${c.commune_id}" data-commune-nom="${c.commune}">
+                  <span>${c.commune}</span>
+                  <span class="geo-count">${c.count.toLocaleString('fr-FR')}</span>
+                </button>
+              `).join('')}
+            </div>
+          </div>
+        `).join('')}
+      `;
+
+      detailBody.querySelectorAll('.geo-district-toggle').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const idx = btn.dataset.districtIdx;
+          const panel = document.getElementById(`geoCommunes${idx}`);
+          panel.classList.toggle('open');
+          btn.classList.toggle('open');
+        });
+      });
+      detailBody.querySelectorAll('.geo-commune-row').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const rootLabel = label.split(' / ')[0];
+          if (OUVRAGE_GROUPED_TYPES.has(detailType)) {
+            showOuvrageGroupeView(detailType, rootLabel, btn.dataset.communeId, btn.dataset.communeNom);
+            return;
+          }
+          showDetailList(btn.dataset.detailType, `${rootLabel} / ${btn.dataset.communeNom}`, {
+            commune_id: btn.dataset.communeId,
+          }, () => showGroupeView(detailType, rootLabel));
+        });
+      });
+    } catch (e) {
+      detailBody.innerHTML = '<div class="detail-empty">Erreur de chargement</div>';
+    }
+  }
+
+  // Factures : après District → Commune, regroupement par OUVRAGE (nombre de
+  // factures, de points d'eau et montant), puis liste des factures de l'ouvrage.
+  const OUVRAGE_GROUPED_TYPES = new Set([
+    'factures_volumetriques_mises_a_jour_mois_courant_non_pointees',
+    'factures_volumetriques_non_mises_a_jour_mois_courant_non_pointees',
+    'factures_volumetriques_mois_courant_non_pointees',
+    'factures_volumetriques_mois_passes_non_pointees',
+    'factures_forfaitaires_mises_a_jour_mois_courant_non_pointees',
+    'factures_forfaitaires_non_mises_a_jour_mois_courant_non_pointees',
+    'factures_forfaitaires_mois_courant_non_pointees',
+    'factures_forfaitaires_mois_passes_non_pointees',
+  ]);
+
+  async function showOuvrageGroupeView(detailType, rootLabel, communeId, communeNom) {
+    const label = `${rootLabel} / ${communeNom}`;
+    detailTitle.textContent = label;
+    detailBody.innerHTML = '<div class="detail-empty">Chargement…</div>';
+    setDetailBackAction(() => showGroupeView(detailType, rootLabel));
+    try {
+      const params = currentFiltreParams();
+      params.set('commune_id', communeId);
+      const url = GROUPES_URL_TEMPLATE.replace('__TYPE__', detailType);
+      const r = await fetch(`${url}?${params.toString()}`, { credentials: 'same-origin' });
+      const data = await r.json();
+      if (!data.success || !data.ouvrages || data.ouvrages.length === 0) {
+        detailBody.innerHTML = '<div class="detail-empty">Aucun élément</div>';
+        return;
+      }
+      const kAr = value => `${(Number(value || 0) / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} K Ar`;
+      detailBody.innerHTML = `
+        <div class="detail-total">${data.ouvrages.length.toLocaleString('fr-FR')} ouvrage${data.ouvrages.length > 1 ? 's' : ''} · ${data.total.toLocaleString('fr-FR')} facture${data.total > 1 ? 's' : ''}</div>
+        ${data.ouvrages.map((o, oi) => `
+          <button type="button" class="geo-commune-row" data-ouvrage-idx="${oi}" ${o.ouvrage_id ? '' : 'disabled'}>
+            <span>🏗️ ${escapeHtml(o.ouvrage)}<br><small style="opacity:.7">${o.points_eau.toLocaleString('fr-FR')} point${o.points_eau > 1 ? 's' : ''} d'eau · ${kAr(o.montant)}</small></span>
+            <span class="geo-count">${o.count.toLocaleString('fr-FR')}</span>
+          </button>
+        `).join('')}
+      `;
+      detailBody.querySelectorAll('[data-ouvrage-idx]').forEach(btn => {
+        const o = data.ouvrages[Number(btn.dataset.ouvrageIdx)];
+        btn.addEventListener('click', () => {
+          showDetailList(detailType, `${label} / ${o.ouvrage}`, {
+            commune_id: communeId,
+            ouvrage_id: o.ouvrage_id,
+          }, () => showOuvrageGroupeView(detailType, rootLabel, communeId, communeNom));
+        });
+      });
+    } catch (e) {
+      detailBody.innerHTML = '<div class="detail-empty">Erreur de chargement</div>';
+    }
+  }
+
+  // Types de détail dont chaque ligne représente une facture d'un point d'eau
+  // rattaché à un ouvrage précis, pour lequel on peut ouvrir directement le
+  // modal de pointage correspondant sur le dashboard Hydria concerné (au lieu
+  // de forcer le parcours manuel : chercher l'ouvrage, ouvrir le modal).
+  const VOLUME_FACTURE_TYPES = new Set([
+    'factures_volumetriques_mises_a_jour_mois_courant_non_pointees',
+    'factures_volumetriques_non_mises_a_jour_mois_courant_non_pointees',
+    'factures_volumetriques_mois_courant_non_pointees',
+    'factures_volumetriques_mois_passes_non_pointees',
+  ]);
+  const FORFAIT_FACTURE_TYPES = new Set([
+    'factures_forfaitaires_mises_a_jour_mois_courant_non_pointees',
+    'factures_forfaitaires_non_mises_a_jour_mois_courant_non_pointees',
+    'factures_forfaitaires_mois_courant_non_pointees',
+    'factures_forfaitaires_mois_passes_non_pointees',
+    'factures_forfaitaires_jour',
+  ]);
+
+  function hydriaFactureLink(detailType, row) {
+    if (!row || !row.ouvrage_id) return null;
+    if (VOLUME_FACTURE_TYPES.has(detailType)) {
+      if (!row.mois) return null;
+      const params = new URLSearchParams({ ouvrage: row.ouvrage_id, open_mois: row.mois });
+      if (row.annee) params.set('annee', row.annee);
+      if (row.ouvrage_nom) params.set('open_ouvrage_nom', row.ouvrage_nom);
+      return `${DASHBOARD_VOLUME_URL}?${params.toString()}`;
+    }
+    if (FORFAIT_FACTURE_TYPES.has(detailType)) {
+      const params = new URLSearchParams({ ouvrage: row.ouvrage_id, open_details: '1' });
+      if (row.annee) params.set('annee', row.annee);
+      return `${DASHBOARD_FORFAITAIRE_URL}?${params.toString()}`;
+    }
+    return null;
+  }
+
+  // Vue liste plate (utilisée directement pour les stats non groupables,
+  // ou en drill-down depuis showGroupeView avec extraParams.commune_id).
+  async function showDetailList(detailType, label, extraParams, backAction) {
+    detailTitle.textContent = label;
+    detailBody.innerHTML = '<div class="detail-empty">Chargement…</div>';
+    setDetailBackAction(backAction || null);
+
+    try {
+      const params = currentFiltreParams();
+      Object.entries(extraParams || {}).forEach(([k, v]) => params.set(k, v));
+      const url = DETAILS_URL_TEMPLATE.replace('__TYPE__', detailType);
+      const r = await fetch(`${url}?${params.toString()}`, { credentials: 'same-origin' });
+      const data = await r.json();
+      if (!data.success || data.rows.length === 0) {
+        detailBody.innerHTML = '<div class="detail-empty">Aucun élément</div>';
+        return;
+      }
+      let lastGroup = null;
+      detailBody.innerHTML = data.rows.map((row, idx) => {
+        const link = hydriaFactureLink(detailType, row);
+        let groupHeader = '';
+        if (row.group && row.group !== lastGroup) {
+          lastGroup = row.group;
+          const n = data.rows.filter(r => r.group === row.group).length;
+          groupHeader = `<div class="detail-group-header">${escapeHtml(row.group)} <span>(${n})</span></div>`;
+        }
+        return groupHeader + `
+        <div class="detail-row${link ? ' row-clickable' : ''}" ${link ? `data-row-idx="${idx}" title="Ouvrir sur Hydria"` : ''}>
+          <div>
+            <div class="row-label">${row.label}</div>
+            ${row.sub ? `<div class="row-sub">${row.sub}</div>` : ''}
+          </div>
+          ${link ? '<span class="row-link-icon">↗</span>' : ''}
+        </div>
+      `;
+      }).join('') + (
+        data.total > data.shown
+          ? `<div class="detail-footer">${data.shown} sur ${data.total.toLocaleString('fr-FR')}, voir Hydria pour la liste complète</div>`
+          : ''
+      );
+      detailBody.querySelectorAll('.detail-row.row-clickable').forEach(el => {
+        const row = data.rows[Number(el.dataset.rowIdx)];
+        const link = hydriaFactureLink(detailType, row);
+        if (!link) return;
+        el.addEventListener('click', () => window.open(link, '_blank', 'noopener'));
+      });
+    } catch (e) {
+      detailBody.innerHTML = '<div class="detail-empty">Erreur de chargement</div>';
+    }
+  }
+
+  detailBack.addEventListener('click', () => {
+    if (detailBackAction) {
+      const action = detailBackAction;
+      setDetailBackAction(null);
+      action();
+      return;
+    }
+    hideDetailOverlay(false);
+  });
+
+  detailClose.addEventListener('click', () => hideDetailOverlay(false));
+
+  detailOverlay.addEventListener('click', (e) => {
+    if (e.target === detailOverlay) hideDetailOverlay(false);
+  });
+
+  window.addEventListener('popstate', () => {
+    if (!detailOverlay.classList.contains('open')) return;
+    if (detailBackAction) {
+      const action = detailBackAction;
+      setDetailBackAction(null);
+      action();
+      history.pushState({ hydriaWidgetDetail: true }, '', window.location.href);
+      detailHistoryActive = true;
+      return;
+    }
+    hideDetailOverlay(true);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && detailOverlay.classList.contains('open')) {
+      hideDetailOverlay(false);
+    }
+  });
+
+  loadFiltres().then(loadAllStats);
+  loadPlanningFiltres().then(() => {
+    loadPlanningCalendarWidget();
+    loadPlanningTodayWidget();
+  });
+  setInterval(loadInterventionWidget, 60 * 1000);
+  setInterval(loadPlanningTodayWidget, 5 * 60 * 1000);
+  setInterval(loadAllStats, 10 * 60 * 1000);
+})();
+</script>
+
+</body>
+</html>

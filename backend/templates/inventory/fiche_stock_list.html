@@ -1,0 +1,2602 @@
+﻿{% extends logistics_shell_base_template|default:"base.html" %}
+{% load humanize %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex justify-between items-center">
+        <h1 class="text-3xl font-bold text-base-content">
+            <i class="fas fa-clipboard-list mr-2"></i>{{ title }}
+        </h1>
+        <a href="{% url 'inventory:dashboard' %}" class="btn btn-outline btn-sm">
+            <i class="fas fa-arrow-left mr-2"></i>Retour
+        </a>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-filter mr-2 text-accent"></i>Sélection Article et Magasin
+            </h2>
+            <form method="GET" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-bold">Article*</span>
+                    </label>
+                    <input type="text" id="designation_text" list="designations_list" class="input input-bordered" placeholder="Rechercher un article..." required onchange="selectDesignation()" value="{% if filters.designation_id %}{{ designation.nom }}{% if designation.unite %} ({{ designation.unite }}){% endif %}{% endif %}">
+                    <datalist id="designations_list">
+                        {% for desig in designations %}
+                        <option value="{{ desig.nom }}{% if desig.unite %} ({{ desig.unite }}){% endif %}" data-id="{{ desig.id }}"></option>
+                        {% endfor %}
+                    </datalist>
+                    <input type="hidden" id="designation_id" name="designation_id" value="{{ filters.designation_id }}" required>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-bold">Base*</span>
+                    </label>
+                    <select name="base_id" id="base_id" class="select select-bordered" required>
+                        <option value="">-- Sélectionner une base --</option>
+                        {% for base_item in bases %}
+                            <option value="{{ base_item.id }}" {% if filters.base_id == base_item.id|stringformat:"s" %}selected{% endif %}>
+                                {{ base_item.nom_base }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-bold">Magasin</span>
+                    </label>
+                    <select name="magasin_id" id="magasin_id" class="select select-bordered">
+                        <option value="">-- Tous les magasins --</option>
+                        {% for magasin in magasins %}
+                            <option value="{{ magasin.id }}"
+                                    data-base="{{ magasin.base_id }}"
+                                    {% if filters.magasin_id == magasin.id|stringformat:"s" %}selected{% endif %}>
+                                {{ magasin.nom_magasin }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Date Début</span>
+                    </label>
+                    <input type="date" name="date_debut" value="{{ filters.date_debut }}" class="input input-bordered">
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Date Fin</span>
+                    </label>
+                    <input type="date" name="date_fin" value="{{ filters.date_fin }}" class="input input-bordered">
+                </div>
+
+                <div class="form-control col-span-full flex justify-end gap-2">
+                    <button type="submit" class="btn btn-accent">
+                        <i class="fas fa-search mr-2"></i>Afficher
+                    </button>
+                    <a href="{% url 'inventory:fiche_stock_list' %}" class="btn btn-ghost">
+                        <i class="fas fa-redo mr-2"></i>Réinitialiser
+                    </a>
+                    {% if designation and base %}
+                    <button type="button" onclick="window.print()" class="btn btn-info">
+                        <i class="fas fa-print mr-2"></i>Imprimer
+                    </button>
+                    {% endif %}
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {% if designation and base %}
+    <!-- En-tête pour impression uniquement -->
+    <div class="print-header" style="display: none;">
+        <h1>Fiche de Stock</h1>
+        <div class="info-line">
+            <strong>Magasin :</strong>
+            {% if mode_tous_magasins %}
+                Tous les magasins de {{ base.nom_base }}
+            {% else %}
+                {{ selected_magasin.nom_magasin|default:base.nom_base }}
+            {% endif %}
+        </div>
+        <div class="info-line"><strong>Article :</strong> {{ designation.nom }}{% if designation.unite %} ({{ designation.unite }}){% endif %}</div>
+        <div class="info-line"><strong>Date d'impression :</strong> {{ "now"|date:"d/m/Y à H:i" }}</div>
+    </div>
+
+    <!-- Informations Stock et Inventaire pour impression -->
+    <div class="print-stock-info" style="display: none;">
+        <div>
+            <div class="label">Stock Actuel</div>
+            <div class="value">{{ stock_actuel|floatformat:2|intcomma }}{% if designation.unite %} {{ designation.unite }}{% endif %}</div>
+        </div>
+        <div>
+            <div class="label">Dernier Inventaire</div>
+            {% if dernier_inventaire %}
+            <div class="value">{{ dernier_inventaire.quantity|floatformat:2|intcomma }}{% if designation.unite %} {{ designation.unite }}{% endif %}</div>
+            <div class="date">{{ dernier_inventaire.operation_date|date:"d/m/Y H:i" }}</div>
+            {% else %}
+            <div class="value">-</div>
+            <div class="date">Aucun inventaire</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Informations Article et Stock -->
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <!-- Photo de l'article -->
+        <div class="card bg-base-100 shadow no-print">
+            <div class="card-body p-2">
+                <h3 class="card-title text-xs mb-2">Photo Article</h3>
+                {% if designation.photo %}
+                <figure class="cursor-pointer group overflow-hidden rounded"
+                        onclick="openPhotoViewer('{{ designation.photo }}')">
+                    <img src="{{ designation.photo }}" alt="{{ designation.nom }}"
+                         class="w-full h-32 object-cover transition-transform group-hover:scale-110">
+                    <div class="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+                        <i class="fas fa-search-plus text-white text-2xl opacity-0 group-hover:opacity-100 transition-opacity"></i>
+                    </div>
+                </figure>
+                {% else %}
+                <div class="h-32 bg-base-200 flex items-center justify-center rounded">
+                    <i class="fas fa-image text-4xl text-base-300"></i>
+                </div>
+                <p class="text-xs text-center text-base-content/70 mt-1">Pas de photo</p>
+                {% if designation %}
+                <button
+                    type="button"
+                    class="btn btn-primary btn-xs w-full mt-2"
+                    onclick="openDesignationCameraModal('{{ designation.id }}', '{{ designation.nom|escapejs }}', '{% if designation.prix_unitaire %}{{ designation.prix_unitaire }}{% endif %}', '', '{% if designation.date_prix %}{{ designation.date_prix|date:'Y-m-d' }}{% endif %}')"
+                >
+                    <i class="fas fa-camera mr-1"></i>Prendre une photo
+                </button>
+                {% endif %}
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card bg-base-200 shadow">
+            <div class="card-body">
+                <h3 class="card-title text-sm">Article</h3>
+                <p class="text-xl font-bold">{{ designation.nom }}</p>
+                {% if designation.unite %}
+                    <p class="text-sm text-gray-500">Unité: {{ designation.unite }}</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card bg-base-200 shadow">
+            <div class="card-body">
+                <h3 class="card-title text-sm">Magasin</h3>
+                <p class="text-xl font-bold">
+                    {% if mode_tous_magasins %}
+                        Tous les magasins de {{ base.nom_base }}
+                    {% else %}
+                        {{ selected_magasin.nom_magasin|default:base.nom_base }}
+                    {% endif %}
+                </p>
+                {% if mode_tous_magasins %}
+                    <p class="text-xs text-base-content/70">{{ fiche_group_count }} magasin(s)</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card {% if stock_actuel < 0 %}bg-error text-error-content{% else %}bg-success text-success-content{% endif %} shadow">
+            <div class="card-body">
+                <h3 class="card-title text-sm">
+                    {% if mode_tous_magasins %}Stock Total (Tous magasins){% else %}Stock Actuel{% endif %}
+                    {% if stock_actuel < 0 %}
+                        <i class="fas fa-exclamation-triangle ml-1"></i>
+                    {% endif %}
+                </h3>
+                <p class="text-2xl font-bold">{{ stock_actuel|floatformat:2|intcomma }}{% if designation.unite %} {{ designation.unite }}{% endif %}</p>
+                {% if stock_actuel < 0 %}
+                    <p class="text-xs opacity-90 mt-1">
+                        <i class="fas fa-exclamation-circle mr-1"></i>
+                        Attention : Stock négatif détecté !
+                    </p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card {% if dernier_inventaire %}bg-info text-info-content{% else %}bg-base-300{% endif %} shadow">
+            <div class="card-body">
+                <h3 class="card-title text-sm">
+                    <i class="fas fa-clipboard-check mr-1"></i>
+                    Dernier Inventaire
+                </h3>
+                {% if dernier_inventaire %}
+                    <p class="text-2xl font-bold">{{ dernier_inventaire.quantity|floatformat:2|intcomma }}{% if designation.unite %} {{ designation.unite }}{% endif %}</p>
+                    <p class="text-xs opacity-80">{{ dernier_inventaire.operation_date|date:"d/m/Y H:i" }}</p>
+                    {% if dernier_inventaire.employee %}
+                        <p class="text-xs opacity-80">
+                            <i class="fas fa-user mr-1"></i>{{ dernier_inventaire.employee.nom_complet }}
+                        </p>
+                    {% endif %}
+                {% else %}
+                    <p class="text-sm opacity-70">Aucun inventaire</p>
+                    <p class="text-xs opacity-60">Pas encore d'inventaire effectué</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    {% if carburant_stock_analysis %}
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <div class="flex items-center justify-between gap-3">
+                <div>
+                    <h3 class="card-title">
+                        <i class="fas fa-gas-pump mr-2 text-warning"></i>Analyse carburant
+                    </h3>
+                    <p class="text-sm text-base-content/70">Confrontation comptabilité, fiche de stock et redistributions véhicules.</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
+                <div class="stat bg-base-200 rounded-lg">
+                    <div class="stat-title">Compta stock</div>
+                    <div class="stat-value text-lg">{{ carburant_stock_analysis.compta_stock_litres|floatformat:2|intcomma }}</div>
+                    <div class="stat-desc">{{ carburant_stock_analysis.compta_stock_count }} ligne(s) · {{ carburant_stock_analysis.compta_stock_montant|floatformat:0|intcomma }} Ar</div>
+                </div>
+                <div class="stat bg-base-200 rounded-lg">
+                    <div class="stat-title">Fiche stock achats</div>
+                    <div class="stat-value text-lg">{{ carburant_stock_analysis.fiche_achats_litres|floatformat:2|intcomma }}</div>
+                    <div class="stat-desc">{% if designation.unite %}{{ designation.unite }}{% endif %}</div>
+                </div>
+                <div class="stat bg-base-200 rounded-lg">
+                    <div class="stat-title">Redistribué véhicules</div>
+                    <div class="stat-value text-lg">{{ carburant_stock_analysis.redistrib_stock_litres|floatformat:2|intcomma }}</div>
+                    <div class="stat-desc">{{ carburant_stock_analysis.redistrib_stock_montant|floatformat:0|intcomma }} Ar</div>
+                </div>
+                <div class="stat {% if carburant_stock_analysis.ecart_stock_litres < 0 %}bg-error text-error-content{% else %}bg-info text-info-content{% endif %} rounded-lg">
+                    <div class="stat-title">Écart stock</div>
+                    <div class="stat-value text-lg">{{ carburant_stock_analysis.ecart_stock_litres|floatformat:2|intcomma }}</div>
+                    <div class="stat-desc">Compta stock - redistribué</div>
+                </div>
+            </div>
+
+            <div class="alert alert-info mt-4">
+                <i class="fas fa-receipt"></i>
+                <span>Achat direct véhicule depuis comptabilité : {{ carburant_stock_analysis.direct_vehicle_litres|floatformat:2|intcomma }} L sur {{ carburant_stock_analysis.direct_vehicle_count }} ligne(s), pour {{ carburant_stock_analysis.direct_vehicle_montant|floatformat:0|intcomma }} Ar.</span>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 mt-4">
+                <div class="overflow-x-auto">
+                    <table class="table table-sm table-zebra">
+                        <thead>
+                            <tr class="bg-base-300">
+                                <th>Date compta</th>
+                                <th>Compte</th>
+                                <th>Détail</th>
+                                <th class="text-right">Litres</th>
+                                <th class="text-right">Montant</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in carburant_stock_analysis.compta_stock_entries %}
+                            <tr>
+                                <td>{{ row.entry.date_m|date:"d/m/Y" }}</td>
+                                <td>{{ row.entry.compte_code|default:"-" }}</td>
+                                <td class="max-w-xs truncate" title="{{ row.entry.description|default:'' }} {{ row.entry.detail|default:'' }}">{{ row.entry.detail|default:row.entry.description|default:"-" }}</td>
+                                <td class="text-right">{{ row.litres|floatformat:2 }}</td>
+                                <td class="text-right">{{ row.montant|floatformat:0|intcomma }} Ar</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="5" class="text-center text-base-content/50">Aucune ligne comptable stock détectée.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="table table-sm table-zebra">
+                        <thead>
+                            <tr class="bg-base-300">
+                                <th>Date</th>
+                                <th>Véhicule</th>
+                                <th>Magasin</th>
+                                <th class="text-right">Litres</th>
+                                <th class="text-right">Montant</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in carburant_stock_analysis.stock_usage_rows %}
+                            <tr>
+                                <td>{{ row.date_utilisation|date:"d/m/Y" }}</td>
+                                <td>{{ row.vehicule.immatriculation|default:"-" }}</td>
+                                <td>{{ row.magasin.nom_magasin|default:"-" }}</td>
+                                <td class="text-right">{{ row.quantite|floatformat:2 }}</td>
+                                <td class="text-right">{{ row.montant|floatformat:0|intcomma }} Ar</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="5" class="text-center text-base-content/50">Aucune redistribution stock vers véhicule.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Alerte stock négatif -->
+    {% if has_negative_stock %}
+        <div class="alert alert-error shadow-lg">
+            <i class="fas fa-exclamation-triangle text-2xl"></i>
+            <div>
+                <h3 class="font-bold">Stocks négatifs détectés dans l'historique</h3>
+                <div class="text-sm">Des mouvements de stock ont créé des quantités négatives. Veuillez effectuer un inventaire de correction pour rétablir la cohérence.</div>
+            </div>
+            <button onclick="scrollToNegative()" class="btn btn-sm btn-ghost">
+                <i class="fas fa-search"></i> Voir les lignes
+            </button>
+        </div>
+    {% endif %}
+
+    {% if stock_non_ventile %}
+        <div class="alert alert-warning shadow-lg">
+            <i class="fas fa-info-circle text-xl"></i>
+            <div>
+                <h3 class="font-bold">Stock non ventilé par magasin</h3>
+                <div class="text-sm">
+                    Le filtre magasin est appliqué strictement.
+                    Une partie du stock est seulement rattachée à la base (sans magasin explicite).
+                    <span class="font-semibold">Stock magasin:</span> {{ stock_actuel|floatformat:2|intcomma }}
+                    {% if designation.unite %} {{ designation.unite }}{% endif %},
+                    <span class="font-semibold">stock base:</span> {{ stock_global_base|floatformat:2|intcomma }}
+                    {% if designation.unite %} {{ designation.unite }}{% endif %},
+                    <span class="font-semibold">écart non ventilé:</span> {{ stock_non_ventile_ecart|floatformat:2|intcomma }}
+                    {% if designation.unite %} {{ designation.unite }}{% endif %}.
+                </div>
+            </div>
+        </div>
+    {% endif %}
+
+    <!-- Tableau des Mouvements -->
+    <div class="card bg-base-100 shadow-lg print-table-container">
+        <div class="card-body p-0">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra w-full">
+                    <thead>
+                        <tr class="bg-base-200">
+                            <th>Date</th>
+                            <th>Type de Mouvement</th>
+                            <th>Référence</th>
+                            <th>Ouvrage</th>
+                            <th>Employé</th>
+                            <th class="text-right">Entrée</th>
+                            <th class="text-right">Sortie</th>
+                            <th class="text-right bg-warning text-warning-content">Inventaire</th>
+                            <th class="text-right bg-info text-info-content">Stock</th>
+                            <th>Notes</th>
+                            <th class="text-center no-print">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for fiche in fiches %}
+                            {% if fiche.is_group_header %}
+                                <tr class="bg-primary/10">
+                                    <td colspan="11" class="font-semibold">
+                                        <i class="fas fa-store mr-2"></i>{{ fiche.magasin }}
+                                        <span class="ml-3 text-sm text-base-content/80">
+                                            Stock: {{ fiche.stock_magasin|floatformat:2|intcomma }}{% if designation.unite %} {{ designation.unite }}{% endif %}
+                                        </span>
+                                    </td>
+                                </tr>
+                            {% elif fiche.is_group_empty %}
+                                <tr>
+                                    <td colspan="11" class="text-center text-base-content/60 italic">
+                                        Aucun mouvement pour {{ fiche.magasin }} sur cette période.
+                                    </td>
+                                </tr>
+                            {% else %}
+                                <tr {% if fiche.stock < 0 %}class="negative-stock" id="stock-negative-{{ forloop.counter }}"{% endif %}>
+                                    <td>{{ fiche.date|date:"d/m/Y H:i" }}</td>
+                                    <td>
+                                        <span class="badge badge-sm">{{ fiche.type }}</span>
+                                    </td>
+                                    <td>{{ fiche.reference }}</td>
+                                    <td>
+                                        {% if fiche.ouvrage != '-' %}
+                                            <span class="badge badge-outline badge-sm">{{ fiche.ouvrage }}</span>
+                                        {% else %}
+                                            <span class="text-gray-400">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if fiche.employe != '-' %}
+                                            <span class="badge badge-info badge-sm">{{ fiche.employe }}</span>
+                                        {% else %}
+                                            <span class="text-gray-400">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-right font-semibold text-success">
+                                        {% if fiche.entree > 0 %}
+                                            +{{ fiche.entree|floatformat:2|intcomma }}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-right font-semibold text-error">
+                                        {% if fiche.sortie > 0 %}
+                                            -{{ fiche.sortie|floatformat:2|intcomma }}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-right font-bold bg-warning text-warning-content">
+                                        {% if fiche.inventaire is not None %}
+                                            {{ fiche.inventaire|floatformat:2|intcomma }}
+                                            {% if fiche.ecart is not None %}
+                                                <span class="block text-xs {% if fiche.ecart >= 0 %}text-success{% else %}text-error{% endif %}">
+                                                    écart: {% if fiche.ecart >= 0 %}+{% endif %}{{ fiche.ecart|floatformat:2|intcomma }}
+                                                </span>
+                                            {% endif %}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-right font-bold {% if fiche.stock < 0 %}bg-error text-error-content{% else %}bg-info text-info-content{% endif %}">
+                                        {{ fiche.stock|floatformat:2|intcomma }}
+                                        {% if fiche.stock < 0 %}
+                                            <span class="block text-xs">
+                                                <i class="fas fa-exclamation-triangle"></i> Stock négatif !
+                                            </span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-sm text-gray-600">{{ fiche.notes }}</td>
+                                    <td class="text-center">
+                                        <div class="flex items-center justify-center gap-1">
+                                            {% if fiche.planning_id %}
+                                                <a href="{% url 'planning:dashboard' %}?highlight={{ fiche.planning_id }}"
+                                                   class="btn btn-ghost btn-xs text-primary"
+                                                   title="Voir le planning">
+                                                    <i class="fas fa-calendar-alt"></i>
+                                                </a>
+                                            {% elif fiche.transfert_id %}
+                                                <button onclick="openTransfertModal('{{ fiche.transfert_id }}')"
+                                                        class="btn btn-ghost btn-xs text-info"
+                                                        title="Voir le transfert">
+                                                    <i class="fas fa-exchange-alt"></i>
+                                                </button>
+                                            {% elif fiche.purchase_id %}
+                                                <button onclick="openPurchaseModal('{{ fiche.purchase_id }}')"
+                                                        class="btn btn-ghost btn-xs text-success"
+                                                        title="Voir l'achat">
+                                                    <i class="fas fa-shopping-cart"></i>
+                                                </button>
+                                            {% endif %}
+                                            {% if can_delete_fiche_rows and fiche.id %}
+                                                <button
+                                                    onclick="deleteFicheStock('{{ fiche.id }}', '{{ fiche.reference|escapejs }}')"
+                                                    class="btn btn-ghost btn-xs text-error"
+                                                    title="Supprimer la ligne"
+                                                >
+                                                    <i class="fas fa-trash-alt"></i>
+                                                </button>
+                                            {% endif %}
+                                            {% if not fiche.planning_id and not fiche.transfert_id and not fiche.purchase_id and not can_delete_fiche_rows %}
+                                                <span class="text-gray-400">-</span>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                </tr>
+                            {% endif %}
+                        {% empty %}
+                        <tr>
+                            <td colspan="11" class="text-center text-gray-500 py-8">
+                                Aucun mouvement trouvé pour cette période
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sources associées -->
+    <div class="card bg-base-100 shadow-lg no-print">
+        <div class="card-body space-y-4">
+            <h2 class="text-lg font-semibold">
+                <i class="fas fa-layer-group mr-2 text-primary"></i>Sources associées (mêmes filtres)
+            </h2>
+
+            <div class="collapse collapse-arrow bg-base-200">
+                <input type="checkbox" />
+                <div class="collapse-title font-semibold">Inventaires</div>
+                <div class="collapse-content">
+                    <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <div class="text-xs text-base-content/70">
+                            {% if stock_item %}
+                                Stock rapproché : <span class="font-semibold">{% if stock_item.rapproche %}Oui{% else %}Non{% endif %}</span>
+                            {% else %}
+                                Stock introuvable pour cet article.
+                            {% endif %}
+                        </div>
+                        <div class="flex gap-2">
+                            <button type="button" class="btn btn-sm btn-accent" onclick="openInventaireModal()" {% if not designation or not base %}disabled{% endif %}>
+                                <i class="fas fa-plus mr-1"></i>Nouvel inventaire
+                            </button>
+                            <a href="{% url 'inventory:purchases' %}" class="btn btn-sm btn-outline btn-primary">
+                                <i class="fas fa-shopping-cart mr-1"></i>Achats
+                            </a>
+                            <a href="{% url 'inventory:transferts_list' %}" class="btn btn-sm btn-outline btn-info">
+                                <i class="fas fa-exchange-alt mr-1"></i>Transferts
+                            </a>
+                            <button type="button" class="btn btn-sm btn-outline" onclick="markRapproche()" {% if not stock_item or stock_item.rapproche %}disabled{% endif %}>
+                                <i class="fas fa-check mr-1"></i>Marquer rapproché
+                            </button>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="table table-sm table-zebra">
+                            <thead>
+                                <tr class="bg-base-300">
+                                    <th>Date</th>
+                                    <th class="text-right">Quantité</th>
+                                    <th>Employé</th>
+                                    <th>Référence</th>
+                                    <th>Magasin</th>
+                                    <th>Notes</th>
+                                    <th class="text-center">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for inv in inventaires %}
+                                <tr>
+                                    <td>{{ inv.date|date:"d/m/Y H:i" }}</td>
+                                    <td class="text-right">{{ inv.quantity|floatformat:2|intcomma }}</td>
+                                    <td>{{ inv.employee }}</td>
+                                    <td>{{ inv.reference }}</td>
+                                    <td>{{ inv.magasin }}</td>
+                                    <td class="text-xs text-base-content/70">{{ inv.notes }}</td>
+                                    <td class="text-center">
+                                        {% if can_delete_fiche_rows and inv.id %}
+                                            <button
+                                                class="btn btn-xs btn-error"
+                                                onclick="deleteFicheStock('{{ inv.id }}', '{{ inv.reference|escapejs }}')"
+                                            >
+                                                Supprimer
+                                            </button>
+                                        {% else %}
+                                            <span class="text-base-content/50">-</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="7" class="text-center text-base-content/60">Aucun inventaire trouvé.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="collapse collapse-arrow bg-base-200">
+                <input type="checkbox" />
+                <div class="collapse-title font-semibold">Achats</div>
+                <div class="collapse-content">
+                    <div class="flex justify-end mb-3">
+                        <a href="{% url 'inventory:purchases' %}" class="btn btn-sm btn-primary">
+                            <i class="fas fa-plus mr-1"></i>Nouvel achat
+                        </a>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="table table-sm table-zebra">
+                            <thead>
+                                <tr class="bg-base-300">
+                                    <th>Date</th>
+                                    <th>N° Achat</th>
+                                    <th>Fournisseur</th>
+                                    <th>Magasin</th>
+                                    <th class="text-right">Quantité</th>
+                                    <th class="text-right">PU</th>
+                                    <th class="text-right">Montant</th>
+                                    <th>Statut</th>
+                                    <th class="text-center">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for achat in achats %}
+                                <tr>
+                                    <td>{{ achat.date|date:"d/m/Y" }}</td>
+                                    <td>{{ achat.numero }}</td>
+                                    <td>{{ achat.fournisseur }}</td>
+                                    <td>{{ achat.magasin }}</td>
+                                    <td class="text-right">{{ achat.quantite|floatformat:2|intcomma }}</td>
+                                    <td class="text-right">{{ achat.pu|floatformat:2|intcomma }}</td>
+                                    <td class="text-right">{{ achat.montant|floatformat:2|intcomma }}</td>
+                                    <td><span class="badge badge-outline badge-sm">{{ achat.statut }}</span></td>
+                                    <td class="text-center">
+                                        {% if achat.purchase_id %}
+                                            <div class="flex items-center justify-center gap-1">
+                                                <button class="btn btn-xs btn-ghost" onclick="openPurchaseModal('{{ achat.purchase_id }}')">Voir</button>
+                                                <button class="btn btn-xs btn-outline" onclick="openPurchaseEditPage('{{ achat.purchase_id }}')">Modifier</button>
+                                                {% if achat.statut_code == 'brouillon' or achat.statut_code == 'commande' %}
+                                                    <button class="btn btn-xs btn-success" onclick="markPurchaseReceived('{{ achat.purchase_id }}')">Receptionner</button>
+                                                {% endif %}
+                                            </div>
+                                        {% else %}
+                                            <span class="text-base-content/50">-</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="9" class="text-center text-base-content/60">Aucun achat trouvé.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="collapse collapse-arrow bg-base-200">
+                <input type="checkbox" />
+                <div class="collapse-title font-semibold">Transferts</div>
+                <div class="collapse-content">
+                    <div class="flex justify-end mb-3">
+                        <a href="{% url 'inventory:transferts_list' %}" class="btn btn-sm btn-info">
+                            <i class="fas fa-plus mr-1"></i>Nouveau transfert
+                        </a>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="table table-sm table-zebra">
+                            <thead>
+                                <tr class="bg-base-300">
+                                    <th>Date</th>
+                                    <th>N° Transfert</th>
+                                    <th>Direction</th>
+                                    <th>Origine</th>
+                                    <th>Destination</th>
+                                    <th class="text-right">Qté envoyée</th>
+                                    <th class="text-right">Qté reçue</th>
+                                    <th>Statut</th>
+                                    <th class="text-center">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for transfert in transferts %}
+                                <tr>
+                                    <td>{{ transfert.date|date:"d/m/Y H:i" }}</td>
+                                    <td>{{ transfert.numero }}</td>
+                                    <td>{{ transfert.direction }}</td>
+                                    <td>{{ transfert.origine }}</td>
+                                    <td>{{ transfert.destination }}</td>
+                                    <td class="text-right">{{ transfert.quantite_envoyee|floatformat:2|intcomma }}</td>
+                                    <td class="text-right">{{ transfert.quantite_recue|floatformat:2|intcomma }}</td>
+                                    <td><span class="badge badge-outline badge-sm">{{ transfert.statut }}</span></td>
+                                    <td class="text-center">
+                                        {% if transfert.statut_code != 'recu' and transfert.transfert_id %}
+                                            <button class="btn btn-xs btn-info" onclick="markTransfertReceived('{{ transfert.transfert_id }}')">Recevoir</button>
+                                        {% else %}
+                                            <span class="text-base-content/50">-</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="9" class="text-center text-base-content/60">Aucun transfert trouvé.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="collapse collapse-arrow bg-base-200">
+                <input type="checkbox" />
+                <div class="collapse-title font-semibold">Bons de livraison (planning)</div>
+                <div class="collapse-content">
+                    <div class="flex justify-end mb-3 gap-2">
+                        <button type="button" class="btn btn-sm btn-success" onclick="openBonLivraisonModal()">
+                            <i class="fas fa-plus mr-1"></i>Nouveau bon de livraison
+                        </button>
+                        <button type="button" class="btn btn-sm btn-info" onclick="openRetourTerrainModal()">
+                            <i class="fas fa-undo mr-1"></i>Retour terrain sans BL
+                        </button>
+                        <a href="{% url 'planning:gestion_livraisons' %}" class="btn btn-sm btn-outline">
+                            <i class="fas fa-external-link-alt mr-1"></i>Page complète
+                        </a>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="table table-sm table-zebra">
+                            <thead>
+                                <tr class="bg-base-300">
+                                    <th>Date</th>
+                                    <th>N° Bon</th>
+                                    <th>Ouvrage</th>
+                                    <th>Magasin</th>
+                                    <th class="text-right">Quantité</th>
+                                    <th>Statut</th>
+                                    <th class="text-center">Planning</th>
+                                    <th class="text-center">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for bon in bons_livraison %}
+                                <tr>
+                                    <td>{{ bon.date|date:"d/m/Y H:i" }}</td>
+                                    <td>{{ bon.numero }}</td>
+                                    <td>{{ bon.ouvrage }}</td>
+                                    <td>{{ bon.magasin }}</td>
+                                    <td class="text-right">{{ bon.quantite|floatformat:2|intcomma }}</td>
+                                    <td><span class="badge badge-outline badge-sm">{{ bon.statut }}</span></td>
+                                    <td class="text-center">
+                                        {% if bon.planning_id %}
+                                            <a href="{% url 'planning:dashboard' %}?highlight={{ bon.planning_id }}"
+                                               class="btn btn-ghost btn-xs text-primary"
+                                               title="Voir le planning">
+                                                <i class="fas fa-calendar-alt"></i>
+                                            </a>
+                                        {% else %}
+                                            <span class="text-base-content/50">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-center">
+                                        <div class="flex items-center justify-center gap-2">
+                                            <button class="btn btn-xs btn-outline" onclick="openBonLivraisonModal('{{ bon.id }}')">Modifier</button>
+                                            {% if can_delete_fiche_rows %}
+                                            <button class="btn btn-xs btn-error" onclick="deleteBonLivraison('{{ bon.id }}', '{{ bon.numero|escapejs }}')">Supprimer</button>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="8" class="text-center text-base-content/60">Aucun bon de livraison trouvé.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Zone de signatures (visible uniquement à l'impression) -->
+    <div class="print-signatures">
+        <div class="print-signature-box">
+            <div style="margin-bottom: 60px;"></div>
+            <div style="border-top: 1px solid #000; padding-top: 5px;">
+                <strong>Magasinier</strong><br>
+                <span style="font-size: 9px;">Nom et signature</span>
+            </div>
+        </div>
+        <div class="print-signature-box">
+            <div style="margin-bottom: 60px;"></div>
+            <div style="border-top: 1px solid #000; padding-top: 5px;">
+                <strong>Responsable</strong><br>
+                <span style="font-size: 9px;">Nom et signature</span>
+            </div>
+        </div>
+    </div>
+        {% else %}
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body space-y-4">
+            <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                <div>
+                    <h2 class="text-xl font-bold">
+                        <i class="fas fa-boxes mr-2 text-primary"></i>Articles disponibles
+                    </h2>
+                    <p class="text-sm text-base-content/70">
+                        Cliquez sur un article, choisissez le magasin, puis ouvrez la fiche detaillee.
+                    </p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="badge badge-outline" id="accueil-results-count">{{ accueil_articles|length }} article(s)</span>
+                    <button type="button"
+                            id="accueil-view-cards-btn"
+                            class="btn btn-sm {% if accueil_view == 'cards' %}btn-primary{% else %}btn-ghost{% endif %}"
+                            onclick="setAccueilView('cards')">
+                        <i class="fas fa-th-large mr-1"></i>Cards
+                    </button>
+                    <button type="button"
+                            id="accueil-view-table-btn"
+                            class="btn btn-sm {% if accueil_view == 'table' %}btn-primary{% else %}btn-ghost{% endif %}"
+                            onclick="setAccueilView('table')">
+                        <i class="fas fa-table mr-1"></i>Tableau
+                    </button>
+                </div>
+            </div>
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text font-semibold">Recherche instantanee</span>
+                </label>
+                <input id="accueil-search"
+                       type="search"
+                       class="input input-bordered"
+                       placeholder="Tapez pour filtrer les articles..."
+                       oninput="filterAccueilArticles()">
+            </div>
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text font-semibold">Type de designation</span>
+                </label>
+                <select id="accueil-type-filter" class="select select-bordered" onchange="filterAccueilArticles()">
+                    <option value="">Tous les types</option>
+                    {% for type_nom in accueil_types_designation %}
+                    <option value="{{ type_nom }}">
+                        {{ type_nom }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div id="accueil-empty" class="alert alert-warning hidden">
+                <i class="fas fa-search"></i>
+                <span>Aucun article ne correspond a votre recherche.</span>
+            </div>
+            <div id="accueil-cards-view" class="{% if accueil_view == 'table' %}hidden{% endif %}">
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {% for article in accueil_articles %}
+                    <div class="card bg-base-200 shadow accueil-item"
+                         data-search="{{ article.nom|lower }} {{ article.unite|lower }} {{ article.type_designation_nom|default:'sans type'|lower }}"
+                         data-type="{{ article.type_designation_nom|default:'Sans type' }}">
+                        {% if article.photo_url %}
+                        <figure class="h-40 overflow-hidden cursor-pointer" onclick="openPhotoViewer('{{ article.photo_url }}')">
+                            <img src="{{ article.photo_url }}" alt="{{ article.nom }}" class="w-full h-full object-cover">
+                        </figure>
+                        {% else %}
+                        <div class="h-40 bg-base-300 flex items-center justify-center">
+                            <i class="fas fa-image text-4xl text-base-content/30"></i>
+                        </div>
+                        {% endif %}
+                        <div class="card-body p-4">
+                            <div class="flex items-start justify-between gap-2">
+                                <h3 class="card-title text-base">{{ article.nom }}</h3>
+                                <button type="button"
+                                        class="btn btn-xs btn-outline"
+                                        onclick="openDesignationEditModal('{{ article.id }}', '{{ article.nom|escapejs }}', '{% if article.prix_unitaire %}{{ article.prix_unitaire }}{% endif %}', '{{ article.photo_url|default:''|escapejs }}', '{% if article.date_prix %}{{ article.date_prix|date:'Y-m-d' }}{% endif %}')">
+                                    Modifier
+                                </button>
+                            </div>
+                            <p class="text-sm text-base-content/70">
+                                Stock total: <span class="font-bold">{{ article.stock_total|floatformat:2|intcomma }} {{ article.unite }}</span>
+                            </p>
+                            <p class="text-sm text-base-content/70">
+                                Prix designation:
+                                <span class="font-bold">
+                                    {% if article.prix_unitaire %}{{ article.prix_unitaire|floatformat:2|intcomma }} Ar{% else %}-{% endif %}
+                                </span>
+                            </p>
+                            <p class="text-sm text-base-content/70">
+                                Type:
+                                <span class="badge badge-outline badge-sm">{{ article.type_designation_nom|default:"Sans type" }}</span>
+                            </p>
+                            <div class="space-y-2">
+                                {% for stock_magasin in article.stocks_par_magasin %}
+                                <div class="p-2 rounded bg-base-100 border border-base-300">
+                                    <div class="flex items-center justify-between text-sm mb-2">
+                                        <span class="font-semibold">{{ stock_magasin.magasin_nom }}</span>
+                                        <span class="font-mono">{{ stock_magasin.quantite|floatformat:2|intcomma }} {{ article.unite }}</span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <select id="accueil-magasin-card-{{ forloop.parentloop.counter }}-{{ forloop.counter }}"
+                                                class="select select-bordered select-xs flex-1">
+                                            <option value="">Tous les magasins</option>
+                                            {% for magasin in magasins %}
+                                                {% if magasin.base_id|stringformat:"s" == stock_magasin.base_id %}
+                                                <option value="{{ magasin.id }}">{{ magasin.nom_magasin }}</option>
+                                                {% endif %}
+                                            {% endfor %}
+                                        </select>
+                                        <button type="button"
+                                                class="btn btn-primary btn-xs"
+                                                onclick="openFicheFromAccueil('{{ article.id }}', '{{ stock_magasin.base_id }}', 'accueil-magasin-card-{{ forloop.parentloop.counter }}-{{ forloop.counter }}')">
+                                            Ouvrir
+                                        </button>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            <div id="accueil-table-view" class="{% if accueil_view != 'table' %}hidden{% endif %}">
+                <div class="overflow-x-auto">
+                    <table class="table table-zebra w-full">
+                        <thead>
+                            <tr class="bg-base-200">
+                                <th>Article</th>
+                                <th>Type</th>
+                                <th>Unite</th>
+                                <th class="text-right">Prix</th>
+                                <th>Magasin / Base</th>
+                                <th class="text-right">Stock dispo</th>
+                                <th>Choix magasin</th>
+                                <th class="text-center">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for article in accueil_articles %}
+                                {% for stock_magasin in article.stocks_par_magasin %}
+                                <tr class="accueil-item"
+                                    data-search="{{ article.nom|lower }} {{ article.unite|lower }} {{ article.type_designation_nom|default:'sans type'|lower }} {{ stock_magasin.magasin_nom|lower }}"
+                                    data-type="{{ article.type_designation_nom|default:'Sans type' }}">
+                                    <td class="font-semibold">{{ article.nom }}</td>
+                                    <td>
+                                        <span class="badge badge-outline badge-sm">{{ article.type_designation_nom|default:"Sans type" }}</span>
+                                    </td>
+                                    <td>{{ article.unite|default:"-" }}</td>
+                                    <td class="text-right">
+                                        {% if article.prix_unitaire %}{{ article.prix_unitaire|floatformat:2|intcomma }} Ar{% else %}-{% endif %}
+                                    </td>
+                                    <td>{{ stock_magasin.magasin_nom }}</td>
+                                    <td class="text-right font-mono">{{ stock_magasin.quantite|floatformat:2|intcomma }}</td>
+                                    <td>
+                                        <select id="accueil-magasin-table-{{ forloop.parentloop.counter }}-{{ forloop.counter }}"
+                                                class="select select-bordered select-xs w-full">
+                                            <option value="">Tous les magasins</option>
+                                            {% for magasin in magasins %}
+                                                {% if magasin.base_id|stringformat:"s" == stock_magasin.base_id %}
+                                                <option value="{{ magasin.id }}">{{ magasin.nom_magasin }}</option>
+                                                {% endif %}
+                                            {% endfor %}
+                                        </select>
+                                    </td>
+                                    <td class="text-center">
+                                        <div class="flex items-center justify-center gap-2">
+                                            <button type="button"
+                                                    class="btn btn-primary btn-xs"
+                                                    onclick="openFicheFromAccueil('{{ article.id }}', '{{ stock_magasin.base_id }}', 'accueil-magasin-table-{{ forloop.parentloop.counter }}-{{ forloop.counter }}')">
+                                                Voir fiche
+                                            </button>
+                                            <button type="button"
+                                                    class="btn btn-outline btn-xs"
+                                                    onclick="openDesignationEditModal('{{ article.id }}', '{{ article.nom|escapejs }}', '{% if article.prix_unitaire %}{{ article.prix_unitaire }}{% endif %}', '{{ article.photo_url|default:''|escapejs }}', '{% if article.date_prix %}{{ article.date_prix|date:'Y-m-d' }}{% endif %}')">
+                                                Modifier
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            {% empty %}
+                            <tr>
+                                <td colspan="8" class="text-center text-base-content/60 py-8">
+                                    Aucun article disponible.
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Modal Détails Transfert -->
+<dialog id="modal-transfert-details" class="modal">
+    <div class="modal-box max-w-3xl">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">âœ•</button>
+        </form>
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-exchange-alt mr-2 text-info"></i>
+            Détails du Transfert
+        </h3>
+        <div id="transfert-details-content" class="space-y-4">
+            <div class="flex justify-center py-8">
+                <span class="loading loading-spinner loading-lg"></span>
+            </div>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Modal Détails Achat -->
+<dialog id="modal-purchase-details" class="modal">
+    <div class="modal-box max-w-3xl">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">âœ•</button>
+        </form>
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-shopping-cart mr-2 text-success"></i>
+            Détails de l'Achat
+        </h3>
+        <div id="purchase-details-content" class="space-y-4">
+            <div class="flex justify-center py-8">
+                <span class="loading loading-spinner loading-lg"></span>
+            </div>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Modal Bon de Livraison -->
+<dialog id="modal-bon-livraison" class="modal">
+    <div class="modal-box max-w-2xl">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">âœ•</button>
+        </form>
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-truck-loading mr-2 text-success"></i>
+            Saisie Bon de Livraison
+        </h3>
+        <form id="bonLivraisonForm" class="space-y-4">
+            <input type="hidden" id="bon-id">
+            <input type="hidden" id="bon-designation-id" value="{% if designation %}{{ designation.id }}{% endif %}">
+            <input type="hidden" id="bon-ouvrage-id">
+
+            <div class="text-sm text-base-content/70">
+                <div><strong>Article :</strong> {{ designation.nom|default:"-" }}</div>
+                <div><strong>Base :</strong> {{ base.nom_base|default:"-" }}</div>
+                <div><strong>Magasin :</strong> {{ selected_magasin.nom_magasin|default:"-" }}</div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Ouvrage *</span></label>
+                    <input type="text" id="bon-ouvrage-text" list="bon-ouvrages-list" class="input input-bordered" placeholder="Rechercher un ouvrage..." onchange="selectOuvrage()" required>
+                    <datalist id="bon-ouvrages-list"></datalist>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Planning (date) *</span></label>
+                    <select id="bon-planning-id" class="select select-bordered" required>
+                        <option value="">-- Choisir un planning --</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Quantité *</span></label>
+                    <input type="number" step="0.01" id="bon-quantite" class="input input-bordered" required>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Magasin</span></label>
+                    <input type="text" id="bon-magasin" class="input input-bordered" value="{% if selected_magasin %}{{ selected_magasin.nom_magasin }}{% endif %}">
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Statut</span></label>
+                    <select id="bon-statut" class="select select-bordered" onchange="toggleBonDate()">
+                        <option value="en_attente">En attente</option>
+                        <option value="livre">Livré</option>
+                    </select>
+                </div>
+                <div class="form-control" id="bon-date-field" style="display:none;">
+                    <label class="label"><span class="label-text">Date livraison</span></label>
+                    <input type="date" id="bon-date" class="input input-bordered" value="{% now 'Y-m-d' %}">
+                </div>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">N° Bon (optionnel)</span></label>
+                <input type="text" id="bon-numero" class="input input-bordered" placeholder="BL-2026-001">
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal-bon-livraison').close()">Annuler</button>
+                <button type="submit" class="btn btn-success">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Modal Retour terrain sans bon -->
+<dialog id="modal-retour-terrain" class="modal">
+    <div class="modal-box max-w-2xl">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">âœ•</button>
+        </form>
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-undo mr-2 text-info"></i>
+            Retour terrain sans bon
+        </h3>
+        <form id="retourTerrainForm" class="space-y-4">
+            <input type="hidden" id="retour-id">
+            <input type="hidden" id="retour-designation-id" value="{% if designation %}{{ designation.id }}{% endif %}">
+            <input type="hidden" id="retour-base-id" value="{% if base %}{{ base.id }}{% endif %}">
+            <input type="hidden" id="retour-magasin-defaut-id" value="{% if selected_magasin %}{{ selected_magasin.id }}{% endif %}">
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Magasin</span></label>
+                    <select id="retour-magasin-id" class="select select-bordered">
+                        <option value="">-- Non ventilé (base) --</option>
+                        {% for magasin in magasins %}
+                            {% if magasin.base_id|stringformat:"s" == base.id|stringformat:"s" %}
+                            <option value="{{ magasin.id }}">{{ magasin.nom_magasin }}</option>
+                            {% endif %}
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Date du retour *</span></label>
+                    <input type="date" id="retour-date" class="input input-bordered" value="{% now 'Y-m-d' %}" required>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Quantité *</span></label>
+                    <input type="number" step="0.01" min="0.01" id="retour-quantite" class="input input-bordered" required>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Référence (optionnel)</span></label>
+                    <input type="text" id="retour-reference" class="input input-bordered" placeholder="Ex: RT-2026-001">
+                </div>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Notes</span></label>
+                <input type="text" id="retour-notes" class="input input-bordered" placeholder="Motif / commentaire">
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal-retour-terrain').close()">Annuler</button>
+                <button type="submit" class="btn btn-info">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Modal Modification Designation -->
+<dialog id="modal-designation-edit" class="modal modal-bottom sm:modal-middle">
+    <div class="modal-box w-full max-w-xl sm:max-w-xl max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl px-4 py-5 sm:px-6">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button>
+        </form>
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-pen mr-2 text-primary"></i>Modifier la designation
+        </h3>
+        <form id="designationEditForm" class="space-y-4">
+            <input type="hidden" id="designation-edit-id">
+            <input type="hidden" id="designation-edit-prix-initial">
+            <div class="text-sm">
+                <strong>Article:</strong> <span id="designation-edit-name">-</span>
+            </div>
+            <div class="form-control">
+                <label class="label"><span class="label-text">Prix unitaire (Ar)</span></label>
+                <input type="number" step="0.01" min="0" id="designation-edit-prix" class="input input-bordered" placeholder="Ex: 12000">
+            </div>
+            <div class="form-control">
+                <label class="label"><span class="label-text">Date du prix</span></label>
+                <input type="date" id="designation-edit-date-prix" class="input input-bordered">
+                <span class="text-xs text-base-content/70 mt-1">Obligatoire si vous modifiez le prix.</span>
+            </div>
+            <div class="form-control">
+                <label class="label"><span class="label-text">Photo</span></label>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button type="button" class="btn btn-outline w-full" onclick="openDesignationPhotoPicker()">
+                        <i class="fas fa-images mr-2"></i>Choisir une photo
+                    </button>
+                    <button type="button" class="btn btn-primary w-full" onclick="openDesignationPhoneCamera()">
+                        <i class="fas fa-camera mr-2"></i>Prendre une photo
+                    </button>
+                </div>
+                <input type="file" id="designation-edit-photo" class="file-input file-input-bordered sr-only" accept="image/*">
+                <div id="designation-edit-photo-preview" class="mt-3 hidden">
+                    <img id="designation-edit-photo-image" src="" alt="Apercu photo designation" class="w-full max-h-56 object-contain rounded border border-base-300 bg-base-200">
+                </div>
+            </div>
+            <div class="modal-action flex-col-reverse sm:flex-row">
+                <button type="button" class="btn btn-ghost w-full sm:w-auto" onclick="document.getElementById('modal-designation-edit').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary w-full sm:w-auto">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Modal Inventaire -->
+<dialog id="modal-inventaire" class="modal">
+    <div class="modal-box max-w-xl">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">âœ•</button>
+        </form>
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-clipboard-check mr-2 text-accent"></i>Nouvel inventaire
+        </h3>
+        <form id="inventaireForm" class="space-y-4">
+            <div class="text-sm text-base-content/70">
+                <div><strong>Article :</strong> {{ designation.nom|default:"-" }}</div>
+                <div><strong>Base :</strong> {{ base.nom_base|default:"-" }}</div>
+                <div><strong>Magasin :</strong> {{ selected_magasin.nom_magasin|default:"-" }}</div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Quantité inventoriée*</span></label>
+                    <input type="number" step="0.01" id="inventaireQuantity" class="input input-bordered" required data-default="{% if stock_item %}{{ stock_item.current_quantity|floatformat:2 }}{% endif %}">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Date inventaire*</span></label>
+                    <input type="date" id="inventaireDate" class="input input-bordered" value="{% now 'Y-m-d' %}" required>
+                </div>
+                <div class="form-control md:col-span-2">
+                    <label class="label"><span class="label-text">Notes</span></label>
+                    <input type="text" id="inventaireNotes" class="input input-bordered" placeholder="Motif / commentaire">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Rapproché</span></label>
+                    <input type="checkbox" id="inventaireRapproche" class="checkbox">
+                </div>
+            </div>
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal-inventaire').close()">Annuler</button>
+                <button type="submit" class="btn btn-accent">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<script>
+const designationUpdateUrlTemplate = "{% url 'planning:designation_update' designation_id='00000000-0000-0000-0000-000000000000' %}";
+
+function selectDesignation() {
+    const textInput = document.getElementById('designation_text');
+    const hiddenInput = document.getElementById('designation_id');
+    const datalist = document.getElementById('designations_list');
+
+    const selectedValue = textInput.value.trim();
+    let selectedOption = null;
+
+    for (let option of datalist.options) {
+        if (option.value === selectedValue) {
+            selectedOption = option;
+            break;
+        }
+    }
+
+    if (selectedOption) {
+        hiddenInput.value = selectedOption.dataset.id;
+    } else {
+        hiddenInput.value = '';
+    }
+}
+
+// Fonction pour ouvrir le modal de transfert
+async function openTransfertModal(transfertId) {
+    const modal = document.getElementById('modal-transfert-details');
+    const content = document.getElementById('transfert-details-content');
+
+    // Afficher le modal avec loading
+    content.innerHTML = '<div class="flex justify-center py-8"><span class="loading loading-spinner loading-lg"></span></div>';
+    modal.showModal();
+
+    try {
+        const response = await fetch(`/stocks/transferts/api/${transfertId}/detail/`);
+        const data = await response.json();
+
+        if (data.success) {
+            const transfert = data.transfert;
+
+            // Construire le HTML des items
+            let itemsHtml = '';
+            transfert.items.forEach(item => {
+                itemsHtml += `
+                    <tr>
+                        <td>${item.designation_nom}</td>
+                        <td class="text-center">${item.quantity_sent} ${item.designation_unite || ''}</td>
+                        <td class="text-center">${item.quantity_received || 0} ${item.designation_unite || ''}</td>
+                    </tr>
+                `;
+            });
+
+            // Badge de statut
+            const statusBadges = {
+                'en_attente': 'badge-warning',
+                'en_cours': 'badge-info',
+                'recu': 'badge-success',
+                'annule': 'badge-error'
+            };
+            const statusBadge = `<span class="badge ${statusBadges[transfert.status] || 'badge-ghost'}">${transfert.status_display}</span>`;
+
+            content.innerHTML = `
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <p class="text-sm text-base-content/70">N° Transfert</p>
+                        <p class="font-bold text-lg">${transfert.transfer_number}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Statut</p>
+                        <p>${statusBadge}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Date de transfert</p>
+                        <p>${new Date(transfert.transfer_date).toLocaleString('fr-FR')}</p>
+                    </div>
+                    ${transfert.actual_arrival_date ? `
+                    <div>
+                        <p class="text-sm text-base-content/70">Date de réception</p>
+                        <p>${new Date(transfert.actual_arrival_date).toLocaleString('fr-FR')}</p>
+                    </div>
+                    ` : ''}
+                    <div>
+                        <p class="text-sm text-base-content/70">Magasin origine</p>
+                        <p class="font-semibold">${transfert.magasin_origine}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Magasin destination</p>
+                        <p class="font-semibold">${transfert.magasin_destination}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Initié par</p>
+                        <p>${transfert.initiated_by || '<em class="text-base-content/50">Non spécifié</em>'}</p>
+                    </div>
+                    ${transfert.received_by ? `
+                    <div>
+                        <p class="text-sm text-base-content/70">Reçu par</p>
+                        <p>${transfert.received_by}</p>
+                    </div>
+                    ` : ''}
+                </div>
+
+                ${transfert.notes ? `
+                <div class="mt-4">
+                    <p class="text-sm text-base-content/70">Notes</p>
+                    <p class="text-sm bg-base-200 p-3 rounded">${transfert.notes}</p>
+                </div>
+                ` : ''}
+
+                <div class="divider">Articles transférés</div>
+
+                <div class="overflow-x-auto">
+                    <table class="table table-sm table-zebra">
+                        <thead>
+                            <tr class="bg-base-200">
+                                <th>Désignation</th>
+                                <th class="text-center">Quantité envoyée</th>
+                                <th class="text-center">Quantité reçue</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${itemsHtml}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="mt-6 flex justify-end">
+                    <a href="/stocks/transferts/${transfertId}/bon-livraison/" target="_blank" class="btn btn-primary btn-sm">
+                        <i class="fas fa-print mr-2"></i>Imprimer bon de livraison
+                    </a>
+                </div>
+            `;
+        } else {
+            content.innerHTML = '<div class="alert alert-error">Erreur lors du chargement des détails</div>';
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        content.innerHTML = '<div class="alert alert-error">Erreur réseau</div>';
+    }
+}
+
+// Fonction pour ouvrir le modal d'achat
+async function openPurchaseModal(purchaseId) {
+    const modal = document.getElementById('modal-purchase-details');
+    const content = document.getElementById('purchase-details-content');
+
+    // Afficher le modal avec loading
+    content.innerHTML = '<div class="flex justify-center py-8"><span class="loading loading-spinner loading-lg"></span></div>';
+    modal.showModal();
+
+    try {
+        const response = await fetch(`/stocks/purchases/api/${purchaseId}/detail/`);
+        const data = await response.json();
+
+        if (data.success) {
+            const purchase = data.purchase;
+
+            // Construire le HTML des items
+            let itemsHtml = '';
+            purchase.items.forEach(item => {
+                itemsHtml += `
+                    <tr>
+                        <td>${item.designation_nom}</td>
+                        <td class="text-center">${item.quantity_ordered} ${item.designation_unite || ''}</td>
+                        <td class="text-center">${item.quantity_received || 0} ${item.designation_unite || ''}</td>
+                        <td class="text-right">${parseFloat(item.unit_price).toLocaleString('fr-FR')} Ar</td>
+                        <td class="text-right font-bold">${parseFloat(item.total_price).toLocaleString('fr-FR')} Ar</td>
+                    </tr>
+                `;
+            });
+
+            // Badge de statut
+            const statusBadges = {
+                'commande': 'badge-warning',
+                'livre': 'badge-success',
+                'recu': 'badge-success',
+                'annule': 'badge-error'
+            };
+            const statusBadge = `<span class="badge ${statusBadges[purchase.purchase_status] || 'badge-ghost'}">${purchase.purchase_status_display}</span>`;
+
+            content.innerHTML = `
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <p class="text-sm text-base-content/70">N° Achat</p>
+                        <p class="font-bold text-lg">${purchase.purchase_number}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Statut</p>
+                        <p>${statusBadge}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Date de commande</p>
+                        <p>${new Date(purchase.purchase_date).toLocaleDateString('fr-FR')}</p>
+                    </div>
+                    ${purchase.actual_delivery_date ? `
+                    <div>
+                        <p class="text-sm text-base-content/70">Date de livraison</p>
+                        <p>${new Date(purchase.actual_delivery_date).toLocaleDateString('fr-FR')}</p>
+                    </div>
+                    ` : ''}
+                    <div>
+                        <p class="text-sm text-base-content/70">Fournisseur</p>
+                        <p class="font-semibold">${purchase.fournisseur || '<em class="text-base-content/50">Non spécifié</em>'}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Magasin</p>
+                        <p class="font-semibold">${purchase.magasin}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Commandé par</p>
+                        <p>${purchase.ordered_by || '<em class="text-base-content/50">Non spécifié</em>'}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Montant total</p>
+                        <p class="font-bold text-xl text-success">${parseFloat(purchase.total_amount).toLocaleString('fr-FR')} Ar</p>
+                    </div>
+                </div>
+
+                ${purchase.notes ? `
+                <div class="mt-4">
+                    <p class="text-sm text-base-content/70">Notes</p>
+                    <p class="text-sm bg-base-200 p-3 rounded">${purchase.notes}</p>
+                </div>
+                ` : ''}
+
+                <div class="divider">Articles achetés</div>
+
+                <div class="overflow-x-auto">
+                    <table class="table table-sm table-zebra">
+                        <thead>
+                            <tr class="bg-base-200">
+                                <th>Désignation</th>
+                                <th class="text-center">Qté commandée</th>
+                                <th class="text-center">Qté reçue</th>
+                                <th class="text-right">Prix unitaire</th>
+                                <th class="text-right">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${itemsHtml}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        } else {
+            content.innerHTML = '<div class="alert alert-error">Erreur lors du chargement des détails</div>';
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        content.innerHTML = '<div class="alert alert-error">Erreur réseau</div>';
+    }
+}
+
+function openPurchaseEditPage(purchaseId) {
+    const url = new URL('{% url "inventory:purchases" %}', window.location.origin);
+    url.searchParams.set('edit_id', purchaseId);
+    window.location.href = url.toString();
+}
+
+
+async function markPurchaseReceived(purchaseId) {
+    if (!confirm('Marquer cet achat comme receptionne ?')) {
+        return;
+    }
+
+    try {
+        const detailResponse = await fetch(`/stocks/purchases/api/${purchaseId}/detail/`);
+        const detailData = await detailResponse.json();
+        if (!detailData.success) {
+            alert(detailData.error || 'Erreur chargement achat.');
+            return;
+        }
+
+        const items = (detailData.purchase.items || []).map(item => ({
+            item_id: item.id,
+            quantity_received: item.quantity_ordered
+        }));
+
+        const response = await fetch(`/stocks/purchases/api/${purchaseId}/update-status/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ status: 'livre', items })
+        });
+        const data = await response.json();
+        if (data.success) {
+            alert('Achat receptionne.');
+            location.reload();
+        } else {
+            alert(data.error || 'Erreur mise a jour achat.');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur reseau.');
+    }
+}
+
+async function markTransfertReceived(transfertId) {
+    if (!confirm('Marquer ce transfert comme recu ?')) {
+        return;
+    }
+
+    try {
+        const detailResponse = await fetch(`/stocks/transferts/api/${transfertId}/detail/`);
+        const detailData = await detailResponse.json();
+        if (!detailData.success) {
+            alert(detailData.error || 'Erreur chargement transfert.');
+            return;
+        }
+
+        const quantities = {};
+        (detailData.transfert.items || []).forEach(item => {
+            quantities[item.id] = item.quantity_sent;
+        });
+
+        const response = await fetch(`/stocks/transferts/api/${transfertId}/update-status/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ action: 'recevoir', quantities })
+        });
+        const data = await response.json();
+        if (data.success) {
+            alert('Transfert recu.');
+            location.reload();
+        } else {
+            alert(data.error || 'Erreur mise a jour transfert.');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur reseau.');
+    }
+}
+
+let bonOuvragesLoaded = false;
+
+async function openBonLivraisonModal(bonId = '') {
+    const modal = document.getElementById('modal-bon-livraison');
+    const form = document.getElementById('bonLivraisonForm');
+    const designationId = document.getElementById('bon-designation-id').value;
+
+    if (!designationId) {
+        alert('Selectionnez un article et une base avant de saisir un bon.');
+        return;
+    }
+
+    form.reset();
+    document.getElementById('bon-id').value = bonId || '';
+    document.getElementById('bon-ouvrage-id').value = '';
+    document.getElementById('bon-planning-id').innerHTML = '<option value="">-- Choisir un planning --</option>';
+    document.getElementById('bon-date').value = new Date().toISOString().split('T')[0];
+    toggleBonDate();
+
+    if (!bonOuvragesLoaded) {
+        await loadOuvrages();
+    }
+
+    if (bonId) {
+        try {
+            const response = await fetch(`/stocks/fiches-stock/api/bon-livraison/${bonId}/`);
+            const data = await response.json();
+            if (data.success) {
+                const bon = data.bon;
+                document.getElementById('bon-id').value = bon.id;
+                document.getElementById('bon-ouvrage-text').value = bon.ouvrage || '';
+                document.getElementById('bon-quantite').value = bon.quantite;
+                document.getElementById('bon-magasin').value = bon.magasin || '';
+                document.getElementById('bon-statut').value = bon.statut || 'en_attente';
+                document.getElementById('bon-numero').value = bon.numero_bon || '';
+                if (bon.date_utilisation) {
+                    document.getElementById('bon-date').value = bon.date_utilisation;
+                }
+                toggleBonDate();
+                if (bon.ouvrage_id) {
+                    document.getElementById('bon-ouvrage-id').value = bon.ouvrage_id;
+                    document.getElementById('bon-ouvrage-text').value = bon.ouvrage || '';
+                    await loadPlanningsForOuvrage(bon.ouvrage_id, bon.planning_id);
+                }
+            }
+        } catch (error) {
+            console.error('Erreur:', error);
+        }
+    }
+
+    modal.showModal();
+}
+
+function openRetourTerrainModal() {
+    const designationId = document.getElementById('designation_id')?.value || '';
+    const baseId = document.getElementById('base_id')?.value || '';
+    if (!designationId || !baseId) {
+        alert('Selectionnez un article et une base avant de saisir un retour terrain.');
+        return;
+    }
+
+    const form = document.getElementById('retourTerrainForm');
+    const defaultMagasinId = document.getElementById('retour-magasin-defaut-id')?.value || '';
+    const magasinSelect = document.getElementById('retour-magasin-id');
+    const designationInput = document.getElementById('retour-designation-id');
+    const baseInput = document.getElementById('retour-base-id');
+
+    if (form) {
+        form.reset();
+    }
+    if (designationInput) {
+        designationInput.value = designationId;
+    }
+    if (baseInput) {
+        baseInput.value = baseId;
+    }
+
+    if (magasinSelect) {
+        magasinSelect.value = defaultMagasinId || '';
+    }
+
+    const dateInput = document.getElementById('retour-date');
+    if (dateInput) {
+        dateInput.value = new Date().toISOString().split('T')[0];
+    }
+
+    const quantiteInput = document.getElementById('retour-quantite');
+    if (quantiteInput) {
+        quantiteInput.value = '';
+    }
+
+    const bonIdInput = document.getElementById('retour-id');
+    if (bonIdInput) {
+        bonIdInput.value = '';
+    }
+
+    const referenceInput = document.getElementById('retour-reference');
+    if (referenceInput) {
+        referenceInput.value = '';
+    }
+
+    const notesInput = document.getElementById('retour-notes');
+    if (notesInput) {
+        notesInput.value = '';
+    }
+
+    document.getElementById('modal-retour-terrain').showModal();
+}
+
+let ouvrageSearchTimer = null;
+
+function queueOuvrageSearch(query) {
+    if (ouvrageSearchTimer) {
+        clearTimeout(ouvrageSearchTimer);
+    }
+    ouvrageSearchTimer = setTimeout(() => {
+        loadOuvrages(query || '');
+    }, 300);
+}
+
+async function loadOuvrages(query = '') {
+    try {
+        const response = await fetch(`/stocks/fiches-stock/api/ouvrages/?q=${encodeURIComponent(query)}`);
+        const data = await response.json();
+        if (!data.success) return;
+        const list = document.getElementById('bon-ouvrages-list');
+        list.innerHTML = '';
+        data.ouvrages.forEach(o => {
+            const option = document.createElement('option');
+            option.value = o.nom;
+            option.dataset.id = o.id;
+            list.appendChild(option);
+        });
+        bonOuvragesLoaded = true;
+    } catch (error) {
+        console.error('Erreur:', error);
+    }
+}
+
+function selectOuvrage() {
+    const input = document.getElementById('bon-ouvrage-text');
+    const list = document.getElementById('bon-ouvrages-list');
+    const hidden = document.getElementById('bon-ouvrage-id');
+    hidden.value = '';
+
+    for (let option of list.options) {
+        if (option.value === input.value) {
+            hidden.value = option.dataset.id;
+            break;
+        }
+    }
+
+    if (hidden.value) {
+        loadPlanningsForOuvrage(hidden.value);
+    } else {
+        document.getElementById('bon-planning-id').innerHTML = '<option value="">-- Choisir un planning --</option>';
+    }
+}
+
+async function loadPlanningsForOuvrage(ouvrageId, selectedPlanningId = '') {
+    try {
+        const response = await fetch(`/stocks/fiches-stock/api/ouvrages/${ouvrageId}/plannings/`);
+        const data = await response.json();
+        if (!data.success) return;
+        const select = document.getElementById('bon-planning-id');
+        select.innerHTML = '<option value="">-- Choisir un planning --</option>';
+        data.plannings.forEach(p => {
+            const option = document.createElement('option');
+            option.value = p.id;
+            option.textContent = `${p.date} ${p.employe ? '- ' + p.employe : ''}`;
+            if (selectedPlanningId && selectedPlanningId === p.id) {
+                option.selected = true;
+            }
+            select.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Erreur:', error);
+    }
+}
+
+function toggleBonDate() {
+    const statut = document.getElementById('bon-statut').value;
+    const dateField = document.getElementById('bon-date-field');
+    dateField.style.display = statut === 'livre' ? 'block' : 'none';
+}
+
+async function submitBonLivraisonForm(event) {
+    event.preventDefault();
+    const payload = {
+        id: document.getElementById('bon-id').value || '',
+        planning_id: document.getElementById('bon-planning-id').value,
+        designation_id: document.getElementById('bon-designation-id').value,
+        quantite: document.getElementById('bon-quantite').value,
+        magasin: document.getElementById('bon-magasin').value,
+        statut: document.getElementById('bon-statut').value,
+        date_utilisation: document.getElementById('bon-date').value,
+        numero_bon: document.getElementById('bon-numero').value
+    };
+
+    try {
+        const response = await fetch('/stocks/fiches-stock/api/bon-livraison/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (data.success) {
+            alert('Bon de livraison enregistre.');
+            location.reload();
+        } else {
+            alert(data.error || 'Erreur enregistrement.');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur reseau.');
+    }
+}
+
+async function submitRetourTerrainForm(event) {
+    event.preventDefault();
+
+    const payload = {
+        id: document.getElementById('retour-id').value || '',
+        designation_id: document.getElementById('retour-designation-id').value,
+        base_id: document.getElementById('retour-base-id').value,
+        magasin_id: document.getElementById('retour-magasin-id').value,
+        quantite: document.getElementById('retour-quantite').value,
+        date_operation: document.getElementById('retour-date').value,
+        reference: document.getElementById('retour-reference').value,
+        notes: document.getElementById('retour-notes').value
+    };
+
+    if (!payload.designation_id || !payload.base_id) {
+        alert('Selectionnez un article et une base avant de valider.');
+        return;
+    }
+
+    if (!payload.quantite || Number(payload.quantite) <= 0) {
+        alert('La quantité doit être positive.');
+        return;
+    }
+
+    try {
+        const response = await fetch('/stocks/fiches-stock/api/retour-terrain/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (data.success) {
+            document.getElementById('modal-retour-terrain').close();
+            alert('Retour terrain enregistre.');
+            location.reload();
+        } else {
+            alert(data.error || 'Erreur enregistrement.');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur reseau.');
+    }
+}
+
+async function deleteBonLivraison(bonId, bonNumero = '') {
+    if (!bonId) {
+        alert('Identifiant du bon manquant.');
+        return;
+    }
+
+    const label = bonNumero ? `le bon ${bonNumero}` : 'ce bon de livraison';
+    if (!confirm(`Supprimer ${label} ?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/stocks/fiches-stock/api/bon-livraison/${bonId}/delete/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        });
+        const data = await response.json().catch(() => ({}));
+        if (data.success) {
+            alert('Bon de livraison supprime.');
+            location.reload();
+        } else {
+            alert(data.error || 'Erreur suppression.');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur reseau.');
+    }
+}
+
+async function deleteFicheStock(ficheId, reference = '') {
+    if (!ficheId) {
+        alert('Identifiant de ligne manquant.');
+        return;
+    }
+
+    const label = reference ? `la ligne ${reference}` : 'cette ligne';
+    if (!confirm(`Supprimer ${label} ?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/stocks/fiches-stock/${ficheId}/delete/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        });
+        const data = await response.json().catch(() => ({}));
+        if (data.success) {
+            alert('Ligne supprimee.');
+            location.reload();
+        } else {
+            alert(data.error || 'Erreur suppression.');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur reseau.');
+    }
+}
+
+// Fonction pour faire défiler jusqu'au premier stock négatif
+function scrollToNegative() {
+    const firstNegative = document.querySelector('.negative-stock');
+    if (firstNegative) {
+        firstNegative.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        firstNegative.classList.add('animate-pulse');
+        setTimeout(() => firstNegative.classList.remove('animate-pulse'), 2000);
+    }
+}
+
+// Fonction pour agrandir une photo
+function openPhotoViewer(photoUrl) {
+    const modal = document.getElementById('modalPhotoViewer');
+    const image = document.getElementById('photo-viewer-image');
+    image.src = photoUrl;
+    modal.showModal();
+}
+
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) {
+        return parts.pop().split(';').shift();
+    }
+    return '';
+}
+
+function updateMagasinOptions() {
+    const baseSelect = document.getElementById('base_id');
+    const magasinSelect = document.getElementById('magasin_id');
+    if (!baseSelect || !magasinSelect) {
+        return;
+    }
+
+    const baseId = baseSelect.value;
+    let hasVisibleSelected = false;
+
+    Array.from(magasinSelect.options).forEach((option) => {
+        const optionBase = option.dataset.base;
+        if (!optionBase) {
+            option.hidden = false;
+            option.disabled = false;
+            return;
+        }
+
+        if (!baseId) {
+            option.hidden = false;
+            option.disabled = false;
+            return;
+        }
+
+        const isVisible = optionBase === baseId;
+        option.hidden = !isVisible;
+        option.disabled = !isVisible;
+        if (isVisible && option.selected) {
+            hasVisibleSelected = true;
+        }
+    });
+
+    if (baseId && !hasVisibleSelected) {
+        magasinSelect.value = '';
+    }
+}
+
+function setAccueilView(viewMode) {
+    const cardsView = document.getElementById('accueil-cards-view');
+    const tableView = document.getElementById('accueil-table-view');
+    const cardsBtn = document.getElementById('accueil-view-cards-btn');
+    const tableBtn = document.getElementById('accueil-view-table-btn');
+    if (!cardsView || !tableView || !cardsBtn || !tableBtn) {
+        return;
+    }
+
+    const showCards = viewMode === 'cards';
+    cardsView.classList.toggle('hidden', !showCards);
+    tableView.classList.toggle('hidden', showCards);
+    cardsBtn.classList.toggle('btn-primary', showCards);
+    cardsBtn.classList.toggle('btn-ghost', !showCards);
+    tableBtn.classList.toggle('btn-primary', !showCards);
+    tableBtn.classList.toggle('btn-ghost', showCards);
+    filterAccueilArticles();
+}
+
+function filterAccueilArticles() {
+    const input = document.getElementById('accueil-search');
+    const typeFilter = document.getElementById('accueil-type-filter');
+    const cardsView = document.getElementById('accueil-cards-view');
+    const tableView = document.getElementById('accueil-table-view');
+    const activeContainer = cardsView && !cardsView.classList.contains('hidden') ? cardsView : tableView;
+    const rows = activeContainer ? activeContainer.querySelectorAll('.accueil-item') : [];
+    const allRows = document.querySelectorAll('.accueil-item');
+    const empty = document.getElementById('accueil-empty');
+    const count = document.getElementById('accueil-results-count');
+    if (!input || !allRows.length) {
+        return;
+    }
+
+    const search = (input.value || '').trim().toLowerCase();
+    const normalizeFilterValue = (value) => (value || '')
+        .toString()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+    const selectedType = normalizeFilterValue(typeFilter?.value || '');
+    let visible = 0;
+
+    allRows.forEach((item) => {
+        const haystack = (item.dataset.search || '').toLowerCase();
+        const itemType = normalizeFilterValue(item.dataset.type || '');
+        const matchesSearch = !search || haystack.includes(search);
+        const matchesType = !selectedType || itemType === selectedType || itemType.includes(selectedType);
+        const isVisible = matchesSearch && matchesType;
+        item.style.display = isVisible ? '' : 'none';
+        if (rows.length && isVisible && item.closest('#accueil-cards-view, #accueil-table-view') === activeContainer) {
+            visible += 1;
+        }
+    });
+
+    if (empty) {
+        empty.classList.toggle('hidden', visible > 0);
+    }
+    if (count) {
+        count.textContent = `${visible} article(s)`;
+    }
+}
+
+function initTypeFilterOptions() {
+    const select = document.getElementById('accueil-type-filter');
+    if (!select) {
+        return;
+    }
+
+    const seen = new Set();
+    const unique = [];
+    Array.from(select.options).forEach((opt) => {
+        const value = (opt.value || '').trim();
+        if (!value) {
+            return;
+        }
+        if (!seen.has(value)) {
+            seen.add(value);
+            unique.push(value);
+        }
+    });
+
+    unique.sort((a, b) => a.localeCompare(b, 'fr', { sensitivity: 'base' }));
+    select.innerHTML = '<option value="">Tous les types</option>';
+    unique.forEach((value) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        select.appendChild(option);
+    });
+}
+
+function openFicheFromAccueil(designationId, baseId, selectId) {
+    if (!designationId || !baseId) {
+        return;
+    }
+    const select = document.getElementById(selectId);
+    const magasinId = select ? select.value : '';
+    const params = new URLSearchParams();
+    params.set('designation_id', designationId);
+    params.set('base_id', baseId);
+    if (magasinId) {
+        params.set('magasin_id', magasinId);
+    }
+    window.location.href = `{% url 'inventory:fiche_stock_list' %}?${params.toString()}`;
+}
+
+function openInventaireModal() {
+    const modal = document.getElementById('modal-inventaire');
+    const quantityInput = document.getElementById('inventaireQuantity');
+    if (!modal) {
+        return;
+    }
+
+    if (quantityInput && !quantityInput.value) {
+        const defaultQty = quantityInput.dataset.default || '';
+        if (defaultQty !== '') {
+            quantityInput.value = defaultQty;
+        }
+    }
+    modal.showModal();
+}
+
+async function submitInventaireForm(event) {
+    event.preventDefault();
+    const designationId = document.getElementById('designation_id')?.value || '';
+    const baseId = document.getElementById('base_id')?.value || '';
+    const magasinId = document.getElementById('magasin_id')?.value || '';
+    const quantityInput = document.getElementById('inventaireQuantity');
+    const dateInput = document.getElementById('inventaireDate');
+    const notesInput = document.getElementById('inventaireNotes');
+    const rapprocheInput = document.getElementById('inventaireRapproche');
+
+    if (!designationId || !baseId || !quantityInput || !dateInput) {
+        window.alert('Veuillez sélectionner un article et une base.');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('designation_id', designationId);
+    formData.append('base_id', baseId);
+    if (magasinId) {
+        formData.append('magasin_id', magasinId);
+    }
+    formData.append('quantity', quantityInput.value);
+    formData.append('inventory_date', dateInput.value);
+    if (notesInput && notesInput.value) {
+        formData.append('notes', notesInput.value);
+    }
+    formData.append('rapproche', rapprocheInput && rapprocheInput.checked ? '1' : '0');
+
+    try {
+        const response = await fetch('/stocks/fiches-stock/api/inventaire/', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: formData,
+        });
+        const data = await response.json();
+        if (data.success) {
+            document.getElementById('modal-inventaire').close();
+            window.location.reload();
+        } else {
+            window.alert(data.error || 'Erreur lors de l\'inventaire.');
+        }
+    } catch (error) {
+        console.error('Erreur inventaire:', error);
+        window.alert('Erreur réseau lors de l\'inventaire.');
+    }
+}
+
+async function markRapproche() {
+    const designationId = document.getElementById('designation_id')?.value || '';
+    const baseId = document.getElementById('base_id')?.value || '';
+
+    if (!designationId || !baseId) {
+        window.alert('Veuillez sélectionner un article et une base.');
+        return;
+    }
+
+    if (!window.confirm('Marquer ce stock comme rapproché ?')) {
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('designation_id', designationId);
+    formData.append('base_id', baseId);
+
+    try {
+        const response = await fetch('/stocks/fiches-stock/api/rapproche/', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: formData,
+        });
+        const data = await response.json();
+        if (data.success) {
+            window.location.reload();
+        } else {
+            window.alert(data.error || 'Erreur lors du rapprochement.');
+        }
+    } catch (error) {
+        console.error('Erreur rapprochement:', error);
+        window.alert('Erreur réseau lors du rapprochement.');
+    }
+}
+
+function openDesignationEditModal(designationId, designationNom, prixUnitaire = '', photoUrl = '', datePrix = '') {
+    const modal = document.getElementById('modal-designation-edit');
+    const idInput = document.getElementById('designation-edit-id');
+    const nameSpan = document.getElementById('designation-edit-name');
+    const prixInitialInput = document.getElementById('designation-edit-prix-initial');
+    const prixInput = document.getElementById('designation-edit-prix');
+    const datePrixInput = document.getElementById('designation-edit-date-prix');
+    const photoInput = document.getElementById('designation-edit-photo');
+    const preview = document.getElementById('designation-edit-photo-preview');
+    const previewImage = document.getElementById('designation-edit-photo-image');
+
+    if (!modal || !idInput || !nameSpan || !prixInitialInput || !prixInput || !datePrixInput || !photoInput || !preview || !previewImage) {
+        return;
+    }
+
+    idInput.value = designationId || '';
+    nameSpan.textContent = designationNom || '-';
+    prixInitialInput.value = prixUnitaire || '';
+    prixInput.value = prixUnitaire || '';
+    datePrixInput.value = datePrix || '';
+    photoInput.value = '';
+    photoInput.removeAttribute('capture');
+
+    if (photoUrl) {
+        previewImage.src = photoUrl;
+        preview.classList.remove('hidden');
+    } else {
+        previewImage.src = '';
+        preview.classList.add('hidden');
+    }
+
+    modal.showModal();
+}
+
+function openDesignationPhotoPicker() {
+    const photoInput = document.getElementById('designation-edit-photo');
+    if (!photoInput) {
+        return;
+    }
+
+    photoInput.setAttribute('accept', 'image/*');
+    photoInput.removeAttribute('capture');
+    photoInput.click();
+}
+
+function openDesignationPhoneCamera() {
+    const photoInput = document.getElementById('designation-edit-photo');
+    if (!photoInput) {
+        return;
+    }
+
+    photoInput.setAttribute('accept', 'image/*');
+    photoInput.setAttribute('capture', 'environment');
+    photoInput.click();
+}
+
+function openDesignationCameraModal(designationId, designationNom, prixUnitaire = '', photoUrl = '', datePrix = '') {
+    openDesignationEditModal(designationId, designationNom, prixUnitaire, photoUrl, datePrix);
+    openDesignationPhoneCamera();
+}
+
+async function submitDesignationEditForm(event) {
+    event.preventDefault();
+
+    const designationId = document.getElementById('designation-edit-id')?.value || '';
+    const prixInitialInput = document.getElementById('designation-edit-prix-initial');
+    const prixInput = document.getElementById('designation-edit-prix');
+    const datePrixInput = document.getElementById('designation-edit-date-prix');
+    const photoInput = document.getElementById('designation-edit-photo');
+
+    if (!designationId) {
+        window.alert('Designation invalide.');
+        return;
+    }
+
+    const formData = new FormData();
+    const prixInitial = (prixInitialInput?.value || '').trim();
+    const prixCurrent = (prixInput?.value || '').trim();
+    const prixChanged = prixCurrent !== '' && prixCurrent !== prixInitial;
+
+    if (prixChanged && (!datePrixInput || !datePrixInput.value)) {
+        window.alert('Veuillez renseigner la date du prix quand vous modifiez le prix.');
+        return;
+    }
+
+    if (prixInput && prixCurrent !== '') {
+        formData.append('prix_unitaire', prixInput.value);
+    }
+    if (datePrixInput && datePrixInput.value) {
+        formData.append('date_prix', datePrixInput.value);
+    }
+    if (photoInput && photoInput.files && photoInput.files.length > 0) {
+        formData.append('photo_specimen', photoInput.files[0]);
+    }
+
+    if (!Array.from(formData.keys()).length) {
+        window.alert('Aucune modification detectee.');
+        return;
+    }
+
+    const updateUrl = designationUpdateUrlTemplate.replace(
+        '00000000-0000-0000-0000-000000000000',
+        designationId
+    );
+
+    try {
+        const response = await fetch(updateUrl, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: formData,
+        });
+        const data = await response.json();
+        if (data.success) {
+            document.getElementById('modal-designation-edit').close();
+            window.location.reload();
+        } else {
+            window.alert(data.message || 'Erreur lors de la modification de la designation.');
+        }
+    } catch (error) {
+        console.error('Erreur modification designation:', error);
+        window.alert('Erreur reseau lors de la modification.');
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    updateMagasinOptions();
+    const baseSelect = document.getElementById('base_id');
+    if (baseSelect) {
+        baseSelect.addEventListener('change', updateMagasinOptions);
+    }
+
+    const bonOuvrageInput = document.getElementById('bon-ouvrage-text');
+    if (bonOuvrageInput) {
+        bonOuvrageInput.addEventListener('input', (e) => {
+            queueOuvrageSearch(e.target.value || '');
+        });
+    }
+
+    const inventaireForm = document.getElementById('inventaireForm');
+    if (inventaireForm) {
+        inventaireForm.addEventListener('submit', submitInventaireForm);
+    }
+
+    const bonForm = document.getElementById('bonLivraisonForm');
+    if (bonForm) {
+        bonForm.addEventListener('submit', submitBonLivraisonForm);
+    }
+
+    const retourTerrainForm = document.getElementById('retourTerrainForm');
+    if (retourTerrainForm) {
+        retourTerrainForm.addEventListener('submit', submitRetourTerrainForm);
+    }
+
+    const designationEditForm = document.getElementById('designationEditForm');
+    if (designationEditForm) {
+        designationEditForm.addEventListener('submit', submitDesignationEditForm);
+    }
+
+    const designationPhotoInput = document.getElementById('designation-edit-photo');
+    const designationPhotoPreview = document.getElementById('designation-edit-photo-preview');
+    const designationPhotoPreviewImage = document.getElementById('designation-edit-photo-image');
+    if (designationPhotoInput && designationPhotoPreview && designationPhotoPreviewImage) {
+        designationPhotoInput.addEventListener('change', () => {
+            const file = designationPhotoInput.files && designationPhotoInput.files[0];
+            if (!file) {
+                return;
+            }
+            const imageUrl = URL.createObjectURL(file);
+            designationPhotoPreviewImage.src = imageUrl;
+            designationPhotoPreview.classList.remove('hidden');
+        });
+    }
+
+    initTypeFilterOptions();
+    filterAccueilArticles();
+});
+</script>
+
+<!-- Modal Agrandissement Photo -->
+<dialog id="modalPhotoViewer" class="modal">
+    <div class="modal-box max-w-6xl w-11/12">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2 z-10 bg-base-100">âœ•</button>
+        </form>
+        <div class="flex items-center justify-center">
+            <img id="photo-viewer-image" src="" alt="Photo agrandie" class="max-h-[80vh] w-auto object-contain" />
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Styles pour l'impression -->
+<style>
+@media print {
+    /* Masquer les éléments non nécessaires à l'impression */
+    .drawer, .drawer-side, .navbar, .btn,
+    form, .alert, .breadcrumbs, footer, .no-print,
+    .flex.justify-between.items-center,
+    .card.bg-base-100.shadow-lg {
+        display: none !important;
+    }
+
+    /* Masquer la colonne Actions */
+    .table th:last-child,
+    .table td:last-child {
+        display: none !important;
+    }
+
+    /* Configuration de la page */
+    @page {
+        size: A4 landscape;
+        margin: 10mm;
+    }
+
+    /* Afficher uniquement le contenu principal */
+    body {
+        background: white !important;
+        color: black !important;
+        font-family: 'Arial', 'Helvetica', sans-serif;
+    }
+
+    /* Conteneur principal */
+    .space-y-6 {
+        padding: 0 !important;
+        margin: 0 !important;
+    }
+
+    /* En-tête personnalisé pour l'impression */
+    .print-header {
+        display: block !important;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #000;
+    }
+
+    .print-header h1 {
+        font-size: 14px;
+        font-weight: bold;
+        margin: 0 0 3px 0;
+        text-transform: uppercase;
+    }
+
+    .print-header .info-line {
+        font-size: 11px;
+        margin: 2px 0;
+    }
+
+    .print-header .info-line strong {
+        font-weight: bold;
+    }
+
+    /* Informations Stock et Inventaire - sans bordures arrondies */
+    .print-stock-info {
+        display: flex !important;
+        justify-content: space-between;
+        margin-bottom: 15px;
+        padding: 8px;
+        border: 1px solid #000;
+        border-radius: 0 !important;
+        background-color: #f5f5f5;
+    }
+
+    .print-stock-info > div {
+        flex: 1;
+        text-align: center;
+    }
+
+    .print-stock-info .label {
+        font-size: 9px;
+        text-transform: uppercase;
+        font-weight: bold;
+        margin-bottom: 3px;
+    }
+
+    .print-stock-info .value {
+        font-size: 13px;
+        font-weight: bold;
+    }
+
+    .print-stock-info .date {
+        font-size: 8px;
+        color: #666;
+    }
+
+    /* Masquer les cartes d'origine */
+    .grid.grid-cols-1 {
+        display: none !important;
+    }
+
+    /* Tableau - style formel */
+    .table {
+        width: 100% !important;
+        border-collapse: collapse !important;
+        border: 2px solid #000 !important;
+        font-size: 9px !important;
+        margin-top: 15px !important;
+    }
+
+    .table thead {
+        background-color: #e0e0e0 !important;
+    }
+
+    .table th {
+        background-color: #e0e0e0 !important;
+        border: 1px solid #000 !important;
+        padding: 8px 4px !important;
+        color: black !important;
+        font-weight: bold !important;
+        text-align: left !important;
+        text-transform: uppercase !important;
+        font-size: 9px !important;
+    }
+
+    .table td {
+        border: 1px solid #666 !important;
+        padding: 5px 4px !important;
+        color: black !important;
+        font-size: 9px !important;
+    }
+
+    /* Alternance de lignes pour meilleure lisibilité */
+    .table tbody tr:nth-child(even) {
+        background-color: #f9f9f9 !important;
+    }
+
+    /* Mise en évidence des stocks négatifs - version compacte */
+    .negative-stock .text-right.font-bold {
+        color: #d00 !important;
+        font-weight: bold !important;
+    }
+
+    /* Masquer les messages d'alerte stock négatif dans les cellules */
+    .negative-stock .block.text-xs {
+        display: none !important;
+    }
+
+    /* Badges et couleurs - conversion en texte */
+    .badge {
+        background-color: transparent !important;
+        color: black !important;
+        border: 1px solid #666 !important;
+        padding: 1px 3px !important;
+        font-size: 7px !important;
+    }
+
+    .text-success, .text-error, .text-info, .text-warning,
+    .bg-success, .bg-error, .bg-info, .bg-warning {
+        background-color: transparent !important;
+        color: black !important;
+    }
+
+    /* Cellules numériques - alignement à droite */
+    .text-right {
+        text-align: right !important;
+        font-family: 'Courier New', monospace !important;
+    }
+
+    /* Enlever toutes les bordures arrondies */
+    * {
+        border-radius: 0 !important;
+    }
+
+    /* En-tête de page répété */
+    thead {
+        display: table-header-group;
+    }
+
+    /* éviter les sauts de page au milieu des lignes */
+    tr {
+        page-break-inside: avoid;
+    }
+
+    /* Signatures */
+    .print-signatures {
+        display: flex !important;
+        justify-content: space-between;
+        margin-top: 50px;
+        page-break-inside: avoid;
+    }
+
+    .print-signature-box {
+        width: 45%;
+        border-top: 1px solid #000;
+        padding-top: 5px;
+        text-align: center;
+        font-size: 10px;
+    }
+}
+
+/* Zone de signatures (visible uniquement à l'impression) */
+.print-signatures {
+    display: none;
+}
+
+@media print {
+    .print-signatures {
+        display: flex !important;
+    }
+}
+</style>
+
+{% endblock %}
+

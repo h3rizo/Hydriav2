@@ -1,0 +1,342 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <!-- Barre de navigation -->
+    <div class="grid gap-4 mb-6 md:grid-cols-[auto_minmax(0,1fr)] md:items-center">
+        <div class="flex items-center gap-3 flex-wrap">
+            <button onclick="window.location.href='{% url 'organization:ouvrage_list' %}'" class="btn btn-ghost btn-sm">
+                <i class="fas fa-arrow-left mr-2"></i>Retour aux ouvrages
+            </button>
+            <div class="divider divider-horizontal hidden md:block"></div>
+        </div>
+        <div class="flex flex-wrap gap-3 items-center">
+            <span class="text-sm font-medium">Ouvrage :</span>
+            <div class="relative w-full max-w-lg">
+                <input type="text"
+                       id="ouvrageSearchAdresses"
+                       class="input input-bordered input-sm w-full"
+                       list="ouvragesListAdresses"
+                       placeholder="Rechercher un ouvrage..."
+                       value="{% if selected_ouvrage %}{{ selected_ouvrage.nom_ouvrage }} ({{ selected_ouvrage.organisation.nom_organisation }}){% endif %}">
+                <datalist id="ouvragesListAdresses">
+                    {% for ouvrage in ouvrages %}
+                <option value="{{ ouvrage.nom_ouvrage }} ({{ ouvrage.organisation.nom_organisation }})" data-id="{{ ouvrage.id }}"></option>
+                    {% endfor %}
+                </datalist>
+                {% if selected_ouvrage %}
+                <button type="button"
+                        onclick="clearOuvrageFilterAdresses()"
+                        class="btn btn-ghost btn-xs absolute right-1 top-1/2 -translate-y-1/2"
+                        title="Effacer">
+                    <i class="fas fa-times"></i>
+                </button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- En-tête -->
+    <div class="grid gap-4 mb-8 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+        <div>
+            <h1 class="text-3xl font-bold">📍 {{ title }}</h1>
+            {% if selected_ouvrage %}
+            <p class="text-base-content/70 mt-2">
+                <strong>{{ selected_ouvrage.nom }}</strong> - {{ selected_ouvrage.organisation.nom_organisation }}
+                {% if selected_ouvrage.typeouvrage %}({{ selected_ouvrage.typeouvrage.nomtype }}){% endif %}
+            </p>
+            {% endif %}
+        </div>
+        <div class="flex flex-wrap gap-2 justify-end items-center">
+            {% if selected_ouvrage %}
+            <button class="btn btn-primary btn-sm" onclick="showCreateModal()">
+                <i class="fas fa-plus mr-2"></i>Nouvelle adresse
+            </button>
+            {% if est_directeur %}
+            <a href="{% url 'organization:export_excel' 'adresses' %}" class="btn btn-success btn-sm">
+                <i class="fas fa-file-excel mr-2"></i>Exporter Excel
+            </a>
+            <button class="btn btn-info btn-sm" onclick="document.getElementById('importModal').showModal()">
+                <i class="fas fa-file-upload mr-2"></i>Importer Excel
+            </button>
+            {% endif %}
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title">📋 Liste des adresses</h2>
+            {% if adresses %}
+            <div class="overflow-x-auto">
+                <table class="table table-zebra w-full">
+                    <thead>
+                        <tr>
+                            <th>Nom</th>
+                            <th>Type</th>
+                            <th>Adresse complète</th>
+                            <th>Coordonnées GPS</th>
+                            <th>Statut</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for adresse in adresses %}
+                        <tr class="hover">
+                            <td class="font-semibold">{{ adresse.nomadresse }}</td>
+                            <td><span class="badge badge-outline">{{ adresse.get_type_adresse_display }}</span></td>
+                            <td>{{ adresse.adresse_complete|default:"N/A" }}</td>
+                            <td class="text-sm">
+                                {% if adresse.latitude and adresse.longitude %}
+                                {{ adresse.latitude }}, {{ adresse.longitude }}
+                                {% else %}
+                                N/A
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if adresse.is_active %}
+                                <span class="badge badge-success">Actif</span>
+                                {% else %}
+                                <span class="badge badge-error">Inactif</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="flex gap-1">
+                                    <button class="btn btn-ghost btn-xs" onclick="showEditModal('{{ adresse.id }}')"><i class="fas fa-edit"></i></button>
+                                    {% if est_directeur %}
+                                    <button class="btn btn-ghost btn-xs text-error" onclick="showDeleteModal('{{ adresse.id }}', '{{ adresse.nomadresse }}')"><i class="fas fa-trash"></i></button>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-8">
+                <i class="fas fa-inbox text-6xl text-base-content/20 mb-4"></i>
+                <p class="text-base-content/70">
+                    {% if selected_ouvrage %}Aucune adresse trouvée.{% else %}Sélectionnez un ouvrage.{% endif %}
+                </p>
+                {% if selected_ouvrage %}
+                <button class="btn btn-primary mt-4" onclick="showCreateModal()">
+                    <i class="fas fa-plus mr-2"></i>Créer la première adresse
+                </button>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Modal Créer/Modifier Adresse -->
+<dialog id="adresseModal" class="modal">
+    <div class="modal-box w-full max-w-3xl sm:max-w-4xl">
+        <h3 class="font-bold text-lg mb-4" id="modalTitle">Nouvelle adresse</h3>
+        <form id="adresseForm">
+            {% csrf_token %}
+            <input type="hidden" id="adresseId">
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Nom de l'adresse *</span></label>
+                    <input type="text" name="nomadresse" id="nomadresse" class="input input-bordered" required>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Type d'adresse</span></label>
+                    <select name="type_adresse" id="type_adresse" class="select select-bordered">
+                        <option value="principale">Adresse principale</option>
+                        <option value="technique">Adresse technique</option>
+                        <option value="administrative">Adresse administrative</option>
+                        <option value="autre">Autre</option>
+                    </select>
+                </div>
+
+                <div class="form-control md:col-span-2">
+                    <label class="label"><span class="label-text">Adresse complète</span></label>
+                    <textarea name="adresse_complete" id="adresse_complete" class="textarea textarea-bordered" rows="2"></textarea>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Latitude</span></label>
+                    <input type="number" step="0.0000001" name="latitude" id="latitude" class="input input-bordered" placeholder="Ex: -18.8792">
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Longitude</span></label>
+                    <input type="number" step="0.0000001" name="longitude" id="longitude" class="input input-bordered" placeholder="Ex: 47.5079">
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Statut</span></label>
+                    <select name="is_active" id="is_active" class="select select-bordered">
+                        <option value="true">Actif</option>
+                        <option value="false">Inactif</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="closeModal()">Annuler</button>
+                <button type="submit" class="btn btn-primary">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal Supprimer -->
+<dialog id="deleteModal" class="modal">
+    <div class="modal-box w-full max-w-md">
+        <h3 class="font-bold text-lg mb-4">Confirmer la suppression</h3>
+        <p>Êtes-vous sûr de vouloir supprimer l'adresse <strong id="deleteItemName"></strong> ?</p>
+        <input type="hidden" id="deleteItemId">
+        <div class="modal-action">
+            <button type="button" class="btn" onclick="document.getElementById('deleteModal').close()">Annuler</button>
+            <button type="button" class="btn btn-error" onclick="deleteAdresse()">Supprimer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+function showCreateModal() {
+    document.getElementById('modalTitle').textContent = 'Nouvelle adresse';
+    document.getElementById('adresseForm').reset();
+    document.getElementById('adresseId').value = '';
+    document.getElementById('adresseModal').showModal();
+}
+
+function showEditModal(adresseId) {
+    document.getElementById('modalTitle').textContent = "Modifier l'adresse";
+
+    fetch(`/organisations/adresses/edit/${adresseId}/`)
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                const data = result.data;
+                document.getElementById('adresseId').value = data.id;
+                document.getElementById('nomadresse').value = data.nomadresse;
+                document.getElementById('type_adresse').value = data.type_adresse;
+                document.getElementById('adresse_complete').value = data.adresse_complete || '';
+                document.getElementById('latitude').value = data.latitude || '';
+                document.getElementById('longitude').value = data.longitude || '';
+                document.getElementById('is_active').value = data.is_active ? 'true' : 'false';
+                document.getElementById('adresseModal').showModal();
+            }
+        });
+}
+
+function showDeleteModal(adresseId, adresseNom) {
+    document.getElementById('deleteItemId').value = adresseId;
+    document.getElementById('deleteItemName').textContent = adresseNom;
+    document.getElementById('deleteModal').showModal();
+}
+
+function closeModal() {
+    document.getElementById('adresseModal').close();
+}
+
+document.getElementById('adresseForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    const formData = new FormData(this);
+    const adresseId = document.getElementById('adresseId').value;
+    const url = adresseId
+        ? `/organisations/adresses/edit/${adresseId}/`
+        : `/organisations/adresses/create/{{ selected_ouvrage.id }}/`;
+
+    fetch(url, {
+        method: 'POST',
+        body: formData,
+        headers: {'X-CSRFToken': '{{ csrf_token }}'}
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            window.location.href = result.redirect;
+        } else {
+            alert('Erreur: ' + result.message);
+        }
+    });
+});
+
+function deleteAdresse() {
+    const adresseId = document.getElementById('deleteItemId').value;
+
+    fetch(`/organisations/adresses/delete/${adresseId}/`, {
+        method: 'POST',
+        headers: {'X-CSRFToken': '{{ csrf_token }}'}
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            window.location.href = result.redirect;
+        } else {
+            alert('Erreur: ' + result.message);
+        }
+    });
+}
+</script>
+
+<script>
+const ouvragesMappingAdresses = {
+    {% for ouvrage in ouvrages %}
+    "{{ ouvrage.nom_ouvrage|escapejs }} ({{ ouvrage.organisation.nom_organisation|escapejs }})": "{{ ouvrage.id }}"{% if not forloop.last %},{% endif %}
+    {% endfor %}
+};
+
+const ouvrageSearchAdresses = document.getElementById('ouvrageSearchAdresses');
+if (ouvrageSearchAdresses) {
+    ouvrageSearchAdresses.addEventListener('change', function () {
+        const selectedValue = this.value.trim();
+        const ouvrageId = ouvragesMappingAdresses[selectedValue];
+        if (ouvrageId) {
+            window.location.href = `/organisations/adresses/${ouvrageId}/`;
+        }
+    });
+
+    ouvrageSearchAdresses.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            const selectedValue = this.value.trim();
+            const ouvrageId = ouvragesMappingAdresses[selectedValue];
+            if (ouvrageId) {
+                window.location.href = `/organisations/adresses/${ouvrageId}/`;
+            }
+        }
+    });
+}
+
+function clearOuvrageFilterAdresses() {
+    window.location.href = '/organisations/adresses/';
+}
+</script>
+
+<!-- Modal Import Excel -->
+<dialog id="importModal" class="modal">
+    <div class="modal-box w-full max-w-lg sm:max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">Importer des adresses depuis Excel</h3>
+        <form method="post" action="{% url 'organization:import_excel' 'adresses' %}" enctype="multipart/form-data">
+            {% csrf_token %}
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text">Fichier Excel (.xlsx)</span>
+                </label>
+                <input type="file" name="excel_file" accept=".xlsx,.xls" class="file-input file-input-bordered w-full" required>
+            </div>
+            <div class="alert alert-info mt-4">
+                <i class="fas fa-info-circle"></i>
+                <span class="text-sm">Le fichier doit contenir les colonnes : Nomadresse, Type Adresse Display, Adresse Complete, Latitude, Longitude, Ouvrage</span>
+            </div>
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('importModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary">Importer</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+{% endblock %}

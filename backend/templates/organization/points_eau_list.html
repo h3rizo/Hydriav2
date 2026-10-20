@@ -1,0 +1,2795 @@
+{% extends 'organization/crud_base.html' %}
+{% load humanize hydria_asset_icons %}
+
+{% block page_icon %}💧{% endblock %}
+{% block page_title %}Gestion des Points d'eau{% endblock %}
+{% block create_button_text %}Nouveau point d'eau{% endblock %}
+
+{% block extra_head %}
+    {{ block.super }}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+    /* Étiquettes permanentes des entités sur la mini-carte */
+    .hydria-map-label {
+        background: rgba(255, 255, 255, 0.9);
+        border: none;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+        padding: 1px 5px;
+        font-size: 11px;
+        font-weight: 600;
+        border-radius: 4px;
+        white-space: nowrap;
+    }
+    .hydria-map-label::before {
+        display: none;
+    }
+    .hydria-map-label-point_eau { color: #0e7490; }
+    .hydria-map-label-equipement { color: #1d4ed8; }
+    .hydria-map-label-village { color: #b45309; }
+
+    /* Styles pour le modal formulaire */
+    .space-y-8 > div {
+        margin-bottom: 2rem;
+    }
+
+    /* Amélioration des formulaires */
+    .form-control {
+        margin-bottom: 1rem;
+    }
+
+    /* Amélioration du modal */
+    .modal-box {
+        overflow: visible;
+    }
+
+    /* Amélioration de l'affichage des select */
+    .select option {
+        padding: 0.5rem;
+    }
+    
+    /* Fix pour le dropdown de parcelle dans le collapse */
+    .collapse-content {
+        overflow: visible !important;
+    }
+    
+    /* Assurer que le dropdown reste juste sous le champ */
+    #parcelle-dropdown {
+        position: relative;
+        z-index: 200;
+        min-height: 18rem;
+        max-height: min(55vh, 34rem);
+    }
+</style>
+{% endblock %}
+
+{% block page_content %}
+<!-- Statistiques -->
+<div class="hydria-v1-kpi-grid mb-8 grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-5">
+    {% if points_eau_actifs_count %}
+    <div class="hydria-v1-stat hydria-v1-tone-primary stat bg-base-100 shadow rounded-lg">
+        <div class="stat-figure text-primary">
+            <i class="fas fa-tint text-2xl"></i>
+        </div>
+        <div class="stat-title">Points d'eau</div>
+        <div class="stat-value text-primary">{{ points_eau_actifs_count }}</div>
+        <div class="stat-desc">Branchés et en service</div>
+    </div>
+    {% endif %}
+    {% if points_eau_coupes_count %}
+    <div class="hydria-v1-stat hydria-v1-tone-error stat bg-base-100 shadow rounded-lg">
+        <div class="stat-figure text-error">
+            <i class="fas fa-ban text-2xl"></i>
+        </div>
+        <div class="stat-title">Coupés</div>
+        <div class="stat-value text-error">{{ points_eau_coupes_count }}</div>
+        <div class="stat-desc">Date d'arrêt depuis moins d'un an</div>
+    </div>
+    {% endif %}
+    {% if points_eau_abandonnes_count %}
+    <div class="hydria-v1-stat stat bg-base-100 shadow rounded-lg">
+        <div class="stat-figure text-neutral">
+            <i class="fas fa-archive text-2xl"></i>
+        </div>
+        <div class="stat-title">Abandonnés</div>
+        <div class="stat-value text-neutral">{{ points_eau_abandonnes_count }}</div>
+        <div class="stat-desc">Coupés depuis plus d'un an</div>
+    </div>
+    {% endif %}
+    {% if points_eau_sans_date_count %}
+    <div class="hydria-v1-stat hydria-v1-tone-warning stat bg-base-100 shadow rounded-lg">
+        <div class="stat-figure text-warning">
+            <i class="fas fa-question-circle text-2xl"></i>
+        </div>
+        <div class="stat-title">Sans date</div>
+        <div class="stat-value text-warning">{{ points_eau_sans_date_count }}</div>
+        <div class="stat-desc">Non comptés · date de branchement manquante</div>
+    </div>
+    {% endif %}
+    {% if stats_types_detail %}
+    <div class="hydria-v1-stat hydria-v1-tone-warning stat bg-base-100 shadow rounded-lg">
+        <div class="stat-figure text-warning">
+            <i class="fas fa-chart-pie text-2xl"></i>
+        </div>
+        <div class="stat-title">Types de points d'eau</div>
+        <div class="stat-value text-warning text-xs">
+            {% for t in stats_types_detail %}
+                <div class="text-sm">{{ t.nom }}: {{ t.count }}</div>
+                {% for s in t.sous %}
+                    <div class="text-xs font-normal opacity-80 pl-3">↳ {{ s.libelle }}: {{ s.count }}</div>
+                {% endfor %}
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+    {% if points_avec_compteur %}
+    <div class="hydria-v1-stat hydria-v1-tone-info stat bg-base-100 shadow rounded-lg">
+        <div class="stat-figure text-info">
+            <i class="fas fa-tachometer-alt text-2xl"></i>
+        </div>
+        <div class="stat-title">Avec compteur</div>
+        <div class="stat-value text-info">
+            {{ points_avec_compteur }}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<div class="hydria-v1-panel card mb-8 border border-base-300 bg-base-100 shadow">
+    <div class="card-body gap-3 p-4 sm:p-5">
+        <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+                <h2 class="card-title text-base"><i class="fas fa-map-location-dot text-info"></i>Localisation</h2>
+                <p class="text-xs opacity-70">Équipements, points d'eau, villages et liaisons dont les deux extrémités sont géolocalisées.</p>
+            </div>
+            <div class="flex flex-wrap gap-2 text-xs">
+                {% if ouvrage_map_data.counts.equipements %}<span class="badge border-blue-500 text-blue-600">{{ ouvrage_map_data.counts.equipements }} équipement{{ ouvrage_map_data.counts.equipements|pluralize }}</span>{% endif %}
+                {% if ouvrage_map_data.counts.points_eau %}<span class="badge border-cyan-500 text-cyan-600">{{ ouvrage_map_data.counts.points_eau }} point{{ ouvrage_map_data.counts.points_eau|pluralize }} d'eau</span>{% endif %}
+                {% if ouvrage_map_data.counts.villages %}<span class="badge border-amber-500 text-amber-600">{{ ouvrage_map_data.counts.villages }} village{{ ouvrage_map_data.counts.villages|pluralize }}</span>{% endif %}
+                {% if ouvrage_map_data.counts.liaisons %}<span class="badge border-emerald-600 text-emerald-700" title="Liaisons dont les deux extrémités ont des coordonnées GPS">{{ ouvrage_map_data.counts.liaisons }} liaison{{ ouvrage_map_data.counts.liaisons|pluralize }}</span>{% endif %}
+                <button id="points-eau-map-assign-mode" type="button" class="btn btn-outline btn-error btn-xs" {% if not points_eau %}disabled{% endif %}>
+                    <i class="fas fa-map-pin mr-1"></i>Affecter une position
+                </button>
+            </div>
+        </div>
+        {% if selected_ouvrage %}
+        <div id="points-eau-mini-map" class="h-72 w-full overflow-hidden rounded-xl border border-base-300"></div>
+        {% else %}
+        <div class="flex h-28 items-center justify-center rounded-xl border border-dashed border-base-300 bg-base-200/50 text-center text-sm opacity-70">
+            Aucune coordonnée disponible pour les équipements, les points d'eau ou les villages desservis.
+        </div>
+        {% endif %}
+    </div>
+</div>
+{{ ouvrage_map_data|json_script:"points-eau-map-data" }}
+{% if selected_ouvrage %}
+{% url 'organization:api_ouvrage_map_coordinate_assign' selected_ouvrage.pk as map_assignment_url %}
+{% include 'organization/_map_coordinate_assignment.html' with map_prefix='points-eau-map' entity_type='point_eau' entities=points_eau assignment_url=map_assignment_url %}
+{% endif %}
+
+<!-- Table des points d'eau -->
+<div class="hydria-v1-table-card card bg-base-100 shadow-xl">
+    <div class="card-body">
+        <div class="mb-6 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <h2 class="card-title">📋 Liste des points d'eau</h2>
+            <div class="hydria-v1-compact-filters flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:w-auto xl:justify-end">
+                {% if selected_ouvrage %}
+                <a href="{% url 'organization:equipements_list_ouvrage' selected_ouvrage.pk %}" class="btn btn-outline btn-sm w-full sm:w-auto" title="Basculer vers les équipements de cet ouvrage">
+                    <i class="fas fa-cogs mr-2"></i>Equipements
+                </a>
+                {% endif %}
+                <input type="text" id="search-input" placeholder="Rechercher..." class="input input-bordered input-sm w-full sm:flex-1 xl:w-64" onkeyup="filterPoints()">
+                <button onclick="window.location.reload()" class="btn btn-ghost btn-sm w-full sm:w-auto" title="Actualiser">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+                <div class="join grid w-full grid-cols-1 sm:w-auto sm:ml-0 lg:grid-cols-2 xl:ml-2">
+                    <button class="btn btn-sm join-item hidden w-full lg:inline-flex" id="btn-view-list" onclick="toggleView('list')" title="Vue liste">
+                        <i class="fas fa-list"></i>
+                    </button>
+                    <button class="btn btn-sm join-item w-full" id="btn-view-grid" onclick="toggleView('grid')" title="Vue cartes">
+                        <i class="fas fa-th-large"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        {% if points_eau %}
+
+        <div id="view-cards" class="hidden grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
+            {% for point in points_eau %}
+            {% ifchanged point.statut_branchement %}{% if point.statut_branchement != 'actif' %}
+            <div class="col-span-full mt-4 flex items-center gap-2 border-b border-base-300 pb-1 text-sm font-semibold {% if point.statut_branchement == 'coupe' %}text-error{% elif point.statut_branchement == 'abandonne' %}text-neutral{% else %}text-warning{% endif %}">
+                {% if point.statut_branchement == 'coupe' %}<i class="fas fa-ban"></i> Points d'eau coupés (depuis moins d'un an)
+                {% elif point.statut_branchement == 'abandonne' %}<i class="fas fa-archive"></i> Points d'eau abandonnés (coupés depuis plus d'un an) — non comptés
+                {% else %}<i class="fas fa-question-circle"></i> Sans date de branchement — non comptés comme points d'eau{% endif %}
+            </div>
+            {% endif %}{% endifchanged %}
+            <div class="card bg-base-100 border border-base-200 shadow-sm point-card h-full"
+                 data-point-id="{{ point.pk }}"
+                 onclick="selectPointEauRow('{{ point.pk }}', '{{ point.nomabonne|escapejs }}')">
+                <div id="point-card-photos-data-{{ point.pk }}" class="hidden" data-photo-title="Photo du point d'eau {{ point.nomabonne|default:'sans nom' }}">
+                    {% for photo_url in point.photo_urls %}<span data-photo-url="{{ photo_url }}"></span>{% endfor %}
+                </div>
+                {% if point.photo_preview_url %}
+                <figure class="relative mx-4 mt-4 h-36 overflow-hidden rounded-xl border border-base-200 bg-base-200">
+                    <img id="point-card-photo-{{ point.pk }}" src="{{ point.photo_preview_url }}"
+                         alt="Photo du point d'eau {{ point.nomabonne|default:'sans nom' }}"
+                         class="h-full w-full cursor-zoom-in object-cover"
+                         onclick="event.stopPropagation(); openPointCardPhoto('{{ point.pk }}')">
+                    <button type="button" class="btn btn-circle btn-sm absolute left-2 top-1/2 -translate-y-1/2 bg-base-100/85 shadow {% if point.photo_urls|length <= 1 %}hidden{% endif %}"
+                            onclick="event.stopPropagation(); stepPointCardPhoto('{{ point.pk }}', -1)" aria-label="Photo précédente">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <button type="button" class="btn btn-circle btn-sm absolute right-2 top-1/2 -translate-y-1/2 bg-base-100/85 shadow {% if point.photo_urls|length <= 1 %}hidden{% endif %}"
+                            onclick="event.stopPropagation(); stepPointCardPhoto('{{ point.pk }}', 1)" aria-label="Photo suivante">
+                        <i class="fas fa-chevron-right"></i>
+                    </button>
+                    <button type="button" class="absolute left-2 top-2 rounded-lg bg-black/55 px-2 py-1 text-xs text-white"
+                            onclick="event.stopPropagation(); openPointCardPhoto('{{ point.pk }}')">
+                        <i class="fas fa-expand mr-1"></i>Agrandir
+                    </button>
+                    <div class="absolute bottom-0 right-0 rounded-tl-lg bg-black/55 px-2 py-1 text-xs text-white">
+                        <i class="fas fa-camera mr-1"></i><span id="point-card-photo-counter-{{ point.pk }}">1 / {{ point.photo_urls|length }}</span>
+                    </div>
+                </figure>
+                {% endif %}
+                <div class="card-body p-4 gap-3">
+                    <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div class="min-w-0">
+                            <div class="break-words font-semibold text-base">{{ point.nomabonne|default:"Non renseigné" }}</div>
+                            <div class="text-xs text-base-content/60">
+                                {{ point.code_point_eau|default:"-" }}
+                                {% if point.idxls %}· IDxls {{ point.idxls|floatformat:0 }}{% endif %}
+                            </div>
+                        </div>
+                        <div>
+                            {% if point.statut_branchement == 'sans_date' %}
+                            <span class="badge badge-warning badge-sm">Sans date de branchement</span>
+                            {% elif point.statut_branchement == 'coupe' %}
+                            <span class="badge badge-error badge-sm">Coupé · {{ point.datearretbranchement|date:"d/m/Y" }}</span>
+                            {% elif point.statut_branchement == 'abandonne' %}
+                            <span class="badge badge-neutral badge-sm">Abandonné · {{ point.datearretbranchement|date:"d/m/Y" }}</span>
+                            {% else %}
+                            <span class="badge badge-success badge-sm">Actif</span>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="mt-2 flex flex-wrap gap-2 text-xs">
+                        {% if point.type_point_eau %}
+                        <span class="inline-flex items-center gap-2" title="{{ point.type_point_eau.nom_type }}">
+                            <i class="fas {{ point.type_point_eau.nom_type|point_eau_icon }} {{ point.type_point_eau.nom_type|point_eau_icon_tone }} text-lg" aria-hidden="true"></i>
+                            <span class="badge badge-outline">{{ point.type_point_eau.nom_type }}</span>
+                        </span>
+                        {% endif %}
+                        {% if point.ouvrage %}
+                        <span class="badge badge-info">{{ point.ouvrage.nom }}</span>
+                        {% endif %}
+                        {% if point.typeabonne %}
+                        <span class="badge badge-ghost">{{ point.typeabonne }}</span>
+                        {% endif %}
+                        {% if point.estbranchementinstitutionnel %}
+                        <span class="badge badge-warning" title="Branchement institutionnel">🏛️ Inst.</span>
+                        {% endif %}
+                        {% if point.tarifforfaitaire and point.tarifforfaitaire > 0 %}
+                        <span class="badge badge-primary badge-outline">{{ point.tarifforfaitaire|floatformat:0|intcomma }} Ar</span>
+                        {% endif %}
+                        {% if point.photos_count %}
+                        <span class="badge badge-success gap-1">
+                            <i class="fas fa-camera"></i>
+                            {{ point.photos_count }}
+                        </span>
+                        {% endif %}
+                    </div>
+
+                    <div class="text-xs text-base-content/70">
+                        {% if point.parcelle_display %}
+                        <span class="font-medium">Parcelle:</span> {{ point.parcelle_display }}
+                        {% else %}
+                        <span class="text-base-content/50">Parcelle non renseignée</span>
+                        {% endif %}
+                    </div>
+
+                    <div class="grid grid-cols-1 gap-1 text-xs">
+                        {% if point.numeroteleph %}
+                        <div class="flex items-center gap-2 text-base-content/80">
+                            <i class="fas fa-phone text-xs"></i>
+                            <span>{{ point.numeroteleph }}</span>
+                        </div>
+                        {% endif %}
+                        {% if point.contactabonne %}
+                        <div class="flex items-center gap-2 text-base-content/80">
+                            <i class="fas fa-user text-xs"></i>
+                            <span>{{ point.contactabonne }}</span>
+                        </div>
+                        {% endif %}
+                        {% if not point.numeroteleph and not point.contactabonne %}
+                        <div class="text-base-content/50">Contact non renseigné</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="mt-auto flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div class="text-xs text-base-content/70">
+                            {% if point.nombre_consommateurs %}
+                            👥 {{ point.nombre_consommateurs }}
+                            {% endif %}
+                            {% if point.nombre_menages_consommateurs %}
+                            · 🏠 {{ point.nombre_menages_consommateurs }} ménages
+                            {% endif %}
+                            {% if not point.nombre_consommateurs and not point.nombre_menages_consommateurs %}
+                            Non renseigné
+                            {% endif %}
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+                            {% if point.latitude and point.longitude %}
+                            <button class="btn btn-xs btn-success btn-outline w-full sm:w-auto"
+                                    onclick="event.stopPropagation(); showLocation({{ point.latitude|stringformat:'f' }}, {{ point.longitude|stringformat:'f' }}, '{{ point.pk }}')">
+                                <i class="fas fa-map-marker-alt"></i>
+                                GPS
+                            </button>
+                            {% endif %}
+                            <button onclick="event.stopPropagation(); editPoint('{{ point.pk }}')" class="btn btn-ghost btn-xs w-full sm:w-auto" title="Modifier">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            {% if is_directeur %}
+                            <button onclick="event.stopPropagation(); deletePoint('{{ point.pk }}', '{{ point.nomabonne|escapejs }}')" class="btn btn-ghost btn-xs w-full sm:w-auto text-error" title="Supprimer">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div id="view-list" class="hidden overflow-x-auto">
+            <table class="table table-zebra w-full">
+                <thead>
+                    <tr>
+                        <th>Sélection</th>
+                        <th>ID Excel</th>
+                        <th>Code</th>
+                        <th>Nom Abonné</th>
+                        <th>Type/Ouvrage</th>
+                        <th>Parcelle</th>
+                        <th>Consommateurs</th>
+                        <th>Photo</th>
+                        <th>Date Branchement</th>
+                        <th>Date Arrêt</th>
+                        <th>Institutionnel</th>
+                        <th>Coordonnées</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="points-tbody">
+                    {% for point in points_eau %}
+                    {% ifchanged point.statut_branchement %}{% if point.statut_branchement != 'actif' %}
+                    <tr class="{% if point.statut_branchement == 'coupe' %}bg-error/10 text-error{% elif point.statut_branchement == 'abandonne' %}bg-base-200 text-base-content/70{% else %}bg-warning/10 text-warning{% endif %}">
+                        <td colspan="13" class="font-semibold">
+                            {% if point.statut_branchement == 'coupe' %}<i class="fas fa-ban mr-1"></i> Points d'eau coupés (depuis moins d'un an)
+                            {% elif point.statut_branchement == 'abandonne' %}<i class="fas fa-archive mr-1"></i> Points d'eau abandonnés (coupés depuis plus d'un an) — non comptés
+                            {% else %}<i class="fas fa-question-circle mr-1"></i> Sans date de branchement — non comptés comme points d'eau{% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}{% endifchanged %}
+                    <tr class="hover cursor-pointer" data-point-id="{{ point.pk }}"
+                        onclick="selectPointEauRow('{{ point.pk }}', '{{ point.nomabonne|escapejs }}')">
+                        <td class="text-center" onclick="event.stopPropagation()">
+                            <input type="radio" name="selected-point" value="{{ point.pk }}" class="peer sr-only"
+                                   onchange="handlePointSelection('{{ point.pk }}', '{{ point.nomabonne|escapejs }}')"
+                                   id="point-{{ point.pk }}">
+                            <label for="point-{{ point.pk }}" class="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-base-300 bg-base-100 transition peer-checked:border-primary peer-checked:ring-2 peer-checked:ring-primary/30" title="Sélectionner · {{ point.type_point_eau.nom_type|default:'Point d’eau' }}">
+                                <i class="fas {{ point.type_point_eau.nom_type|point_eau_icon }} {{ point.type_point_eau.nom_type|point_eau_icon_tone }} text-lg" aria-hidden="true"></i>
+                            </label>
+                        </td>
+                        <td>
+                            {% if point.idxls %}
+                            <span class="font-mono font-bold text-primary">{{ point.idxls|floatformat:0 }}</span>
+                            {% else %}
+                            <span class="text-gray-400">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="badge badge-ghost">{{ point.code_point_eau|default:"-" }}</span>
+                        </td>
+                        <td class="font-semibold">
+                            {{ point.nomabonne|default:"Non renseigné" }}
+                            {% if point.typeabonne %}
+                            <div class="text-xs text-gray-500">({{ point.typeabonne }})</div>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="space-y-1">
+                                {% if point.type_point_eau %}
+                                <div class="inline-flex items-center gap-2" title="{{ point.type_point_eau.nom_type }}">
+                                    <i class="fas {{ point.type_point_eau.nom_type|point_eau_icon }} {{ point.type_point_eau.nom_type|point_eau_icon_tone }} text-lg" aria-hidden="true"></i>
+                                    <span class="badge badge-outline">{{ point.type_point_eau.nom_type }}</span>
+                                </div>
+                                {% endif %}
+                                {% if point.ouvrage %}
+                                <div class="badge badge-info text-xs">{{ point.ouvrage.nom }}</div>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td>
+                            {% if point.parcelle_display %}
+                            <div class="text-sm">{{ point.parcelle_display }}</div>
+                            {% else %}
+                            <span class="text-gray-400">Non renseignee</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="space-y-1">
+                                {% if point.nombre_consommateurs %}
+                                <div class="text-sm">👥 {{ point.nombre_consommateurs }}</div>
+                                {% endif %}
+                                {% if point.nombre_menages_consommateurs %}
+                                <div class="text-xs text-gray-500">🏠 {{ point.nombre_menages_consommateurs }} ménages</div>
+                                {% endif %}
+                                {% if not point.nombre_consommateurs and not point.nombre_menages_consommateurs %}
+                                <span class="text-gray-400">Non renseigné</span>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td class="text-center">
+                            {% if point.photos %}
+                            <span class="badge badge-success gap-1">
+                                <i class="fas fa-camera"></i>
+                                {{ point.photos|length }}
+                            </span>
+                            {% else %}
+                            <span class="text-gray-400">
+                                <i class="fas fa-camera-slash"></i>
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if point.datebranchement %}
+                            {{ point.datebranchement|date:"d/m/Y" }}
+                            {% else %}
+                            <span class="text-gray-400">Non renseignée</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if point.datearretbranchement %}
+                            <span class="badge badge-error">Coupé · {{ point.datearretbranchement|date:"d/m/Y" }}</span>
+                            {% elif not point.datebranchement %}
+                            <span class="badge badge-warning">Sans date</span>
+                            {% else %}
+                            <span class="badge badge-success">Actif</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if point.estbranchementinstitutionnel %}
+                            <span class="badge badge-warning">🏛️ Oui</span>
+                            {% else %}
+                            <span class="badge badge-ghost">👤 Non</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if point.latitude and point.longitude %}
+                            <button class="btn btn-xs btn-success btn-outline" onclick="showLocation({{ point.latitude|stringformat:'f' }}, {{ point.longitude|stringformat:'f' }}, '{{ point.pk }}')" title="Voir sur carte intégrée ({{ point.latitude|floatformat:6 }}, {{ point.longitude|floatformat:6 }})">
+                                <i class="fas fa-map-marker-alt"></i>
+                                <span class="ml-1">GPS</span>
+                            </button>
+                            {% else %}
+                            <div class="flex items-center gap-1 text-gray-400">
+                                <i class="fas fa-map-marker-alt-slash"></i>
+                                <span class="text-xs">Non géolocalisé</span>
+                            </div>
+                            {% endif %}
+                        </td>
+                        <td onclick="event.stopPropagation()">
+                            <div class="flex gap-1">
+                                <button onclick="editPoint('{{ point.pk }}')" class="btn btn-ghost btn-xs" title="Modifier">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                {% if is_directeur %}
+                                <button onclick="deletePoint('{{ point.pk }}', '{{ point.nomabonne|escapejs }}')" class="btn btn-ghost btn-xs text-error" title="Supprimer">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-12">
+            <div class="text-gray-400 text-6xl mb-4">
+                <i class="fas fa-tint"></i>
+            </div>
+            <h3 class="text-2xl font-bold mb-4">Aucun point d'eau trouvé</h3>
+            {% if selected_ouvrage %}
+            <p class="text-gray-500 mb-6">Il n'y a actuellement aucun point d'eau pour l'ouvrage <strong>{{ selected_ouvrage.nom_ouvrage }}</strong>.</p>
+            {% else %}
+            <p class="text-gray-500 mb-6">Sélectionnez un ouvrage pour voir ses points d'eau.</p>
+            {% endif %}
+            <button onclick="openCreateModal()" class="btn btn-primary">
+                <i class="fas fa-plus mr-2"></i>Créer le premier point d'eau
+            </button>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Section Gestion des Points de Contrôle en cascade -->
+<div class="hydria-v1-table-card card bg-base-100 shadow-xl mt-8" id="points-controle-section" style="display: none;">
+    <div class="card-body">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="card-title">🔍 Points de contrôle pour <span id="selected-point-name"></span></h2>
+            <div class="flex gap-2">
+                <button onclick="hidePointsControle()" class="btn btn-ghost btn-sm">
+                    <i class="fas fa-times"></i> Fermer
+                </button>
+                <button onclick="addPointControle()" class="btn btn-primary btn-sm">
+                    <i class="fas fa-plus mr-2"></i>Ajouter Composant à Contrôler
+                </button>
+            </div>
+        </div>
+
+        <div class="alert alert-info mb-4">
+            <i class="fas fa-info-circle"></i>
+            <span>Configurez les composants de ce point d'eau qui doivent être contrôlés lors des inspections. Les composants disponibles dépendent du type de point d'eau.</span>
+        </div>
+
+        <!-- Table des points de contrôle -->
+        <div class="overflow-x-auto">
+            <table class="table table-zebra w-full">
+                <thead>
+                    <tr>
+                        <th>Composant</th>
+                        <th>Description</th>
+                        <th>Obligatoire</th>
+                        <th>Fréquence</th>
+                        <th>Dernière Vérification</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="points-controle-tbody">
+                    <!-- Sera rempli dynamiquement -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<dialog id="point-photo-lightbox" class="modal">
+    <div class="modal-box max-w-5xl bg-base-100 p-3">
+        <div class="mb-3 flex items-center justify-between gap-3">
+            <h3 id="point-photo-lightbox-title" class="text-sm font-semibold text-base-content/80">Photo</h3>
+            <form method="dialog">
+                <button class="btn btn-sm btn-circle btn-ghost" type="submit">✕</button>
+            </form>
+        </div>
+        <div class="mb-3 flex items-center justify-between">
+            <button id="point-photo-lightbox-prev" type="button" class="btn btn-sm btn-outline">Précédent</button>
+            <span id="point-photo-lightbox-counter" class="text-xs text-base-content/70">1 / 1</span>
+            <button id="point-photo-lightbox-next" type="button" class="btn btn-sm btn-outline">Suivant</button>
+        </div>
+        <div class="flex items-center justify-center">
+            <img id="point-photo-lightbox-image" src="" alt="" class="max-h-[75vh] w-auto max-w-full rounded-xl object-contain">
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button type="submit">close</button>
+    </form>
+</dialog>
+{% endblock %}
+
+{% block modals %}
+<!-- Modale de création/édition de point d'eau -->
+<input type="checkbox" id="createModal" class="modal-toggle" />
+<div class="modal">
+    <div class="modal-box relative max-w-6xl max-h-[90vh]">
+        <label for="createModal" class="btn btn-sm btn-circle absolute right-2 top-2">✕</label>
+        <h3 class="text-lg font-bold mb-4" id="modal-title">💧 Nouveau point d'eau</h3>
+
+        <form id="pointForm" method="post" action="{% url 'organization:points_eau_create' selected_ouvrage.pk %}" class="max-h-[calc(90vh-5rem)] overflow-y-auto pr-1">
+            {% csrf_token %}
+
+            <!-- Formulaire simple avec sections -->
+            <div class="space-y-4">
+                <!-- Section 1: Informations de base -->
+                <div class="collapse collapse-arrow bg-base-200 collapse-open">
+                    <input type="checkbox" checked />
+                    <div class="collapse-title flex items-center gap-3">
+                        <span class="text-lg">📋</span>
+                        <h4 class="text-lg font-semibold">Informations de base</h4>
+                    </div>
+                    <div class="collapse-content">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Code du point d'eau</span>
+                            </label>
+                            <input type="text" name="code_point_eau" class="input input-bordered" placeholder="Ex: PE-001">
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Nom de l'abonné *</span>
+                            </label>
+                            <input type="text" name="nomabonne" class="input input-bordered" required>
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Numéro de téléphone</span>
+                            </label>
+                            <input type="text" name="numeroteleph" class="input input-bordered">
+                        </div>
+
+                        <div id="diamex-extraction-panel" class="hidden md:col-span-2 rounded-box border border-info/30 bg-info/5 p-4">
+                            <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                                <div>
+                                    <h5 class="font-semibold">Suggestions DiameX - compte 621102</h5>
+                                    <p class="text-xs opacity-70">Noms extraits des écritures les plus récentes. Ouvrez le scan pour vérifier le téléphone.</p>
+                                </div>
+                                <button type="button" class="btn btn-xs btn-outline btn-info" onclick="loadPointDiamexExtractions()">
+                                    <i class="fas fa-sync-alt"></i> Actualiser
+                                </button>
+                            </div>
+                            <div id="diamex-extraction-content" class="text-sm">
+                                <span class="loading loading-spinner loading-sm"></span> Recherche en cours...
+                            </div>
+                        </div>
+
+                        <input type="hidden" name="contactabonne" id="contactabonne-hidden">
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Type de point d'eau</span>
+                            </label>
+                            <select name="type_point_eau" class="select select-bordered">
+                                <option value="">Sélectionner un type</option>
+                                {% for type_pe in types_points_eau %}
+                                <option value="{{ type_pe.pk }}">{{ type_pe.nom_type }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Type d'abonné</span>
+                            </label>
+                            <select name="typeabonne" class="select select-bordered">
+                                <option value="">Sélectionner</option>
+                                <option value="particulier">Particulier</option>
+                                <option value="boutique">Boutique</option>
+                            </select>
+                            <label class="label">
+                                <span class="label-text-alt text-info">Réservé au type Kiosque</span>
+                            </label>
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Branchement institutionnel</span>
+                            </label>
+                            <input type="checkbox" name="estbranchementinstitutionnel" class="toggle toggle-primary">
+                            <label class="label">
+                                <span class="label-text-alt text-info">Réservé aux types BP, BF ou PMH</span>
+                            </label>
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Element amont</span>
+                            </label>
+                            <select name="amont_node" class="select select-bordered">
+                                <option value="">Aucun element amont</option>
+                                {% if organigramme_equipements %}
+                                <optgroup label="Equipements">
+                                    {% for equipement in organigramme_equipements %}
+                                    <option value="equipement:{{ equipement.pk }}">{{ equipement.nom }}</option>
+                                    {% endfor %}
+                                </optgroup>
+                                {% endif %}
+                                {% if organigramme_compteurs %}
+                                <optgroup label="Compteurs de tete">
+                                    {% for compteur in organigramme_compteurs %}
+                                    <option value="compteur:{{ compteur.pk }}">{{ compteur.numerocompteur }} - {{ compteur.marque|default:"Sans marque" }}</option>
+                                    {% endfor %}
+                                </optgroup>
+                                {% endif %}
+                                {% if points_eau %}
+                                <optgroup label="Points d'eau">
+                                    {% for point_item in points_eau %}
+                                    <option value="point_eau:{{ point_item.pk }}">{{ point_item.code_point_eau|default:point_item.nomabonne }}</option>
+                                    {% endfor %}
+                                </optgroup>
+                                {% endif %}
+                            </select>
+                            <label class="label">
+                                <span class="label-text-alt">L'amont peut etre un equipement, un compteur de tete ou un autre point d'eau.</span>
+                            </label>
+                        </div>
+
+                        <div class="form-control" id="compteur-tete-field-wrapper">
+                            <label class="label">
+                                <span class="label-text">Compteur de tete relie</span>
+                            </label>
+                            <select name="compteur_tete" class="select select-bordered">
+                                <option value="">Aucun compteur de tete</option>
+                                {% for compteur in organigramme_compteurs %}
+                                <option value="{{ compteur.pk }}">{{ compteur.numerocompteur }} - {{ compteur.marque|default:"Sans marque" }}</option>
+                                {% endfor %}
+                            </select>
+                            <label class="label">
+                                <span class="label-text-alt">Ce champ permet de parametrer explicitement le compteur de tete associe au point d'eau.</span>
+                            </label>
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Date de branchement</span>
+                            </label>
+                            <input type="date" name="datebranchement" class="input input-bordered">
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Date d'arrêt du branchement</span>
+                                <span class="label-text-alt text-warning"><i class="fas fa-lock mr-1"></i>Géré automatiquement</span>
+                            </label>
+                            <input type="date" name="datearretbranchement" class="input input-bordered" readonly disabled>
+                            <label class="label">
+                                <span class="label-text-alt text-info">
+                                    <i class="fas fa-info-circle mr-1"></i>
+                                    <strong>Workflow de gestion :</strong>
+                                </span>
+                            </label>
+                            <div class="alert alert-info mt-2">
+                                <div class="text-xs space-y-1">
+                                    <div><i class="fas fa-cut text-error mr-2"></i><strong>Paiement forfaitaire :</strong> Géré via Facturation &gt; Suivi forfaitaires &gt; Modal point d'eau &gt; onglet Coupure (coupure/remise en eau)</div>
+                                    <div><i class="fas fa-tint text-primary mr-2"></i><strong>Paiement volumétrique :</strong> Géré via Facturation > Workflow Relevés > Coupures d'eau</div>
+                                    <div class="mt-2 pl-6 text-base-content/70">
+                                        • Couper un point d'eau : Définit cette date<br>
+                                        • Remettre en service : Supprime cette date<br>
+                                        • Point coupé = Pas de facture à recouvrer
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Tarif forfaitaire (% du tarif plein)</span>
+                            </label>
+                            <input type="number" name="pourcentage_tarif" class="input input-bordered" min="0" max="1000" step="0.01" placeholder="Ex : 100">
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Besoin en clôture</span>
+                            </label>
+                            <input type="checkbox" name="besoin_en_cloture" class="toggle toggle-primary">
+                        </div>
+                    </div>
+                    </div>
+                </div>
+
+                <!-- Section 2: Localisation & Parcelle -->
+                <div class="collapse collapse-arrow bg-base-200 collapse-open">
+                    <input type="checkbox" checked />
+                    <div class="collapse-title flex items-center gap-3">
+                        <span class="text-lg">📍</span>
+                        <h4 class="text-lg font-semibold">Localisation & Parcelle</h4>
+                    </div>
+                    <div class="collapse-content pb-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="form-control col-span-2">
+                            <label class="label">
+                                <span class="label-text">Parcelle</span>
+                            </label>
+                            <div class="mb-3 rounded-xl border border-base-300 bg-base-100 p-3">
+                                <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                    <span class="text-sm font-semibold">
+                                        <i class="fas fa-filter mr-1 text-primary"></i>
+                                        Affiner la localisation
+                                    </span>
+                                    <button type="button" class="btn btn-ghost btn-xs" onclick="clearParcelleLocationFilters()">
+                                        <i class="fas fa-undo mr-1"></i>Effacer les filtres
+                                    </button>
+                                </div>
+                                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                    <label class="form-control">
+                                        <span class="label-text mb-1 text-xs">Commune</span>
+                                        <input type="text"
+                                               id="parcelle-commune-filter"
+                                               list="parcelle-commune-suggestions"
+                                               class="input input-bordered input-sm w-full"
+                                               placeholder="Saisir le nom de la commune"
+                                               autocomplete="off"
+                                               oninput="populateParcelleVillageSuggestions(); filterParcelles()">
+                                        <datalist id="parcelle-commune-suggestions"></datalist>
+                                    </label>
+                                    <label class="form-control">
+                                        <span class="label-text mb-1 text-xs">Village</span>
+                                        <input type="text"
+                                               id="parcelle-village-filter"
+                                               list="parcelle-village-suggestions"
+                                               class="input input-bordered input-sm w-full"
+                                               placeholder="Saisir le nom du village"
+                                               autocomplete="off"
+                                               oninput="filterParcelles()">
+                                        <datalist id="parcelle-village-suggestions"></datalist>
+                                    </label>
+                                </div>
+                                <p class="mt-2 text-xs text-base-content/60">
+                                    Ces filtres se combinent avec la recherche de parcelle ci-dessous.
+                                </p>
+                            </div>
+                            <div class="relative">
+                                <!-- Champ de recherche autocomplete -->
+                                <input type="text"
+                                       id="parcelle-search"
+                                       class="input input-bordered w-full"
+                                       placeholder="🔍 Rechercher par référence ou village..."
+                                       autocomplete="off"
+                                       onkeyup="filterParcelles()"
+                                       onfocus="showParcelleDropdown()"
+                                       onblur="hideParcelleDropdown()">
+
+                                <!-- Select caché contenant la valeur -->
+                                <select name="parcelle" id="parcelle-select" class="hidden">
+                                    <option value="">Sélectionner une parcelle</option>
+                                    {% for parcelle in parcelles_disponibles %}
+                                    <option value="{{ parcelle.pk }}"
+                                            data-reference="{{ parcelle.reference_parcelle|default:'' }}"
+                                            data-village="{{ parcelle.village.nom_village|default:'' }}"
+                                            data-fokontany="{% if parcelle.village.fokontany %}{{ parcelle.village.fokontany.nom_fokontany|default:'' }}{% endif %}"
+                                            data-commune="{% if parcelle.village.fokontany %}{{ parcelle.village.fokontany.commune.nom_commune|default:'' }}{% endif %}"
+                                            data-district="{% if parcelle.village.fokontany %}{{ parcelle.village.fokontany.commune.district.nom_district|default:'' }}{% endif %}"
+                                            data-region="{% if parcelle.village.fokontany %}{{ parcelle.village.fokontany.commune.district.region.nom_region|default:'' }}{% endif %}"
+                                            data-search="{{ parcelle.reference_parcelle|lower }} {{ parcelle.village.nom_village|lower }} {% if parcelle.village.fokontany %}{{ parcelle.village.fokontany.nom_fokontany|lower }} {{ parcelle.village.fokontany.commune.nom_commune|lower }} {{ parcelle.village.fokontany.commune.district.nom_district|lower }} {{ parcelle.village.fokontany.commune.district.region.nom_region|lower }}{% endif %}">
+                                        {{ parcelle.reference_parcelle }} - {{ parcelle.village.nom_village }}
+                                        {% if parcelle.village.fokontany %}
+                                            ({{ parcelle.village.fokontany.nom_fokontany }},
+                                             {{ parcelle.village.fokontany.commune.nom_commune }})
+                                        {% endif %}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+
+                                <!-- Dropdown des résultats -->
+                                <div id="parcelle-dropdown"
+                                     class="z-[100] mt-2 hidden w-full overflow-y-auto rounded-xl border border-base-300 bg-base-100 shadow-xl">
+                                    <!-- Sera rempli dynamiquement -->
+                                </div>
+
+                                <!-- Affichage de la sélection actuelle -->
+                                <div id="parcelle-current" class="mt-3 hidden rounded-xl border border-primary/30 bg-primary/10 p-3">
+                                    <div class="mb-1 text-xs font-semibold uppercase tracking-wide text-primary">Parcelle sélectionnée</div>
+                                    <div id="parcelle-current-text" class="break-words text-base font-semibold leading-relaxed"></div>
+                                    <div class="mt-3 flex flex-wrap gap-2">
+                                        <button type="button" onclick="changeParcelleSelection()" class="btn btn-primary btn-sm">
+                                            <i class="fas fa-search mr-1"></i>Changer
+                                        </button>
+                                        <button type="button" onclick="clearParcelleSelection()" class="btn btn-ghost btn-sm text-error">
+                                            <i class="fas fa-times mr-1"></i>Retirer
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    </div>
+                </div>
+
+                <!-- Section 3: Consommateurs -->
+                <div class="collapse collapse-arrow bg-base-200 collapse-open">
+                    <input type="checkbox" checked />
+                    <div class="collapse-title flex items-center gap-3">
+                        <span class="text-lg">👥</span>
+                        <h4 class="text-lg font-semibold">Consommateurs</h4>
+                    </div>
+                    <div class="collapse-content">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Nombre de consommateurs</span>
+                            </label>
+                            <input type="number" name="nombre_consommateurs" class="input input-bordered" min="0">
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Nombre de ménages consommateurs</span>
+                            </label>
+                            <input type="number" name="nombre_menages_consommateurs" class="input input-bordered" min="0">
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">ID Excel</span>
+                            </label>
+                            <input type="text" name="idxls" class="input input-bordered" placeholder="Identifiant Excel">
+                        </div>
+                    </div>
+                    </div>
+                </div>
+
+                <!-- Section 4: Paiements & DiameX (pliée par défaut) -->
+                <div class="collapse collapse-arrow bg-base-200">
+                    <input type="checkbox" />
+                    <div class="collapse-title flex items-center gap-3">
+                        <span class="text-lg">💰</span>
+                        <h4 class="text-lg font-semibold">Paiements & DiameX</h4>
+                    </div>
+                    <div class="collapse-content">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">DiameX Demande</span>
+                            </label>
+                            <input type="number" name="numerodiamexdemande" class="input input-bordered" min="0">
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">DiameX Devis</span>
+                            </label>
+                            <input type="number" name="numerodiamexdevis" class="input input-bordered" min="0">
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Base DiameX Demande</span>
+                            </label>
+                            <input type="number" name="basediamexdemande" class="input input-bordered" min="0">
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Base DiameX Devis</span>
+                            </label>
+                            <input type="number" name="basediamexdevis" class="input input-bordered" min="0">
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Date paiement demande</span>
+                            </label>
+                            <input type="date" name="datepaiementdemande" class="input input-bordered">
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Date paiement devis</span>
+                            </label>
+                            <input type="date" name="datepaiementdevis" class="input input-bordered">
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Montant demande payé (Ar)</span>
+                            </label>
+                            <input type="number" name="montantdemandepaye" class="input input-bordered" min="0" step="0.01">
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Montant devis payé (Ar)</span>
+                            </label>
+                            <input type="number" name="montantdevispaye" class="input input-bordered" min="0" step="0.01">
+                        </div>
+                    </div>
+                    </div>
+                </div>
+
+                <!-- Section 5: Coordonnées GPS -->
+                <div class="collapse collapse-arrow bg-base-200 collapse-open">
+                    <input type="checkbox" checked />
+                    <div class="collapse-title flex items-center gap-3">
+                        <span class="text-lg">🗺️</span>
+                        <h4 class="text-lg font-semibold">Coordonnées GPS</h4>
+                    </div>
+                    <div class="collapse-content">
+                    <div class="flex justify-between items-center mb-2">
+                        <h3 class="font-semibold text-sm text-base-content">Coordonnées GPS</h3>
+                        <button type="button" onclick="getCurrentPosition()" class="btn btn-sm btn-info gap-2">
+                            <i class="fas fa-crosshairs"></i>
+                            Obtenir position GPS
+                        </button>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Latitude</span>
+                            </label>
+                            <input type="number" step="any" name="latitude" id="gps-latitude" class="input input-bordered" placeholder="-18.9041">
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Longitude</span>
+                            </label>
+                            <input type="number" step="any" name="longitude" id="gps-longitude" class="input input-bordered" placeholder="47.5216">
+                        </div>
+                    </div>
+                    <div id="gps-status" class="mt-2 text-sm"></div>
+                    </div>
+                </div>
+
+                <!-- Section 6: Photos -->
+                <div class="collapse collapse-arrow bg-base-200 collapse-open">
+                    <input type="checkbox" checked />
+                    <div class="collapse-title flex items-center gap-3">
+                        <span class="text-lg">📷</span>
+                        <h4 class="text-lg font-semibold">Photos</h4>
+                    </div>
+                    <div class="collapse-content">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="font-semibold text-sm text-base-content">Photos du point d'eau</h3>
+                        <div class="flex gap-2">
+                            <button type="button" onclick="capturePhoto()" class="btn btn-sm btn-info gap-2">
+                                <i class="fas fa-camera"></i>
+                                Prendre photo
+                            </button>
+                            <button type="button" onclick="selectPhoto()" class="btn btn-sm btn-primary gap-2">
+                                <i class="fas fa-folder-open"></i>
+                                Choisir fichier
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Input fichier caché -->
+                    <input type="file" id="photo-input" accept="image/*" style="display: none;" onchange="handlePhotoSelected(event)">
+
+                    <!-- Galerie de photos -->
+                    <div id="photos-gallery" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <!-- Les photos seront ajoutées ici dynamiquement -->
+                    </div>
+
+                    <!-- Champ caché pour stocker les photos en JSON -->
+                    <input type="hidden" name="photos_json" id="photos-json">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Ouvrage caché -->
+            <input type="hidden" name="ouvrage" value="{{ selected_ouvrage.pk }}">
+
+            <div class="modal-action mt-6">
+                <button type="button" onclick="closeModal('createModal')" class="btn btn-ghost">Annuler</button>
+                <button type="submit" class="btn btn-primary">Créer le point d'eau</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const mapElement = document.getElementById('points-eau-mini-map');
+    const dataElement = document.getElementById('points-eau-map-data');
+    if (!mapElement || !dataElement || typeof L === 'undefined') return;
+
+    const mapData = JSON.parse(dataElement.textContent || '{}');
+    const markers = Array.isArray(mapData.markers) ? mapData.markers : [];
+    const liaisons = Array.isArray(mapData.liaisons) ? mapData.liaisons : [];
+
+    const miniMap = L.map(mapElement, { scrollWheelZoom: false, zoomSnap: 0.5 });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap'
+    }).addTo(miniMap);
+    L.control.scale({
+        position: 'bottomleft',
+        metric: true,
+        imperial: false,
+        maxWidth: 160,
+    }).addTo(miniMap);
+
+    const bounds = [];
+    liaisons.forEach(liaison => {
+        const start = [Number(liaison.from?.latitude), Number(liaison.from?.longitude)];
+        const end = [Number(liaison.to?.latitude), Number(liaison.to?.longitude)];
+        if (![...start, ...end].every(Number.isFinite)) return;
+        const line = L.polyline([start, end], {
+            color: '#059669',
+            weight: 4,
+            opacity: 0.8,
+            dashArray: '10 7',
+            lineCap: 'round',
+        }).addTo(miniMap);
+        const tooltip = document.createElement('div');
+        tooltip.textContent = (liaison.from?.label || 'Amont') + ' → ' + (liaison.to?.label || 'Aval');
+        line.bindTooltip(tooltip, { sticky: true });
+    });
+    markers.forEach(item => {
+        const latLng = [Number(item.latitude), Number(item.longitude)];
+        if (!Number.isFinite(latLng[0]) || !Number.isFinite(latLng[1])) return;
+        bounds.push(latLng);
+        const palette = item.kind === 'village'
+            ? { color: '#d97706', fill: '#f59e0b', radius: 4 }
+            : item.kind === 'point_eau'
+                ? { color: '#0891b2', fill: '#06b6d4', radius: 7 }
+                : { color: '#2563eb', fill: '#3b82f6', radius: 10 };
+        const marker = L.circleMarker(latLng, {
+            radius: palette.radius,
+            color: palette.color,
+            fillColor: palette.fill,
+            fillOpacity: 0.85,
+            weight: 2,
+        }).addTo(miniMap);
+        const popup = document.createElement('div');
+        const title = document.createElement('strong');
+        const detail = document.createElement('div');
+        title.textContent = item.label || (item.kind === 'village' ? 'Village desservi' : item.kind === 'point_eau' ? "Point d'eau" : 'Équipement');
+        detail.textContent = item.detail || '';
+        popup.append(title, detail);
+        marker.bindPopup(popup);
+
+        // Étiquette permanente à côté du marqueur : IDXLS (point d'eau),
+        // type d'équipement (équipement), nom du village (village)
+        let labelText = '';
+        if (item.kind === 'point_eau') {
+            labelText = item.idxls || '';
+        } else if (item.kind === 'equipement') {
+            labelText = item.type_equipement || item.detail || '';
+        } else if (item.kind === 'village') {
+            labelText = item.label || '';
+        }
+        if (labelText) {
+            marker.bindTooltip(labelText, {
+                permanent: true,
+                direction: 'right',
+                offset: [palette.radius + 2, 0],
+                className: 'hydria-map-label hydria-map-label-' + item.kind,
+            });
+        }
+    });
+
+    if (bounds.length === 0) {
+        miniMap.setView([-18.8792, 47.5079], 6);
+    } else if (bounds.length === 1) {
+        miniMap.setView(bounds[0], 15);
+    } else {
+        miniMap.fitBounds(bounds, { padding: [28, 28], maxZoom: 16 });
+    }
+    window.setTimeout(() => miniMap.invalidateSize(), 100);
+    if (window.setupHydriaMapCoordinateAssignment) {
+        window.setupHydriaMapCoordinateAssignment(miniMap, 'points-eau-map');
+    }
+});
+// Gestion de la vue (Liste vs Cartes)
+document.addEventListener('DOMContentLoaded', function() {
+    // Récupérer la préférence ou détecter par défaut
+    const savedView = localStorage.getItem('points_eau_view_mode');
+    const isMobile = window.innerWidth < 1024;
+    
+    // En mobile, forcer la vue cartes. Sur desktop, respecter la préférence utilisateur.
+    const initialView = isMobile ? 'grid' : (savedView || 'list');
+    toggleView(initialView);
+});
+
+function toggleView(mode) {
+    const listView = document.getElementById('view-list');
+    const cardsView = document.getElementById('view-cards');
+    const btnList = document.getElementById('btn-view-list');
+    const btnGrid = document.getElementById('btn-view-grid');
+    const isMobile = window.innerWidth < 1024;
+
+    if (isMobile) {
+        mode = 'grid';
+    }
+
+    if (mode === 'list') {
+        listView.classList.remove('hidden');
+        cardsView.classList.add('hidden');
+        
+        btnList.classList.add('btn-active', 'btn-primary');
+        btnGrid.classList.remove('btn-active', 'btn-primary');
+    } else {
+        listView.classList.add('hidden');
+        cardsView.classList.remove('hidden');
+        
+        btnList.classList.remove('btn-active', 'btn-primary');
+        btnGrid.classList.add('btn-active', 'btn-primary');
+    }
+
+    // Sauvegarder la préférence
+    localStorage.setItem('points_eau_view_mode', mode);
+}
+
+let pointPhotoLightboxImages = [];
+let pointPhotoLightboxIndex = 0;
+let pointPhotoLightboxTitle = '';
+const pointCardPhotoIndexes = {};
+
+function getPointCardPhotoUrls(pointId) {
+    return Array.from(document.querySelectorAll(`#point-card-photos-data-${pointId} [data-photo-url]`))
+        .map(node => node.dataset.photoUrl)
+        .filter(Boolean);
+}
+
+function renderPointCardPhoto(pointId) {
+    const urls = getPointCardPhotoUrls(pointId);
+    const image = document.getElementById(`point-card-photo-${pointId}`);
+    const counter = document.getElementById(`point-card-photo-counter-${pointId}`);
+    if (!urls.length || !image) return;
+    const index = ((pointCardPhotoIndexes[pointId] || 0) + urls.length) % urls.length;
+    pointCardPhotoIndexes[pointId] = index;
+    image.src = urls[index];
+    if (counter) counter.textContent = `${index + 1} / ${urls.length}`;
+}
+
+function stepPointCardPhoto(pointId, step) {
+    pointCardPhotoIndexes[pointId] = (pointCardPhotoIndexes[pointId] || 0) + step;
+    renderPointCardPhoto(pointId);
+}
+
+function openPointCardPhoto(pointId) {
+    const urls = getPointCardPhotoUrls(pointId);
+    const dataNode = document.getElementById(`point-card-photos-data-${pointId}`);
+    const title = dataNode?.dataset.photoTitle || "Photo du point d'eau";
+    openPointPhotoLightbox(urls, title, pointCardPhotoIndexes[pointId] || 0);
+}
+
+function renderPointPhotoLightbox(title) {
+    const modal = document.getElementById('point-photo-lightbox');
+    const image = document.getElementById('point-photo-lightbox-image');
+    const titleNode = document.getElementById('point-photo-lightbox-title');
+    const counterNode = document.getElementById('point-photo-lightbox-counter');
+    const prevBtn = document.getElementById('point-photo-lightbox-prev');
+    const nextBtn = document.getElementById('point-photo-lightbox-next');
+    if (!modal || !image || !pointPhotoLightboxImages.length) {
+        return;
+    }
+    image.src = pointPhotoLightboxImages[pointPhotoLightboxIndex];
+    image.alt = title || pointPhotoLightboxTitle || "Photo du point d'eau";
+    if (titleNode) {
+        titleNode.textContent = title || pointPhotoLightboxTitle || "Photo du point d'eau";
+    }
+    if (counterNode) {
+        counterNode.textContent = `${pointPhotoLightboxIndex + 1} / ${pointPhotoLightboxImages.length}`;
+    }
+    if (prevBtn) {
+        prevBtn.classList.toggle('invisible', pointPhotoLightboxIndex <= 0);
+    }
+    if (nextBtn) {
+        nextBtn.classList.toggle('invisible', pointPhotoLightboxIndex >= pointPhotoLightboxImages.length - 1);
+    }
+}
+
+function openPointPhotoLightbox(imageUrls, title, startIndex) {
+    const modal = document.getElementById('point-photo-lightbox');
+    pointPhotoLightboxImages = (imageUrls || []).filter(Boolean);
+    pointPhotoLightboxIndex = Math.max(0, Math.min(startIndex || 0, pointPhotoLightboxImages.length - 1));
+    pointPhotoLightboxTitle = title || "Photo du point d'eau";
+    if (!modal || !pointPhotoLightboxImages.length) {
+        return;
+    }
+    renderPointPhotoLightbox(title);
+    modal.showModal();
+}
+
+function stepPointPhotoLightbox(step) {
+    const nextIndex = pointPhotoLightboxIndex + step;
+    if (nextIndex < 0 || nextIndex >= pointPhotoLightboxImages.length) return;
+    pointPhotoLightboxIndex = nextIndex;
+    renderPointPhotoLightbox();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const prevBtn = document.getElementById('point-photo-lightbox-prev');
+    const nextBtn = document.getElementById('point-photo-lightbox-next');
+    if (prevBtn) {
+        prevBtn.addEventListener('click', function() { stepPointPhotoLightbox(-1); });
+    }
+    if (nextBtn) {
+        nextBtn.addEventListener('click', function() { stepPointPhotoLightbox(1); });
+    }
+});
+
+// Fonctions spécifiques aux points d'eau
+function filterPoints() {
+    console.log('Filtrage des points d\'eau...');
+    const searchValue = document.getElementById('search-input').value.toLowerCase();
+    const rows = document.querySelectorAll('#points-tbody tr');
+    const cards = document.querySelectorAll('.point-card');
+
+    rows.forEach(row => {
+        const text = row.textContent.toLowerCase();
+        row.style.display = text.includes(searchValue) ? '' : 'none';
+    });
+
+    cards.forEach(card => {
+        const text = card.textContent.toLowerCase();
+        card.style.display = text.includes(searchValue) ? '' : 'none';
+    });
+
+    // Si un point est sélectionné et caché par le filtre, fermer la section points de contrôle
+    if (currentPointEauId) {
+        const selectedRow = document.querySelector(`tr[data-point-id="${currentPointEauId}"]`);
+        if (selectedRow && selectedRow.style.display === 'none') {
+            console.log('Point sélectionné caché par le filtre, fermeture de la section');
+            hidePointsControles();
+        }
+    }
+}
+
+let currentDiamexPointId = null;
+
+function useDiamexSubscriberName(nomExtrait) {
+    const input = document.querySelector('#pointForm input[name="nomabonne"]');
+    if (!input) return;
+    const nomActuel = input.value.trim();
+    if (nomActuel && nomActuel.toLocaleLowerCase() !== nomExtrait.toLocaleLowerCase()) {
+        const ok = confirm(`Remplacer le nom actuel « ${nomActuel} » par « ${nomExtrait} » ?`);
+        if (!ok) return;
+    }
+    input.value = nomExtrait;
+    input.focus();
+}
+
+function focusDiamexPhoneInput() {
+    const input = document.querySelector('#pointForm input[name="numeroteleph"]');
+    if (!input) return;
+    input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    input.focus();
+}
+
+function renderPointDiamexExtractions(data) {
+    const content = document.getElementById('diamex-extraction-content');
+    if (!content) return;
+    content.replaceChildren();
+
+    const results = Array.isArray(data.results) ? data.results : [];
+    if (!results.length) {
+        const empty = document.createElement('div');
+        empty.className = 'alert py-2';
+        empty.textContent = data.message || 'Aucune écriture 621102 correspondante trouvée pour cet ouvrage et cet IDXls.';
+        content.appendChild(empty);
+        return;
+    }
+
+    results.forEach((item, index) => {
+        const card = document.createElement('div');
+        card.className = 'rounded-lg border border-base-300 bg-base-100 p-3 mb-2';
+
+        const header = document.createElement('div');
+        header.className = 'flex flex-wrap items-start justify-between gap-2';
+        const identity = document.createElement('div');
+        const name = document.createElement('div');
+        name.className = 'font-semibold';
+        name.textContent = item.nom_extrait;
+        const meta = document.createElement('div');
+        meta.className = 'text-xs opacity-70';
+        meta.textContent = `${item.date || 'Date inconnue'} · IDXls ${item.idxls} · ${item.ouvrage}`;
+        identity.append(name, meta);
+
+        const badge = document.createElement('span');
+        badge.className = index === 0 ? 'badge badge-success badge-sm' : 'badge badge-ghost badge-sm';
+        badge.textContent = index === 0 ? 'Plus récent' : 'Historique';
+        header.append(identity, badge);
+
+        const description = document.createElement('div');
+        description.className = 'mt-2 text-xs break-words opacity-80';
+        description.textContent = item.description;
+
+        const actions = document.createElement('div');
+        actions.className = 'mt-3 flex flex-wrap gap-2';
+        const useName = document.createElement('button');
+        useName.type = 'button';
+        useName.className = 'btn btn-xs btn-primary';
+        useName.innerHTML = '<i class="fas fa-user-check"></i> Utiliser ce nom';
+        useName.addEventListener('click', () => useDiamexSubscriberName(item.nom_extrait));
+        actions.appendChild(useName);
+
+        if (item.scan_disponible) {
+            const scan = document.createElement('a');
+            scan.className = 'btn btn-xs btn-outline btn-info';
+            scan.href = item.scan_url;
+            scan.target = '_blank';
+            scan.rel = 'noopener';
+            scan.innerHTML = '<i class="fas fa-file-image"></i> Ouvrir le scan';
+            actions.appendChild(scan);
+
+            const phone = document.createElement('button');
+            phone.type = 'button';
+            phone.className = 'btn btn-xs btn-outline';
+            phone.innerHTML = '<i class="fas fa-phone"></i> Saisir le téléphone';
+            phone.addEventListener('click', focusDiamexPhoneInput);
+            actions.appendChild(phone);
+        } else {
+            const noScan = document.createElement('span');
+            noScan.className = 'badge badge-warning badge-outline badge-sm';
+            noScan.textContent = 'Scan indisponible';
+            actions.appendChild(noScan);
+        }
+
+        card.append(header, description, actions);
+        content.appendChild(card);
+    });
+}
+
+async function loadPointDiamexExtractions(pointId = currentDiamexPointId) {
+    const panel = document.getElementById('diamex-extraction-panel');
+    const content = document.getElementById('diamex-extraction-content');
+    if (!pointId || !panel || !content) return;
+
+    currentDiamexPointId = pointId;
+    panel.classList.remove('hidden');
+    content.innerHTML = '<span class="loading loading-spinner loading-sm"></span> Recherche des écritures 621102...';
+    try {
+        const response = await fetch(`/organisations/api/points-eau/${pointId}/diamex-extractions/`, {
+            credentials: 'same-origin',
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Impossible de charger les extractions.');
+        }
+        renderPointDiamexExtractions(data);
+    } catch (error) {
+        content.textContent = `Erreur : ${error.message}`;
+    }
+}
+
+function setPointCoordinateInput(inputId, value) {
+    const input = document.getElementById(inputId);
+    if (!input) return false;
+    if (value === null || value === undefined || value === '') {
+        input.value = '';
+        return false;
+    }
+    const normalizedValue = String(value).trim().replace(',', '.');
+    const numericValue = Number(normalizedValue);
+    input.value = Number.isFinite(numericValue) ? String(numericValue) : normalizedValue;
+    return input.value !== '';
+}
+
+// Active/désactive "Type d'abonné" (Kiosque) et "Branchement institutionnel" (BP, BF, PMH)
+function syncChampsSelonTypePoint() {
+    const typeSelect = document.querySelector('select[name="type_point_eau"]');
+    const abonne = document.querySelector('select[name="typeabonne"]');
+    const inst = document.querySelector('input[name="estbranchementinstitutionnel"]');
+    if (!typeSelect || !abonne || !inst) return;
+    const nom = (typeSelect.selectedOptions[0]?.textContent || '').trim().toLowerCase();
+    const estKiosque = nom === 'kiosque';
+    const estInstitutionnelPossible = ['bp', 'bf', 'pmh'].includes(nom);
+    abonne.disabled = !estKiosque;
+    if (!estKiosque) abonne.value = '';
+    inst.disabled = !estInstitutionnelPossible;
+    if (!estInstitutionnelPossible) inst.checked = false;
+}
+document.addEventListener('DOMContentLoaded', function () {
+    const typeSelect = document.querySelector('select[name="type_point_eau"]');
+    if (typeSelect) typeSelect.addEventListener('change', syncChampsSelonTypePoint);
+    const form = document.getElementById('pointForm');
+    if (form) form.addEventListener('reset', () => setTimeout(syncChampsSelonTypePoint, 0));
+    syncChampsSelonTypePoint();
+});
+
+function editPoint(pointId) {
+    // Charger les données du point d'eau et ouvrir la modale en mode édition
+    fetch(`/organisations/points-eau/edit/${pointId}/`, {
+        method: 'GET',
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Remplir le formulaire avec les données existantes
+            const form = document.getElementById('pointForm');
+            form.action = `/organisations/points-eau/edit/${pointId}/`;
+
+            // Remplir les champs de base
+            document.querySelector('input[name="code_point_eau"]').value = data.data.code_point_eau || '';
+            document.querySelector('input[name="nomabonne"]').value = data.data.nomabonne || '';
+            document.querySelector('input[name="numeroteleph"]').value = data.data.numeroteleph || '';
+            const contactHidden = document.getElementById('contactabonne-hidden');
+            if (contactHidden) {
+                contactHidden.value = data.data.contactabonne || '';
+            }
+            document.querySelector('select[name="typeabonne"]').value = data.data.typeabonne || '';
+            document.querySelector('select[name="type_point_eau"]').value = data.data.type_point_eau || '';
+            document.querySelector('select[name="amont_node"]').value = data.data.amont_node || '';
+            document.querySelector('select[name="compteur_tete"]').value = data.data.compteur_tete || '';
+
+            // Mettre à jour la parcelle et afficher la sélection
+            const parcelleId = data.data.parcelle || '';
+            document.querySelector('select[name="parcelle"]').value = parcelleId;
+            if (parcelleId) {
+                // Récupérer le texte de l'option sélectionnée
+                const parcelleSelect = document.getElementById('parcelle-select');
+                const selectedOption = parcelleSelect.querySelector(`option[value="${parcelleId}"]`);
+                const parcelleText = selectedOption ? selectedOption.textContent.trim() : '';
+                selectParcelle(parcelleId, parcelleText);
+            }
+
+            document.querySelector('input[name="datebranchement"]').value = data.data.datebranchement || '';
+            document.querySelector('input[name="datearretbranchement"]').value = data.data.datearretbranchement || '';
+            document.querySelector('input[name="pourcentage_tarif"]').value = data.data.pourcentage_tarif || '';
+            document.querySelector('input[name="estbranchementinstitutionnel"]').checked = data.data.estbranchementinstitutionnel || false;
+            document.querySelector('input[name="besoin_en_cloture"]').checked = data.data.besoin_en_cloture || false;
+            syncChampsSelonTypePoint();
+
+            // Remplir les nouveaux champs consommateurs
+            document.querySelector('input[name="nombre_consommateurs"]').value = data.data.nombre_consommateurs || '';
+            document.querySelector('input[name="nombre_menages_consommateurs"]').value = data.data.nombre_menages_consommateurs || '';
+            document.querySelector('input[name="idxls"]').value = data.data.idxls || '';
+
+            // Remplir les champs diameX et paiements
+            document.querySelector('input[name="numerodiamexdemande"]').value = data.data.numerodiamexdemande || '';
+            document.querySelector('input[name="numerodiamexdevis"]').value = data.data.numerodiamexdevis || '';
+            document.querySelector('input[name="basediamexdemande"]').value = data.data.basediamexdemande || '';
+            document.querySelector('input[name="basediamexdevis"]').value = data.data.basediamexdevis || '';
+            document.querySelector('input[name="datepaiementdemande"]').value = data.data.datepaiementdemande || '';
+            document.querySelector('input[name="datepaiementdevis"]').value = data.data.datepaiementdevis || '';
+            document.querySelector('input[name="montantdemandepaye"]').value = data.data.montantdemandepaye || '';
+            document.querySelector('input[name="montantdevispaye"]').value = data.data.montantdevispaye || '';
+
+            // Coordonnées GPS
+            const latitudeLoaded = setPointCoordinateInput('gps-latitude', data.data.latitude);
+            const longitudeLoaded = setPointCoordinateInput('gps-longitude', data.data.longitude);
+            const gpsStatus = document.getElementById('gps-status');
+            if (gpsStatus) {
+                gpsStatus.className = `mt-2 text-sm ${latitudeLoaded && longitudeLoaded ? 'text-success' : 'text-warning'}`;
+                gpsStatus.textContent = latitudeLoaded && longitudeLoaded
+                    ? `Coordonnées chargées : ${data.data.latitude}, ${data.data.longitude}`
+                    : 'Aucune coordonnée GPS enregistrée pour ce point d’eau.';
+            }
+
+            // Charger les photos existantes
+            if (data.data.photos) {
+                loadExistingPhotos(data.data.photos);
+            } else {
+                photosData = [];
+                renderPhotosGallery();
+            }
+
+            // Changer le titre et le bouton de la modale
+            document.getElementById('modal-title').textContent = '✏️ Modifier le point d\'eau';
+            document.querySelector('#pointForm button[type="submit"]').textContent = 'Modifier le point d\'eau';
+
+            // Afficher les propositions extraites des dernières lignes DiameX 621102.
+            loadPointDiamexExtractions(pointId);
+
+            // Ouvrir la modale avec DaisyUI natif
+            openModal('createModal');
+        } else {
+            alert('Erreur lors du chargement des données : ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        alert('Erreur lors du chargement des données');
+    });
+}
+
+function deletePoint(pointId, nomAbonne) {
+    if (confirm(`Êtes-vous sûr de vouloir supprimer le point d'eau "${nomAbonne}" ?`)) {
+        fetch(`/organisations/points-eau/delete/${pointId}/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(data.message);
+                window.location.href = data.redirect;
+            } else {
+                alert('Erreur lors de la suppression : ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            alert('Erreur lors de la suppression');
+        });
+    }
+}
+
+function showLocation(latitude, longitude, pointId) {
+    // Utiliser notre carte intégrée Leaflet au lieu des services externes
+    if (pointId) {
+        const url = `/organisations/points-eau/map/${pointId}/`;
+        window.open(url, '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
+    } else {
+        // Fallback vers Google Maps si pas d'ID
+        const url = `https://www.google.com/maps?q=${latitude},${longitude}`;
+        window.open(url, '_blank');
+    }
+}
+
+let currentPointEauId = null;
+
+// Fonction pour gérer la sélection en cascade avec clic sur ligne
+function selectPointEauRow(pointId, nomAbonne) {
+    console.log('Point d\'eau sélectionné (clic ligne):', pointId, nomAbonne);
+    currentPointEauId = pointId;
+
+    // Cocher le bouton radio correspondant
+    const radioButton = document.getElementById(`point-${pointId}`);
+    if (radioButton) {
+        radioButton.checked = true;
+    }
+
+    // Afficher la section des points de contrôle en cascade
+    document.getElementById('points-controle-section').style.display = 'block';
+    document.getElementById('selected-point-name').textContent = nomAbonne;
+
+    // Charger les points de contrôle pour ce point d'eau
+    loadPointsControle(pointId);
+
+    // Mettre en évidence la ligne sélectionnée
+    highlightSelectedRow(pointId);
+    highlightSelectedCard(pointId);
+}
+
+// Fonction pour gérer la sélection via bouton radio (garde la compatibilité)
+function handlePointSelection(pointId, nomAbonne) {
+    console.log('Point d\'eau sélectionné (radio):', pointId, nomAbonne);
+    selectPointEauRow(pointId, nomAbonne);
+}
+
+function highlightSelectedRow(pointId) {
+    // Enlever la mise en évidence des autres lignes
+    document.querySelectorAll('#points-tbody tr').forEach(row => {
+        row.classList.remove('bg-base-200', 'ring-2', 'ring-primary');
+    });
+
+    // Mettre en évidence la ligne sélectionnée
+    const selectedRow = document.querySelector(`tr[data-point-id="${pointId}"]`);
+    if (selectedRow) {
+        selectedRow.classList.add('bg-base-200', 'ring-2', 'ring-primary');
+    }
+}
+
+function highlightSelectedCard(pointId) {
+    document.querySelectorAll('.point-card').forEach(card => {
+        card.classList.remove('ring-2', 'ring-primary');
+    });
+
+    const selectedCard = document.querySelector(`.point-card[data-point-id="${pointId}"]`);
+    if (selectedCard) {
+        selectedCard.classList.add('ring-2', 'ring-primary');
+    }
+}
+
+function hidePointsControle() {
+    console.log('Fermeture de la section points de contrôle');
+    document.getElementById('points-controle-section').style.display = 'none';
+    currentPointEauId = null;
+
+    // Enlever la sélection du bouton radio
+    const selectedRadio = document.querySelector('input[name="selected-point"]:checked');
+    if (selectedRadio) {
+        selectedRadio.checked = false;
+    }
+
+    // Enlever la mise en évidence des lignes
+    document.querySelectorAll('#points-tbody tr').forEach(row => {
+        row.classList.remove('bg-base-200', 'ring-2', 'ring-primary');
+    });
+    document.querySelectorAll('.point-card').forEach(card => {
+        card.classList.remove('ring-2', 'ring-primary');
+    });
+}
+
+function loadPointsControle(pointId) {
+    const tbody = document.getElementById('points-controle-tbody');
+
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="6" class="text-center text-gray-500">
+                <i class="fas fa-spinner fa-spin mr-2"></i>Chargement des points de contrôle...
+            </td>
+        </tr>
+    `;
+
+    // Charger les points de contrôle pour ce point d'eau
+    fetch(`/organisations/api/points-eau/${pointId}/controles/`, {
+        method: 'GET',
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            if (data.data.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="text-center text-gray-500 py-8">
+                            <i class="fas fa-search text-4xl mb-2"></i><br>
+                            Aucun point de contrôle configuré pour ce point d'eau.<br>
+                            <span class="text-sm">Cliquez sur "Ajouter Point de Contrôle" pour commencer</span>
+                        </td>
+                    </tr>
+                `;
+            } else {
+                let html = '';
+                data.data.forEach(controle => {
+                    const obligatoireBadge = controle.est_obligatoire
+                        ? '<span class="badge badge-error">Obligatoire</span>'
+                        : '<span class="badge badge-warning">Optionnel</span>';
+
+                    const frequence = controle.frequence_jours
+                        ? `${controle.frequence_jours} jours`
+                        : 'Non définie';
+
+                    const derniereVerif = controle.derniere_verification
+                        ? new Date(controle.derniere_verification).toLocaleDateString('fr-FR')
+                        : 'Jamais vérifié';
+
+                    html += `
+                        <tr>
+                            <td>
+                                <div class="font-semibold">${controle.composant_nom}</div>
+                                <div class="text-xs text-gray-500">Ordre: ${controle.ordre_affichage}</div>
+                            </td>
+                            <td>
+                                <div class="text-sm">${controle.composant_description || 'Aucune description'}</div>
+                            </td>
+                            <td class="text-center">${obligatoireBadge}</td>
+                            <td class="text-center">${frequence}</td>
+                            <td class="text-center">${derniereVerif}</td>
+                            <td>
+                                <div class="flex gap-1">
+                                    <button onclick="editPointControle('${controle.id}')"
+                                            class="btn btn-ghost btn-xs" title="Modifier">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <button onclick="deletePointControle('${controle.id}', '${controle.composant_nom}')"
+                                            class="btn btn-ghost btn-xs text-error" title="Supprimer">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                });
+                tbody.innerHTML = html;
+            }
+        } else {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="6" class="text-center text-error">
+                        Erreur lors du chargement: ${data.error || 'Erreur inconnue'}
+                    </td>
+                </tr>
+            `;
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" class="text-center text-error">
+                    Erreur lors du chargement des points de contrôle
+                </td>
+            </tr>
+        `;
+    });
+}
+
+// Les fonctions d'inspection de composants ont été supprimées de cette page
+// car elles appartiennent au calendrier des inspections (/inspections/calendrier/)
+// Cette page est uniquement pour la gestion des points de contrôle.
+
+function addPointControle() {
+    if (!currentPointEauId) {
+        alert('Aucun point d\'eau sélectionné');
+        return;
+    }
+
+    // Charger les points de contrôle disponibles
+    fetch(`/organisations/api/points-eau/${currentPointEauId}/controles/create/`, {
+        method: 'GET',
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showAddControleModal(data.composants, data.point_eau_nom);
+        } else {
+            alert('Erreur lors du chargement des composants disponibles: ' + data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        alert('Erreur lors du chargement des points de contrôle disponibles');
+    });
+}
+
+function showAddControleModal(composantsDisponibles, pointEauNom) {
+    let options = '<option value="">Sélectionner un composant...</option>';
+    composantsDisponibles.forEach(composant => {
+        options += `<option value="${composant.id}" title="${composant.description}">${composant.nom_composant} - ${composant.description}</option>`;
+    });
+
+    const modalContent = `
+        <input type="checkbox" id="addControleModal" class="modal-toggle" checked />
+        <div class="modal">
+            <div class="modal-box relative">
+                <label for="addControleModal" class="btn btn-sm btn-circle absolute right-2 top-2">✕</label>
+                <h3 class="text-lg font-bold mb-4">🔧 Ajouter un composant à contrôler</h3>
+                <p class="mb-4">Point d'eau: <strong>${pointEauNom}</strong></p>
+
+                <form id="addControleForm">
+                    <div class="form-control mb-4">
+                        <label class="label">
+                            <span class="label-text">Composant *</span>
+                        </label>
+                        <select name="composant" class="select select-bordered" required>
+                            ${options}
+                        </select>
+                    </div>
+
+                    <div class="form-control mb-4">
+                        <label class="label cursor-pointer">
+                            <span class="label-text">Obligatoire</span>
+                            <input type="checkbox" name="est_obligatoire" class="checkbox" checked />
+                        </label>
+                    </div>
+
+                    <div class="form-control mb-4">
+                        <label class="label">
+                            <span class="label-text">Fréquence (jours)</span>
+                        </label>
+                        <input type="number" name="frequence_jours" class="input input-bordered" min="1" placeholder="Ex: 30">
+                    </div>
+
+                    <div class="form-control mb-4">
+                        <label class="label">
+                            <span class="label-text">Notes</span>
+                        </label>
+                        <textarea name="notes" class="textarea textarea-bordered" placeholder="Notes spécifiques..."></textarea>
+                    </div>
+
+                    <div class="modal-action">
+                        <button type="button" onclick="closeAddControleModal()" class="btn btn-ghost">Annuler</button>
+                        <button type="submit" class="btn btn-primary">Ajouter</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalContent);
+
+    document.getElementById('addControleForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const formData = new FormData(this);
+
+        fetch(`/organisations/api/points-eau/${currentPointEauId}/controles/create/`, {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(data.message);
+                closeAddControleModal();
+                loadPointsControle(currentPointEauId);
+            } else {
+                alert('Erreur: ' + data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            alert('Erreur lors de l\'ajout du point de contrôle');
+        });
+    });
+}
+
+function closeAddControleModal() {
+    const modal = document.getElementById('addControleModal');
+    if (modal) {
+        modal.checked = false;
+        setTimeout(() => {
+            // Supprimer tout le conteneur modal qui a été ajouté dynamiquement
+            const modalContainer = modal.parentElement;
+            if (modalContainer) {
+                modalContainer.remove();
+            }
+        }, 300);
+    }
+}
+
+function editPointControle(controleId) {
+    fetch(`/organisations/api/controles/${controleId}/edit/`, {
+        method: 'GET',
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showEditControleModal(controleId, data.data);
+        } else {
+            alert('Erreur lors du chargement: ' + data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        alert('Erreur lors du chargement des données');
+    });
+}
+
+function showEditControleModal(controleId, data) {
+    const modalContent = `
+        <input type="checkbox" id="editControleModal" class="modal-toggle" checked />
+        <div class="modal">
+            <div class="modal-box relative">
+                <label for="editControleModal" class="btn btn-sm btn-circle absolute right-2 top-2">✕</label>
+                <h3 class="text-lg font-bold mb-4">✏️ Modifier le point de contrôle</h3>
+                <p class="mb-4">Point de contrôle: <strong>${data.point_de_controle_nom}</strong></p>
+                <p class="text-sm text-gray-600 mb-4">${data.point_de_controle_description}</p>
+
+                <form id="editControleForm">
+                    <div class="form-control mb-4">
+                        <label class="label cursor-pointer">
+                            <span class="label-text">Obligatoire</span>
+                            <input type="checkbox" name="est_obligatoire" class="checkbox" ${data.est_obligatoire ? 'checked' : ''} />
+                        </label>
+                    </div>
+
+                    <div class="form-control mb-4">
+                        <label class="label">
+                            <span class="label-text">Fréquence (jours)</span>
+                        </label>
+                        <input type="number" name="frequence_jours" class="input input-bordered" min="1" value="${data.frequence_jours || ''}" placeholder="Ex: 30">
+                    </div>
+
+                    <div class="form-control mb-4">
+                        <label class="label">
+                            <span class="label-text">Notes</span>
+                        </label>
+                        <textarea name="notes" class="textarea textarea-bordered" placeholder="Notes spécifiques...">${data.notes || ''}</textarea>
+                    </div>
+
+                    <div class="modal-action">
+                        <button type="button" onclick="closeEditControleModal()" class="btn btn-ghost">Annuler</button>
+                        <button type="submit" class="btn btn-primary">Modifier</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalContent);
+
+    document.getElementById('editControleForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const formData = new FormData(this);
+
+        fetch(`/organisations/api/controles/${controleId}/edit/`, {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(data.message);
+                closeEditControleModal();
+                loadPointsControle(currentPointEauId);
+            } else {
+                alert('Erreur: ' + data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            alert('Erreur lors de la modification');
+        });
+    });
+}
+
+function closeEditControleModal() {
+    const modal = document.getElementById('editControleModal');
+    if (modal) {
+        modal.checked = false;
+        setTimeout(() => {
+            // Supprimer tout le conteneur modal qui a été ajouté dynamiquement
+            const modalContainer = modal.parentElement;
+            if (modalContainer) {
+                modalContainer.remove();
+            }
+        }, 300);
+    }
+}
+
+function deletePointControle(controleId, nom) {
+    if (confirm(`Êtes-vous sûr de vouloir supprimer le point de contrôle "${nom}" ?`)) {
+        fetch(`/organisations/api/controles/${controleId}/delete/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(data.message);
+                loadPointsControle(currentPointEauId);
+            } else {
+                alert('Erreur lors de la suppression: ' + data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            alert('Erreur lors de la suppression');
+        });
+    }
+}
+
+// Gestion du formulaire de création/édition
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('pointForm');
+
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const photosJsonInput = document.getElementById('photos-json');
+            const photosPayloadBytes = new Blob([photosJsonInput?.value || '[]']).size;
+            const maxPhotosPayloadBytes = 48 * 1024 * 1024;
+            if (photosPayloadBytes > maxPhotosPayloadBytes) {
+                alert(
+                    `Les photos occupent ${(photosPayloadBytes / 1024 / 1024).toFixed(1)} Mo. ` +
+                    'Supprimez une ou plusieurs photos volumineuses avant d\'enregistrer.'
+                );
+                return;
+            }
+
+            const formData = new FormData(form);
+
+            // Utiliser form.action si défini (mode édition), sinon URL de création
+            let url = form.action;
+            if (!url || url === window.location.href || url === '') {
+                {% if selected_ouvrage %}
+                url = `/organisations/points-eau/create/{{ selected_ouvrage.pk }}/`;
+                {% else %}
+                alert('Aucun ouvrage sélectionné. Veuillez sélectionner un ouvrage.');
+                return;
+                {% endif %}
+            }
+
+            console.log('Envoi vers URL:', url);
+
+            fetch(url, {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                }
+            })
+            .then(response => {
+                console.log('Response status:', response.status);
+                console.log('Response headers:', response.headers.get('content-type'));
+
+                // Lire le texte brut pour debug
+                return response.text().then(text => {
+                    console.log('Response text (first 500 chars):', text.substring(0, 500));
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}\n${text.substring(0, 200)}`);
+                    }
+
+                    try {
+                        return JSON.parse(text);
+                    } catch (e) {
+                        throw new Error('Réponse non-JSON du serveur: ' + text.substring(0, 200));
+                    }
+                });
+            })
+            .then(data => {
+                console.log('Response data:', data);
+                if (data.success) {
+                    alert(data.message);
+                    closeModal('createModal');
+                    if (isEmbeddedPointManager()) {
+                        window.parent.postMessage({
+                            type: 'hydria-inline-manager-saved',
+                            entity: 'point_eau'
+                        }, window.location.origin);
+                    } else {
+                        window.location.href = data.redirect;
+                    }
+                } else {
+                    console.error('Erreur serveur:', data);
+                    let errorMsg = data.message || 'Erreur inconnue';
+                    if (data.error_details) {
+                        console.error('Détails:', data.error_details);
+                        errorMsg += '\n\nDétails dans la console (F12)';
+                    }
+                    alert(errorMsg);
+                    if (data.code_doublon) {
+                        const codeInput = document.querySelector('#pointForm input[name="code_point_eau"]');
+                        if (codeInput) {
+                            codeInput.focus();
+                            codeInput.select();
+                            codeInput.classList.add('input-error');
+                        }
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Erreur complète:', error);
+                alert('Erreur lors de l\'envoi du formulaire: ' + error.message);
+            });
+        });
+    }
+});
+
+// Réinitialiser la modale à la fermeture
+function resetModal() {
+    const form = document.getElementById('pointForm');
+    if (form) {
+        form.reset();
+        const parcelleCurrent = document.getElementById('parcelle-current');
+        const parcelleDropdown = document.getElementById('parcelle-dropdown');
+        if (parcelleCurrent) parcelleCurrent.classList.add('hidden');
+        if (parcelleDropdown) parcelleDropdown.classList.add('hidden');
+        form.action = '';
+        document.getElementById('modal-title').textContent = '💧 Nouveau point d\'eau';
+        document.querySelector('#pointForm button[type="submit"]').textContent = 'Créer le point d\'eau';
+
+        // Réinitialiser les photos
+        photosData = [];
+        renderPhotosGallery();
+        updatePhotosJSON();
+
+        currentDiamexPointId = null;
+        const extractionPanel = document.getElementById('diamex-extraction-panel');
+        if (extractionPanel) extractionPanel.classList.add('hidden');
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const pointForm = document.getElementById('pointForm');
+    if (!pointForm) {
+        return;
+    }
+
+    const amontSelect = pointForm.querySelector('select[name="amont_node"]');
+    const compteurSelect = pointForm.querySelector('select[name="compteur_tete"]');
+    const compteurFieldWrapper = document.getElementById('compteur-tete-field-wrapper');
+
+    function syncCompteurFieldVisibility() {
+        if (!amontSelect || !compteurFieldWrapper) {
+            return;
+        }
+        const amontValue = amontSelect.value || '';
+        const shouldShow = !amontValue || amontValue.startsWith('compteur:');
+        compteurFieldWrapper.style.display = shouldShow ? '' : 'none';
+    }
+
+    if (amontSelect && compteurSelect) {
+        amontSelect.addEventListener('change', function() {
+            const value = amontSelect.value || '';
+            if (value.startsWith('compteur:')) {
+                compteurSelect.value = value.split(':')[1] || '';
+            } else if (compteurSelect.value) {
+                compteurSelect.value = '';
+            }
+            syncCompteurFieldVisibility();
+        });
+
+        compteurSelect.addEventListener('change', function() {
+            const value = compteurSelect.value || '';
+            if (!value) {
+                if ((amontSelect.value || '').startsWith('compteur:')) {
+                    amontSelect.value = '';
+                }
+                syncCompteurFieldVisibility();
+                return;
+            }
+            amontSelect.value = `compteur:${value}`;
+            syncCompteurFieldVisibility();
+        });
+
+        syncCompteurFieldVisibility();
+    }
+});
+
+// Appliquer la réinitialisation quand on ouvre le modal pour créer
+function isEmbeddedPointManager() {
+    return new URLSearchParams(window.location.search).get('embedded') === '1' && window.parent !== window;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('embedded') !== '1') return;
+
+    const action = params.get('action') || 'create';
+    const entityId = params.get('entity_id') || '';
+    window.setTimeout(function() {
+        if (action === 'edit' && entityId) {
+            editPoint(entityId);
+        } else {
+            openCreateModal();
+        }
+    }, 0);
+});
+
+function openCreateModal() {
+    console.log('🚀 Opening create modal with native DaisyUI tabs...');
+    resetModal();
+    openModal('createModal');
+}
+
+// Définition de fonctions de modal si elles ne sont pas déjà disponibles
+if (typeof window.openModal === 'undefined') {
+    window.openModal = function(modalId) {
+        const modal = document.getElementById(modalId);
+        if (modal) {
+            modal.checked = true;
+        }
+    };
+}
+
+if (typeof window.closeModal === 'undefined') {
+    window.closeModal = function(modalId) {
+        const modal = document.getElementById(modalId);
+        if (modal) {
+            modal.checked = false;
+        }
+    };
+}
+
+// Définition de la fonction changeOuvrage si elle n'est pas déjà disponible
+if (typeof window.changeOuvrage === 'undefined') {
+    window.changeOuvrage = function() {
+        const selectElement = document.getElementById('ouvrage-selector');
+        if (!selectElement) return;
+
+        const selectedOuvrageId = selectElement.value;
+        if (selectedOuvrageId) {
+            // Rediriger vers la page des points d'eau pour l'ouvrage sélectionné
+            window.location.href = `/organisations/points-eau/${selectedOuvrageId}/`;
+        }
+    };
+}
+
+// Fonction pour obtenir la position GPS actuelle
+function getCurrentPosition() {
+    const statusDiv = document.getElementById('gps-status');
+    const latInput = document.getElementById('gps-latitude');
+    const lonInput = document.getElementById('gps-longitude');
+
+    // Vérifier si la géolocalisation est supportée
+    if (!navigator.geolocation) {
+        statusDiv.innerHTML = '<span class="text-error"><i class="fas fa-exclamation-triangle mr-1"></i>La géolocalisation n\'est pas supportée par votre navigateur</span>';
+        return;
+    }
+
+    // Afficher un message de chargement
+    statusDiv.innerHTML = '<span class="text-info"><i class="fas fa-spinner fa-spin mr-1"></i>Obtention de votre position GPS...</span>';
+
+    // Options de géolocalisation
+    const options = {
+        enableHighAccuracy: true,  // Haute précision (utilise GPS si disponible)
+        timeout: 10000,            // Timeout après 10 secondes
+        maximumAge: 0              // Ne pas utiliser de position en cache
+    };
+
+    // Obtenir la position
+    navigator.geolocation.getCurrentPosition(
+        // Succès
+        function(position) {
+            const latitude = position.coords.latitude;
+            const longitude = position.coords.longitude;
+            const accuracy = position.coords.accuracy;
+
+            // Remplir les champs
+            latInput.value = latitude.toFixed(6);
+            lonInput.value = longitude.toFixed(6);
+
+            // Afficher le message de succès avec la précision
+            statusDiv.innerHTML = `
+                <span class="text-success">
+                    <i class="fas fa-check-circle mr-1"></i>
+                    Position obtenue avec succès !
+                    (Précision: ±${Math.round(accuracy)}m)
+                </span>
+            `;
+
+            // Faire clignoter les champs pour attirer l'attention
+            latInput.classList.add('ring-2', 'ring-success');
+            lonInput.classList.add('ring-2', 'ring-success');
+            setTimeout(() => {
+                latInput.classList.remove('ring-2', 'ring-success');
+                lonInput.classList.remove('ring-2', 'ring-success');
+            }, 2000);
+        },
+        // Erreur
+        function(error) {
+            let errorMessage = '';
+            switch(error.code) {
+                case error.PERMISSION_DENIED:
+                    errorMessage = 'Vous avez refusé l\'accès à la géolocalisation. Veuillez autoriser l\'accès dans les paramètres de votre navigateur.';
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    errorMessage = 'Les informations de localisation ne sont pas disponibles.';
+                    break;
+                case error.TIMEOUT:
+                    errorMessage = 'La demande de localisation a expiré. Veuillez réessayer.';
+                    break;
+                default:
+                    errorMessage = 'Une erreur inconnue s\'est produite.';
+            }
+            statusDiv.innerHTML = `<span class="text-error"><i class="fas fa-exclamation-triangle mr-1"></i>${errorMessage}</span>`;
+        },
+        options
+    );
+}
+
+// Gestion des photos
+let photosData = [];
+
+function selectPhoto() {
+    document.getElementById('photo-input').click();
+}
+
+function capturePhoto() {
+    const input = document.getElementById('photo-input');
+    input.setAttribute('capture', 'environment');
+    input.click();
+}
+
+/**
+ * Compresse une image avant de l'enregistrer
+ * @param {File} file - Fichier image à compresser
+ * @param {Function} callback - Fonction appelée avec (dataUrl, originalSize, compressedSize)
+ */
+function compressImage(file, callback) {
+    const reader = new FileReader();
+
+    reader.onload = function(e) {
+        const img = new Image();
+
+        img.onload = function() {
+            // Créer un canvas pour la compression
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // Définir la taille maximale (ex: 1200px pour le côté le plus grand)
+            const MAX_WIDTH = 1200;
+            const MAX_HEIGHT = 1200;
+
+            let width = img.width;
+            let height = img.height;
+
+            // Calculer les nouvelles dimensions en conservant le ratio
+            if (width > height) {
+                if (width > MAX_WIDTH) {
+                    height = Math.round((height * MAX_WIDTH) / width);
+                    width = MAX_WIDTH;
+                }
+            } else {
+                if (height > MAX_HEIGHT) {
+                    width = Math.round((width * MAX_HEIGHT) / height);
+                    height = MAX_HEIGHT;
+                }
+            }
+
+            // Redimensionner le canvas
+            canvas.width = width;
+            canvas.height = height;
+
+            // Dessiner l'image redimensionnée
+            ctx.drawImage(img, 0, 0, width, height);
+
+            // Convertir en JPEG avec qualité 0.8 (80%)
+            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+
+            // Calculer les tailles
+            const originalSize = file.size;
+            const compressedSize = Math.round((compressedDataUrl.length - 'data:image/jpeg;base64,'.length) * 3/4);
+
+            callback(compressedDataUrl, originalSize, compressedSize);
+        };
+
+        img.src = e.target.result;
+    };
+
+    reader.readAsDataURL(file);
+}
+
+function handlePhotoSelected(event) {
+    const files = event.target.files;
+    if (files.length === 0) return;
+
+    Array.from(files).forEach(file => {
+        // Vérifier que c'est une image
+        if (!file.type.startsWith('image/')) {
+            alert('Seules les images sont acceptées');
+            return;
+        }
+
+        // Compresser l'image avant de l'enregistrer
+        compressImage(file, function(compressedDataUrl, originalSize, compressedSize) {
+            const photoData = {
+                id: Date.now() + Math.random(),
+                name: file.name,
+                data: compressedDataUrl,
+                size: compressedSize,
+                originalSize: originalSize,
+                type: file.type,
+                date: new Date().toISOString()
+            };
+
+            photosData.push(photoData);
+            renderPhotosGallery();
+            updatePhotosJSON();
+
+            console.log(`📸 Image compressée: ${(originalSize/1024).toFixed(1)}KB → ${(compressedSize/1024).toFixed(1)}KB (${((1-compressedSize/originalSize)*100).toFixed(0)}% de réduction)`);
+        });
+    });
+
+    // Réinitialiser l'input
+    event.target.value = '';
+    event.target.removeAttribute('capture');
+}
+
+function renderPhotosGallery() {
+    const gallery = document.getElementById('photos-gallery');
+
+    if (photosData.length === 0) {
+        gallery.innerHTML = '<div class="col-span-full text-center text-gray-400 py-4"><i class="fas fa-images text-4xl mb-2"></i><br>Aucune photo ajoutée</div>';
+        return;
+    }
+
+    gallery.replaceChildren();
+    photosData.forEach((photo, index) => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'relative group';
+
+        const image = document.createElement('img');
+        image.src = getPhotoSource(photo);
+        image.alt = photo.name || `Photo ${index + 1}`;
+        image.className = 'w-full h-32 object-cover rounded-lg border-2 border-base-300';
+        wrapper.appendChild(image);
+
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'absolute z-10 top-1 right-1 btn btn-xs btn-error btn-circle opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity';
+        removeButton.setAttribute('aria-label', `Supprimer ${image.alt}`);
+        removeButton.innerHTML = '<i class="fas fa-times"></i>';
+        removeButton.addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            removePhotoAt(index);
+        });
+        wrapper.appendChild(removeButton);
+
+        if (Number(photo.size) > 0) {
+            const size = document.createElement('div');
+            size.className = 'absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white text-xs p-1 rounded-b-lg opacity-0 group-hover:opacity-100 transition-opacity';
+            size.textContent = `${(Number(photo.size) / 1024).toFixed(0)} KB`;
+            wrapper.appendChild(size);
+        }
+
+        gallery.appendChild(wrapper);
+    });
+}
+
+function getPhotoSource(photo) {
+    const source = String((photo && (photo.data || photo.url)) || '').trim();
+    if (source.startsWith('/9j/')) {
+        return `data:image/jpeg;base64,${source}`;
+    }
+    if (!source || /^(data:|blob:|https?:\/\/|\/)/i.test(source)) {
+        return source;
+    }
+    const contentType = photo.type || photo.content_type || 'image/jpeg';
+    return `data:${contentType};base64,${source}`;
+}
+
+function removePhotoAt(index) {
+    photosData.splice(index, 1);
+    renderPhotosGallery();
+    updatePhotosJSON();
+}
+
+// Compatibilite avec d'anciens appels bases sur l'identifiant.
+function removePhoto(photoId) {
+    const index = photosData.findIndex(photo => String(photo.id) === String(photoId));
+    if (index >= 0) removePhotoAt(index);
+}
+
+function updatePhotosJSON() {
+    document.getElementById('photos-json').value = JSON.stringify(photosData);
+}
+
+function loadExistingPhotos(photos) {
+    photosData = Array.isArray(photos) ? photos.map((photo, index) => {
+        const normalized = typeof photo === 'string' ? { data: photo } : { ...photo };
+        normalized.id = normalized.id || `existing-${index}`;
+        if (normalized.data) normalized.data = getPhotoSource(normalized);
+        return normalized;
+    }) : [];
+    renderPhotosGallery();
+    updatePhotosJSON();
+}
+
+// DaisyUI gère nativement les onglets avec les boutons radio - plus besoin de JavaScript !
+
+// ===============================
+// Autocomplétion pour Parcelles
+// ===============================
+
+function filterParcelles() {
+    const searchInput = document.getElementById('parcelle-search');
+    const communeInput = document.getElementById('parcelle-commune-filter');
+    const villageInput = document.getElementById('parcelle-village-filter');
+    const select = document.getElementById('parcelle-select');
+    const searchTerm = normalizeParcelleSearch(searchInput.value);
+    const communeTerm = normalizeParcelleSearch(communeInput?.value);
+    const villageTerm = normalizeParcelleSearch(villageInput?.value);
+
+    const options = Array.from(select.options).filter(opt => opt.value !== '');
+    const matches = options.filter(opt => {
+        const searchData = normalizeParcelleSearch(opt.getAttribute('data-search') || '');
+        const communeData = normalizeParcelleSearch(opt.getAttribute('data-commune') || '');
+        const villageData = normalizeParcelleSearch(opt.getAttribute('data-village') || '');
+        return (!searchTerm || searchData.includes(searchTerm))
+            && (!communeTerm || communeData.includes(communeTerm))
+            && (!villageTerm || villageData.includes(villageTerm));
+    });
+    const activeFilters = [
+        communeInput?.value.trim() ? `Commune : ${communeInput.value.trim()}` : '',
+        villageInput?.value.trim() ? `Village : ${villageInput.value.trim()}` : '',
+        searchInput.value.trim() ? `Parcelle : ${searchInput.value.trim()}` : '',
+    ].filter(Boolean).join(' | ');
+    renderParcelleOptions(matches, activeFilters);
+}
+
+function renderAllParcelles() {
+    const select = document.getElementById('parcelle-select');
+    const options = Array.from(select.options).filter(opt => opt.value !== '');
+    renderParcelleOptions(options, '');
+}
+
+function normalizeParcelleSearch(value) {
+    return String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLocaleLowerCase('fr')
+        .trim();
+}
+
+function formatParcelleOption(option) {
+    const reference = option?.dataset.reference || 'Sans référence';
+    const village = option?.dataset.village || 'Village non renseigné';
+    const geography = [
+        option?.dataset.fokontany,
+        option?.dataset.commune,
+        option?.dataset.district,
+        option?.dataset.region,
+    ].filter(Boolean);
+    return {
+        reference,
+        village,
+        geography: geography.join(' • '),
+        fullText: `${reference} — ${village}${geography.length ? ` (${geography.join(' • ')})` : ''}`,
+    };
+}
+
+function renderParcelleOptions(options, searchLabel) {
+    const dropdown = document.getElementById('parcelle-dropdown');
+    dropdown.innerHTML = '';
+
+    const summary = document.createElement('div');
+    summary.className = 'sticky top-0 z-10 border-b border-base-300 bg-base-200 px-4 py-3 text-sm font-semibold';
+    summary.textContent = `${options.length} parcelle${options.length > 1 ? 's' : ''}${searchLabel ? ` trouvée${options.length > 1 ? 's' : ''}` : ' disponible' + (options.length > 1 ? 's' : '')}`;
+    dropdown.appendChild(summary);
+
+    if (!options.length) {
+        const empty = document.createElement('div');
+        empty.className = 'p-8 text-center text-base-content/60';
+        empty.innerHTML = '<i class="fas fa-search mb-3 block text-3xl"></i>Aucune parcelle trouvée.';
+        dropdown.appendChild(empty);
+    }
+
+    options.forEach(option => {
+        const item = formatParcelleOption(option);
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'block min-h-20 w-full border-b border-base-300 px-4 py-3 text-left transition-colors hover:bg-primary/10 focus:bg-primary/10 focus:outline-none';
+        button.addEventListener('mousedown', function(event) {
+            event.preventDefault();
+            selectParcelle(option.value, item.fullText);
+        });
+
+        const reference = document.createElement('div');
+        reference.className = 'break-words text-base font-bold text-primary';
+        reference.textContent = item.reference;
+        const village = document.createElement('div');
+        village.className = 'mt-1 break-words text-sm font-semibold';
+        village.textContent = item.village;
+        button.append(reference, village);
+        if (item.geography) {
+            const geography = document.createElement('div');
+            geography.className = 'mt-1 break-words text-xs leading-relaxed opacity-65';
+            geography.textContent = item.geography;
+            button.appendChild(geography);
+        }
+        dropdown.appendChild(button);
+    });
+
+    dropdown.classList.remove('hidden');
+}
+
+function selectParcelle(value, text) {
+    const select = document.getElementById('parcelle-select');
+    const searchInput = document.getElementById('parcelle-search');
+    const currentDiv = document.getElementById('parcelle-current');
+    const currentText = document.getElementById('parcelle-current-text');
+    const dropdown = document.getElementById('parcelle-dropdown');
+
+    // Mettre à jour le select caché
+    select.value = value;
+    const selectedOption = select.options[select.selectedIndex];
+    const selectedDisplay = selectedOption ? formatParcelleOption(selectedOption).fullText : text;
+    const communeInput = document.getElementById('parcelle-commune-filter');
+    const villageInput = document.getElementById('parcelle-village-filter');
+    if (selectedOption) {
+        if (communeInput) communeInput.value = selectedOption.dataset.commune || '';
+        if (villageInput) villageInput.value = selectedOption.dataset.village || '';
+    }
+
+    // Mettre à jour l'affichage
+    searchInput.value = '';
+    currentText.textContent = selectedDisplay || text;
+    currentDiv.classList.remove('hidden');
+
+    // Cacher le dropdown
+    dropdown.classList.add('hidden');
+}
+
+function changeParcelleSelection() {
+    const searchInput = document.getElementById('parcelle-search');
+    const currentDiv = document.getElementById('parcelle-current');
+    currentDiv.classList.add('hidden');
+    searchInput.value = '';
+    searchInput.focus();
+    filterParcelles();
+}
+
+function clearParcelleSelection() {
+    const select = document.getElementById('parcelle-select');
+    const searchInput = document.getElementById('parcelle-search');
+    const currentDiv = document.getElementById('parcelle-current');
+
+    select.value = '';
+    searchInput.value = '';
+    currentDiv.classList.add('hidden');
+    clearParcelleLocationFilters(false);
+    searchInput.focus();
+}
+
+function clearParcelleLocationFilters(refreshResults = true) {
+    const communeInput = document.getElementById('parcelle-commune-filter');
+    const villageInput = document.getElementById('parcelle-village-filter');
+    if (communeInput) communeInput.value = '';
+    if (villageInput) villageInput.value = '';
+    if (refreshResults) filterParcelles();
+}
+
+function populateParcelleLocationSuggestions() {
+    const select = document.getElementById('parcelle-select');
+    const communeList = document.getElementById('parcelle-commune-suggestions');
+    const villageList = document.getElementById('parcelle-village-suggestions');
+    if (!select || !communeList || !villageList) return;
+
+    const communes = new Set();
+    const villages = new Set();
+    Array.from(select.options).forEach(option => {
+        const commune = (option.dataset.commune || '').trim();
+        const village = (option.dataset.village || '').trim();
+        if (commune) communes.add(commune);
+        if (village) villages.add(village);
+    });
+
+    const appendSuggestions = (dataList, values) => {
+        dataList.replaceChildren();
+        Array.from(values)
+            .sort((left, right) => left.localeCompare(right, 'fr', { sensitivity: 'base' }))
+            .forEach(value => {
+                const option = document.createElement('option');
+                option.value = value;
+                dataList.appendChild(option);
+            });
+    };
+    appendSuggestions(communeList, communes);
+    appendSuggestions(villageList, villages);
+}
+
+function populateParcelleVillageSuggestions() {
+    const select = document.getElementById('parcelle-select');
+    const communeInput = document.getElementById('parcelle-commune-filter');
+    const villageList = document.getElementById('parcelle-village-suggestions');
+    if (!select || !villageList) return;
+
+    const communeTerm = normalizeParcelleSearch(communeInput?.value);
+    const villages = new Set();
+    Array.from(select.options).forEach(option => {
+        const commune = normalizeParcelleSearch(option.dataset.commune || '');
+        const village = (option.dataset.village || '').trim();
+        if (village && (!communeTerm || commune.includes(communeTerm))) {
+            villages.add(village);
+        }
+    });
+
+    villageList.replaceChildren();
+    Array.from(villages)
+        .sort((left, right) => left.localeCompare(right, 'fr', { sensitivity: 'base' }))
+        .forEach(value => {
+            const option = document.createElement('option');
+            option.value = value;
+            villageList.appendChild(option);
+        });
+}
+
+function showParcelleDropdown() {
+    const searchInput = document.getElementById('parcelle-search');
+    const currentDiv = document.getElementById('parcelle-current');
+
+    // Si une parcelle est déjà sélectionnée, ne pas afficher le dropdown
+    if (!currentDiv.classList.contains('hidden')) {
+        return;
+    }
+
+    filterParcelles();
+}
+
+function hideParcelleDropdown() {
+    const dropdown = document.getElementById('parcelle-dropdown');
+    // Délai pour permettre le clic sur les options
+    setTimeout(() => {
+        dropdown.classList.add('hidden');
+    }, 200);
+}
+
+// Lors de l'édition, afficher la parcelle sélectionnée
+function updateParcelleDisplay() {
+    const select = document.getElementById('parcelle-select');
+    const currentDiv = document.getElementById('parcelle-current');
+    const currentText = document.getElementById('parcelle-current-text');
+
+    if (select.value) {
+        const selectedOption = select.options[select.selectedIndex];
+        currentText.textContent = formatParcelleOption(selectedOption).fullText;
+        currentDiv.classList.remove('hidden');
+    } else {
+        currentDiv.classList.add('hidden');
+    }
+}
+
+// Observer les changements du select pour mettre à jour l'affichage
+document.addEventListener('DOMContentLoaded', function() {
+    const select = document.getElementById('parcelle-select');
+    if (select) {
+        // Observer les changements programmatiques (lors de l'édition)
+        populateParcelleLocationSuggestions();
+        const observer = new MutationObserver(updateParcelleDisplay);
+        observer.observe(select, { attributes: true, attributeFilter: ['value'] });
+    }
+});
+</script>
+{% endblock %}

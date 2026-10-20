@@ -1,0 +1,319 @@
+{% extends 'base.html' %}
+
+{% block title %}Coupures du réseau routier - Hydria{% endblock %}
+
+{% block content %}
+<div class="mx-auto py-4 sm:py-6">
+    <div class="mb-4">
+        <h1 class="text-3xl font-bold"><i class="fas fa-road mr-2 text-warning"></i>Coupures du réseau routier</h1>
+        <p class="text-base-content/70 mt-1">
+            Morceaux de routes isolés du réseau principal qui desservent des villages. Pour chacun, un raccord est proposé :
+            ajuste-le sur la carte puis valide.
+        </p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <!-- Liste -->
+        <div class="card bg-base-100 shadow lg:col-span-1">
+            <div class="card-body p-4">
+                <div class="flex items-center justify-between">
+                    <h2 class="card-title text-lg">À raccorder <span id="badge-total" class="badge badge-warning">0</span></h2>
+                    <button class="btn btn-ghost btn-xs" onclick="chargerListe()" title="Recharger"><i class="fas fa-sync"></i></button>
+                </div>
+                <p id="progression" class="text-xs text-base-content/60"></p>
+                <div id="liste-loading" class="flex items-center gap-2 text-sm">
+                    <span class="loading loading-spinner loading-sm"></span> Analyse du réseau...
+                </div>
+                <div id="liste" class="flex flex-col gap-2 overflow-y-auto" style="max-height: 62vh;"></div>
+            </div>
+        </div>
+
+        <!-- Carte -->
+        <div id="carte-card" class="card bg-base-100 shadow lg:col-span-2 scroll-mt-16">
+            <div class="card-body p-4">
+                <div id="panneau-action" class="hidden mb-2 sticky top-14 z-[1100] -mx-1 px-1 py-2 bg-base-100/95 backdrop-blur rounded-lg">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span id="titre-selection" class="font-semibold"></span>
+                        <span id="info-trace" class="badge badge-ghost"></span>
+                        <div class="ml-auto flex flex-wrap gap-2">
+                            <button class="btn btn-ghost btn-sm" onclick="annulerPoint()"><i class="fas fa-undo mr-1"></i>Annuler le dernier point</button>
+                            <button class="btn btn-ghost btn-sm" onclick="reinitialiserTrace()"><i class="fas fa-redo mr-1"></i>Tracé proposé</button>
+                            <button class="btn btn-ghost btn-sm" onclick="passer()"><i class="fas fa-forward mr-1"></i>Passer</button>
+                            <button id="btn-valider" class="btn btn-success btn-sm" onclick="valider()"><i class="fas fa-check mr-1"></i>Valider le raccord</button>
+                        </div>
+                    </div>
+                    <p class="text-xs text-base-content/60 mt-1">
+                        Clic sur la carte : ajoute un point intermédiaire · Glisser le point orange : change l'arrivée (ramenée sur la route la plus proche) ·
+                        Clic droit sur un point : le supprime.
+                    </p>
+                </div>
+                <div class="relative">
+                    <div id="carte" class="rounded-lg" style="height: 66vh; min-height: 420px;"></div>
+                    <div id="carte-loading" class="hidden absolute inset-0 z-[1000] flex items-center justify-center rounded-lg bg-base-100/60">
+                        <span class="loading loading-spinner loading-lg"></span>
+                    </div>
+                    <div id="carte-vide" class="absolute inset-0 z-[500] flex items-center justify-center pointer-events-none">
+                        <p id="carte-vide-txt" class="rounded-lg bg-base-100/85 px-4 py-2 text-sm text-center">Choisis une coupure dans la liste</p>
+                    </div>
+                </div>
+                <div class="flex flex-wrap gap-4 text-xs mt-2">
+                    <span><span style="color:#dc2626">&#9644;</span> Morceau isolé</span>
+                    <span><span style="color:#2563eb">&#9644;</span> Réseau principal</span>
+                    <span><span style="color:#f59e0b">&#9644;</span> Raccord proposé</span>
+                    <span><span style="color:#16a34a">&#9679;</span> Villages desservis</span>
+                    <span class="ml-auto hidden lg:inline text-base-content/60">
+                        <kbd class="kbd kbd-xs">&uarr;</kbd> <kbd class="kbd kbd-xs">&darr;</kbd> naviguer ·
+                        <kbd class="kbd kbd-xs">Entrée</kbd> valider · <kbd class="kbd kbd-xs">S</kbd> passer ·
+                        <kbd class="kbd kbd-xs">Z</kbd> annuler un point
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="toast" class="toast toast-end hidden z-50"><div id="toast-msg" class="alert alert-success"></div></div>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const URL_LISTE = "{% url 'geography:api_coupures_liste' %}";
+const URL_DETAIL = "{% url 'geography:api_coupures_liste' %}";   // + <id>/
+const URL_RACCORDER = "{% url 'geography:api_coupure_raccorder' %}";
+
+let carte, coucheDetail, coucheTrace;
+let coupures = [], ignorees = new Set(), courante = null, nbRaccordees = 0;
+let trace = { depart: null, waypoints: [], fin: null, finInitiale: null };
+let marqueurFin = null, marqueursWp = [], ligneTrace = null;
+
+const COULEURS = { nationale: '#7c3aed', provinciale: '#2563eb', communale: '#0891b2', route: '#2563eb', piste: '#64748b', sentier: '#94a3b8', autre: '#94a3b8' };
+
+function getCookie(name) {
+    const v = document.cookie.split('; ').find(r => r.startsWith(name + '='));
+    return v ? decodeURIComponent(v.split('=')[1]) : null;
+}
+function toast(msg, ok = true) {
+    const box = document.getElementById('toast'), m = document.getElementById('toast-msg');
+    m.className = 'alert ' + (ok ? 'alert-success' : 'alert-error');
+    m.textContent = msg;
+    box.classList.remove('hidden');
+    setTimeout(() => box.classList.add('hidden'), 3500);
+}
+function distM(a, b) {  // a, b = [lon, lat] ; haversine
+    const R = 6371008.8, rad = x => x * Math.PI / 180;
+    const dp = rad(b[1] - a[1]), dl = rad(b[0] - a[0]);
+    const h = Math.sin(dp / 2) ** 2 + Math.cos(rad(a[1])) * Math.cos(rad(b[1])) * Math.sin(dl / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+}
+const ll = p => [p[1], p[0]];   // [lon, lat] -> [lat, lon] Leaflet
+
+function initCarte() {
+    carte = L.map('carte').setView([-18.9, 47.5], 6);
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' });
+    const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        { maxZoom: 21, maxNativeZoom: 17, attribution: 'Imagery &copy; Esri' });
+    sat.addTo(carte);
+    L.control.layers({ 'Satellite': sat, 'Plan': osm }).addTo(carte);
+    coucheDetail = L.layerGroup().addTo(carte);
+    coucheTrace = L.layerGroup().addTo(carte);
+    carte.on('click', e => {
+        if (!courante) return;
+        trace.waypoints.push([e.latlng.lng, e.latlng.lat]);
+        redessinerTrace();
+    });
+}
+
+/** `silencieux` : rafraîchit la liste en arrière-plan, sans spinner ni vidage, en gardant la sélection. */
+async function chargerListe(silencieux = false) {
+    if (!silencieux) document.getElementById('liste-loading').classList.remove('hidden');
+    try {
+        const r = await fetch(URL_LISTE);
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Erreur');
+        coupures = d.coupures;
+        if (courante) courante = coupures.find(c => c.id === courante.id) || courante;
+        afficherListe();
+    } catch (e) {
+        toast('Chargement impossible : ' + e.message, false);
+    } finally {
+        document.getElementById('liste-loading').classList.add('hidden');
+    }
+}
+
+function afficherListe() {
+    const box = document.getElementById('liste');
+    box.replaceChildren();
+    const visibles = coupures.filter(c => !ignorees.has(c.id));
+    document.getElementById('badge-total').textContent = visibles.length;
+    const villagesRestants = visibles.reduce((n, c) => n + c.nb_villages, 0);
+    document.getElementById('progression').textContent =
+        nbRaccordees + ' raccordée' + (nbRaccordees > 1 ? 's' : '') + ' · ' + ignorees.size + ' ignorée' + (ignorees.size > 1 ? 's' : '') +
+        ' · ' + villagesRestants + ' villages encore isolés';
+    if (!visibles.length) {
+        const p = document.createElement('p');
+        p.className = 'text-sm text-success';
+        p.textContent = 'Plus aucune coupure à traiter.';
+        box.appendChild(p);
+        return;
+    }
+    visibles.forEach(c => {
+        const el = document.createElement('button');
+        const actif = !!courante && courante.id === c.id;
+        el.className = 'text-left border rounded-lg p-2 hover:bg-base-200 ' + (actif ? 'bg-base-200 border-primary ring-1 ring-primary' : 'border-base-300');
+        const t = document.createElement('div');
+        t.className = 'flex items-center gap-2 text-sm font-semibold';
+        t.textContent = c.nb_villages + ' village' + (c.nb_villages > 1 ? 's' : '');
+        const b = document.createElement('span');
+        b.className = 'badge badge-sm ' + (c.ecart_m <= 300 ? 'badge-success' : (c.ecart_m <= 1000 ? 'badge-warning' : 'badge-error'));
+        b.textContent = c.ecart_m + ' m';
+        t.appendChild(b);
+        const n = document.createElement('div');
+        n.className = 'text-xs text-base-content/70';
+        n.textContent = c.villages.join(', ') + (c.nb_villages > c.villages.length ? '…' : '');
+        el.append(t, n);
+        el.onclick = () => selectionner(c);
+        if (actif) el.dataset.actif = '1';
+        box.appendChild(el);
+    });
+    const actifEl = box.querySelector('[data-actif]');
+    if (actifEl) actifEl.scrollIntoView({ block: 'nearest' });
+}
+
+function listeVisible() { return coupures.filter(c => !ignorees.has(c.id)); }
+
+function naviguer(delta) {
+    const liste = listeVisible();
+    if (!liste.length) return;
+    const i = courante ? liste.findIndex(c => c.id === courante.id) : -1;
+    selectionner(liste[Math.max(0, Math.min(liste.length - 1, i + delta))]);
+}
+
+async function selectionner(c) {
+    courante = c;
+    afficherListe();
+    coucheDetail.clearLayers();
+    coucheTrace.clearLayers();
+    document.getElementById('carte-vide').classList.add('hidden');
+    document.getElementById('carte-loading').classList.remove('hidden');
+    document.getElementById('panneau-action').classList.remove('hidden');
+    // Sur téléphone la carte est sous la liste : on y amène l'écran.
+    if (window.innerWidth < 1024) document.getElementById('carte-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('titre-selection').textContent = c.nb_villages + ' village(s) à raccorder';
+    carte.setView(ll(c.centre), 14);
+    try {
+        const r = await fetch(URL_DETAIL + encodeURIComponent(c.id) + '/');
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Erreur');
+        if (!courante || courante.id !== c.id) return;   // l'utilisateur a changé de sélection entre-temps
+        L.geoJSON(d.reseau, { style: f => ({ color: COULEURS[f.properties.categorie] || '#2563eb', weight: 2, opacity: 0.8 }) }).addTo(coucheDetail);
+        const iso = L.geoJSON(d.coupure, { style: { color: '#dc2626', weight: 4, opacity: 0.95 } }).addTo(coucheDetail);
+        d.villages.forEach(v => {
+            L.circleMarker([v.lat, v.lon], { radius: 6, color: '#fff', weight: 1.5, fillColor: '#16a34a', fillOpacity: 1 })
+                .bindTooltip(v.nom + ' (' + v.distance_m + ' m de la route)').addTo(coucheDetail);
+        });
+        carte.fitBounds(iso.getBounds().extend(ll(c.to)).pad(0.25), { maxZoom: 18 });
+    } catch (e) {
+        toast(e.message, false);
+    } finally {
+        document.getElementById('carte-loading').classList.add('hidden');
+    }
+    reinitialiserTrace();
+}
+
+function reinitialiserTrace() {
+    if (!courante) return;
+    trace = { depart: courante.from, waypoints: [], fin: courante.to.slice(), finInitiale: courante.to.slice() };
+    redessinerTrace();
+}
+function annulerPoint() {
+    if (trace.waypoints.length) { trace.waypoints.pop(); redessinerTrace(); }
+}
+
+function redessinerTrace() {
+    coucheTrace.clearLayers();
+    const pts = [trace.depart, ...trace.waypoints, trace.fin];
+    ligneTrace = L.polyline(pts.map(ll), { color: '#f59e0b', weight: 4, dashArray: '8 6' }).addTo(coucheTrace);
+    L.circleMarker(ll(trace.depart), { radius: 7, color: '#fff', weight: 2, fillColor: '#dc2626', fillOpacity: 1 }).addTo(coucheTrace);
+
+    trace.waypoints.forEach((w, i) => {
+        const m = L.marker(ll(w), { draggable: true, icon: L.divIcon({ className: '', html: '<div style="width:12px;height:12px;border-radius:50%;background:#fff;border:3px solid #f59e0b"></div>', iconSize: [12, 12], iconAnchor: [6, 6] }) }).addTo(coucheTrace);
+        m.on('drag', e => { trace.waypoints[i] = [e.latlng.lng, e.latlng.lat]; majLigne(); });
+        m.on('contextmenu', () => { trace.waypoints.splice(i, 1); redessinerTrace(); });
+    });
+    marqueurFin = L.marker(ll(trace.fin), { draggable: true, icon: L.divIcon({ className: '', html: '<div style="width:16px;height:16px;border-radius:50%;background:#f59e0b;border:3px solid #fff;box-shadow:0 0 3px #000"></div>', iconSize: [16, 16], iconAnchor: [8, 8] }) }).addTo(coucheTrace);
+    marqueurFin.on('drag', e => { trace.fin = [e.latlng.lng, e.latlng.lat]; majLigne(); });
+    majLigne();
+}
+function majLigne() {
+    const pts = [trace.depart, ...trace.waypoints, trace.fin];
+    ligneTrace.setLatLngs(pts.map(ll));
+    let total = 0;
+    for (let i = 1; i < pts.length; i++) total += distM(pts[i - 1], pts[i]);
+    const info = document.getElementById('info-trace');
+    info.textContent = 'Tracé : ' + Math.round(total) + ' m';
+    info.className = 'badge ' + (total > 1000 ? 'badge-warning' : 'badge-ghost');
+    info.title = total > 1000 ? 'Raccord long : vérifie sur le satellite que les routes se rejoignent vraiment.' : '';
+}
+
+function viderCarte(message) {
+    courante = null;
+    coucheDetail.clearLayers();
+    coucheTrace.clearLayers();
+    document.getElementById('panneau-action').classList.add('hidden');
+    document.getElementById('carte-vide-txt').textContent = message;
+    document.getElementById('carte-vide').classList.remove('hidden');
+}
+
+function passer() {
+    if (!courante) return;
+    const rang = listeVisible().findIndex(c => c.id === courante.id);
+    ignorees.add(courante.id);
+    const liste = listeVisible();
+    // La suivante prend la place de celle qu'on vient d'écarter.
+    if (liste.length) selectionner(liste[Math.min(rang, liste.length - 1)]);
+    else { viderCarte('Toutes les coupures sont traitées.'); afficherListe(); }
+}
+
+async function valider() {
+    if (!courante) return;
+    const btn = document.getElementById('btn-valider');
+    btn.disabled = true;
+    try {
+        const r = await fetch(URL_RACCORDER, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify({ from_noeud_id: courante.from_noeud_id, waypoints: trace.waypoints, fin: trace.fin })
+        });
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Erreur');
+        toast('Raccord créé (' + d.longueur_m + ' m).');
+        nbRaccordees++;
+        // On avance tout de suite : la coupure traitée sort de la liste, la suivante s'ouvre,
+        // et la liste complète est recalculée en arrière-plan (d'autres coupures ont pu changer).
+        const rang = Math.max(0, listeVisible().findIndex(c => c.id === courante.id));
+        coupures = coupures.filter(c => c.id !== courante.id);
+        const liste = listeVisible();
+        if (liste.length) selectionner(liste[Math.min(rang, liste.length - 1)]);
+        else { viderCarte('Toutes les coupures sont traitées.'); afficherListe(); }
+        chargerListe(true);
+    } catch (e) {
+        toast(e.message, false);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+document.addEventListener('keydown', e => {
+    const cible = e.target instanceof Element ? e.target : null;
+    if ((cible && cible.closest('input, textarea, select')) || e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (k === 'arrowdown' || k === 'j') { e.preventDefault(); naviguer(1); }
+    else if (k === 'arrowup' || k === 'k') { e.preventDefault(); naviguer(-1); }
+    else if (k === 'enter' && courante) { e.preventDefault(); valider(); }
+    else if (k === 's' && courante) { passer(); }
+    else if (k === 'z' && courante) { annulerPoint(); }
+});
+
+document.addEventListener('DOMContentLoaded', () => { initCarte(); chargerListe(); });
+</script>
+{% endblock %}

@@ -1,0 +1,388 @@
+{% extends "accounting/base.html" %}
+{% load humanize %}
+{% load tz %}
+
+{% block title %}Pointage et validation mensuelle — Comptabilité Hydria{% endblock %}
+
+{% block content %}
+<div class="mx-auto w-full max-w-[1600px] space-y-6">
+
+    <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+            <h1 class="text-2xl font-bold text-slate-900">
+                <i class="fas fa-list-check mr-2 text-cyan-600"></i>Pointage et validation mensuelle
+            </h1>
+            <p class="mt-1 text-sm text-slate-500">
+                Circuit à trois niveaux : caissière → responsable opérationnel → directeur.
+                Lignes DiameX et rapprochements de soldes contrôlés en parallèle.
+                Toutes les décisions restent dans Hydria — aucune écriture vers Access.
+            </p>
+        </div>
+    </div>
+
+    {% if messages %}
+    <div class="space-y-2">
+        {% for message in messages %}
+        <div class="alert {% if message.tags == 'error' %}alert-error{% elif message.tags == 'success' %}alert-success{% else %}alert-info{% endif %} py-2 text-sm">
+            <i class="fas {% if message.tags == 'error' %}fa-triangle-exclamation{% elif message.tags == 'success' %}fa-circle-check{% else %}fa-circle-info{% endif %}"></i>
+            <span>{{ message }}</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {# ------- Sélecteur fichier + mois ------- #}
+    <form method="get" class="card border border-slate-200 bg-white/90 shadow-sm">
+        <div class="card-body flex-row flex-wrap items-end gap-4 p-5">
+            <label class="form-control">
+                <span class="label-text mb-1 font-semibold">Fichier comptable</span>
+                <select name="source" required class="select select-bordered select-sm min-w-[16rem]">
+                    <option value="">Choisir un fichier…</option>
+                    {% for item in sources %}
+                    <option value="{{ item }}" {% if item == source %}selected{% endif %}>{{ item }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label class="form-control">
+                <span class="label-text mb-1 font-semibold">Mois des mouvements</span>
+                <input type="month" name="periode" value="{{ periode }}" required class="input input-bordered input-sm">
+            </label>
+            <input type="hidden" name="onglet" value="{{ onglet|default:'ligne' }}">
+            <button class="btn btn-sm btn-primary"><i class="fas fa-magnifying-glass mr-1"></i>Afficher</button>
+        </div>
+    </form>
+
+    {% if not roles %}
+    <div class="alert alert-warning py-2 text-sm">
+        <i class="fas fa-lock"></i>
+        <span>Lecture seule : votre poste ne correspond à aucun des trois niveaux de pointage.</span>
+    </div>
+    {% endif %}
+
+    {% if etat %}
+    {% with cm=compteurs_mois.total %}
+
+    {# ------- Bandeau statut du mois ------- #}
+    <div class="card border {% if etat.valide %}border-emerald-300 bg-emerald-50/70{% elif etat.mois.valide_le %}border-amber-300 bg-amber-50/70{% else %}border-slate-200 bg-white/90{% endif %} shadow-sm">
+        <div class="card-body gap-3 p-5">
+            <div class="flex flex-wrap items-center gap-3">
+                <span class="text-lg font-bold text-slate-900">
+                    {% if etat.valide %}<i class="fas fa-circle-check mr-1 text-emerald-600"></i>{% elif etat.mois.valide_le %}<i class="fas fa-rotate mr-1 text-amber-600"></i>{% else %}<i class="fas fa-hourglass-half mr-1 text-slate-500"></i>{% endif %}
+                    {{ etat.statut }}
+                </span>
+                <span class="badge badge-outline">{{ cm.valides }} / {{ cm.total }} pointés directeur</span>
+                {% if cm.bloques %}<span class="badge badge-error badge-outline">{{ cm.bloques }} bloqué{{ cm.bloques|pluralize }}</span>{% endif %}
+                {% if cm.corrections %}<span class="badge badge-warning badge-outline">{{ cm.corrections }} à corriger</span>{% endif %}
+            </div>
+
+            {% if etat.sans_date %}
+            <div class="alert alert-error py-2 text-sm">
+                <i class="fas fa-calendar-xmark"></i>
+                <span>Le fichier contient des lignes sans date de mouvement. Corriger ces dates dans Access avant de valider un mois.</span>
+            </div>
+            {% endif %}
+            {% if not etat.lignes %}<p class="text-sm text-slate-500">Aucune ligne DiameX pour ce mois — un mois vide ne peut pas être validé.</p>{% endif %}
+            {% if not etat.soldes %}<p class="text-sm text-slate-500">Aucun rapprochement identifié — la validation mensuelle reste bloquée.</p>{% endif %}
+
+            <div class="flex flex-wrap items-center gap-3">
+                {% if etat.pret and not etat.valide and 'directeur' in roles %}
+                <form method="post" onsubmit="return confirm('Valider définitivement la comptabilité de ce mois ?');">
+                    {% csrf_token %}
+                    <input type="hidden" name="source" value="{{ source }}">
+                    <input type="hidden" name="periode" value="{{ periode }}">
+                    <input type="hidden" name="action" value="valider_mois">
+                    <input type="hidden" name="role" value="directeur">
+                    <input type="hidden" name="fingerprint" value="{{ etat.fingerprint }}">
+                    <button class="btn btn-sm btn-success"><i class="fas fa-stamp mr-1"></i>Valider la comptabilité du mois</button>
+                </form>
+                {% elif not etat.valide %}
+                <span class="text-xs text-slate-500">
+                    La validation du mois nécessite que toutes les lignes et tous les rapprochements soient pointés par le directeur, sans correction en attente.
+                </span>
+                {% endif %}
+                {% if etat.valide %}
+                <span class="text-xs text-emerald-700">
+                    Validé le {{ etat.mois.valide_le|localtime|date:"d/m/Y H:i" }}. Toute modification des données contrôlées imposera une nouvelle validation.
+                </span>
+                {% endif %}
+            </div>
+
+            <div class="collapse collapse-arrow border border-slate-200 bg-white/60">
+                <input type="checkbox">
+                <div class="collapse-title text-sm font-semibold">Historique des validations mensuelles</div>
+                <div class="collapse-content text-sm">
+                    {% for d in historique_mois %}
+                    <p class="border-b border-slate-100 py-1">
+                        {{ d.cree_le|localtime|date:"d/m/Y H:i" }} — <strong>{{ d.auteur_libelle }}</strong> · {{ d.action }}
+                        {% if d.remarque %}<span class="text-slate-500">— {{ d.remarque }}</span>{% endif %}
+                    </p>
+                    {% empty %}
+                    <p class="text-slate-500">Aucune validation mensuelle enregistrée.</p>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# ------- Tableau de suivi mensuel (compteurs cliquables, onglet courant) ------- #}
+    <div>
+        <h2 class="mb-2 text-sm font-bold uppercase tracking-wide text-slate-500">
+            Suivi — {% if onglet == 'solde' %}rapprochements{% else %}lignes DiameX{% endif %}
+        </h2>
+        <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+            {% include "accounting/includes/pointage_suivi_carte.html" with libelle="Bloqués" valeur=compteurs.bloques cible="bloques" ton="error" icone="fa-ban" %}
+            {% include "accounting/includes/pointage_suivi_carte.html" with libelle="À corriger" valeur=compteurs.corrections cible="corrections" ton="warning" icone="fa-rotate-left" %}
+            {% include "accounting/includes/pointage_suivi_carte.html" with libelle="Attente caissière" valeur=compteurs.attente_caissiere cible="caissiere" ton="info" icone="fa-user" %}
+            {% include "accounting/includes/pointage_suivi_carte.html" with libelle="Attente responsable" valeur=compteurs.attente_responsable cible="responsable" ton="info" icone="fa-user-tie" %}
+            {% include "accounting/includes/pointage_suivi_carte.html" with libelle="Attente directeur" valeur=compteurs.attente_directeur cible="directeur" ton="info" icone="fa-user-shield" %}
+            {% include "accounting/includes/pointage_suivi_carte.html" with libelle="Validés directeur" valeur=compteurs.valides cible="valides" ton="success" icone="fa-circle-check" %}
+        </div>
+    </div>
+
+    {# ------- Onglets nature + filtre d'état ------- #}
+    <div class="flex flex-wrap items-center justify-between gap-3">
+        <div role="tablist" class="tabs tabs-boxed bg-slate-100">
+            <a role="tab" class="tab {% if onglet != 'solde' %}tab-active{% endif %}"
+               href="?source={{ source|urlencode }}&periode={{ periode|urlencode }}&onglet=ligne">
+                Lignes DiameX <span class="badge badge-sm ml-1">{{ compteurs_mois.lignes.total }}</span>
+            </a>
+            <a role="tab" class="tab {% if onglet == 'solde' %}tab-active{% endif %}"
+               href="?source={{ source|urlencode }}&periode={{ periode|urlencode }}&onglet=solde">
+                Rapprochements <span class="badge badge-sm ml-1">{{ compteurs_mois.soldes.total }}</span>
+            </a>
+        </div>
+        <form method="get" class="flex items-end gap-2">
+            <input type="hidden" name="source" value="{{ source }}">
+            <input type="hidden" name="periode" value="{{ periode }}">
+            <input type="hidden" name="onglet" value="{{ onglet }}">
+            <label class="form-control">
+                <span class="label-text mb-1 text-xs">État</span>
+                <select name="filtre" class="select select-bordered select-sm">
+                    <option value="">Tous</option>
+                    <option value="bloques" {% if filtre == 'bloques' %}selected{% endif %}>Bloqués</option>
+                    <option value="corrections" {% if filtre == 'corrections' %}selected{% endif %}>À corriger</option>
+                    <option value="caissiere" {% if filtre == 'caissiere' %}selected{% endif %}>Attente caissière</option>
+                    <option value="responsable" {% if filtre == 'responsable' %}selected{% endif %}>Attente responsable</option>
+                    <option value="directeur" {% if filtre == 'directeur' %}selected{% endif %}>Attente directeur</option>
+                    <option value="valides" {% if filtre == 'valides' %}selected{% endif %}>Validés directeur</option>
+                </select>
+            </label>
+            <button class="btn btn-sm">Filtrer</button>
+        </form>
+    </div>
+
+    {# ------- Liste des lignes / rapprochements ------- #}
+    <div class="space-y-4">
+        {% for row in page %}
+        <article class="card border border-slate-200 bg-white/95 shadow-sm">
+            <div class="card-body gap-3 p-5">
+                <div class="flex flex-wrap items-start justify-between gap-2">
+                    <div class="min-w-0">
+                        <h3 class="break-words font-semibold text-slate-900">{{ row.libelle }}</h3>
+                        <p class="mt-0.5 text-xs text-slate-500">{{ row.cle }} · {{ row.controles|join:" · " }}</p>
+                    </div>
+                    <span class="badge shrink-0
+                        {% if row.correction %}badge-warning
+                        {% elif row.erreurs %}badge-error badge-outline
+                        {% elif row.niveau == 3 %}badge-success
+                        {% else %}badge-ghost{% endif %}">{{ row.statut }}</span>
+                </div>
+
+                {% if row.nature == 'ligne' %}
+                <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3 lg:grid-cols-4">
+                    <div><span class="text-xs text-slate-500">Date</span><div class="font-medium">{{ row.entry.date_m|date:"d/m/Y"|default:"—" }}</div></div>
+                    <div><span class="text-xs text-slate-500">Reçu</span><div class="font-medium">{{ row.entry.rec|default_if_none:"—" }}</div></div>
+                    <div><span class="text-xs text-slate-500">Journal</span><div class="font-medium">{{ row.entry.journal_code|default:"—" }}</div></div>
+                    <div><span class="text-xs text-slate-500">Cat</span><div class="font-medium">{{ row.entry.compte_code|default:"—" }}</div></div>
+                    <div><span class="text-xs text-slate-500">Fin</span><div class="font-medium">{{ row.entry.fin|default:"—" }}</div></div>
+                    <div><span class="text-xs text-slate-500">Entrée / sortie</span><div class="font-mono font-medium">{{ row.entry.montant_in|floatformat:"2g" }} / {{ row.entry.montant_out|floatformat:"2g" }}</div></div>
+                    <div><span class="text-xs text-slate-500">Pers</span><div class="font-medium">{{ row.entry.pers|default:"—" }}</div></div>
+                    <div><span class="text-xs text-slate-500">Fournisseur</span><div class="font-medium">{{ row.entry.fournisseur|default:"—" }}</div></div>
+                </div>
+                <div class="text-sm">
+                    {% if row.entry.scan_importe %}
+                    <a href="{{ row.entry.scan_importe.url }}" target="_blank" rel="noopener" class="link link-primary"><i class="fas fa-paperclip mr-1"></i>Scan importé</a>
+                    {% elif row.entry.scan %}
+                    <span class="text-slate-500"><i class="fas fa-link mr-1"></i>Scan : <span class="break-all font-mono text-xs">{{ row.entry.scan }}</span></span>
+                    {% else %}
+                    <span class="text-error"><i class="fas fa-link-slash mr-1"></i>Scan absent</span>
+                    {% endif %}
+                </div>
+
+                {% else %}
+                <div class="grid grid-cols-1 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
+                    <div><span class="text-xs text-slate-500">{% if row.est_tiers %}Solde de tiers calculé{% else %}Solde comptable cumulé{% endif %}</span><div class="font-mono font-medium">{{ row.calcule|floatformat:"2g" }}</div></div>
+                    {% if row.est_tiers %}
+                    <div class="sm:col-span-2 self-center text-xs text-slate-500">
+                        {% if row.rien_a_rapprocher %}Solde nul — rien à valider.
+                        {% else %}Compte de tiers : pas de solde de référence externe. Les trois niveaux confirment que ce montant calculé est correct (mouvements ci-dessous).{% endif %}
+                    </div>
+                    {% else %}
+                    <div>
+                        <span class="text-xs text-slate-500">Solde de référence</span>
+                        <div class="font-mono font-medium">
+                            {% if row.rien_a_rapprocher %}<span class="font-sans text-slate-500">— (compte sans solde, rien à rapprocher)</span>
+                            {% elif row.reference is not None %}{{ row.reference|floatformat:"2g" }}
+                            {% if row.reference_source == 'soldes_reels' %}<span class="badge badge-ghost badge-xs align-middle font-sans">solde réel importé</span>
+                            {% elif row.reference_source == 'manuel' %}<span class="badge badge-ghost badge-xs align-middle font-sans">saisie caissière</span>{% endif %}
+                            {% else %}À renseigner{% endif %}
+                        </div>
+                    </div>
+                    <div><span class="text-xs text-slate-500">Écart</span><div class="font-mono font-medium {% if row.ecart and row.ecart != 0 %}text-error{% endif %}">{% if row.ecart is not None %}{{ row.ecart|floatformat:"2g" }}{% else %}—{% endif %}</div></div>
+                    {% endif %}
+                </div>
+                {% if row.objet.justification %}<p class="rounded bg-slate-50 p-2 text-sm text-slate-700">{{ row.objet.justification }}</p>{% endif %}
+                {% if row.justificatif_document %}<p class="text-xs text-slate-500"><i class="fas fa-file-invoice mr-1"></i>Justificatif : {{ row.justificatif_document }} · <span class="font-mono">{{ row.justificatif_document.chemin_document }}</span></p>
+                {% elif row.justificatif_scan %}<p class="text-xs text-slate-500"><i class="fas fa-file-invoice mr-1"></i>Justificatif (solde réel) : <span class="font-mono break-all">{{ row.justificatif_scan }}</span></p>{% endif %}
+
+                {% if 'caissiere' in roles and not row.rien_a_rapprocher %}
+                <div class="collapse collapse-arrow border border-slate-200 bg-slate-50/60">
+                    <input type="checkbox" {% if row.erreurs %}checked{% endif %}>
+                    <div class="collapse-title text-sm font-semibold">{% if row.est_tiers %}Observation caissière{% else %}Préparer / corriger le rapprochement{% endif %}</div>
+                    <div class="collapse-content">
+                        <form method="post" class="space-y-3">
+                            {% csrf_token %}
+                            {% include 'accounting/includes/pointage_fields.html' %}
+                            <input type="hidden" name="action" value="preparer">
+                            <input type="hidden" name="role" value="caissiere">
+                            {% if not row.est_tiers %}
+                            <div class="grid gap-3 sm:grid-cols-2">
+                                <label class="form-control">
+                                    <span class="label-text mb-1 text-xs">Solde de référence <span class="opacity-60">— laisser vide pour utiliser le solde réel importé</span></span>
+                                    <input name="reference" value="{{ row.objet.solde_reference|default_if_none:'' }}" inputmode="decimal" class="input input-bordered input-sm"
+                                        {% if row.reference_source == 'soldes_reels' %}placeholder="{{ row.reference|floatformat:"2g" }} (solde réel importé)"{% endif %}>
+                                </label>
+                                <label class="form-control">
+                                    <span class="label-text mb-1 text-xs">Justificatif du mois <span class="opacity-60">— facultatif si le solde réel porte un scan</span></span>
+                                    <select name="document" class="select select-bordered select-sm">
+                                        <option value="">Aucun / solde réel</option>
+                                        {% for doc in documents %}
+                                        <option value="{{ doc.pk }}" {% if row.objet.document_id == doc.pk %}selected{% endif %}>{{ doc }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </label>
+                            </div>
+                            {% endif %}
+                            <label class="form-control">
+                                <span class="label-text mb-1 text-xs">{% if row.est_tiers %}Observation / éléments à rapprocher{% else %}Explication de l'écart / éléments restant à rapprocher{% endif %}</span>
+                                <textarea name="justification" class="textarea textarea-bordered textarea-sm">{{ row.objet.justification }}</textarea>
+                            </label>
+                            <p class="text-xs text-slate-500">Un enregistrement réinitialise les trois pointages.</p>
+                            <button class="btn btn-sm btn-primary"><i class="fas fa-floppy-disk mr-1"></i>Enregistrer</button>
+                        </form>
+                    </div>
+                </div>
+                {% endif %}
+                {% endif %}
+
+                {% if row.erreurs %}
+                <div class="alert alert-error items-start py-2 text-sm">
+                    <i class="fas fa-triangle-exclamation mt-0.5"></i>
+                    <ul class="list-disc pl-4">
+                        {% for erreur in row.erreurs %}<li>{{ erreur }}</li>{% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+
+                {% if roles %}
+                <form method="post" class="space-y-3 rounded-lg border border-slate-200 bg-slate-50/50 p-3" data-pointage-form>
+                    {% csrf_token %}
+                    {% include 'accounting/includes/pointage_fields.html' %}
+                    <div class="flex flex-wrap items-end gap-3">
+                        <label class="form-control">
+                            <span class="label-text mb-1 text-xs">Niveau</span>
+                            <select name="role" class="select select-bordered select-sm">
+                                {% for role in roles %}
+                                <option value="{{ role }}" {% if role == row.role_attendu %}selected{% endif %}>{{ role }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <label class="flex max-w-xl cursor-pointer items-start gap-2 text-sm">
+                            <input type="checkbox" name="confirme" value="oui" class="checkbox checkbox-sm mt-0.5" data-pointage-confirme>
+                            <span>
+                                {% if row.nature == 'ligne' %}
+                                J'ai vérifié manuellement le libellé, Cat, le scan et Fin ; cette ligne est conforme.
+                                {% else %}
+                                J'ai vérifié les soldes, le justificatif et les éléments de rapprochement ; ce rapprochement est conforme.
+                                {% endif %}
+                            </span>
+                        </label>
+                    </div>
+                    <label class="form-control">
+                        <span class="label-text mb-1 text-xs">Remarque (obligatoire pour une remarque ou un renvoi en correction)</span>
+                        <textarea name="remarque" maxlength="10000" class="textarea textarea-bordered textarea-sm" placeholder="Observation, ou motif de correction…"></textarea>
+                    </label>
+                    <div class="flex flex-wrap gap-2">
+                        <button name="action" value="pointer" class="btn btn-sm btn-success" data-pointage-pointer {% if not row.peut_pointer %}disabled{% endif %}>
+                            <i class="fas fa-check mr-1"></i>Pointer conforme
+                        </button>
+                        <button name="action" value="remarque" class="btn btn-sm btn-outline">
+                            <i class="fas fa-note-sticky mr-1"></i>Enregistrer une remarque
+                        </button>
+                        <button name="action" value="correction" class="btn btn-sm btn-error btn-outline">
+                            <i class="fas fa-rotate-left mr-1"></i>Renvoyer en correction
+                        </button>
+                    </div>
+                    {% if not row.peut_pointer and not row.erreurs %}
+                    <p class="text-xs text-slate-500">Pointage indisponible : ce n'est pas le tour de votre niveau ({{ row.statut }}).</p>
+                    {% endif %}
+                </form>
+                {% endif %}
+
+                <div class="collapse collapse-arrow border border-slate-200">
+                    <input type="checkbox">
+                    <div class="collapse-title text-sm font-semibold">Historique du pointage</div>
+                    <div class="collapse-content overflow-x-auto">
+                        <table class="table table-xs">
+                            <thead><tr><th>Date</th><th>Auteur / niveau</th><th>Décision</th><th>Remarque</th></tr></thead>
+                            <tbody>
+                                {% for d in row.historique %}
+                                <tr>
+                                    <td class="whitespace-nowrap">{{ d.cree_le|localtime|date:"d/m/Y H:i" }}</td>
+                                    <td>{{ d.auteur_libelle }} / {{ d.role|default:"—" }}</td>
+                                    <td>{{ d.action }}</td>
+                                    <td class="max-w-xs whitespace-pre-wrap">{{ d.remarque }}</td>
+                                </tr>
+                                {% empty %}
+                                <tr><td colspan="4" class="text-slate-500">Aucune décision.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </article>
+        {% empty %}
+        <div class="card border border-slate-200 bg-white/90">
+            <div class="card-body items-center py-10 text-slate-500">Aucun élément pour ce filtre.</div>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% if page.paginator.num_pages > 1 %}
+    <div class="flex items-center justify-center gap-3 text-sm">
+        {% if page.has_previous %}<a class="btn btn-sm" href="?{{ query }}&page={{ page.previous_page_number }}">‹ Précédent</a>{% endif %}
+        <span>Page {{ page.number }} / {{ page.paginator.num_pages }}</span>
+        {% if page.has_next %}<a class="btn btn-sm" href="?{{ query }}&page={{ page.next_page_number }}">Suivant ›</a>{% endif %}
+    </div>
+    {% endif %}
+
+    {% endwith %}
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  // Confort : le bouton "Pointer conforme" reste inactif tant que la case de
+  // confirmation n'est pas cochée. Le serveur revérifie de toute façon.
+  document.querySelectorAll('[data-pointage-form]').forEach(function (form) {
+    var box = form.querySelector('[data-pointage-confirme]');
+    var btn = form.querySelector('[data-pointage-pointer]');
+    if (!box || !btn || btn.disabled) return;
+    var sync = function () { btn.disabled = !box.checked; };
+    sync();
+    box.addEventListener('change', sync);
+  });
+</script>
+{% endblock %}

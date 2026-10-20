@@ -1,0 +1,1794 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="px-4 py-6 max-w-7xl mx-auto" x-data="revalorisationApp">
+    
+    <div class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+        <div>
+            <h1 class="text-2xl font-bold flex items-center gap-2">
+                <i class="fas fa-chart-line text-primary"></i>
+                Revalorisations Salariales Annuelles
+            </h1>
+            <p class="text-base-content/70 mt-1">Gestion des augmentations salariales par année et employé.</p>
+        </div>
+        
+        <div class="flex items-center gap-4">
+            <a href="{% url 'employees:grilles_salariales_list' %}" class="btn btn-outline">
+                <i class="fas fa-layer-group"></i> Grilles salariales
+            </a>
+            <select class="select select-bordered" x-model="selectedOrganisationId" @change="loadData()" x-ref="organisationSelect">
+                {% for organisation in organisations_filter %}
+                <option value="{{ organisation.id }}" {% if organisation.id == default_organisation_id %}selected{% endif %}>{{ organisation.nom }}</option>
+                {% endfor %}
+            </select>
+            <select class="select select-bordered" x-model="selectedYear" @change="loadData()">
+                {% for year in years %}
+                <option value="{{ year }}" {% if year == current_year %}selected{% endif %}>Année {{ year }}</option>
+                {% endfor %}
+            </select>
+            <button class="btn btn-primary" @click="loadData()">
+                <i class="fas fa-sync-alt" :class="{'fa-spin': loading}"></i> Rafraichir
+            </button>
+        </div>
+    </div>
+
+    <div class="alert alert-error mb-4 shadow-sm" x-show="errorMessage" style="display: none;">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span x-text="errorMessage"></span>
+    </div>
+
+    <div class="alert alert-success mb-4 shadow-sm" x-show="successMessage" style="display: none;">
+        <i class="fas fa-check-circle"></i>
+        <span x-text="successMessage"></span>
+    </div>
+
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6" x-show="!loading && groupedEmployesData.length > 0" style="display: none;">
+        <div class="stat bg-base-100 shadow rounded-box">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-users fa-2x opacity-20"></i>
+            </div>
+            <div class="stat-title text-xs uppercase font-bold text-base-content/50">Effectif</div>
+            <div class="stat-value text-2xl" x-text="getStats().count">0</div>
+            <div class="stat-desc">Employés affichés</div>
+        </div>
+        
+        <div class="stat bg-base-100 shadow rounded-box">
+            <div class="stat-figure text-secondary">
+                <i class="fas fa-money-bill-wave fa-2x opacity-20"></i>
+            </div>
+            <div class="stat-title text-xs uppercase font-bold text-base-content/50">Budget Actuel</div>
+            <div class="stat-value text-xl" x-text="formatMoney(getStats().totalActual)">0 Ar</div>
+            <div class="stat-desc">Total mensuel net</div>
+        </div>
+
+        <div class="stat bg-base-100 shadow rounded-box">
+            <div class="stat-figure text-accent">
+                <i class="fas fa-chart-line fa-2x opacity-20"></i>
+            </div>
+            <div class="stat-title text-xs uppercase font-bold text-base-content/50">Budget Proposé</div>
+            <div class="stat-value text-xl text-accent" x-text="formatMoney(getStats().totalProposed)">0 Ar</div>
+            <div class="stat-desc">
+                <span class="text-success font-bold" x-show="getStats().diff > 0" x-text="`+${formatMoney(getStats().diff)}`"></span>
+                <span x-show="getStats().diff <= 0">-</span>
+            </div>
+        </div>
+
+        <div class="stat bg-base-100 shadow rounded-box">
+            <div class="stat-figure text-info">
+                <div class="radial-progress text-info" :style="`--value:${getStats().rate}; --size:3rem; --thickness: 4px;`" role="progressbar">
+                    <span class="text-[10px] font-bold" x-text="getStats().rate + '%'"></span>
+                </div>
+            </div>
+            <div class="stat-title text-xs uppercase font-bold text-base-content/50">Augmentation</div>
+            <div class="stat-value text-2xl text-info" x-text="getStats().rate + '%'">0%</div>
+            <div class="stat-desc">Taux pondéré global</div>
+        </div>
+    </div>
+
+    <!-- Repartition Stats -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6" x-show="!loading && groupedEmployesData.length > 0" style="display: none;">
+        <div class="card bg-base-100 shadow p-4 border-l-4 border-l-secondary">
+            <h3 class="text-xs font-bold uppercase text-base-content/50 mb-3 flex items-center gap-2">
+                <i class="fas fa-balance-scale-left"></i> Répartition des salaires ACTUELS
+            </h3>
+            <div class="flex justify-around items-center">
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-error" x-text="getStats().actualStatus.below"></div>
+                    <div class="text-[10px] uppercase font-bold opacity-50">Bas</div>
+                </div>
+                <div class="divider divider-horizontal"></div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-success" x-text="getStats().actualStatus.within"></div>
+                    <div class="text-[10px] uppercase font-bold opacity-50">Dans la grille</div>
+                </div>
+                <div class="divider divider-horizontal"></div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-warning" x-text="getStats().actualStatus.above"></div>
+                    <div class="text-[10px] uppercase font-bold opacity-50">Haut</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card bg-base-100 shadow p-4 border-l-4 border-l-primary">
+            <h3 class="text-xs font-bold uppercase text-base-content/50 mb-3 flex items-center gap-2 text-primary">
+                <i class="fas fa-balance-scale-right"></i> Répartition des salaires PROPOSÉS
+            </h3>
+            <div class="flex justify-around items-center">
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-error" x-text="getStats().proposedStatus.below"></div>
+                    <div class="text-[10px] uppercase font-bold opacity-50">Bas</div>
+                </div>
+                <div class="divider divider-horizontal"></div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-success" x-text="getStats().proposedStatus.within"></div>
+                    <div class="text-[10px] uppercase font-bold opacity-50">Dans la grille</div>
+                </div>
+                <div class="divider divider-horizontal"></div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-warning" x-text="getStats().proposedStatus.above"></div>
+                    <div class="text-[10px] uppercase font-bold opacity-50">Haut</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow mb-4" x-show="!loading && availablePostes().length > 0">
+        <div class="card-body">
+            <div class="flex flex-col gap-3">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <div>
+                        <h2 class="card-title text-base">Filtres postes</h2>
+                        <p class="text-sm text-base-content/60">Cochez les postes que vous voulez afficher.</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button" class="btn btn-ghost btn-sm" @click="selectAllPostes()">
+                            Tout cocher
+                        </button>
+                        <button type="button" class="btn btn-ghost btn-sm" @click="clearSelectedPostes()">
+                            Tout décocher
+                        </button>
+                    </div>
+                </div>
+                <div class="flex flex-wrap gap-3">
+                    <template x-for="poste in availablePostes()" :key="poste.id || poste.nom">
+                        <label class="label cursor-pointer justify-start gap-2 rounded-box border border-base-300 px-3 py-2">
+                            <input type="checkbox"
+                                   class="checkbox checkbox-sm"
+                                   :value="poste.id"
+                                   :checked="isPosteSelected(poste.id)"
+                                   @change="togglePoste(poste.id)">
+                            <span class="label-text" x-text="poste.nom"></span>
+                            <span class="badge badge-ghost badge-xs" x-text="poste.count"></span>
+                        </label>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-xl" x-show="!loading && groupedEmployesData.length > 0">
+        <div class="card-body p-0">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm w-full">
+                    <thead class="bg-base-200">
+                        <tr>
+                            <th>Employé</th>
+                            <th class="text-center">Ancienneté</th>
+                            <th class="text-center">Evaluations</th>
+                            <th>Fourchette Nette Estimee</th>
+                            <th class="text-right">Salaire Net Actuel</th>
+                            <th class="text-right">Salaire Net Propose</th>
+                            <th class="text-right">Brut propose + charges emp.</th>
+                            <th class="text-center">%</th>
+                            <th>Justification & Statut</th>
+                            <th class="text-center">Actions</th>
+                        </tr>
+                    </thead>
+                    <template x-for="baseGroup in groupedEmployesData" :key="baseGroup.key">
+                        <tbody>
+                                <tr class="bg-base-200/80">
+                                    <td colspan="10">
+                                        <div class="flex items-center justify-between gap-3 py-1">
+                                            <div class="font-bold" x-text="baseGroup.base_nom"></div>
+                                            <span class="badge badge-neutral badge-sm" x-text="`${baseGroup.total} employe(s)`"></span>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <template x-for="row in baseGroup.rows" :key="row.key">
+                                            <tr :class="row.type === 'poste' ? 'bg-primary/10' : 'hover'">
+                                                <td :colspan="row.type === 'poste' ? 10 : 1" :class="row.type === 'poste' ? '' : 'whitespace-nowrap'">
+                                                    <template x-if="row.type === 'poste'">
+                                                        <div class="flex items-center justify-between gap-3 py-1 pl-4">
+                                                            <div class="font-semibold" x-text="row.poste_nom"></div>
+                                                            <span class="badge badge-primary badge-sm" x-text="`${row.total} employe(s)`"></span>
+                                                        </div>
+                                                    </template>
+                                                    <template x-if="row.type === 'employe'">
+                                                        <div>
+                                                            <div class="font-semibold">
+                                                                <span x-text="row.emp.surnom"></span>
+                                                            </div>
+                                                            <div class="flex flex-wrap gap-1 mt-1">
+                                                                <span class="badge badge-xs"
+                                                                      :class="salaryStatusClass(row.emp.grille, row.emp.salaire_actuel)"
+                                                                      :title="salaryStatusTitle('Salaire actuel', row.emp.grille, row.emp.salaire_actuel)"
+                                                                      x-text="salaryStatusText('Actuel', row.emp.grille, row.emp.salaire_actuel)"></span>
+                                                                <span class="badge badge-xs"
+                                                                      :class="salaryStatusClass(row.emp.grille, row.emp.revalorisation ? row.emp.revalorisation.salaire_propose : null)"
+                                                                      :title="salaryStatusTitle('Salaire proposé', row.emp.grille, row.emp.revalorisation ? row.emp.revalorisation.salaire_propose : null)"
+                                                                      x-text="salaryStatusText('Proposé', row.emp.grille, row.emp.revalorisation ? row.emp.revalorisation.salaire_propose : null)"></span>
+                                                            </div>
+                                                        </div>
+                                                    </template>
+                                                </td>
+                                                <td class="text-center min-w-[120px]" x-show="row.type === 'employe'">
+                                                    <div class="badge badge-sm mb-1" :class="row.emp && row.emp.est_junior ? 'badge-warning' : 'badge-ghost'"
+                                                         :title="row.emp && !row.emp.est_junior ? 'Anciennete comptee depuis la sortie du niveau Junior' : 'Pas encore sorti du niveau Junior'"
+                                                         x-text="row.emp ? formatAncienneteGrille(row.emp) : ''"></div>
+                                                    <template x-if="row.emp && row.emp.grille && row.emp.grille.niveau !== 'junior'">
+                                                        <div class="mx-auto w-24">
+                                                            <div class="flex justify-between items-center text-[9px] mb-0.5 px-0.5 leading-none text-base-content/50">
+                                                                <span x-text="row.emp.grille.anciennete_min + ' an'"></span>
+                                                                <span x-text="row.emp.grille.anciennete_max + (row.emp.grille.anciennete_max > 1 ? ' ans' : ' an')"></span>
+                                                            </div>
+                                                            <progress class="progress progress-info h-1.5 w-full" 
+                                                                    :value="seniorityRangePercentage(row.emp.grille, row.emp.anciennete)" 
+                                                                    max="100"></progress>
+                                                        </div>
+                                                    </template>
+                                                </td>
+                                                <td class="text-center min-w-[220px]" x-show="row.type === 'employe'">
+                                                    <div class="space-y-2" x-show="row.emp">
+                                                        <div class="rounded-box bg-base-200/60 p-2">
+                                                            <div class="mb-1 flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-wide text-base-content/50">
+                                                                <span>Taches</span>
+                                                                <span x-text="row.emp && row.emp.evaluation_score ? `${row.emp.evaluation_score.evaluations_count} eval.` : '-'"></span>
+                                                            </div>
+                                                            <template x-if="row.emp && row.emp.evaluation_score">
+                                                                <div class="mx-auto max-w-[170px]" :title="evaluationScoreTitle(row.emp.evaluation_score)">
+                                                                    <div class="flex items-center justify-between gap-2 text-[11px] mb-1">
+                                                                        <span class="font-semibold"
+                                                                              :class="evaluationScoreTextClass(row.emp.evaluation_score)"
+                                                                              x-text="formatPercent(row.emp.evaluation_score.percentage)"></span>
+                                                                        <span class="text-base-content/50"
+                                                                              x-text="`${row.emp.evaluation_score.evaluations_count} eval.`"></span>
+                                                                    </div>
+                                                                    <progress class="progress h-2 w-full"
+                                                                              :class="evaluationProgressClass(row.emp.evaluation_score)"
+                                                                              :value="Math.round(Number(row.emp.evaluation_score.percentage || 0))"
+                                                                              max="100"></progress>
+                                                                </div>
+                                                            </template>
+                                                            <template x-if="row.emp && !row.emp.evaluation_score">
+                                                                <span class="text-base-content/30">-</span>
+                                                            </template>
+                                                        </div>
+
+                                                        <div class="rounded-box bg-base-200/60 p-2">
+                                                            <div class="mb-1 flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-wide text-base-content/50">
+                                                                <span>Resultats</span>
+                                                                <span x-text="formatResultatsScore(row.emp ? row.emp.evaluation_resultats : null)"></span>
+                                                            </div>
+                                                            <template x-if="row.emp && row.emp.evaluation_resultats">
+                                                                <div class="mx-auto max-w-[170px]" :title="evaluationResultatsTitle(row.emp.evaluation_resultats)">
+                                                                    <div class="flex items-center justify-between gap-2 text-[11px] mb-1">
+                                                                        <span class="font-semibold"
+                                                                              :class="evaluationScoreTextClass(row.emp.evaluation_resultats)"
+                                                                              x-text="formatPercent(row.emp.evaluation_resultats.pourcentage)"></span>
+                                                                        <span class="text-base-content/50"
+                                                                              x-text="formatPercent(row.emp.evaluation_resultats.taux_recouvrement)"></span>
+                                                                    </div>
+                                                                    <progress class="progress h-2 w-full"
+                                                                              :class="evaluationProgressClass(row.emp.evaluation_resultats)"
+                                                                              :value="Math.round(Number(row.emp.evaluation_resultats.pourcentage || 0))"
+                                                                              max="100"></progress>
+                                                                    <div class="mt-1 text-left text-[10px] text-base-content/60">
+                                                                        Recouvrement <span class="font-medium" x-text="formatPercent(row.emp.evaluation_resultats.taux_recouvrement)"></span>
+                                                                    </div>
+                                                                </div>
+                                                            </template>
+                                                            <template x-if="row.emp && !row.emp.evaluation_resultats">
+                                                                <span class="text-base-content/30">-</span>
+                                                            </template>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td x-show="row.type === 'employe'">
+                                                    <template x-if="row.emp && row.emp.grille">
+                                                            <div class="text-xs">
+                                                                <span x-text="formatMoney(row.emp.grille.fourchette_basse)"></span> - 
+                                                                <span x-text="formatMoney(row.emp.grille.fourchette_haute)"></span>
+                                                                <span class="text-base-content/50" x-text="salaryUnitSuffix(row.emp)"></span>
+                                                            </div>
+                                                    </template>
+                                                    <template x-if="row.emp && !row.emp.grille">
+                                                        <span class="text-xs text-error italic">Aucune grille</span>
+                                                    </template>
+                                                </td>
+                                                <td class="text-right min-w-[110px]" x-show="row.type === 'employe'">
+                                                    <div class="font-medium text-base-content/70">
+                                                        <span x-text="row.emp ? formatMoney(row.emp.salaire_actuel) : ''"></span>
+                                                        <span class="text-xs text-base-content/50" x-text="row.emp ? salaryUnitSuffix(row.emp) : ''"></span>
+                                                    </div>
+                                                    <template x-if="row.emp && row.emp.grille && row.emp.salaire_actuel">
+                                                        <div class="ml-auto w-24 mt-1">
+                                                            <div class="flex justify-between items-center text-[9px] mb-0.5 px-0.5 leading-none">
+                                                                <span class="text-base-content/50" x-text="salaryRangePercentage(row.emp.grille, row.emp.salaire_actuel) + '%'"></span>
+                                                                <span class="font-bold uppercase" 
+                                                                      :class="salaryStatusTextClass(row.emp.grille, row.emp.salaire_actuel)"
+                                                                      x-text="salaryStatusLabel(row.emp.grille, row.emp.salaire_actuel)"></span>
+                                                            </div>
+                                                            <progress class="progress h-1.5 w-full" 
+                                                                    :class="salaryProgressClass(row.emp.grille, row.emp.salaire_actuel)"
+                                                                    :value="salaryRangePercentage(row.emp.grille, row.emp.salaire_actuel)" 
+                                                                    max="100"></progress>
+                                                        </div>
+                                                    </template>
+                                                </td>
+                                                <td class="text-right min-w-[110px]" x-show="row.type === 'employe'">
+                                                    <template x-if="row.emp && row.emp.revalorisation">
+                                                        <div>
+                                                            <div class="font-bold text-primary">
+                                                                <span x-text="formatMoney(row.emp.revalorisation.salaire_propose)"></span>
+                                                                <span class="text-xs text-base-content/50" x-text="salaryUnitSuffix(row.emp)"></span>
+                                                            </div>
+                                                            <template x-if="row.emp.grille">
+                                                                <div class="ml-auto w-24 mt-1">
+                                                                    <div class="flex justify-between items-center text-[9px] mb-0.5 px-0.5 leading-none">
+                                                                        <span class="text-base-content/50" x-text="salaryRangePercentage(row.emp.grille, row.emp.revalorisation.salaire_propose) + '%'"></span>
+                                                                        <span class="font-bold uppercase" 
+                                                                              :class="salaryStatusTextClass(row.emp.grille, row.emp.revalorisation.salaire_propose)"
+                                                                              x-text="salaryStatusLabel(row.emp.grille, row.emp.revalorisation.salaire_propose)"></span>
+                                                                    </div>
+                                                                    <progress class="progress h-1.5 w-full" 
+                                                                            :class="salaryProgressClass(row.emp.grille, row.emp.revalorisation.salaire_propose)"
+                                                                            :value="salaryRangePercentage(row.emp.grille, row.emp.revalorisation.salaire_propose)" 
+                                                                            max="100"></progress>
+                                                                </div>
+                                                            </template>
+                                                        </div>
+                                                    </template>
+                                                    <template x-if="row.emp && !row.emp.revalorisation">
+                                                        <span class="text-base-content/30">-</span>
+                                                    </template>
+                                                </td>
+                                                <td class="text-center" x-show="row.type === 'employe'">
+                                                    <template x-if="row.emp && row.emp.revalorisation">
+                                                        <div class="font-semibold text-accent">
+                                                            <span x-text="formatMoney(row.emp.revalorisation.salaire_propose_charge_employeur)"></span>
+                                                            <span class="text-xs text-base-content/50" x-text="salaryUnitSuffix(row.emp)"></span>
+                                                        </div>
+                                                    </template>
+                                                    <template x-if="row.emp && !row.emp.revalorisation">
+                                                        <span class="text-base-content/30">-</span>
+                                                    </template>
+                                                </td>
+                                                <td class="text-center" x-show="row.type === 'employe'">
+                                                    <template x-if="row.emp && row.emp.revalorisation">
+                                                        <div class="badge" 
+                                                             :class="{'badge-success': row.emp.revalorisation.pourcentage > 0, 'badge-neutral': row.emp.revalorisation.pourcentage <= 0}"
+                                                             x-text="formatPercent(row.emp.revalorisation.pourcentage)">
+                                                        </div>
+                                                    </template>
+                                                </td>
+                                                <td x-show="row.type === 'employe'">
+                                                    <template x-if="row.emp && row.emp.revalorisation">
+                                                        <div>
+                                                            <div class="max-w-[320px]" x-data="{ expanded: false }">
+                                                                <div class="text-xs leading-5 whitespace-normal break-words"
+                                                                     :class="expanded ? '' : 'line-clamp-4'"
+                                                                     :title="row.emp.revalorisation.justification"
+                                                                     x-text="row.emp.revalorisation.justification"></div>
+                                                                <button type="button"
+                                                                        class="link link-hover text-[11px] mt-1 inline-block"
+                                                                        x-show="row.emp.revalorisation.justification && row.emp.revalorisation.justification.length > 180"
+                                                                        @click="expanded = !expanded"
+                                                                        x-text="expanded ? 'Voir moins' : 'Voir plus'"></button>
+                                                                <div class="badge badge-outline badge-xs mt-2" x-text="row.emp.revalorisation.statut_display"></div>
+                                                            </div>
+                                                        </div>
+                                                    </template>
+                                                </td>
+                                                <td class="text-center" x-show="row.type === 'employe'">
+                                                    <div class="flex flex-col items-center gap-1">
+                                                        <button class="btn btn-ghost btn-xs w-20 text-secondary tooltip" data-tip="Modifier les donnees employe"
+                                                                @click="openModalEmployee(row.emp)">
+                                                            <i class="fas fa-user-edit"></i>
+                                                        </button>
+                                                        <button class="btn btn-ghost btn-xs w-20 text-info tooltip" data-tip="Éditer la proposition"
+                                                                @click="openModalEdit(row.emp)">
+                                                            <i class="fas fa-edit"></i>
+                                                        </button>
+                                                        <button class="btn btn-ghost btn-xs w-20 text-neutral tooltip" data-tip="Historique salarial"
+                                                                @click="openModalHistory(row.emp)">
+                                                            <i class="fas fa-history"></i>
+                                                        </button>
+                                                        <button class="btn btn-ghost btn-xs w-20 tooltip"
+                                                                :class="{'text-warning': row.emp && row.emp.evaluation, 'text-base-content/50': !row.emp || !row.emp.evaluation}"
+                                                                data-tip="Évaluation de référence"
+                                                                @click="openModalEvaluation(row.emp)">
+                                                            <i class="fas fa-star"></i>
+                                                        </button>
+                                                        <button class="btn btn-ghost btn-xs w-20 tooltip"
+                                                                :class="{'text-primary': row.emp && row.emp.evaluation_resultats, 'text-base-content/50': !row.emp || !row.emp.evaluation_resultats}"
+                                                                data-tip="Evaluation resultats"
+                                                                @click="openModalEvaluationResultats(row.emp)">
+                                                            <i class="fas fa-chart-pie"></i>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        </template>
+                        </tbody>
+                    </template>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Empty State -->
+    <div class="text-center py-16" x-show="!loading && groupedEmployesData.length === 0" style="display: none;">
+        <i class="fas fa-search text-4xl text-base-content/20 mb-4"></i>
+        <h3 class="text-lg font-bold">Aucune donnée trouvée</h3>
+        <p class="text-base-content/60" x-text="emptyStateMessage()"></p>
+    </div>
+
+    <!-- Loading State -->
+    <div class="flex justify-center items-center py-20" x-show="loading">
+        <span class="loading loading-spinner text-primary loading-lg"></span>
+    </div>
+
+    <!-- Modal Édition -->
+    <dialog id="modal_edit" class="modal">
+        <div class="modal-box w-11/12 max-w-2xl">
+            <h3 class="font-bold text-lg mb-4">Proposition de Revalorisation - Année <span x-text="selectedYear"></span></h3>
+            
+            <template x-if="currentEmp">
+                <form @submit.prevent="saveRevalorisation()">
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <p class="text-sm font-semibold">Employé</p>
+                            <p x-text="currentEmp.nom_complet"></p>
+                        </div>
+                        <div>
+                            <p class="text-sm font-semibold">Poste</p>
+                            <p x-text="currentEmp.poste"></p>
+                        </div>
+                        <div>
+                            <p class="text-sm font-semibold">Ancienneté (depuis sortie Junior)</p>
+                            <p x-text="formatAncienneteGrille(currentEmp)"></p>
+                        </div>
+                        <div>
+                            <p class="text-sm font-semibold">Salaire Net Actuel</p>
+                            <p class="font-bold">
+                                <span x-text="formatMoney(currentEmp.salaire_actuel)"></span>
+                                <span class="text-xs text-base-content/50" x-text="salaryUnitSuffix(currentEmp)"></span>
+                            </p>
+                        </div>
+                        <div class="col-span-2">
+                            <template x-if="currentEmp.grille">
+                                <div class="alert alert-info py-2 shadow-sm text-sm">
+                                    <i class="fas fa-info-circle"></i>
+                                    <span>Fourchette nette estimee : <span class="font-bold" x-text="formatMoney(currentEmp.grille.fourchette_basse)"></span> - <span class="font-bold" x-text="formatMoney(currentEmp.grille.fourchette_haute)"></span> <span class="text-base-content/70" x-text="salaryUnitSuffix(currentEmp)"></span></span>
+                                </div>
+                            </template>
+                            <template x-if="!currentEmp.grille">
+                                <div class="alert alert-warning py-2 shadow-sm text-sm">
+                                    <i class="fas fa-exclamation-triangle"></i>
+                                    <span>Aucune grille salariale applicable trouvée pour cette année.</span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                    
+                    <div class="form-control mb-4">
+                        <label class="label"><span class="label-text font-bold">Salaire Net Propose <span x-text="salaryUnitLabel(currentEmp)"></span> (Ar)</span></label>
+                        <input type="number" class="input input-bordered w-full" x-model="formData.salaire_propose" required min="0" step="0.01">
+                        <label class="label py-1">
+                            <span class="label-text-alt text-primary font-medium">
+                                Le salaire brut sera calcule automatiquement. Augmentation : 
+                                <span x-text="calculatePercentage()"></span>%
+                            </span>
+                        </label>
+                    </div>
+                    
+                    <div class="form-control mb-4">
+                        <label class="label"><span class="label-text font-bold">Justification</span></label>
+                        <textarea class="textarea textarea-bordered h-24" x-model="formData.justification" required placeholder="Justifiez l'augmentation..."></textarea>
+                    </div>
+
+                    <div class="modal-action">
+                        <template x-if="currentEmp.revalorisation && currentEmp.revalorisation.statut === 'brouillon'">
+                            <button type="button" class="btn btn-primary" @click="changeStatus('soumettre')" :disabled="saving">
+                                <i class="fas fa-paper-plane mr-1"></i> Soumettre
+                            </button>
+                        </template>
+                        <template x-if="currentEmp.revalorisation && currentEmp.revalorisation.statut === 'soumise'">
+                            <div class="flex gap-2 w-full">
+                                <input type="text" x-model="formData.commentaire" placeholder="Commentaire validation/rejet" class="input input-bordered flex-1 input-sm">
+                                <button type="button" class="btn btn-success btn-sm" @click="changeStatus('valider')" :disabled="saving">Valider</button>
+                                <button type="button" class="btn btn-error btn-sm" @click="changeStatus('rejeter')" :disabled="saving">Rejeter</button>
+                            </div>
+                        </template>
+                        <template x-if="currentEmp.revalorisation && currentEmp.revalorisation.statut === 'validee'">
+                            <button type="button" class="btn btn-accent" @click="changeStatus('appliquer')" :disabled="saving">
+                                <i class="fas fa-check-double mr-1"></i> Appliquer au contrat
+                            </button>
+                        </template>
+                        
+                        <div class="flex-1"></div>
+                        <button type="button" class="btn btn-ghost" onclick="modal_edit.close()">Annuler</button>
+                        <button type="submit" class="btn btn-primary" :disabled="saving || (currentEmp.revalorisation && currentEmp.revalorisation.statut !== 'brouillon' && currentEmp.revalorisation.statut !== 'rejetee')">
+                            <span x-show="saving" class="loading loading-spinner text-white loading-sm"></span>
+                            <span x-show="!saving">Enregistrer (Brouillon)</span>
+                        </button>
+                    </div>
+                </form>
+            </template>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+
+    <!-- Modal Historique -->
+    <dialog id="modal_history" class="modal">
+        <div class="modal-box w-11/12 max-w-3xl">
+            <h3 class="font-bold text-lg mb-4">Historique des Revalorisations - <span x-text="currentEmp?.surnom"></span></h3>
+            
+            <div x-show="loadingHistory" class="flex justify-center p-8">
+                <span class="loading loading-spinner text-primary"></span>
+            </div>
+            
+            <table class="table table-sm w-full" x-show="!loadingHistory">
+                <thead>
+                    <tr>
+                        <th>Période</th>
+                        <th>Salaire Net Precedent</th>
+                        <th>Salaire Net Revalorise</th>
+                        <th>%</th>
+                        <th>Statut</th>
+                        <th>Date Application</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="hist in history" :key="hist.id">
+                        <tr>
+                            <td class="font-bold" x-text="hist.periode || hist.annee"></td>
+                            <td x-text="formatMoney(hist.salaire_actuel)"></td>
+                            <td class="font-bold text-primary" x-text="formatMoney(hist.salaire_propose)"></td>
+                            <td>
+                                <span class="badge badge-sm" x-text="formatPercent(hist.pourcentage)"></span>
+                            </td>
+                            <td><span class="badge badge-outline badge-sm" x-text="hist.statut"></span></td>
+                            <td x-text="hist.date_application || '-'"></td>
+                        </tr>
+                    </template>
+                    <tr x-show="history.length === 0">
+                        <td colspan="6" class="text-center text-base-content/50 py-4">Aucun historique disponible</td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <div class="modal-action">
+                <form method="dialog">
+                    <button class="btn">Fermer</button>
+                </form>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <!-- Modal Evaluation -->
+    <dialog id="modal_eval" class="modal">
+        <div class="modal-box w-11/12 max-w-4xl">
+            <h3 class="font-bold text-lg mb-4">Évaluation de Référence</h3>
+            <p class="text-sm text-base-content/70 mb-4">
+                <span x-text="currentEmp?.surnom || currentEmp?.nom_complet || 'Employe'"></span>
+            </p>
+
+            <div x-show="loadingEvaluation" class="flex justify-center p-8" style="display: none;">
+                <span class="loading loading-spinner text-primary"></span>
+            </div>
+
+            <div class="alert alert-error mb-4 shadow-sm" x-show="evaluationError" style="display: none;">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span x-text="evaluationError"></span>
+            </div>
+
+            <div class="alert alert-info mb-4 shadow-sm" x-show="!loadingEvaluation && currentEmp && !currentEmp.evaluation && !evaluationError" style="display: none;">
+                <i class="fas fa-info-circle"></i>
+                <span>Aucune evaluation de reference n'est disponible pour cet employe.</span>
+            </div>
+
+            <template x-if="!loadingEvaluation && evaluationSummary">
+                <div class="space-y-4 mb-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                        <div class="stat bg-base-200 rounded-box p-4">
+                            <div class="stat-title">Date</div>
+                            <div class="stat-value text-lg" x-text="formatDate(evaluationSummary.date_evaluation)"></div>
+                            <div class="stat-desc" x-text="`${formatDate(evaluationSummary.periode_debut)} - ${formatDate(evaluationSummary.periode_fin)}`"></div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-box p-4">
+                            <div class="stat-title">Evaluateur</div>
+                            <div class="stat-value text-lg" x-text="evaluationSummary.evaluateur_nom || '-'"></div>
+                            <div class="stat-desc" x-text="evaluationSummary.est_auto_evaluation ? 'Auto-evaluation' : 'Evaluation manageriale'"></div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-box p-4">
+                            <div class="stat-title">Score</div>
+                            <div class="stat-value text-lg" x-text="formatEvaluationScore(evaluationSummary)"></div>
+                            <div class="stat-desc" x-text="formatEvaluationPercent(evaluationSummary.pourcentage)"></div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-box p-4">
+                            <div class="stat-title">Statut</div>
+                            <div class="stat-value text-lg">
+                                <span class="badge badge-lg"
+                                      :class="statusBadgeClass(evaluationSummary.statut)"
+                                      x-text="evaluationStatusLabel(evaluationSummary.statut)"></span>
+                            </div>
+                            <div class="stat-desc" x-text="`${evaluationStats.total} taches evaluees`"></div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                        <div class="card bg-success/10 border border-success/20">
+                            <div class="card-body p-4">
+                                <h4 class="card-title text-base text-success">Points forts</h4>
+                                <p class="text-2xl font-bold" x-text="evaluationStats.mastered"></p>
+                                <p class="text-sm text-base-content/70">Taches maitrisees</p>
+                                <ul class="text-sm mt-3 space-y-2" x-show="evaluationStrengths.length > 0">
+                                    <template x-for="detail in evaluationStrengths" :key="detail.id">
+                                        <li class="leading-snug">
+                                            <span class="font-medium" x-text="detail.tache"></span>
+                                            <span class="text-base-content/60" x-show="detail.remarques"> - <span x-text="detail.remarques"></span></span>
+                                        </li>
+                                    </template>
+                                </ul>
+                                <p class="text-sm text-base-content/60 mt-3" x-show="evaluationStrengths.length === 0">Aucune tache pleinement maitrisee dans cette evaluation.</p>
+                            </div>
+                        </div>
+
+                        <div class="card bg-warning/10 border border-warning/20">
+                            <div class="card-body p-4">
+                                <h4 class="card-title text-base text-warning">En progression</h4>
+                                <p class="text-2xl font-bold" x-text="evaluationStats.inProgress"></p>
+                                <p class="text-sm text-base-content/70">Taches en cours d'acquisition</p>
+                                <ul class="text-sm mt-3 space-y-2" x-show="evaluationProgress.length > 0">
+                                    <template x-for="detail in evaluationProgress" :key="detail.id">
+                                        <li class="leading-snug">
+                                            <span class="font-medium" x-text="detail.tache"></span>
+                                            <span class="text-base-content/60" x-show="detail.remarques"> - <span x-text="detail.remarques"></span></span>
+                                        </li>
+                                    </template>
+                                </ul>
+                                <p class="text-sm text-base-content/60 mt-3" x-show="evaluationProgress.length === 0">Aucune tache en progression relevee.</p>
+                            </div>
+                        </div>
+
+                        <div class="card bg-error/10 border border-error/20">
+                            <div class="card-body p-4">
+                                <h4 class="card-title text-base text-error">Points d'attention</h4>
+                                <p class="text-2xl font-bold" x-text="evaluationStats.notAcquired"></p>
+                                <p class="text-sm text-base-content/70">Taches non acquises</p>
+                                <ul class="text-sm mt-3 space-y-2" x-show="evaluationWatchpoints.length > 0">
+                                    <template x-for="detail in evaluationWatchpoints" :key="detail.id">
+                                        <li class="leading-snug">
+                                            <span class="font-medium" x-text="detail.tache"></span>
+                                            <span class="text-base-content/60" x-show="detail.remarques"> - <span x-text="detail.remarques"></span></span>
+                                        </li>
+                                    </template>
+                                </ul>
+                                <p class="text-sm text-base-content/60 mt-3" x-show="evaluationWatchpoints.length === 0">Aucun point critique releve.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card bg-base-200">
+                        <div class="card-body p-4">
+                            <h4 class="card-title text-base">Commentaire general</h4>
+                            <p class="text-sm leading-relaxed whitespace-pre-line" x-text="evaluationSummary.commentaire_general || 'Aucun commentaire general saisi.'"></p>
+                        </div>
+                    </div>
+
+                    <div class="card bg-base-100 border border-base-300" x-show="evaluationDetails.length > 0">
+                        <div class="card-body p-0">
+                            <div class="overflow-x-auto">
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Tache</th>
+                                            <th>Type</th>
+                                            <th>Note</th>
+                                            <th>Remarques</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <template x-for="detail in evaluationDetails" :key="detail.id">
+                                            <tr>
+                                                <td class="font-medium" x-text="detail.tache"></td>
+                                                <td x-text="detail.type_activites_nom || '-'"></td>
+                                                <td>
+                                                    <span class="badge badge-sm"
+                                                          :class="detailBadgeClass(detail.note)"
+                                                          x-text="detail.note_label"></span>
+                                                </td>
+                                                <td class="max-w-xl whitespace-pre-line text-sm" x-text="detail.remarques || '-'"></td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <a :href="buildEvaluationPageUrl(evaluationSummary.id)" class="btn btn-outline w-full" target="_blank">
+                            <i class="fas fa-external-link-alt"></i> Voir l'evaluation complete
+                        </a>
+                    </div>
+                </div>
+            </template>
+
+            <template x-if="false">
+                <div>
+                    <p class="py-2">Date d'évaluation : <span class="font-bold" x-text="currentEmp.evaluation.date"></span></p>
+                    <p class="py-2">Note globale : <span class="badge badge-lg badge-primary" x-text="currentEmp.evaluation.note_globale !== null ? currentEmp.evaluation.note_globale.toFixed(1) + '/5' : 'Non notee'"></span></p>
+                    <div class="mt-4">
+                        <a :href="`/employes/evaluations/${currentEmp.evaluation.id}/`" class="btn btn-outline btn-block" target="_blank">
+                            <i class="fas fa-external-link-alt"></i> Voir les détails de l'évaluation
+                        </a>
+                    </div>
+                </div>
+            </template>
+            <div class="modal-action">
+                <form method="dialog">
+                    <button class="btn">Fermer</button>
+                </form>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <!-- Modal Evaluation Resultats -->
+    <dialog id="modal_eval_resultats" class="modal">
+        <div class="modal-box w-11/12 max-w-5xl">
+            <h3 class="font-bold text-lg mb-4">Evaluation resultats de reference</h3>
+            <p class="text-sm text-base-content/70 mb-4">
+                <span x-text="currentEmp?.surnom || currentEmp?.nom_complet || 'Employe'"></span>
+            </p>
+
+            <div x-show="loadingEvaluationResultats" class="flex justify-center p-8" style="display: none;">
+                <span class="loading loading-spinner text-primary"></span>
+            </div>
+
+            <div class="alert alert-error mb-4 shadow-sm" x-show="evaluationResultatsError" style="display: none;">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span x-text="evaluationResultatsError"></span>
+            </div>
+
+            <div class="alert alert-info mb-4 shadow-sm" x-show="!loadingEvaluationResultats && currentEmp && !currentEmp.evaluation_resultats && !evaluationResultatsError" style="display: none;">
+                <i class="fas fa-info-circle"></i>
+                <span>Aucune evaluation resultats de reference n'est disponible pour cet employe.</span>
+            </div>
+
+            <template x-if="!loadingEvaluationResultats && evaluationResultatsSummary">
+                <div class="space-y-4 mb-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                        <div class="stat bg-base-200 rounded-box p-4">
+                            <div class="stat-title">Periode</div>
+                            <div class="stat-value text-base" x-text="`${formatDate(evaluationResultatsSummary.periode_debut)} - ${formatDate(evaluationResultatsSummary.periode_fin)}`"></div>
+                            <div class="stat-desc" x-text="`Calcul du ${formatDate(evaluationResultatsSummary.date_calcul)}`"></div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-box p-4">
+                            <div class="stat-title">Score</div>
+                            <div class="stat-value text-lg text-primary" x-text="formatResultatsScore(evaluationResultatsSummary)"></div>
+                            <div class="stat-desc" x-text="formatPercent(evaluationResultatsSummary.pourcentage)"></div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-box p-4">
+                            <div class="stat-title">Recouvrement</div>
+                            <div class="stat-value text-lg" x-text="formatPercent(evaluationResultatsSummary.taux_recouvrement)"></div>
+                            <div class="stat-desc" x-text="`${formatMoney(evaluationResultatsSummary.montant_total_collecte)} / ${formatMoney(evaluationResultatsSummary.montant_total_prevu)}`"></div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-box p-4">
+                            <div class="stat-title">Statut</div>
+                            <div class="stat-value text-lg">
+                                <span class="badge badge-lg"
+                                      :class="evaluationResultatsStatusBadgeClass(evaluationResultatsSummary.statut)"
+                                      x-text="evaluationResultatsStatusLabel(evaluationResultatsSummary.statut, evaluationResultatsSummary.statut_display)"></span>
+                            </div>
+                            <div class="stat-desc" x-text="`${evaluationResultatsSummary.nb_ouvrages || 0} ouvrage(x)`"></div>
+                        </div>
+                    </div>
+
+                    <div class="card bg-base-200">
+                        <div class="card-body p-4">
+                            <h4 class="card-title text-base">Commentaire</h4>
+                            <p class="text-sm leading-relaxed whitespace-pre-line" x-text="evaluationResultatsSummary.commentaire || 'Aucun commentaire saisi.'"></p>
+                        </div>
+                    </div>
+
+                    <div class="card bg-base-100 border border-base-300">
+                        <div class="card-body p-0">
+                            <div class="overflow-x-auto">
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Ouvrage</th>
+                                            <th>Point d'eau</th>
+                                            <th>Type</th>
+                                            <th>Prevu</th>
+                                            <th>Paye</th>
+                                            <th>Score</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <template x-for="detail in evaluationResultatsDetails" :key="detail.id">
+                                            <tr>
+                                                <td class="font-medium" x-text="detail.ouvrage_nom || '-'"></td>
+                                                <td x-text="detail.point_eau_nom || '-'"></td>
+                                                <td>
+                                                    <span class="badge badge-ghost badge-sm" x-text="detail.type_paiement || '-'"></span>
+                                                </td>
+                                                <td x-text="formatMoney(detail.montant_prevu)"></td>
+                                                <td x-text="formatMoney(detail.montant_paye)"></td>
+                                                <td>
+                                                    <span class="badge badge-sm"
+                                                          :class="detail.point_obtenu ? 'badge-success' : 'badge-error'"
+                                                          x-text="detail.point_obtenu ? '1 point' : '0 point'"></span>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                        <tr x-show="evaluationResultatsDetails.length === 0">
+                                            <td colspan="6" class="py-4 text-center text-base-content/50">Aucun detail disponible</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </template>
+
+            <div class="modal-action">
+                <form method="dialog">
+                    <button class="btn">Fermer</button>
+                </form>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <!-- Modal Donnees Employe -->
+    <dialog id="modal_employee" class="modal">
+        <div class="modal-box w-11/12 max-w-xl">
+            <h3 class="font-bold text-lg mb-4">Donnees employe</h3>
+
+            <template x-if="currentEmp">
+                <form @submit.prevent="saveEmployeeData()">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <p class="text-sm font-semibold">Employe</p>
+                            <p x-text="currentEmp.nom_complet"></p>
+                        </div>
+                        <div>
+                            <p class="text-sm font-semibold">Annee affichee</p>
+                            <p x-text="selectedYear"></p>
+                        </div>
+                        <div>
+                            <p class="text-sm font-semibold">Poste</p>
+                            <p x-text="currentEmp.poste"></p>
+                        </div>
+                        <div>
+                            <p class="text-sm font-semibold">Base</p>
+                            <p x-text="currentEmp.base_nom || '-'"></p>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info mb-4 shadow-sm text-sm">
+                        <i class="fas fa-info-circle"></i>
+                        <span>Si l'employe est debauche pendant l'annee selectionnee, ou si sa periode d'emploi ne couvre plus cette annee, il disparaitra de cette grille apres sauvegarde.</span>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text font-bold">Date d'embauche</span>
+                            </label>
+                            <input type="date" class="input input-bordered w-full" x-model="employeeFormData.date_embauche">
+                        </div>
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text font-bold">Date de debauchage</span>
+                            </label>
+                            <input type="date" class="input input-bordered w-full" x-model="employeeFormData.date_debauchage">
+                            <label class="label py-1">
+                                <span class="label-text-alt">Laissez vide si l'employe travaille toujours.</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="modal-action">
+                        <button type="button" class="btn btn-ghost" onclick="modal_employee.close()">Annuler</button>
+                        <button type="submit" class="btn btn-primary" :disabled="savingEmployee">
+                            <span x-show="savingEmployee" class="loading loading-spinner text-white loading-sm"></span>
+                            <span x-show="!savingEmployee">Enregistrer</span>
+                        </button>
+                    </div>
+                </form>
+            </template>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+</div>
+
+<!-- Inclure Alpine.js -->
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+<script>
+document.addEventListener('alpine:init', () => {
+    Alpine.data('revalorisationApp', () => ({
+        selectedYear: '{{ current_year|escapejs }}',
+        selectedOrganisationId: '{{ default_organisation_id|escapejs }}',
+        organisations: [],
+        employes: [],
+        groupedEmployesData: [],
+        selectedPosteIds: [],
+        posteFilterInitialized: false,
+        loading: false,
+        saving: false,
+        savingEmployee: false,
+        loadingHistory: false,
+        loadingEvaluation: false,
+        loadingEvaluationResultats: false,
+        errorMessage: '',
+        successMessage: '',
+        _successTimeout: null,
+        currentEmp: null,
+        history: [],
+        evaluationError: '',
+        evaluationSummary: null,
+        evaluationDetails: [],
+        evaluationResultatsError: '',
+        evaluationResultatsSummary: null,
+        evaluationResultatsDetails: [],
+        evaluationStats: {
+            total: 0,
+            mastered: 0,
+            inProgress: 0,
+            notAcquired: 0
+        },
+        evaluationStrengths: [],
+        evaluationProgress: [],
+        evaluationWatchpoints: [],
+        urls: {
+            list: "{% url 'employees:api_revalorisations_list' %}",
+            save: "{% url 'employees:api_revalorisation_save' %}",
+            updateEmployee: "{% url 'employees:api_revalorisation_update_employe' %}",
+            actionTemplate: "{% url 'employees:api_revalorisation_action' reval_id='00000000-0000-0000-0000-000000000000' action='__ACTION__' %}",
+            historyTemplate: "{% url 'employees:api_revalorisation_history' employe_id='00000000-0000-0000-0000-000000000000' %}",
+            evaluationDetailTemplate: "{% url 'employees:api_evaluation_detail' evaluation_id='00000000-0000-0000-0000-000000000000' %}",
+            evaluationResultatsDetailTemplate: "{% url 'employees:api_evaluation_resultats_detail' evaluation_id='00000000-0000-0000-0000-000000000000' %}",
+            evaluationPageTemplate: "{% url 'employees:evaluation_detail' evaluation_id='00000000-0000-0000-0000-000000000000' %}"
+        },
+        formData: {
+            salaire_propose: 0,
+            justification: '',
+            commentaire: ''
+        },
+        employeeFormData: {
+            date_embauche: '',
+            date_debauchage: ''
+        },
+        
+        init() {
+            this.selectedYear = '{{ current_year|escapejs }}';
+            this.selectedOrganisationId = '{{ default_organisation_id|escapejs }}';
+            this.loadData();
+        },
+        
+        formatMoney(amount) {
+            if (amount === undefined || amount === null) return '-';
+            return new Intl.NumberFormat('fr-MG', { style: 'currency', currency: 'MGA', maximumFractionDigits: 0 }).format(amount).replace('MGA', 'Ar');
+        },
+
+        salaryUnitLabel(emp) {
+            return emp && emp.salary_display_unit === 'jour' ? 'par jour' : 'par mois';
+        },
+
+        salaryUnitSuffix(emp) {
+            return emp && emp.salary_display_unit === 'jour' ? '/ jour' : '/ mois';
+        },
+
+        syncOrganisationSelect() {
+            if (!this.$refs.organisationSelect) {
+                return;
+            }
+
+            this.$refs.organisationSelect.innerHTML = '';
+            for (const org of this.organisations) {
+                const option = document.createElement('option');
+                option.value = org.id;
+                option.textContent = org.nom;
+                if (org.id === this.selectedOrganisationId) {
+                    option.selected = true;
+                }
+                this.$refs.organisationSelect.appendChild(option);
+            }
+        },
+
+        formatAncienneteGrille(emp) {
+            if (!emp) return '-';
+            return emp.est_junior ? 'Junior' : this.formatAnciennete(emp.anciennete);
+        },
+
+        formatAnciennete(value) {
+            if (value === undefined || value === null || value === '') return '-';
+            const monthsTotal = Math.max(0, Math.round(Number(value) * 12));
+            const years = Math.floor(monthsTotal / 12);
+            const months = monthsTotal % 12;
+            const parts = [];
+
+            if (years > 0) {
+                parts.push(`${years} ${years > 1 ? 'ans' : 'an'}`);
+            }
+            if (months > 0) {
+                parts.push(`${months} mois`);
+            }
+
+            return parts.length > 0 ? parts.join(' ') : '0 mois';
+        },
+
+        evaluationScoreStatus(score) {
+            if (!score || score.percentage === null || score.percentage === undefined) {
+                return 'none';
+            }
+
+            const percentage = Number(score.percentage);
+            if (!Number.isFinite(percentage)) {
+                return 'none';
+            }
+            if (percentage < 50) return 'below';
+            if (percentage < 75) return 'average';
+            return 'good';
+        },
+
+        evaluationProgressClass(score) {
+            const status = this.evaluationScoreStatus(score);
+            return {
+                'progress-error': status === 'below',
+                'progress-warning': status === 'average',
+                'progress-success': status === 'good',
+                'progress-neutral': status === 'none',
+            };
+        },
+
+        evaluationScoreTextClass(score) {
+            const status = this.evaluationScoreStatus(score);
+            return {
+                'text-error': status === 'below',
+                'text-warning': status === 'average',
+                'text-success': status === 'good',
+                'text-base-content/40': status === 'none',
+            };
+        },
+
+        evaluationScoreTitle(score) {
+            if (!score) {
+                return 'Aucune evaluation de reference';
+            }
+
+            return `Note ponderee ${this.formatPercent(score.percentage)} (${score.evaluations_count} evaluation(s) : ${score.standard_count} standard, ${score.direction_count} direction, ${score.auto_count} auto)`;
+        },
+
+        formatResultatsScore(result) {
+            if (!result) {
+                return '-';
+            }
+
+            return `${Number(result.score_obtenu || 0)}/${Number(result.score_maximum || 0)}`;
+        },
+
+        evaluationResultatsTitle(result) {
+            if (!result) {
+                return 'Aucune evaluation resultats de reference';
+            }
+
+            return `Score ${this.formatResultatsScore(result)} (${this.formatPercent(result.pourcentage)}) - recouvrement ${this.formatPercent(result.taux_recouvrement)}`;
+        },
+
+        salaryStatus(grille, amount) {
+            if (!grille) return 'no_grille';
+            if (amount === undefined || amount === null || amount === '') return 'no_value';
+
+            const value = Number(amount);
+            const low = Number(grille.fourchette_basse);
+            const high = Number(grille.fourchette_haute);
+
+            if (!Number.isFinite(value) || !Number.isFinite(low) || !Number.isFinite(high)) {
+                return 'unknown';
+            }
+            if (value < low) return 'below';
+            if (value > high) return 'above';
+            return 'within';
+        },
+
+        salaryStatusClass(grille, amount) {
+            const status = this.salaryStatus(grille, amount);
+            return {
+                'badge-error': status === 'below',
+                'badge-success': status === 'within',
+                'badge-warning': status === 'above',
+                'badge-ghost': ['no_grille', 'no_value', 'unknown'].includes(status),
+            };
+        },
+
+        salaryStatusText(label, grille, amount) {
+            const status = this.salaryStatus(grille, amount);
+            if (status === 'below') return `${label}: bas`;
+            if (status === 'within') return `${label}: OK`;
+            if (status === 'above') return `${label}: haut`;
+            if (status === 'no_grille') return `${label}: sans grille`;
+            if (status === 'no_value') return `${label}: -`;
+            return `${label}: ?`;
+        },
+
+        salaryStatusTitle(label, grille, amount) {
+            const status = this.salaryStatus(grille, amount);
+            if (!grille) {
+                return `${label}: aucune grille salariale applicable`;
+            }
+
+            const range = `${this.formatMoney(grille.fourchette_basse)} - ${this.formatMoney(grille.fourchette_haute)}`;
+            if (status === 'below') return `${label} en dessous de la fourchette permise (${range})`;
+            if (status === 'within') return `${label} dans la fourchette permise (${range})`;
+            if (status === 'above') return `${label} au dessus de la fourchette permise (${range})`;
+            if (status === 'no_value') return `${label} non renseigné`;
+            return `${label}: statut indéterminé`;
+        },
+
+        salaryRangePercentage(grille, amount) {
+            if (!grille || amount === undefined || amount === null || amount === '') return 0;
+            const value = Number(amount);
+            const low = Number(grille.fourchette_basse);
+            const high = Number(grille.fourchette_haute);
+            if (!Number.isFinite(value) || !Number.isFinite(low) || !Number.isFinite(high) || high <= low) return 0;
+            
+            const percentage = ((value - low) / (high - low)) * 100;
+            return Math.max(0, Math.min(100, Math.round(percentage)));
+        },
+
+        salaryProgressClass(grille, amount) {
+            const status = this.salaryStatus(grille, amount);
+            return {
+                'progress-error': status === 'below',
+                'progress-success': status === 'within',
+                'progress-warning': status === 'above',
+                'progress-neutral': ['no_grille', 'no_value', 'unknown'].includes(status),
+            };
+        },
+
+        salaryStatusLabel(grille, amount) {
+            const status = this.salaryStatus(grille, amount);
+            if (status === 'below') return 'Bas';
+            if (status === 'within') return 'OK';
+            if (status === 'above') return 'Haut';
+            return '';
+        },
+
+        salaryStatusTextClass(grille, amount) {
+            const status = this.salaryStatus(grille, amount);
+            return {
+                'text-error': status === 'below',
+                'text-success': status === 'within',
+                'text-warning': status === 'above',
+                'text-base-content/40': !['below', 'within', 'above'].includes(status),
+            };
+        },
+
+        seniorityRangePercentage(grille, value) {
+            if (!grille) return 0;
+            const current = Number(value || 0);
+            const min = Number(grille.anciennete_min || 0);
+            const max = Number(grille.anciennete_max || 0);
+            if (max <= min) return 100;
+            const percentage = ((current - min) / (max - min)) * 100;
+            return Math.max(0, Math.min(100, Math.round(percentage)));
+        },
+
+        refreshGroupedEmployes() {
+            const baseGroups = new Map();
+
+            for (const emp of this.employes) {
+                if (!this.isPosteSelected(emp.poste_id || 'sans-poste')) {
+                    continue;
+                }
+
+                const baseId = emp.base_id || 'sans-base';
+                const baseNom = emp.base_nom || 'Sans base';
+                const baseKey = `${baseId}::${baseNom}`;
+
+                if (!baseGroups.has(baseKey)) {
+                    baseGroups.set(baseKey, {
+                        key: baseKey,
+                        base_id: emp.base_id,
+                        base_nom: baseNom,
+                        total: 0,
+                        postes: [],
+                        _postes: new Map(),
+                    });
+                }
+
+                const baseGroup = baseGroups.get(baseKey);
+                baseGroup.total += 1;
+
+                const posteId = emp.poste_id || 'sans-poste';
+                const posteNom = emp.poste || 'Non assigné';
+                const posteKey = `${baseKey}::${posteId}::${posteNom}`;
+
+                if (!baseGroup._postes.has(posteKey)) {
+                    const posteGroup = {
+                        key: posteKey,
+                        poste_id: emp.poste_id,
+                        poste_nom: posteNom,
+                        total: 0,
+                        employes: [],
+                    };
+                    baseGroup._postes.set(posteKey, posteGroup);
+                    baseGroup.postes.push(posteGroup);
+                }
+
+                const posteGroup = baseGroup._postes.get(posteKey);
+                posteGroup.total += 1;
+                posteGroup.employes.push(emp);
+            }
+
+            this.groupedEmployesData = Array.from(baseGroups.values())
+                .sort((a, b) => String(a.base_nom || '').localeCompare(String(b.base_nom || '')))
+                .map(group => {
+                    const rows = [];
+                    const postes = group.postes
+                        .sort((a, b) => String(a.poste_nom || '').localeCompare(String(b.poste_nom || '')));
+
+                    for (const poste of postes) {
+                        rows.push({
+                            key: `${poste.key}::header`,
+                            type: 'poste',
+                            poste_nom: poste.poste_nom,
+                            total: poste.total,
+                        });
+
+                        for (const emp of poste.employes) {
+                            rows.push({
+                                key: `${poste.key}::${emp.employe_id}`,
+                                type: 'employe',
+                                emp,
+                            });
+                        }
+                    }
+
+                    return {
+                        key: group.key,
+                        base_id: group.base_id,
+                        base_nom: group.base_nom,
+                        total: group.total,
+                        rows,
+                    };
+                });
+        },
+
+        formatDate(value) {
+            if (!value) return '-';
+            if (value.includes('/')) return value;
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) return value;
+            return new Intl.DateTimeFormat('fr-FR').format(date);
+        },
+
+        formatEvaluationScore(evaluation) {
+            if (!evaluation || evaluation.note_totale === null || evaluation.note_totale === undefined) {
+                return 'Non notee';
+            }
+            return `${evaluation.note_totale}/${evaluation.note_maximale ?? 0}`;
+        },
+
+        formatEvaluationPercent(value) {
+            if (value === null || value === undefined) return '-';
+            return this.formatPercent(value);
+        },
+
+        formatPercent(value) {
+            if (value === null || value === undefined || value === '') return '-';
+            return `${Math.round(Number(value))}%`;
+        },
+
+        emptyStateMessage() {
+            if (this.employes.length === 0) {
+                return "Verifiez les criteres ou reessayez.";
+            }
+            return "Aucun employe ne correspond aux postes coches.";
+        },
+
+        flashSuccess(message) {
+            this.successMessage = message || '';
+            if (!this.successMessage) return;
+
+            window.clearTimeout(this._successTimeout);
+            this._successTimeout = window.setTimeout(() => {
+                this.successMessage = '';
+            }, 5000);
+        },
+
+        availablePostes() {
+            const postes = new Map();
+
+            for (const emp of this.employes) {
+                const id = emp.poste_id || 'sans-poste';
+                const nom = emp.poste || 'Non assigné';
+
+                if (!postes.has(id)) {
+                    postes.set(id, { id, nom, count: 0 });
+                }
+                postes.get(id).count += 1;
+            }
+
+            return Array.from(postes.values()).sort((a, b) => String(a.nom || '').localeCompare(String(b.nom || '')));
+        },
+
+        isDefaultExcludedPoste(poste) {
+            const normalized = String(poste?.nom || '').trim().toLowerCase();
+            return ['mpikojakoja ifotony', 'directeur', 'directeur adjoint'].includes(normalized);
+        },
+
+        syncSelectedPostes() {
+            const availablePostes = this.availablePostes();
+            const availableIds = availablePostes.map(poste => poste.id);
+
+            if (!this.posteFilterInitialized) {
+                this.selectedPosteIds = availablePostes
+                    .filter(poste => !this.isDefaultExcludedPoste(poste))
+                    .map(poste => poste.id);
+                this.posteFilterInitialized = true;
+                this.refreshGroupedEmployes();
+
+                // CRITICAL: Forcer la mise à jour de l'UI Alpine.js
+                // Sans cela, les checkboxes apparaissent décochées malgré l'état correct
+                this.$nextTick(() => {
+                    console.log('[Revalo] Postes sélectionnés après init:', this.selectedPosteIds);
+                    console.log('[Revalo] Données groupées:', this.groupedEmployesData.length);
+                });
+                return;
+            }
+
+            this.selectedPosteIds = this.selectedPosteIds.filter(id => availableIds.includes(id));
+            this.refreshGroupedEmployes();
+        },
+
+        isPosteSelected(posteId) {
+            return this.selectedPosteIds.includes(posteId || 'sans-poste');
+        },
+
+        togglePoste(posteId) {
+            const normalizedId = posteId || 'sans-poste';
+            if (this.selectedPosteIds.includes(normalizedId)) {
+                this.selectedPosteIds = this.selectedPosteIds.filter(id => id !== normalizedId);
+            } else {
+                this.selectedPosteIds = [...this.selectedPosteIds, normalizedId];
+            }
+            this.refreshGroupedEmployes();
+        },
+
+        selectAllPostes() {
+            this.selectedPosteIds = this.availablePostes().map(poste => poste.id);
+            this.refreshGroupedEmployes();
+        },
+
+        clearSelectedPostes() {
+            this.selectedPosteIds = [];
+            this.refreshGroupedEmployes();
+        },
+
+        getStats() {
+            let count = 0;
+            let totalActual = 0;
+            let totalProposed = 0;
+            
+            let actualStatus = { below: 0, within: 0, above: 0, none: 0 };
+            let proposedStatus = { below: 0, within: 0, above: 0, none: 0 };
+
+            for (const group of this.groupedEmployesData) {
+                for (const row of group.rows) {
+                    if (row.type === 'employe') {
+                        count++;
+                        const actual = Number(row.emp.salaire_actuel || 0);
+                        totalActual += actual;
+                        
+                        const sActual = this.salaryStatus(row.emp.grille, row.emp.salaire_actuel);
+                        if (actualStatus.hasOwnProperty(sActual)) actualStatus[sActual]++;
+                        else actualStatus.none++;
+
+                        let proposed = actual;
+                        if (row.emp.revalorisation) {
+                            proposed = Number(row.emp.revalorisation.salaire_propose || 0);
+                        }
+                        totalProposed += proposed;
+
+                        const sProposed = this.salaryStatus(row.emp.grille, proposed);
+                        if (proposedStatus.hasOwnProperty(sProposed)) proposedStatus[sProposed]++;
+                        else proposedStatus.none++;
+                    }
+                }
+            }
+
+            const diff = totalProposed - totalActual;
+            const rate = totalActual > 0 ? (diff / totalActual) * 100 : 0;
+
+            return {
+                count,
+                totalActual,
+                totalProposed,
+                diff,
+                rate: Math.round(rate * 10) / 10,
+                actualStatus,
+                proposedStatus
+            };
+        },
+
+        async readJson(response) {
+            const contentType = response.headers.get('content-type') || '';
+            const data = contentType.includes('application/json') ? await response.json() : null;
+
+            if (!response.ok || !data || !data.success) {
+                throw new Error(data?.error || `Erreur HTTP ${response.status}`);
+            }
+
+            return data;
+        },
+
+        buildActionUrl(revalId, action) {
+            return this.urls.actionTemplate
+                .replace('00000000-0000-0000-0000-000000000000', revalId)
+                .replace('__ACTION__', action);
+        },
+
+        buildHistoryUrl(employeId) {
+            return this.urls.historyTemplate
+                .replace('00000000-0000-0000-0000-000000000000', employeId);
+        },
+
+        buildEvaluationDetailUrl(evaluationId) {
+            return this.urls.evaluationDetailTemplate
+                .replace('00000000-0000-0000-0000-000000000000', evaluationId);
+        },
+
+        buildEvaluationResultatsDetailUrl(evaluationId) {
+            return this.urls.evaluationResultatsDetailTemplate
+                .replace('00000000-0000-0000-0000-000000000000', evaluationId);
+        },
+
+        buildEvaluationPageUrl(evaluationId) {
+            return this.urls.evaluationPageTemplate
+                .replace('00000000-0000-0000-0000-000000000000', evaluationId);
+        },
+
+        evaluationStatusLabel(statut) {
+            const labels = {
+                brouillon: 'Brouillon',
+                terminee: 'Terminee',
+                validee: 'Validee'
+            };
+            return labels[statut] || statut || '-';
+        },
+
+        statusBadgeClass(statut) {
+            return {
+                'badge-ghost': !statut || statut === 'brouillon',
+                'badge-info': statut === 'terminee',
+                'badge-success': statut === 'validee'
+            };
+        },
+
+        evaluationResultatsStatusLabel(statut, statutDisplay = '') {
+            const labels = {
+                provisoire: 'Provisoire',
+                validee: 'Validee'
+            };
+            return labels[statut] || statutDisplay || statut || '-';
+        },
+
+        evaluationResultatsStatusBadgeClass(statut) {
+            return {
+                'badge-warning': statut === 'provisoire',
+                'badge-success': statut === 'validee',
+                'badge-ghost': !statut
+            };
+        },
+
+        detailBadgeClass(note) {
+            return {
+                'badge-success': Number(note) >= 2,
+                'badge-warning': Number(note) === 1,
+                'badge-error': Number(note) <= 0
+            };
+        },
+
+        resetEvaluationState() {
+            this.evaluationError = '';
+            this.evaluationSummary = null;
+            this.evaluationDetails = [];
+            this.evaluationStats = {
+                total: 0,
+                mastered: 0,
+                inProgress: 0,
+                notAcquired: 0
+            };
+            this.evaluationStrengths = [];
+            this.evaluationProgress = [];
+            this.evaluationWatchpoints = [];
+        },
+
+        resetEvaluationResultatsState() {
+            this.evaluationResultatsError = '';
+            this.evaluationResultatsSummary = null;
+            this.evaluationResultatsDetails = [];
+        },
+
+        applyEvaluationSummary(evaluation, details) {
+            const safeDetails = Array.isArray(details) ? details : [];
+            this.evaluationSummary = evaluation || null;
+            this.evaluationDetails = safeDetails;
+            this.evaluationStrengths = safeDetails.filter(detail => Number(detail.note) >= 2);
+            this.evaluationProgress = safeDetails.filter(detail => Number(detail.note) === 1);
+            this.evaluationWatchpoints = safeDetails.filter(detail => Number(detail.note) <= 0);
+            this.evaluationStats = {
+                total: safeDetails.length,
+                mastered: this.evaluationStrengths.length,
+                inProgress: this.evaluationProgress.length,
+                notAcquired: this.evaluationWatchpoints.length
+            };
+        },
+
+        applyEvaluationResultatsSummary(evaluation, details) {
+            this.evaluationResultatsSummary = evaluation || null;
+            this.evaluationResultatsDetails = Array.isArray(details) ? details : [];
+        },
+        
+        loadData() {
+            this.loading = true;
+            this.errorMessage = '';
+            console.log('[Revalo] Chargement des donn?es pour Année:', this.selectedYear);
+            const params = new URLSearchParams({
+                annee: this.selectedYear,
+            });
+            if (this.selectedOrganisationId) {
+                params.set('organisation_id', this.selectedOrganisationId);
+            }
+            fetch(`${this.urls.list}?${params.toString()}`)
+                .then(res => this.readJson(res))
+                .then(data => {
+                    console.log("[Revalo] Données reçues de l'API:", data);
+                    this.organisations = Array.isArray(data.organisations) ? data.organisations : [];
+                    this.selectedOrganisationId = data.selected_organisation_id || (this.organisations[0]?.id || '');
+                    this.$nextTick(() => this.syncOrganisationSelect());
+                    this.employes = Array.isArray(data.data) ? data.data : [];
+                    console.log("[Revalo] Nombre d'employes charges:", this.employes.length);
+                    this.syncSelectedPostes();
+                })
+                .catch(err => {
+                    this.employes = [];
+                    this.groupedEmployesData = [];
+                    this.selectedPosteIds = [];
+                    this.errorMessage = err.message || "Erreur de chargement des revalorisations";
+                    console.error("[Revalo] Erreur de chargement", err);
+                })
+                .finally(() => {
+                    this.loading = false;
+                });
+        },
+
+        openModalEmployee(emp) {
+            this.currentEmp = emp;
+            this.employeeFormData.date_embauche = emp.date_embauche || '';
+            this.employeeFormData.date_debauchage = emp.date_debauchage || '';
+            document.getElementById('modal_employee').showModal();
+        },
+
+        saveEmployeeData() {
+            if (!this.currentEmp) return;
+
+            this.savingEmployee = true;
+            this.errorMessage = '';
+
+            const payload = {
+                employe_id: this.currentEmp.employe_id,
+                date_embauche: this.employeeFormData.date_embauche || null,
+                date_debauchage: this.employeeFormData.date_debauchage || null
+            };
+
+            fetch(this.urls.updateEmployee, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCsrfToken()
+                },
+                body: JSON.stringify(payload)
+            })
+            .then(res => this.readJson(res))
+            .then(data => {
+                this.flashSuccess(data.message || "Donnees employe mises a jour.");
+                document.getElementById('modal_employee').close();
+                this.loadData();
+            })
+            .catch(err => {
+                this.errorMessage = err.message || "Erreur lors de la mise a jour des donnees employe";
+                alert(this.errorMessage);
+            })
+            .finally(() => {
+                this.savingEmployee = false;
+            });
+        },
+        
+        openModalEdit(emp) {
+            this.currentEmp = emp;
+            if (emp.revalorisation) {
+                this.formData.salaire_propose = emp.revalorisation.salaire_propose;
+                this.formData.justification = emp.revalorisation.justification;
+            } else {
+                this.formData.salaire_propose = emp.salaire_actuel;
+                this.formData.justification = '';
+            }
+            this.formData.commentaire = '';
+            document.getElementById('modal_edit').showModal();
+        },
+        
+        calculatePercentage() {
+            if (!this.currentEmp || !this.currentEmp.salaire_actuel) return 0;
+            const current = parseFloat(this.currentEmp.salaire_actuel);
+            const proposed = parseFloat(this.formData.salaire_propose || 0);
+            if (current <= 0) return 0;
+            return Math.round(((proposed - current) / current) * 100);
+        },
+        
+        saveRevalorisation() {
+            this.saving = true;
+            const payload = {
+                employe_id: this.currentEmp.employe_id,
+                annee: parseInt(this.selectedYear),
+                salaire_propose: parseFloat(this.formData.salaire_propose),
+                justification: this.formData.justification
+            };
+            
+            fetch(this.urls.save, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCsrfToken()
+                },
+                body: JSON.stringify(payload)
+            })
+            .then(res => this.readJson(res))
+            .then(() => {
+                this.loadData();
+                document.getElementById('modal_edit').close();
+            })
+            .catch(err => alert(err.message || "Erreur serveur"))
+            .finally(() => {
+                this.saving = false;
+            });
+        },
+        
+        changeStatus(action) {
+            if (!this.currentEmp || !this.currentEmp.revalorisation) return;
+            
+            // Si l'utilisateur clique sur un bouton de changement d'état (soumettre, etc) depuis le form
+            // on sauvegarde d'abord si c'est "soumettre" ou "appliquer".
+            
+            this.saving = true;
+            const payload = { commentaire: this.formData.commentaire };
+            
+            fetch(this.buildActionUrl(this.currentEmp.revalorisation.id, action), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCsrfToken()
+                },
+                body: JSON.stringify(payload)
+            })
+            .then(res => this.readJson(res))
+            .then(() => {
+                this.loadData();
+                document.getElementById('modal_edit').close();
+            })
+            .catch(err => alert(err.message || "Erreur serveur"))
+            .finally(() => {
+                this.saving = false;
+            });
+        },
+        
+        openModalHistory(emp) {
+            this.currentEmp = emp;
+            this.loadingHistory = true;
+            this.history = [];
+            document.getElementById('modal_history').showModal();
+            
+            fetch(this.buildHistoryUrl(emp.employe_id))
+                .then(res => this.readJson(res))
+                .then(data => {
+                    this.history = Array.isArray(data.data) ? data.data : [];
+                })
+                .catch(err => {
+                    this.history = [];
+                    this.errorMessage = err.message || "Erreur de chargement de l'historique";
+                })
+                .finally(() => {
+                    this.loadingHistory = false;
+                });
+        },
+        
+        openModalEvaluation(emp) {
+            this.currentEmp = emp;
+            this.resetEvaluationState();
+            this.loadingEvaluation = !!emp.evaluation;
+            document.getElementById('modal_eval').showModal();
+
+            if (!emp.evaluation) {
+                return;
+            }
+
+            fetch(this.buildEvaluationDetailUrl(emp.evaluation.id))
+                .then(res => this.readJson(res))
+                .then(data => {
+                    this.applyEvaluationSummary(data.evaluation, data.details);
+                })
+                .catch(err => {
+                    this.evaluationError = err.message || "Erreur de chargement de l'evaluation";
+                })
+                .finally(() => {
+                    this.loadingEvaluation = false;
+                });
+        },
+
+        openModalEvaluationResultats(emp) {
+            this.currentEmp = emp;
+            this.resetEvaluationResultatsState();
+            this.loadingEvaluationResultats = !!emp.evaluation_resultats;
+            document.getElementById('modal_eval_resultats').showModal();
+
+            if (!emp.evaluation_resultats) {
+                return;
+            }
+
+            fetch(this.buildEvaluationResultatsDetailUrl(emp.evaluation_resultats.id))
+                .then(res => this.readJson(res))
+                .then(data => {
+                    this.applyEvaluationResultatsSummary(data.evaluation, data.details);
+                })
+                .catch(err => {
+                    this.evaluationResultatsError = err.message || "Erreur de chargement de l'evaluation resultats";
+                })
+                .finally(() => {
+                    this.loadingEvaluationResultats = false;
+                });
+        },
+        
+        getCsrfToken() {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, 10) === ('csrftoken=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(10));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+    }));
+});
+</script>
+{% endblock %}
+

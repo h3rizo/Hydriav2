@@ -1,0 +1,433 @@
+﻿{% extends 'base.html' %}
+{% load static %}
+{% load employee_grouping %}
+
+{% block title %}Suivi des Congés{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- En-tête -->
+    <div class="mb-6 flex justify-between items-center">
+        <div>
+            <h1 class="text-3xl font-bold">Suivi des Congés et Permissions</h1>
+            <p class="text-base-content/70 mt-2">
+                Historique mensuel des soldes de congés et permissions par employé
+                {% if user_organisation %}
+                <span class="badge badge-primary ml-2">{{ user_organisation.nom_organisation }}</span>
+                {% endif %}
+            </p>
+        </div>
+        <a href="{% url 'employees:suivi_conges_matriciel' %}" class="btn btn-primary">
+            <i class="fas fa-calendar-alt mr-2"></i>Vue Matricielle
+        </a>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow-xl mb-6">
+        <div class="card-body">
+            <h2 class="card-title">Filtres</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- Employé -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Employé</span>
+                    </label>
+                    <select id="filterEmploye" class="select select-bordered">
+                        {% grouped_employee_options employes "" "Tous les employés" %}
+                    </select>
+                </div>
+
+                <!-- Année -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Année</span>
+                    </label>
+                    <input type="number" id="filterAnnee" class="input input-bordered" value="{{ annee_courante }}" min="2020" max="2030">
+                </div>
+
+                <!-- Boutons -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">&nbsp;</span>
+                    </label>
+                    <div class="flex gap-2">
+                        <button onclick="applyFilters()" class="btn btn-primary flex-1">
+                            <i class="fas fa-search mr-2"></i>
+                            Rechercher
+                        </button>
+                        <button onclick="resetFilters()" class="btn btn-outline">
+                            <i class="fas fa-redo"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Zone de chargement -->
+    <div id="loading" class="hidden text-center py-8">
+        <span class="loading loading-spinner loading-lg text-primary"></span>
+        <p class="mt-4 text-base-content/70">Chargement des données...</p>
+    </div>
+
+    <!-- Résultats groupés par employé -->
+    <div id="resultsContainer"></div>
+
+    <!-- Modal Paiement Congés Non Pris -->
+    <dialog id="paiementModal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg mb-4">Payer des Congés Non Pris (Exceptionnel)</h3>
+
+            <form id="paiementForm" onsubmit="handlePaiement(event)">
+                <input type="hidden" id="paiementEmployeId">
+
+                <div class="alert alert-warning mb-4">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <div>
+                        <div class="font-semibold">Opération exceptionnelle</div>
+                        <div class="text-sm">Le paiement de congés non pris est une exception. Les congés doivent normalement être pris.</div>
+                    </div>
+                </div>
+
+                <div class="form-control mb-4">
+                    <label class="label">
+                        <span class="label-text">Employé</span>
+                    </label>
+                    <input type="text" id="paiementEmployeNom" class="input input-bordered" readonly>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">Année</span>
+                        </label>
+                        <input type="number" id="paiementAnnee" class="input input-bordered" required min="2020" max="2030">
+                    </div>
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">Mois</span>
+                        </label>
+                        <select id="paiementMois" class="select select-bordered" required>
+                            <option value="1">Janvier</option>
+                            <option value="2">Février</option>
+                            <option value="3">Mars</option>
+                            <option value="4">Avril</option>
+                            <option value="5">Mai</option>
+                            <option value="6">Juin</option>
+                            <option value="7">Juillet</option>
+                            <option value="8">Aout</option>
+                            <option value="9">Septembre</option>
+                            <option value="10">Octobre</option>
+                            <option value="11">Novembre</option>
+                            <option value="12">Décembre</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-control mb-4">
+                    <label class="label">
+                        <span class="label-text">Nombre de jours Ã  payer <span class="text-error">*</span></span>
+                    </label>
+                    <input type="number" id="paiementNbJours" class="input input-bordered" required min="0.5" max="30" step="0.5">
+                    <label class="label">
+                        <span class="label-text-alt">Montant calculé selon: (Salaire net / 22) Ã— Nb jours</span>
+                    </label>
+                </div>
+
+                <div id="calculPreview" class="alert alert-info mb-4 hidden">
+                    <div>
+                        <div class="font-semibold">Estimation du montant:</div>
+                        <div id="montantEstime" class="text-lg">0 Ar</div>
+                    </div>
+                </div>
+
+                <div class="modal-action">
+                    <button type="button" class="btn" onclick="document.getElementById('paiementModal').close()">
+                        Annuler
+                    </button>
+                    <button type="submit" class="btn btn-success">
+                        <i class="fas fa-money-bill-wave mr-2"></i>
+                        Confirmer le paiement
+                    </button>
+                </div>
+            </form>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+</div>
+
+<script>
+let employes = [];
+let soldesData = [];
+const userIsDirecteur = {{ user_is_directeur|yesno:"true,false" }};
+
+function getInitialEmployeIdFromUrl() {
+    const params = new URLSearchParams(window.location.search || '');
+    return (params.get('employe_id') || params.get('employe') || '').trim();
+}
+
+function applyInitialEmployeFilterFromUrl() {
+    const employeId = getInitialEmployeIdFromUrl();
+    const select = document.getElementById('filterEmploye');
+    if (!employeId || !select) {
+        return;
+    }
+
+    const hasOption = Array.from(select.options).some((option) => option.value === employeId);
+    if (hasOption) {
+        select.value = employeId;
+    }
+}
+
+function loadEmployes() {
+    const select = document.getElementById('filterEmploye');
+    if (!select) {
+        return;
+    }
+    employes = Array.from(select.options)
+        .filter((option) => option.value)
+        .map((option) => ({
+            id: option.value,
+            nom: option.textContent.trim(),
+        }));
+}
+
+// Appliquer les filtres
+async function applyFilters() {
+    document.getElementById('loading').classList.remove('hidden');
+    document.getElementById('resultsContainer').innerHTML = '';
+
+    const params = new URLSearchParams();
+    const employeId = document.getElementById('filterEmploye').value;
+    const annee = document.getElementById('filterAnnee').value;
+
+    if (employeId) params.append('employe_id', employeId);
+    if (annee) params.append('annee', annee);
+
+    try {
+        const response = await fetch(`{% url "employees:api_suivi_conges" %}?${params}`);
+        const data = await response.json();
+
+        if (data.success) {
+            soldesData = data.employes;
+            displayResults();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors du chargement des données');
+    } finally {
+        document.getElementById('loading').classList.add('hidden');
+    }
+}
+
+// Afficher les résultats
+function displayResults() {
+    const container = document.getElementById('resultsContainer');
+
+    if (!soldesData || soldesData.length === 0) {
+        container.innerHTML = `
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body text-center text-base-content/50">
+                    Aucune donnée trouvée
+                </div>
+            </div>
+        `;
+        return;
+    }
+
+    // Afficher chaque employé
+    container.innerHTML = soldesData.map(emp => {
+        const historiqueReverse = [...emp.historique].reverse(); // Chronologique
+
+        return `
+            <div class="card bg-base-100 shadow-xl mb-6">
+                <div class="card-body">
+                    <div class="flex justify-between items-center mb-4">
+                        <div>
+                            <h2 class="card-title text-2xl">
+                                <i class="fas fa-user mr-2 text-primary"></i>
+                                ${emp.nom_complet}
+                            </h2>
+                            <p class="text-sm text-base-content/70">
+                                ${emp.poste_nom} â€¢ ${emp.base_nom} â€¢ ${emp.organisation_nom}
+                            </p>
+                        </div>
+                        <div class="flex gap-2 items-center">
+                            <div class="badge badge-lg badge-success">
+                                Congés disponibles: ${emp.conges_disponibles.toFixed(1)} j
+                            </div>
+                            <div class="badge badge-lg badge-info">
+                                Permissions: ${emp.permissions_disponibles} j
+                            </div>
+                            ${userIsDirecteur ? `
+                                <button onclick="openPaiementModal('${emp.employe_id}', '${emp.nom_complet}')" class="btn btn-sm btn-warning">
+                                    <i class="fas fa-money-bill-wave mr-2"></i>
+                                    Payer congés non pris
+                                </button>
+                            ` : ''}
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-5 gap-4 mb-4">
+                        <div class="stat bg-base-200 rounded-lg p-3">
+                            <div class="stat-title text-xs">Solde au 01/01</div>
+                            <div class="stat-value text-info text-lg">${emp.solde_conges_debut_annee.toFixed(1)}</div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-lg p-3">
+                            <div class="stat-title text-xs">Congés acquis</div>
+                            <div class="stat-value text-success text-lg">${emp.conges_acquis.toFixed(1)}</div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-lg p-3">
+                            <div class="stat-title text-xs">Congés pris</div>
+                            <div class="stat-value text-error text-lg">${emp.conges_pris}</div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-lg p-3">
+                            <div class="stat-title text-xs">Congés disponibles</div>
+                            <div class="stat-value text-primary text-lg">${emp.conges_disponibles.toFixed(1)}</div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-lg p-3">
+                            <div class="stat-title text-xs">Permissions prises</div>
+                            <div class="stat-value text-warning text-lg">${emp.permissions_prises}</div>
+                        </div>
+                    </div>
+
+                    ${emp.historique.length > 0 ? `
+                    <div class="overflow-x-auto">
+                        <h3 class="font-semibold mb-2">Historique mensuel</h3>
+                        <table class="table table-zebra table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Période</th>
+                                    <th>Solde début</th>
+                                    <th>Acquisition</th>
+                                    <th>Congés pris</th>
+                                    <th>Solde fin</th>
+                                    <th>Permissions prises</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${historiqueReverse.map(h => `
+                                    <tr>
+                                        <td class="font-semibold">${h.annee}-${String(h.mois).padStart(2, '0')}</td>
+                                        <td class="text-info">${h.solde_conges_debut_mois.toFixed(1)} j</td>
+                                        <td class="text-success">+${h.acquisition_conges} j</td>
+                                        <td class="text-error">${h.conges_pris > 0 ? h.conges_pris + ' j' : '-'}</td>
+                                        <td class="text-primary font-semibold">${h.solde_conges_fin_mois.toFixed(1)} j</td>
+                                        <td class="text-warning">${h.permissions_prises > 0 ? h.permissions_prises + ' j' : '-'}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                    ` : '<p class="text-base-content/50 text-center py-4">Aucun historique de congés</p>'}
+
+                    ${emp.conges_disponibles > 10 ? `
+                        <div class="alert alert-warning mt-4">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <div>
+                                <div class="font-semibold">Attention: Solde de congés élevé</div>
+                                <div class="text-sm">Le solde dépasse 10 jours. Maximum autorisé fin janvier.</div>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// Ouvrir modal paiement
+function openPaiementModal(employeId, employeNom) {
+    document.getElementById('paiementEmployeId').value = employeId;
+    document.getElementById('paiementEmployeNom').value = employeNom;
+
+    const now = new Date();
+    document.getElementById('paiementAnnee').value = now.getFullYear();
+    document.getElementById('paiementMois').value = now.getMonth() + 1;
+    document.getElementById('paiementNbJours').value = '';
+    document.getElementById('calculPreview').classList.add('hidden');
+
+    document.getElementById('paiementModal').showModal();
+}
+
+// Gérer le paiement
+async function handlePaiement(event) {
+    event.preventDefault();
+
+    const data = {
+        employe_id: document.getElementById('paiementEmployeId').value,
+        nb_jours: parseFloat(document.getElementById('paiementNbJours').value),
+        annee: parseInt(document.getElementById('paiementAnnee').value),
+        mois: parseInt(document.getElementById('paiementMois').value)
+    };
+
+    if (!confirm(`Confirmer le paiement de ${data.nb_jours} jour(s) de congé non pris ?\n\nCette action créera une ligne DiameX et déduira du solde de congés.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('{% url "employees:api_payer_conges_non_pris" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert(`âœ“ ${result.message}\n\nProrata journalier: ${formatMontant(result.prorata_journalier)} Ar`);
+            document.getElementById('paiementModal').close();
+            applyFilters(); // Recharger les données
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors du paiement');
+    }
+}
+
+// Réinitialiser les filtres
+function resetFilters() {
+    document.getElementById('filterEmploye').value = '';
+    document.getElementById('filterAnnee').value = {{ annee_courante }};
+    applyFilters();
+}
+
+// Formater un montant
+function formatMontant(montant) {
+    return parseFloat(montant).toLocaleString('fr-FR', {minimumFractionDigits: 0, maximumFractionDigits: 0});
+}
+
+// Helper pour CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Charger au démarrage
+document.addEventListener('DOMContentLoaded', async () => {
+    loadEmployes();
+    applyInitialEmployeFilterFromUrl();
+    applyFilters(); // Charger les données de l'année en cours
+});
+</script>
+{% endblock %}
+

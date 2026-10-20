@@ -1,0 +1,243 @@
+{% extends 'base.html' %}
+
+{% block title %}Jonctions du réseau routier - Hydria{% endblock %}
+
+{% block content %}
+<div class="mx-auto py-4 sm:py-6">
+    <div class="mb-4">
+        <h1 class="text-3xl font-bold"><i class="fas fa-code-branch mr-2 text-warning"></i>Jonctions manquantes</h1>
+        <p class="text-base-content/70 mt-1">
+            Endroits où deux routes sont proches sans être reliées (le trajet actuel entre les deux dépasse
+            <span id="ecart-txt">3 km</span>). Regarde la carte : si les routes se rejoignent vraiment, relie-les.
+            Une rivière ou une route qui passe en dessous d'une autre n'est <b>pas</b> une jonction : ignore-la.
+        </p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div class="card bg-base-100 shadow lg:col-span-1">
+            <div class="card-body p-4">
+                <div class="flex items-center justify-between">
+                    <h2 class="card-title text-lg">À contrôler <span id="badge-total" class="badge badge-warning">0</span></h2>
+                    <button class="btn btn-ghost btn-xs" onclick="chargerListe()" title="Recalculer"><i class="fas fa-sync"></i></button>
+                </div>
+                <label class="form-control w-full">
+                    <span class="label-text text-xs">Distance max entre les deux routes : <b id="rayon-val">250</b> m</span>
+                    <input id="rayon" type="range" min="25" max="500" step="25" value="250" class="range range-xs"
+                           oninput="document.getElementById('rayon-val').textContent = this.value"
+                           onchange="chargerListe()">
+                </label>
+                <p id="progression" class="text-xs text-base-content/60"></p>
+                <div id="liste-loading" class="flex items-center gap-2 text-sm">
+                    <span class="loading loading-spinner loading-sm"></span> Analyse du réseau (une quinzaine de secondes)...
+                </div>
+                <div id="liste" class="flex flex-col gap-2 overflow-y-auto" style="max-height: 55vh;"></div>
+            </div>
+        </div>
+
+        <div id="carte-card" class="card bg-base-100 shadow lg:col-span-2 scroll-mt-16">
+            <div class="card-body p-4">
+                <div id="panneau-action" class="hidden mb-2 sticky top-14 z-[1100] -mx-1 px-1 py-2 bg-base-100/95 backdrop-blur rounded-lg">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span id="titre-selection" class="font-semibold"></span>
+                        <div class="ml-auto flex flex-wrap gap-2">
+                            <button class="btn btn-ghost btn-sm" onclick="ignorer()"><i class="fas fa-ban mr-1"></i>Ignorer</button>
+                            <button id="btn-relier" class="btn btn-success btn-sm" onclick="relier()"><i class="fas fa-link mr-1"></i>Relier ces deux routes</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="relative">
+                    <div id="carte" class="rounded-lg" style="height: 66vh; min-height: 420px;"></div>
+                    <div id="carte-loading" class="hidden absolute inset-0 z-[1000] flex items-center justify-center rounded-lg bg-base-100/60">
+                        <span class="loading loading-spinner loading-lg"></span>
+                    </div>
+                    <div id="carte-vide" class="absolute inset-0 z-[500] flex items-center justify-center pointer-events-none">
+                        <p id="carte-vide-txt" class="rounded-lg bg-base-100/85 px-4 py-2 text-sm text-center">Choisis un cas dans la liste</p>
+                    </div>
+                </div>
+                <div class="flex flex-wrap gap-4 text-xs mt-2">
+                    <span><span style="color:#2563eb">&#9644;</span> Réseau existant</span>
+                    <span><span style="color:#dc2626">&#9679;</span> Bout de route à relier</span>
+                    <span><span style="color:#f59e0b">&#9644;</span> Jonction proposée</span>
+                    <span class="ml-auto hidden lg:inline text-base-content/60">
+                        <kbd class="kbd kbd-xs">&uarr;</kbd> <kbd class="kbd kbd-xs">&darr;</kbd> naviguer ·
+                        <kbd class="kbd kbd-xs">Entrée</kbd> relier · <kbd class="kbd kbd-xs">S</kbd> ignorer
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="toast" class="toast toast-end hidden z-50"><div id="toast-msg" class="alert alert-success"></div></div>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const URL_LISTE = "{% url 'geography:api_jonctions_liste' %}";
+const URL_CONTEXTE = "{% url 'geography:api_jonctions_contexte' %}";
+const URL_RELIER = "{% url 'geography:api_jonction_relier' %}";
+
+let carte, couche;
+let jonctions = [], ignorees = new Set(), courante = null, nbReliees = 0;
+const cle = j => j.noeud_id + '|' + j.troncon_id;
+const ll = p => [p[1], p[0]];
+
+function getCookie(name) {
+    const v = document.cookie.split('; ').find(r => r.startsWith(name + '='));
+    return v ? decodeURIComponent(v.split('=')[1]) : null;
+}
+function toast(msg, ok = true) {
+    const box = document.getElementById('toast'), m = document.getElementById('toast-msg');
+    m.className = 'alert ' + (ok ? 'alert-success' : 'alert-error');
+    m.textContent = msg;
+    box.classList.remove('hidden');
+    setTimeout(() => box.classList.add('hidden'), 3500);
+}
+
+function initCarte() {
+    carte = L.map('carte').setView([-18.9, 47.5], 6);
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' });
+    const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        { maxZoom: 21, maxNativeZoom: 17, attribution: 'Imagery &copy; Esri' });
+    sat.addTo(carte);
+    L.control.layers({ 'Satellite': sat, 'Plan': osm }).addTo(carte);
+    couche = L.layerGroup().addTo(carte);
+}
+
+async function chargerListe() {
+    document.getElementById('liste-loading').classList.remove('hidden');
+    document.getElementById('liste').replaceChildren();
+    const rayon = document.getElementById('rayon').value;
+    try {
+        const r = await fetch(URL_LISTE + '?rayon_m=' + encodeURIComponent(rayon));
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Erreur');
+        jonctions = d.jonctions;
+        afficherListe();
+    } catch (e) {
+        toast('Chargement impossible : ' + e.message, false);
+    } finally {
+        document.getElementById('liste-loading').classList.add('hidden');
+    }
+}
+
+function afficherListe() {
+    const box = document.getElementById('liste');
+    box.replaceChildren();
+    const visibles = jonctions.filter(j => !ignorees.has(cle(j)));
+    document.getElementById('badge-total').textContent = visibles.length;
+    document.getElementById('progression').textContent =
+        nbReliees + ' relié' + (nbReliees > 1 ? 's' : '') + ' · ' + ignorees.size + ' ignoré' + (ignorees.size > 1 ? 's' : '');
+    if (!visibles.length) {
+        const p = document.createElement('p');
+        p.className = 'text-sm text-success';
+        p.textContent = 'Aucune jonction à contrôler à cette distance.';
+        box.appendChild(p);
+        return;
+    }
+    visibles.forEach((j, i) => {
+        const el = document.createElement('button');
+        const actif = !!courante && cle(courante) === cle(j);
+        el.className = 'text-left border rounded-lg p-2 hover:bg-base-200 text-sm ' + (actif ? 'bg-base-200 border-primary ring-1 ring-primary' : 'border-base-300');
+        el.textContent = '#' + (i + 1) + ' · ' + j.distance_m + ' m entre les deux routes';
+        el.onclick = () => selectionner(j);
+        if (actif) el.dataset.actif = '1';
+        box.appendChild(el);
+    });
+    const actifEl = box.querySelector('[data-actif]');
+    if (actifEl) actifEl.scrollIntoView({ block: 'nearest' });
+}
+
+function listeVisible() { return jonctions.filter(j => !ignorees.has(cle(j))); }
+
+function naviguer(delta) {
+    const liste = listeVisible();
+    if (!liste.length) return;
+    const i = courante ? liste.findIndex(j => cle(j) === cle(courante)) : -1;
+    selectionner(liste[Math.max(0, Math.min(liste.length - 1, i + delta))]);
+}
+
+async function selectionner(j) {
+    courante = j;
+    afficherListe();
+    couche.clearLayers();
+    document.getElementById('carte-vide').classList.add('hidden');
+    document.getElementById('carte-loading').classList.remove('hidden');
+    document.getElementById('panneau-action').classList.remove('hidden');
+    if (window.innerWidth < 1024) document.getElementById('carte-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('titre-selection').textContent = j.distance_m + ' m entre les deux routes';
+    const milieu = [(j.from[0] + j.to[0]) / 2, (j.from[1] + j.to[1]) / 2];
+    carte.setView(ll(milieu), 18);
+    try {
+        const r = await fetch(URL_CONTEXTE + '?lon=' + milieu[0] + '&lat=' + milieu[1]);
+        const d = await r.json();
+        if (!courante || cle(courante) !== cle(j)) return;
+        if (d.success) L.geoJSON(d.troncons, { style: { color: '#2563eb', weight: 3, opacity: 0.85 } }).addTo(couche);
+    } catch (e) { /* le contexte est facultatif */ }
+    finally { document.getElementById('carte-loading').classList.add('hidden'); }
+    L.polyline([ll(j.from), ll(j.to)], { color: '#f59e0b', weight: 4, dashArray: '6 4' }).addTo(couche);
+    L.circleMarker(ll(j.from), { radius: 7, color: '#fff', weight: 2, fillColor: '#dc2626', fillOpacity: 1 }).addTo(couche);
+    L.circleMarker(ll(j.to), { radius: 5, color: '#fff', weight: 2, fillColor: '#f59e0b', fillOpacity: 1 }).addTo(couche);
+}
+
+function viderCarte(message) {
+    courante = null;
+    couche.clearLayers();
+    document.getElementById('panneau-action').classList.add('hidden');
+    document.getElementById('carte-vide-txt').textContent = message;
+    document.getElementById('carte-vide').classList.remove('hidden');
+}
+
+/** Passe au cas suivant (ou vide la carte s'il n'y en a plus). `rang` : position de celui qu'on vient de traiter. */
+function avancer(rang) {
+    const liste = listeVisible();
+    if (liste.length) selectionner(liste[Math.min(rang, liste.length - 1)]);
+    else { viderCarte('Tous les cas sont traités.'); afficherListe(); }
+}
+
+function ignorer() {
+    if (!courante) return;
+    const rang = listeVisible().findIndex(j => cle(j) === cle(courante));
+    ignorees.add(cle(courante));
+    avancer(Math.max(0, rang));
+}
+
+async function relier() {
+    if (!courante) return;
+    const btn = document.getElementById('btn-relier');
+    btn.disabled = true;
+    try {
+        const r = await fetch(URL_RELIER, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify({ noeud_id: courante.noeud_id, troncon_id: courante.troncon_id, fraction: courante.fraction })
+        });
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Erreur');
+        toast('Jonction créée.');
+        nbReliees++;
+        // Les routes ont changé : on retire ce cas et ceux qui visaient la même route (leur point de découpe est périmé).
+        const rang = Math.max(0, listeVisible().findIndex(j => cle(j) === cle(courante)));
+        const tid = courante.troncon_id;
+        jonctions = jonctions.filter(j => j.troncon_id !== tid);
+        avancer(rang);
+    } catch (e) {
+        toast(e.message, false);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+document.addEventListener('keydown', e => {
+    const cible = e.target instanceof Element ? e.target : null;
+    if ((cible && cible.closest('input, textarea, select')) || e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (k === 'arrowdown' || k === 'j') { e.preventDefault(); naviguer(1); }
+    else if (k === 'arrowup' || k === 'k') { e.preventDefault(); naviguer(-1); }
+    else if (k === 'enter' && courante) { e.preventDefault(); relier(); }
+    else if (k === 's' && courante) { ignorer(); }
+});
+
+document.addEventListener('DOMContentLoaded', () => { initCarte(); chargerListe(); });
+</script>
+{% endblock %}

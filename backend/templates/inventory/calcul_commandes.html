@@ -1,0 +1,974 @@
+{% extends logistics_shell_base_template|default:"base.html" %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">{{ title }}</h1>
+            <p class="text-sm text-base-content/70">
+                Choisissez la methode a appliquer au calcul. Les colonnes bons et historique
+                restent visibles pour comparer les deux approches avant generation de la demande.
+            </p>
+        </div>
+        <div class="flex items-center gap-2">
+            <a href="{% url 'inventory:demande_devis_list' %}" class="btn btn-outline btn-sm">
+                <i class="fas fa-list mr-2"></i>Voir mes demandes
+            </a>
+            <a href="{% url 'inventory:purchases' %}" class="btn btn-ghost btn-sm">
+                <i class="fas fa-arrow-left mr-2"></i>Retour aux achats
+            </a>
+        </div>
+    </div>
+
+    <div class="alert alert-info">
+        <i class="fas fa-info-circle"></i>
+        <div>
+            <p class="font-semibold">Workflow de commande</p>
+            <p class="text-sm">
+                1. Selectionnez une base. 2. Choisissez une periode et une methode.
+                3. Comparez les besoins proposes. 4. Ajustez si necessaire. 5. Generez la demande de devis.
+            </p>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <h2 class="card-title"><i class="fas fa-calculator mr-2"></i>Calcul des quantites</h2>
+
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Base *</span></label>
+                    <select id="base_id" class="select select-bordered" required>
+                        <option value="">Selectionner une base...</option>
+                        {% for base in bases %}
+                        <option value="{{ base.id }}">{{ base.nom_base }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Periode d'analyse (jours)</span></label>
+                    <input type="number" id="nb_jours" class="input input-bordered" value="30" min="1" max="365">
+                    <label class="label">
+                        <span class="label-text-alt">Exemple: 180 pour environ 6 mois.</span>
+                    </label>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mode de calcul applique</span></label>
+                    <select id="mode_calcul" class="select select-bordered">
+                        <option value="auto">Auto: priorite bons, secours historique</option>
+                        <option value="bons_livraison">Bons de livraison uniquement</option>
+                        <option value="historique_stock_achats">Historique stock + achats uniquement</option>
+                    </select>
+                    <label class="label">
+                        <span class="label-text-alt">Les deux colonnes restent visibles pour la comparaison.</span>
+                    </label>
+                </div>
+
+                <div class="form-control flex flex-col justify-end">
+                    <button onclick="calculerQuantites()" class="btn btn-primary">
+                        <i class="fas fa-calculator mr-2"></i>Calculer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="draftBanner" class="alert alert-warning hidden">
+        <i class="fas fa-pause-circle"></i>
+        <div class="flex-1">
+            <p class="font-semibold">Brouillon local disponible</p>
+            <p class="text-sm" id="draftBannerMessage">
+                Reprenez votre revision sans relancer le calcul.
+            </p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <button type="button" onclick="restoreDraft()" class="btn btn-warning btn-sm">
+                <i class="fas fa-play mr-2"></i>Reprendre
+            </button>
+            <button type="button" onclick="clearDraft()" class="btn btn-ghost btn-sm">
+                <i class="fas fa-trash mr-2"></i>Effacer
+            </button>
+        </div>
+    </div>
+
+    <div id="resultsSection" class="hidden space-y-4">
+        <div class="stats stats-vertical shadow w-full lg:stats-horizontal">
+            <div class="stat">
+                <div class="stat-figure text-info"><i class="fas fa-scale-balanced text-3xl"></i></div>
+                <div class="stat-title">Articles compares</div>
+                <div class="stat-value text-info" id="stat-total">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-figure text-primary"><i class="fas fa-filter text-3xl"></i></div>
+                <div class="stat-title">Articles retenus</div>
+                <div class="stat-value text-primary" id="stat-retenus">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-figure text-warning"><i class="fas fa-shopping-cart text-3xl"></i></div>
+                <div class="stat-title">A commander</div>
+                <div class="stat-value text-warning" id="stat-commander">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-figure text-success"><i class="fas fa-warehouse text-3xl"></i></div>
+                <div class="stat-title">Avec stock</div>
+                <div class="stat-value text-success" id="stat-stock">0</div>
+            </div>
+        </div>
+
+        <div class="alert">
+            <i class="fas fa-calendar"></i>
+            <div class="space-y-1 text-sm">
+                <div>
+                    <strong id="info-base"></strong> -
+                    Periode: <strong id="info-periode"></strong>
+                    (depuis <strong id="info-date-debut"></strong>)
+                </div>
+                <div>
+                    Mode applique: <strong id="info-mode-calcul"></strong>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <span class="badge badge-primary badge-outline" id="info-total-retenus">0 article retenu</span>
+                    <span class="badge badge-info badge-outline" id="info-total-bons">0 article via bons</span>
+                    <span class="badge badge-secondary badge-outline" id="info-total-historique">0 article via historique</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-4">
+                    <div class="form-control md:col-span-2">
+                        <label class="label"><span class="label-text">Filtrer par designation</span></label>
+                        <input
+                            type="text"
+                            id="designationFilter"
+                            class="input input-bordered"
+                            placeholder="Rechercher un article..."
+                            oninput="applyTableFilters()"
+                        >
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Filtre rapide</span></label>
+                        <select id="statutFilter" class="select select-bordered" onchange="applyTableFilters()">
+                            <option value="all">Tous les articles</option>
+                            <option value="a_commander">A commander</option>
+                            <option value="selectionnes">Selectionnes</option>
+                            <option value="avec_stock">Avec stock</option>
+                            <option value="sans_mouvement">Sans mouvement</option>
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Tri</span></label>
+                        <select id="sortOrder" class="select select-bordered" onchange="applyTableFilters()">
+                            <option value="designation_asc">Designation A a Z</option>
+                            <option value="designation_desc">Designation Z a A</option>
+                            <option value="quantite_desc">A commander decroissant</option>
+                            <option value="quantite_asc">A commander croissant</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="mt-3 text-sm text-base-content/70">
+                    <span id="displayedCount">0 article affiche</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bg-base-100 shadow">
+            <div class="card-body p-0">
+                <div class="overflow-x-auto">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>
+                                    <input type="checkbox" id="selectAll" onchange="toggleSelectAll()" class="checkbox checkbox-sm">
+                                </th>
+                                <th>Designation</th>
+                                <th>Besoin retenu</th>
+                                <th>Bons attente</th>
+                                <th>Stock precedent</th>
+                                <th>Achats effectues</th>
+                                <th>Estimation historique</th>
+                                <th>Stock actuel</th>
+                                <th>A commander</th>
+                                <th>Quantite finale</th>
+                                <th>Nb lignes BL</th>
+                            </tr>
+                        </thead>
+                        <tbody id="quantitesTable">
+                            <tr>
+                                <td colspan="11" class="py-8 text-center">
+                                    Cliquez sur "Calculer" pour afficher les resultats.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div id="draftFooterStatus" class="text-xs text-base-content/60">
+                Aucun brouillon local.
+            </div>
+            <div class="flex flex-wrap justify-end gap-2">
+                <button type="button" onclick="saveDraft()" class="btn btn-outline btn-sm">
+                    <i class="fas fa-save mr-2"></i>Enregistrer brouillon
+                </button>
+                <button type="button" onclick="clearDraft()" class="btn btn-ghost btn-sm">
+                    <i class="fas fa-trash mr-2"></i>Effacer brouillon
+                </button>
+                <button onclick="exporterExcel()" class="btn btn-success btn-sm">
+                    <i class="fas fa-file-excel mr-2"></i>Exporter Excel
+                </button>
+                <button onclick="genererDemandeDevis()" class="btn btn-primary">
+                    <i class="fas fa-file-invoice mr-2"></i>Generer Demande de Devis
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentResults = [];
+let currentMode = 'auto';
+let currentContext = null;
+
+const COMMANDES_DRAFT_KEY = 'stocks-commandes-draft-{{ request.user.id|default:"anonymous" }}';
+
+const MODE_LABELS = {
+    auto: 'Auto: priorite bons, secours historique',
+    bons_livraison: 'Bons de livraison uniquement',
+    historique_stock_achats: 'Historique stock + achats uniquement',
+};
+
+function formatQuantity(value) {
+    const number = Number(value || 0);
+    return new Intl.NumberFormat('fr-FR', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+    }).format(number);
+}
+
+function escapeHtml(value) {
+    return String(value || '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+function normalizeText(value) {
+    return String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+}
+
+function getSelectedMode() {
+    return document.getElementById('mode_calcul')?.value || 'auto';
+}
+
+function getSelectedBaseLabel() {
+    const select = document.getElementById('base_id');
+    if (!select) {
+        return '';
+    }
+
+    const option = select.options[select.selectedIndex];
+    return option ? option.text : '';
+}
+
+function formatDraftTimestamp(value) {
+    if (!value) {
+        return '';
+    }
+
+    try {
+        return new Intl.DateTimeFormat('fr-FR', {
+            dateStyle: 'short',
+            timeStyle: 'short',
+        }).format(new Date(value));
+    } catch (error) {
+        return value;
+    }
+}
+
+function readDraft() {
+    try {
+        const rawDraft = localStorage.getItem(COMMANDES_DRAFT_KEY);
+        if (!rawDraft) {
+            return null;
+        }
+
+        const parsedDraft = JSON.parse(rawDraft);
+        if (!parsedDraft || !Array.isArray(parsedDraft.currentResults)) {
+            return null;
+        }
+
+        return parsedDraft;
+    } catch (error) {
+        console.warn('Impossible de lire le brouillon local', error);
+        return null;
+    }
+}
+
+function updateDraftUi() {
+    const draft = readDraft();
+    const banner = document.getElementById('draftBanner');
+    const bannerMessage = document.getElementById('draftBannerMessage');
+    const footerStatus = document.getElementById('draftFooterStatus');
+
+    if (!banner || !bannerMessage || !footerStatus) {
+        return;
+    }
+
+    if (!draft) {
+        banner.classList.add('hidden');
+        footerStatus.textContent = currentResults.length
+            ? 'Brouillon local non enregistre.'
+            : 'Aucun brouillon local.';
+        return;
+    }
+
+    const savedAt = formatDraftTimestamp(draft.saved_at);
+    const baseLabel = draft.form?.base_label || draft.currentContext?.base_nom || 'Base inconnue';
+    const articleCount = Array.isArray(draft.currentResults) ? draft.currentResults.length : 0;
+
+    bannerMessage.textContent = `${baseLabel} - ${articleCount} article(s) - enregistre le ${savedAt}`;
+    banner.classList.remove('hidden');
+    footerStatus.textContent = `Brouillon local enregistre le ${savedAt}.`;
+}
+
+function getDraftPayload() {
+    if (!currentResults.length || !currentContext) {
+        return null;
+    }
+
+    return {
+        version: 1,
+        saved_at: new Date().toISOString(),
+        form: {
+            base_id: document.getElementById('base_id')?.value || '',
+            base_label: getSelectedBaseLabel(),
+            nb_jours: document.getElementById('nb_jours')?.value || '30',
+            mode_calcul: getSelectedMode(),
+        },
+        filters: {
+            designationFilter: document.getElementById('designationFilter')?.value || '',
+            statutFilter: document.getElementById('statutFilter')?.value || 'all',
+            sortOrder: document.getElementById('sortOrder')?.value || 'designation_asc',
+        },
+        currentMode: currentMode,
+        currentContext: currentContext,
+        currentResults: currentResults,
+    };
+}
+
+function saveDraft(options = {}) {
+    const silent = Boolean(options.silent);
+    const payload = getDraftPayload();
+
+    if (!payload) {
+        if (!silent) {
+            alert('Aucun tableau a enregistrer pour le moment.');
+        }
+        updateDraftUi();
+        return false;
+    }
+
+    try {
+        localStorage.setItem(COMMANDES_DRAFT_KEY, JSON.stringify(payload));
+        updateDraftUi();
+        return true;
+    } catch (error) {
+        console.error('Impossible d enregistrer le brouillon local', error);
+        if (!silent) {
+            alert('Le brouillon local n a pas pu etre enregistre.');
+        }
+        return false;
+    }
+}
+
+function clearDraft(options = {}) {
+    const silent = Boolean(options.silent);
+
+    try {
+        localStorage.removeItem(COMMANDES_DRAFT_KEY);
+    } catch (error) {
+        console.error('Impossible d effacer le brouillon local', error);
+    }
+
+    updateDraftUi();
+
+    if (!silent && currentResults.length) {
+        document.getElementById('draftFooterStatus').textContent = 'Brouillon local efface.';
+    }
+}
+
+function restoreDraft() {
+    const draft = readDraft();
+
+    if (!draft) {
+        alert('Aucun brouillon local disponible.');
+        updateDraftUi();
+        return;
+    }
+
+    document.getElementById('base_id').value = draft.form?.base_id || '';
+    document.getElementById('nb_jours').value = draft.form?.nb_jours || '30';
+    document.getElementById('mode_calcul').value = draft.form?.mode_calcul || 'auto';
+
+    currentMode = draft.currentMode || draft.form?.mode_calcul || 'auto';
+    currentResults = Array.isArray(draft.currentResults) ? draft.currentResults : [];
+
+    const fallbackContext = {
+        base_nom: draft.form?.base_label || '',
+        periode: `${draft.form?.nb_jours || '30'} derniers jours`,
+        date_debut: '',
+        mode_calcul_label: MODE_LABELS[currentMode] || currentMode,
+        total_articles_retenus: currentResults.filter((item) => Number(item.quantite_demandee || 0) > 0).length,
+        total_articles_bons: 0,
+        total_articles_historique: 0,
+    };
+
+    currentContext = draft.currentContext || fallbackContext;
+
+    afficherResultats({
+        ...currentContext,
+        resultats: currentResults,
+        total_articles_retenus: currentContext.total_articles_retenus || 0,
+        total_articles_bons: currentContext.total_articles_bons || 0,
+        total_articles_historique: currentContext.total_articles_historique || 0,
+    });
+
+    document.getElementById('designationFilter').value = draft.filters?.designationFilter || '';
+    document.getElementById('statutFilter').value = draft.filters?.statutFilter || 'all';
+    document.getElementById('sortOrder').value = draft.filters?.sortOrder || 'designation_asc';
+    renderResultsTable();
+    saveDraft({silent: true});
+    updateDraftUi();
+}
+
+function methodeBadge(item) {
+    const quantiteRetenue = Number(item.quantite_demandee || 0);
+
+    if (item.methode_calcul === 'catalogue_manuel') {
+        return '<span class="badge badge-warning badge-sm">Sans mouvement</span>';
+    }
+
+    if (currentMode === 'auto') {
+        if (item.methode_calcul === 'historique_stock_achats') {
+            return '<span class="badge badge-secondary badge-sm">Auto > Historique</span>';
+        }
+        return '<span class="badge badge-info badge-sm">Auto > Bons</span>';
+    }
+
+    if (quantiteRetenue <= 0) {
+        return '<span class="badge badge-ghost badge-sm">Non retenu par ce mode</span>';
+    }
+
+    if (currentMode === 'historique_stock_achats') {
+        return '<span class="badge badge-secondary badge-sm">Historique applique</span>';
+    }
+
+    return '<span class="badge badge-info badge-sm">Bons appliques</span>';
+}
+
+function historiqueFormulaHtml(details) {
+    if (!details.date_stock_precedent) {
+        return '';
+    }
+
+    return `
+        <div class="text-xs text-base-content/60">
+            Stock precedent ${escapeHtml(details.date_stock_precedent)}: ${formatQuantity(details.stock_precedent)}
+            + achats: ${formatQuantity(details.achats_periode)}
+            - stock dernier ${escapeHtml(details.date_stock_dernier)}: ${formatQuantity(details.stock_dernier)}
+        </div>
+    `;
+}
+
+function stockPrecedentCellHtml(item) {
+    const details = item.historique_details || {};
+    if (!details.date_stock_precedent) {
+        return '<span class="text-base-content/40">-</span>';
+    }
+
+    return `
+        <div class="font-medium">${formatQuantity(details.stock_precedent)}</div>
+        <div class="text-xs text-base-content/50">${escapeHtml(details.date_stock_precedent)}</div>
+    `;
+}
+
+function achatsEffectuesCellHtml(item) {
+    const details = item.historique_details || {};
+    if (!details.date_stock_precedent) {
+        return '<span class="text-base-content/40">-</span>';
+    }
+
+    return `<span class="font-medium">${formatQuantity(details.achats_periode)}</span>`;
+}
+
+function detailLigneHtml(item) {
+    const details = item.historique_details || {};
+    const quantiteRetenue = Number(item.quantite_demandee || 0);
+    const quantiteBons = Number(item.quantite_demandee_bons || 0);
+    const quantiteHistorique = Number(item.quantite_estimee_historique || 0);
+    const formuleHistorique = historiqueFormulaHtml(details);
+    const seuilMinimum = Number(item.seuil_minimum || 0);
+
+    if (item.methode_calcul === 'catalogue_manuel') {
+        if (seuilMinimum > 0) {
+            return `
+                <div class="text-xs text-base-content/50">
+                    Aucun mouvement exploitable detecte sur la periode.
+                    Article affiche pour saisie manuelle. Seuil minimum parametre: ${formatQuantity(seuilMinimum)}.
+                </div>
+            `;
+        }
+
+        return `
+            <div class="text-xs text-base-content/50">
+                Aucun mouvement exploitable detecte sur la periode.
+                Article affiche quand meme pour saisie manuelle.
+            </div>
+        `;
+    }
+
+    if (currentMode === 'auto') {
+        if (item.methode_calcul === 'bons_livraison') {
+            return `
+                <div class="text-xs text-base-content/50">Auto retient la valeur issue des bons de livraison.</div>
+                ${formuleHistorique}
+            `;
+        }
+
+        return `
+            <div class="text-xs text-base-content/50">Auto bascule sur l'historique faute de bons exploitables.</div>
+            ${formuleHistorique || '<div class="text-xs text-base-content/50">Aucun detail historique disponible.</div>'}
+        `;
+    }
+
+    if (currentMode === 'bons_livraison') {
+        if (quantiteRetenue > 0) {
+            return `
+                <div class="text-xs text-base-content/50">Mode bons applique. Comparez avec la colonne historique.</div>
+                ${formuleHistorique}
+            `;
+        }
+
+        if (quantiteHistorique > 0) {
+            return `
+                <div class="text-xs text-base-content/50">
+                    Aucun bon exploitable sur la periode. L'historique suggere ${formatQuantity(quantiteHistorique)}.
+                </div>
+                ${formuleHistorique}
+            `;
+        }
+
+        return '<div class="text-xs text-base-content/50">Aucun bon exploitable sur la periode.</div>';
+    }
+
+    if (quantiteRetenue > 0) {
+        return formuleHistorique || '<div class="text-xs text-base-content/50">Historique applique sans detail supplementaire.</div>';
+    }
+
+    if (quantiteBons > 0) {
+        return `
+            <div class="text-xs text-base-content/50">
+                Aucun historique exploitable sur la periode. Les bons suggerent ${formatQuantity(quantiteBons)}.
+            </div>
+        `;
+    }
+
+    return '<div class="text-xs text-base-content/50">Aucun historique exploitable sur la periode.</div>';
+}
+
+async function calculerQuantites() {
+    const baseId = document.getElementById('base_id').value;
+    const nbJours = document.getElementById('nb_jours').value;
+    const modeCalcul = getSelectedMode();
+
+    if (!baseId) {
+        alert('Veuillez selectionner une base');
+        return;
+    }
+
+    try {
+        const response = await fetch('/stocks/commandes/api/calculer/', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                base_id: baseId,
+                nb_jours: nbJours,
+                mode_calcul: modeCalcul
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            currentMode = data.mode_calcul || modeCalcul;
+            currentResults = (data.resultats || []).map((item, index) => {
+                const quantiteACommander = Number(item.quantite_a_commander || 0);
+                return {
+                    ...item,
+                    row_id: item.designation_id || `row-${index}`,
+                    selected: quantiteACommander > 0,
+                    quantite_finale: quantiteACommander,
+                };
+            });
+            afficherResultats(data);
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        alert('Erreur: ' + error.message);
+    }
+}
+
+function afficherResultats(data) {
+    document.getElementById('resultsSection').classList.remove('hidden');
+
+    const resultats = data.resultats || [];
+    const articlesRetenus = Number(data.total_articles_retenus || 0);
+    const aCommander = resultats.filter((row) => Number(row.quantite_a_commander || 0) > 0).length;
+    const enStock = resultats.filter((row) => Number(row.stock_actuel || 0) > 0).length;
+
+    document.getElementById('stat-total').textContent = resultats.length;
+    document.getElementById('stat-retenus').textContent = articlesRetenus;
+    document.getElementById('stat-commander').textContent = aCommander;
+    document.getElementById('stat-stock').textContent = enStock;
+
+    document.getElementById('info-base').textContent = data.base_nom || '';
+    document.getElementById('info-periode').textContent = data.periode || '';
+    document.getElementById('info-date-debut').textContent = data.date_debut || '';
+    document.getElementById('info-mode-calcul').textContent = data.mode_calcul_label || MODE_LABELS[currentMode];
+    document.getElementById('info-total-retenus').textContent = `${articlesRetenus} article(s) retenu(s) dans ce mode`;
+    document.getElementById('info-total-bons').textContent = `${data.total_articles_bons || 0} article(s) avec valeur via bons`;
+    document.getElementById('info-total-historique').textContent = `${data.total_articles_historique || 0} article(s) avec valeur via historique`;
+
+    currentContext = {
+        base_nom: data.base_nom || getSelectedBaseLabel(),
+        periode: data.periode || '',
+        date_debut: data.date_debut || '',
+        mode_calcul_label: data.mode_calcul_label || MODE_LABELS[currentMode],
+        total_articles_retenus: articlesRetenus,
+        total_articles_bons: Number(data.total_articles_bons || 0),
+        total_articles_historique: Number(data.total_articles_historique || 0),
+    };
+
+    document.getElementById('designationFilter').value = '';
+    document.getElementById('statutFilter').value = 'all';
+    document.getElementById('sortOrder').value = 'designation_asc';
+
+    renderResultsTable();
+    saveDraft({silent: true});
+}
+
+function getFilteredResults() {
+    const designationFilter = normalizeText(document.getElementById('designationFilter')?.value);
+    const statutFilter = document.getElementById('statutFilter')?.value || 'all';
+    const sortOrder = document.getElementById('sortOrder')?.value || 'designation_asc';
+
+    const filtered = currentResults.filter((item) => {
+        const matchesDesignation = !designationFilter || normalizeText(item.designation_nom).includes(designationFilter);
+
+        if (!matchesDesignation) {
+            return false;
+        }
+
+        if (statutFilter === 'a_commander') {
+            return Number(item.quantite_a_commander || 0) > 0;
+        }
+        if (statutFilter === 'selectionnes') {
+            return Boolean(item.selected);
+        }
+        if (statutFilter === 'avec_stock') {
+            return Number(item.stock_actuel || 0) > 0;
+        }
+        if (statutFilter === 'sans_mouvement') {
+            return Boolean(item.sans_mouvement);
+        }
+
+        return true;
+    });
+
+    filtered.sort((left, right) => {
+        // En plus du tri sélectionné, on groupe par type de désignation par défaut si c'est alphabétique
+        if (sortOrder === 'designation_asc' || sortOrder === 'designation_desc') {
+            const typeL = (left.designation_type_nom || "").toLowerCase();
+            const typeR = (right.designation_type_nom || "").toLowerCase();
+            
+            if (typeL !== typeR) {
+                return typeL.localeCompare(typeR, 'fr');
+            }
+            
+            const nomL = normalizeText(left.designation_nom);
+            const nomR = normalizeText(right.designation_nom);
+            
+            return sortOrder === 'designation_asc' 
+                ? nomL.localeCompare(nomR, 'fr')
+                : nomR.localeCompare(nomL, 'fr');
+        }
+
+        if (sortOrder === 'quantite_desc') {
+            return Number(right.quantite_a_commander || 0) - Number(left.quantite_a_commander || 0);
+        }
+        if (sortOrder === 'quantite_asc') {
+            return Number(left.quantite_a_commander || 0) - Number(right.quantite_a_commander || 0);
+        }
+        return normalizeText(left.designation_nom).localeCompare(normalizeText(right.designation_nom), 'fr');
+    });
+
+    return filtered;
+}
+
+function renderResultsTable() {
+    const tbody = document.getElementById('quantitesTable');
+    const resultats = getFilteredResults();
+
+    document.getElementById('displayedCount').textContent = `${resultats.length} article(s) affiche(s)`;
+
+    tbody.innerHTML = '';
+
+    if (resultats.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="11" class="py-8 text-center text-base-content/60">
+                    Aucun article ne correspond aux filtres actuels.
+                </td>
+            </tr>
+        `;
+        document.getElementById('selectAll').checked = false;
+        return;
+    }
+
+    let lastType = null;
+    resultats.forEach((item) => {
+        const currentType = item.designation_type_nom || "SANS CATÉGORIE";
+        
+        // Entête de groupe
+        if (currentType !== lastType) {
+            const groupRow = document.createElement('tr');
+            groupRow.className = 'bg-base-200 font-bold';
+            groupRow.innerHTML = `<td colspan="11" class="py-1 px-4 text-[10px] uppercase opacity-70"><i class="fas fa-tag mr-2"></i>${currentType}</td>`;
+            tbody.appendChild(groupRow);
+            lastType = currentType;
+        }
+
+        const quantiteRetenue = Number(item.quantite_demandee || 0);
+        const quantiteACommander = Number(item.quantite_a_commander || 0);
+        const row = document.createElement('tr');
+
+        if (item.methode_calcul === 'catalogue_manuel') {
+            row.className = 'bg-base-200/40';
+        } else if (quantiteACommander > 0) {
+            row.className = 'bg-warning/10';
+        } else if (quantiteRetenue <= 0) {
+            row.className = 'opacity-70';
+        }
+
+        row.innerHTML = `
+            <td>
+                <input
+                    type="checkbox"
+                    class="checkbox checkbox-sm item-checkbox"
+                    data-row-id="${item.row_id}"
+                    onchange="toggleItemSelection('${item.row_id}', this.checked)"
+                    ${item.selected ? 'checked' : ''}
+                >
+            </td>
+            <td>
+                <div class="font-semibold">${escapeHtml(item.designation_nom)}</div>
+                <div class="mt-1 flex flex-wrap gap-1">${methodeBadge(item)}</div>
+                <div class="mt-1">${detailLigneHtml(item)}</div>
+            </td>
+            <td class="font-semibold">${formatQuantity(item.quantite_demandee)}</td>
+            <td>${formatQuantity(item.quantite_demandee_bons)}</td>
+            <td>${stockPrecedentCellHtml(item)}</td>
+            <td>${achatsEffectuesCellHtml(item)}</td>
+            <td>${formatQuantity(item.quantite_estimee_historique)}</td>
+            <td>${formatQuantity(item.stock_actuel)}</td>
+            <td class="font-bold text-warning">${formatQuantity(item.quantite_a_commander)}</td>
+            <td>
+                <input
+                    type="number"
+                    class="input input-bordered input-sm w-24 quantite-finale"
+                    data-row-id="${item.row_id}"
+                    value="${item.quantite_finale}"
+                    min="0"
+                    step="0.01"
+                    oninput="updateFinalQuantity('${item.row_id}', this.value)"
+                >
+            </td>
+            <td><span class="badge badge-sm">${item.nb_lignes || 0}</span></td>
+        `;
+
+        tbody.appendChild(row);
+    });
+
+    document.getElementById('selectAll').checked = false;
+}
+
+function applyTableFilters() {
+    if (!currentResults.length) {
+        return;
+    }
+    renderResultsTable();
+    saveDraft({silent: true});
+}
+
+function findResultByRowId(rowId) {
+    return currentResults.find((item) => String(item.row_id) === String(rowId));
+}
+
+function toggleItemSelection(rowId, checked, options = {}) {
+    const item = findResultByRowId(rowId);
+    if (item) {
+        item.selected = checked;
+        if (!options.skipSave) {
+            saveDraft({silent: true});
+        }
+    }
+}
+
+function updateFinalQuantity(rowId, value) {
+    const item = findResultByRowId(rowId);
+    if (item) {
+        item.quantite_finale = Math.max(0, parseFloat(value) || 0);
+        item.selected = item.quantite_finale > 0;
+
+        const checkbox = document.querySelector(`.item-checkbox[data-row-id="${rowId}"]`);
+        if (checkbox) {
+            checkbox.checked = item.selected;
+        }
+
+        saveDraft({silent: true});
+    }
+}
+
+function toggleSelectAll() {
+    const checked = document.getElementById('selectAll').checked;
+    document.querySelectorAll('.item-checkbox').forEach((checkbox) => {
+        checkbox.checked = checked;
+        toggleItemSelection(checkbox.dataset.rowId, checked, {skipSave: true});
+    });
+    saveDraft({silent: true});
+}
+
+async function genererDemandeDevis() {
+    const baseId = document.getElementById('base_id').value;
+    const nbJours = document.getElementById('nb_jours').value;
+    const modeCalcul = getSelectedMode();
+    const dateDebut = document.getElementById('info-date-debut').textContent;
+    
+    const items = [];
+
+    currentResults.forEach((item) => {
+        if (item.selected) {
+            items.push({
+                designation_id: item.designation_id,
+                designation_nom: item.designation_nom,
+                quantite_demandee: item.quantite_demandee,
+                quantite_estimee_historique: item.quantite_estimee_historique,
+                stock_actuel: item.stock_actuel,
+                quantite_a_commander: item.quantite_a_commander,
+                quantite_finale: item.quantite_finale,
+                nb_lignes: item.nb_lignes,
+                methode_calcul: item.methode_calcul,
+                product_id: item.product_id
+            });
+        }
+    });
+
+    if (items.length === 0) {
+        alert('Veuillez selectionner au moins un article avec une quantite > 0');
+        return;
+    }
+
+    if (!confirm(`Generer une demande de devis pour ${items.length} article(s) ?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/stocks/commandes/api/generer-bon/', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                base_id: baseId,
+                nb_jours: nbJours,
+                mode_calcul: modeCalcul,
+                date_debut: dateDebut,
+                items: items
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            window.location.href = `/stocks/commandes/demandes-devis/${data.demande_id}/`;
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        alert('Erreur: ' + error.message);
+    }
+}
+
+async function exporterExcel() {
+    if (currentResults.length === 0) {
+        alert('Aucune donnee a exporter. Veuillez d abord lancer un calcul.');
+        return;
+    }
+
+    const baseId = document.getElementById('base_id').value;
+    const nbJours = document.getElementById('nb_jours').value;
+    const modeCalcul = getSelectedMode();
+    const baseNom = getSelectedBaseLabel();
+
+    try {
+        const response = await fetch('/stocks/commandes/api/export-excel/', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                base_id: baseId,
+                base_nom: baseNom,
+                nb_jours: nbJours,
+                mode_calcul: modeCalcul,
+                items: currentResults
+            })
+        });
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || 'Erreur lors de l export');
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Calcul_Commande_${baseNom.replace(/\s+/g, '_')}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        a.remove();
+    } catch (error) {
+        alert('Erreur: ' + error.message);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    updateDraftUi();
+});
+
+window.addEventListener('beforeunload', () => {
+    saveDraft({silent: true});
+});
+</script>
+{% endblock %}

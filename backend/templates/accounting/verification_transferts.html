@@ -1,0 +1,392 @@
+{% extends "accounting/base.html" %}
+{% load humanize %}
+
+{% block title %}Vérification Transferts{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- En-tête -->
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+        <div>
+            <h1 class="text-3xl font-bold mb-2">Vérification des Transferts</h1>
+            <p class="text-sm opacity-70">Diagnostic des transferts 00BOOK et 00FND1 (inter-fichiers)</p>
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'accounting:dashboard_comptabilite' %}" class="btn btn-info btn-sm">
+                <i class="fas fa-chart-line mr-2"></i>Tableau de bord
+            </a>
+            <a href="{% url 'accounting:entries_list' %}" class="btn btn-secondary btn-sm">
+                <i class="fas fa-list mr-2"></i>Entrées
+            </a>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-200 shadow-xl mb-6">
+        <div class="card-body py-4">
+            <form method="get" class="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Mois</span></label>
+                    <input type="month" name="mois" value="{{ request.GET.mois }}" class="input input-bordered input-sm">
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Fichier source</span></label>
+                    <select name="fichier_source" class="select select-bordered select-sm">
+                        <option value="">Tous</option>
+                        {% for fichier in fichiers_sources %}
+                        <option value="{{ fichier }}" {% if request.GET.fichier_source == fichier %}selected{% endif %}>{{ fichier }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Programme</span></label>
+                    <select name="prog" class="select select-bordered select-sm">
+                        <option value="">Tous</option>
+                        {% for prog in progs %}
+                        <option value="{{ prog }}" {% if request.GET.prog == prog %}selected{% endif %}>{{ prog }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="flex gap-2">
+                    <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-search mr-1"></i>Filtrer</button>
+                    <a href="{% url 'accounting:verification_transferts' %}" class="btn btn-ghost btn-sm">Réinitialiser</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Onglets -->
+    <div role="tablist" class="tabs tabs-lifted tabs-lg">
+        <input type="radio" name="tabs" role="tab" class="tab" aria-label="00BOOK" checked />
+        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
+            <h2 class="text-xl font-bold mb-4">
+                <i class="fas fa-exchange-alt mr-2 text-success"></i>Transferts 00BOOK
+                <span class="badge badge-ghost ml-2">Solde attendu: 0</span>
+            </h2>
+
+            <!-- Stats -->
+            <div class="stats stats-vertical lg:stats-horizontal shadow w-full mb-6">
+                <div class="stat">
+                    <div class="stat-title text-xs">Solde global</div>
+                    <div class="stat-value text-xl {% if stats_00book.solde == 0 %}text-success{% elif stats_00book.solde_abs < 100 %}text-warning{% else %}text-error{% endif %}">
+                        {{ stats_00book.solde|floatformat:0|intcomma }}
+                    </div>
+                    <div class="stat-desc">
+                        {% if stats_00book.solde == 0 %}
+                            <span class="text-success"><i class="fas fa-check-circle"></i> OK</span>
+                        {% else %}
+                            <span class="text-error"><i class="fas fa-times-circle"></i> Problème</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title text-xs">Groupes (Rec)</div>
+                    <div class="stat-value text-xl">{{ stats_00book.count_groupes }}</div>
+                    <div class="stat-desc">paires trouvées</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title text-xs">OK</div>
+                    <div class="stat-value text-success text-xl">{{ stats_00book.count_ok }}</div>
+                    <div class="stat-desc">équilibrés</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title text-xs">Problèmes</div>
+                    <div class="stat-value text-error text-xl">{{ stats_00book.count_problemes_groupes }}</div>
+                    <div class="stat-desc">déséquilibrés</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title text-xs">Sans Rec</div>
+                    <div class="stat-value text-warning text-xl">{{ stats_00book.count_problemes_sans_rec }}</div>
+                    <div class="stat-desc">à vérifier</div>
+                </div>
+            </div>
+
+            <!-- Filtre affichage -->
+            <div class="flex gap-2 mb-4">
+                <a href="?filtre_book=tous{% if request.GET.mois %}&mois={{ request.GET.mois }}{% endif %}{% if request.GET.fichier_source %}&fichier_source={{ request.GET.fichier_source|urlencode }}{% endif %}{% if request.GET.prog %}&prog={{ request.GET.prog|urlencode }}{% endif %}"
+                   class="btn btn-sm {% if request.GET.filtre_book == 'tous' or not request.GET.filtre_book %}btn-active{% endif %}">
+                    Tous ({{ stats_00book.count_groupes }})
+                </a>
+                <a href="?filtre_book=problemes{% if request.GET.mois %}&mois={{ request.GET.mois }}{% endif %}{% if request.GET.fichier_source %}&fichier_source={{ request.GET.fichier_source|urlencode }}{% endif %}{% if request.GET.prog %}&prog={{ request.GET.prog|urlencode }}{% endif %}"
+                   class="btn btn-sm {% if request.GET.filtre_book == 'problemes' %}btn-active{% endif %} btn-error">
+                    Problèmes ({{ stats_00book.count_problemes_groupes }})
+                </a>
+                <a href="?filtre_book=ok{% if request.GET.mois %}&mois={{ request.GET.mois }}{% endif %}{% if request.GET.fichier_source %}&fichier_source={{ request.GET.fichier_source|urlencode }}{% endif %}{% if request.GET.prog %}&prog={{ request.GET.prog|urlencode }}{% endif %}"
+                   class="btn btn-sm {% if request.GET.filtre_book == 'ok' %}btn-active{% endif %} btn-success">
+                    OK ({{ stats_00book.count_ok }})
+                </a>
+            </div>
+
+            <!-- Affichage par groupes (Rec + Montant) -->
+            <div class="space-y-3">
+                {% for groupe in page_obj_book %}
+                <div class="card bg-base-200 shadow {% if groupe.statut == 'probleme' %}border-2 border-error{% endif %}">
+                    <div class="card-body p-3">
+                        <div class="flex justify-between items-center mb-2">
+                            <div>
+                                <span class="font-bold">Rec: {{ groupe.rec }}</span>
+                                <span class="ml-3 font-semibold">Montant: {{ groupe.montant|floatformat:0|intcomma }} Ar</span>
+                                <span class="ml-3 badge badge-xs {% if groupe.statut == 'ok' %}badge-success{% else %}badge-error{% endif %}">
+                                    Solde: {{ groupe.solde|floatformat:0|intcomma }}
+                                </span>
+                            </div>
+                            <div class="text-xs">
+                                <span class="badge badge-success badge-xs">{{ groupe.count_in }} IN</span>
+                                <span class="badge badge-error badge-xs ml-1">{{ groupe.count_out }} OUT</span>
+                            </div>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="table table-xs">
+                                <thead>
+                                    <tr>
+                                        <th class="w-8">Type</th>
+                                        <th>ID</th>
+                                        <th>DateRec</th>
+                                        <th>Journal</th>
+                                        <th>Compte</th>
+                                        <th>Prog</th>
+                                        <th>Fichier</th>
+                                        <th>Description</th>
+                                        <th class="text-right">IN</th>
+                                        <th class="text-right">OUT</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for entry in groupe.entries_in %}
+                                    <tr class="bg-success/10">
+                                        <td><span class="badge badge-success badge-xs">IN</span></td>
+                                        <td class="font-mono text-xs">{{ entry.id }}</td>
+                                        <td class="text-xs">{{ entry.date_rec|date:"d/m/Y"|default:"-" }}</td>
+                                        <td><span class="badge badge-info badge-xs">{{ entry.journal_code|default:"-" }}</span></td>
+                                        <td class="font-mono text-xs">{{ entry.compte_code|default:"-" }}</td>
+                                        <td><span class="badge badge-ghost badge-xs">{{ entry.prog|default:"-" }}</span></td>
+                                        <td class="text-xs">{{ entry.fichier_source|truncatewords:1 }}</td>
+                                        <td class="text-xs">{{ entry.description|truncatechars:30 }}</td>
+                                        <td class="text-right text-success font-semibold text-xs">{{ entry.montant_in|floatformat:0|intcomma }}</td>
+                                        <td class="text-right text-xs">-</td>
+                                    </tr>
+                                    {% endfor %}
+                                    {% for entry in groupe.entries_out %}
+                                    <tr class="bg-error/10">
+                                        <td><span class="badge badge-error badge-xs">OUT</span></td>
+                                        <td class="font-mono text-xs">{{ entry.id }}</td>
+                                        <td class="text-xs">{{ entry.date_rec|date:"d/m/Y"|default:"-" }}</td>
+                                        <td><span class="badge badge-info badge-xs">{{ entry.journal_code|default:"-" }}</span></td>
+                                        <td class="font-mono text-xs">{{ entry.compte_code|default:"-" }}</td>
+                                        <td><span class="badge badge-ghost badge-xs">{{ entry.prog|default:"-" }}</span></td>
+                                        <td class="text-xs">{{ entry.fichier_source|truncatewords:1 }}</td>
+                                        <td class="text-xs">{{ entry.description|truncatechars:30 }}</td>
+                                        <td class="text-right text-xs">-</td>
+                                        <td class="text-right text-error font-semibold text-xs">{{ entry.montant_out|floatformat:0|intcomma }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                    <tr class="font-bold border-t-2">
+                                        <td colspan="8" class="text-right">Total:</td>
+                                        <td class="text-right text-success">{{ groupe.total_in|floatformat:0|intcomma }}</td>
+                                        <td class="text-right text-error">{{ groupe.total_out|floatformat:0|intcomma }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="alert">
+                    <i class="fas fa-info-circle"></i>
+                    <span>Aucun groupe trouvé avec ce filtre.</span>
+                </div>
+                {% endfor %}
+            </div>
+
+            <!-- Pagination -->
+            {% if page_obj_book.paginator.num_pages > 1 %}
+            <div class="flex justify-center mt-4">
+                <div class="join">
+                    {% if page_obj_book.has_previous %}
+                    <a href="?page_book=1&filtre_book={{ request.GET.filtre_book|default:'tous' }}{% if request.GET.mois %}&mois={{ request.GET.mois }}{% endif %}" class="join-item btn btn-xs">«</a>
+                    <a href="?page_book={{ page_obj_book.previous_page_number }}&filtre_book={{ request.GET.filtre_book|default:'tous' }}{% if request.GET.mois %}&mois={{ request.GET.mois }}{% endif %}" class="join-item btn btn-xs">‹</a>
+                    {% endif %}
+                    <button class="join-item btn btn-xs btn-active">{{ page_obj_book.number }}/{{ page_obj_book.paginator.num_pages }}</button>
+                    {% if page_obj_book.has_next %}
+                    <a href="?page_book={{ page_obj_book.next_page_number }}&filtre_book={{ request.GET.filtre_book|default:'tous' }}{% if request.GET.mois %}&mois={{ request.GET.mois }}{% endif %}" class="join-item btn btn-xs">›</a>
+                    <a href="?page_book={{ page_obj_book.paginator.num_pages }}&filtre_book={{ request.GET.filtre_book|default:'tous' }}{% if request.GET.mois %}&mois={{ request.GET.mois }}{% endif %}" class="join-item btn btn-xs">»</a>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <input type="radio" name="tabs" role="tab" class="tab" aria-label="00FND1" />
+        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
+            <h2 class="text-xl font-bold mb-4">
+                <i class="fas fa-exchange-alt mr-2 text-warning"></i>Transferts 00FND1
+                <span class="badge badge-ghost ml-2">Inter-fichiers, sans EDF ni « Report à nouveau »</span>
+            </h2>
+
+            <!-- Stats -->
+            <div class="stats stats-vertical lg:stats-horizontal shadow w-full mb-6">
+                <div class="stat">
+                    <div class="stat-title text-xs">Total IN</div>
+                    <div class="stat-value text-success text-xl">{{ stats_00fnd1.total_in|floatformat:0|intcomma }}</div>
+                    <div class="stat-desc">Ar</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title text-xs">Total OUT</div>
+                    <div class="stat-value text-error text-xl">{{ stats_00fnd1.total_out|floatformat:0|intcomma }}</div>
+                    <div class="stat-desc">Ar</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title text-xs">Solde</div>
+                    <div class="stat-value text-xl {% if stats_00fnd1.solde_abs < 100 %}text-success{% else %}text-warning{% endif %}">
+                        {{ stats_00fnd1.solde|floatformat:0|intcomma }}
+                    </div>
+                    <div class="stat-desc">Ar</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title text-xs">Total</div>
+                    <div class="stat-value text-xl">{{ stats_00fnd1.count }}</div>
+                    <div class="stat-desc">entrées</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title text-xs">Matchés</div>
+                    <div class="stat-value text-success text-xl">{{ stats_00fnd1.count_matched }}</div>
+                    <div class="stat-desc">OK</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title text-xs">Problèmes</div>
+                    <div class="stat-value text-error text-xl">{{ stats_00fnd1.count_problemes }}</div>
+                    <div class="stat-desc">sans match</div>
+                </div>
+            </div>
+
+            <!-- Rapprochements à dates décalées (à contrôler) -->
+            {% if matches_approx %}
+            <div class="collapse collapse-arrow bg-base-200 mb-6">
+                <input type="checkbox" />
+                <div class="collapse-title font-semibold">
+                    <i class="fas fa-calendar-alt mr-2 text-info"></i>
+                    {{ matches_approx|length }} rapprochement{{ matches_approx|length|pluralize }} à dates décalées (jusqu'à {{ tolerance_jours }} jours) &mdash; à contrôler
+                </div>
+                <div class="collapse-content">
+                    <p class="text-xs mb-2">Même montant, fichiers différents, plus proche en premier. Modifiez l'intervalle avec <code>?tolerance_jours=120</code> dans l'adresse (8 à 366).</p>
+                    <div class="overflow-x-auto">
+                        <table class="table table-xs">
+                            <thead>
+                                <tr><th class="text-right">Montant</th><th>OUT</th><th>Date OUT</th><th>IN</th><th>Date IN</th><th class="text-center">Écart</th></tr>
+                            </thead>
+                            <tbody>
+                                {% for m in matches_approx %}
+                                <tr>
+                                    <td class="text-right font-mono">{{ m.montant|floatformat:0|intcomma }}</td>
+                                    <td><span class="badge badge-outline badge-xs">{{ m.out.fichier_source|truncatechars:24 }}</span> <span class="text-xs">{{ m.out.description|truncatechars:40 }}</span></td>
+                                    <td class="whitespace-nowrap text-xs">{{ m.out.date_m|date:"d/m/Y" }}</td>
+                                    <td><span class="badge badge-outline badge-xs">{{ m.in.fichier_source|truncatechars:24 }}</span> <span class="text-xs">{{ m.in.description|truncatechars:40 }}</span></td>
+                                    <td class="whitespace-nowrap text-xs">{{ m.in.date_m|date:"d/m/Y" }}</td>
+                                    <td class="text-center"><span class="badge badge-warning badge-sm">{{ m.delta_days }} j</span></td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Par fichier -->
+            <h3 class="font-semibold mb-2"><i class="fas fa-file-alt mr-2"></i>Par fichier</h3>
+            <div class="overflow-x-auto mb-6">
+                <table class="table table-xs">
+                    <thead>
+                        <tr><th>Fichier</th><th class="text-right">IN</th><th class="text-right">OUT</th><th class="text-right">Solde</th><th class="text-center">Nb</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for fichier, data in transferts_00fnd1_par_fichier.items %}
+                        <tr>
+                            <td><span class="badge badge-outline badge-xs">{{ fichier|truncatechars:30 }}</span></td>
+                            <td class="text-right text-success text-xs">{{ data.total_in|floatformat:0|intcomma }}</td>
+                            <td class="text-right text-error text-xs">{{ data.total_out|floatformat:0|intcomma }}</td>
+                            <td class="text-right font-semibold text-xs {% if data.solde >= 0 %}text-success{% else %}text-error{% endif %}">{{ data.solde|floatformat:0|intcomma }}</td>
+                            <td class="text-center text-xs">{{ data.count }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Problèmes -->
+            {% if page_obj_fnd1 %}
+            <div class="alert alert-error mb-4">
+                <i class="fas fa-exclamation-circle"></i>
+                <div>
+                    <h4 class="font-bold">{{ stats_00fnd1.count_problemes }} transfert{{ stats_00fnd1.count_problemes|pluralize }} sans contrepartie</h4>
+                    <p class="text-xs">Critères: même montant (±0.01), dates ±7j (priorité aux fichiers différents, puis date la plus proche), puis 2e passe fichiers différents jusqu'à {{ tolerance_jours }} jours. Exclus: EDF et « Report à nouveau ».</p>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="table table-xs">
+                    <thead>
+                        <tr>
+                            <th>ID Access</th>
+                            <th>Type</th>
+                            <th>Date</th>
+                            <th>Journal</th>
+                            <th>Rec</th>
+                            <th>Prog</th>
+                            <th>Fichier</th>
+                            <th>Description</th>
+                            <th class="text-right">Montant</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for p in page_obj_fnd1 %}
+                        <tr class="{% if p.type == 'OUT sans contrepartie' %}bg-error/10{% else %}bg-warning/10{% endif %}">
+                            <td class="font-mono text-xs">{{ p.id_access }}</td>
+                            <td><span class="badge badge-xs {% if p.type == 'OUT sans contrepartie' %}badge-error{% else %}badge-warning{% endif %}">{{ p.type }}</span></td>
+                            <td class="text-xs">{{ p.date|date:"d/m/Y" }}</td>
+                            <td><span class="badge badge-info badge-xs">{{ p.journal|default:"-" }}</span></td>
+                            <td class="font-mono text-xs">{{ p.rec|default:"-" }}</td>
+                            <td><span class="badge badge-ghost badge-xs">{{ p.prog|truncatechars:15|default:"-" }}</span></td>
+                            <td class="text-xs">{{ p.fichier|truncatewords:2 }}</td>
+                            <td class="text-xs">{{ p.description|truncatechars:40 }}</td>
+                            <td class="text-right font-semibold text-xs {% if p.type == 'OUT sans contrepartie' %}text-error{% else %}text-success{% endif %}">{{ p.montant|floatformat:0|intcomma }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if page_obj_fnd1.paginator.num_pages > 1 %}
+            <div class="flex justify-center mt-4">
+                <div class="join">
+                    {% if page_obj_fnd1.has_previous %}
+                    <a href="?page_fnd1=1{% if request.GET.mois %}&mois={{ request.GET.mois }}{% endif %}" class="join-item btn btn-xs">«</a>
+                    <a href="?page_fnd1={{ page_obj_fnd1.previous_page_number }}{% if request.GET.mois %}&mois={{ request.GET.mois }}{% endif %}" class="join-item btn btn-xs">‹</a>
+                    {% endif %}
+                    <button class="join-item btn btn-xs btn-active">{{ page_obj_fnd1.number }}/{{ page_obj_fnd1.paginator.num_pages }}</button>
+                    {% if page_obj_fnd1.has_next %}
+                    <a href="?page_fnd1={{ page_obj_fnd1.next_page_number }}{% if request.GET.mois %}&mois={{ request.GET.mois }}{% endif %}" class="join-item btn btn-xs">›</a>
+                    <a href="?page_fnd1={{ page_obj_fnd1.paginator.num_pages }}{% if request.GET.mois %}&mois={{ request.GET.mois }}{% endif %}" class="join-item btn btn-xs">»</a>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+            {% else %}
+            <div class="alert alert-success">
+                <i class="fas fa-check-circle"></i>
+                <span>Tous les transferts ont une contrepartie. Aucun problème.</span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Info -->
+    <div class="card bg-base-300 shadow-xl mt-6">
+        <div class="card-body py-4">
+            <h3 class="font-bold text-sm mb-2"><i class="fas fa-info-circle mr-2"></i>À propos</h3>
+            <div class="text-xs space-y-1">
+                <p><strong>00BOOK :</strong> Transferts par numéro Rec. Solde par groupe (Rec, montant) doit être = 0</p>
+                <p><strong>00FND1 :</strong> Transferts généraux. Matching: même montant (±0.01), dates ±7j. Priorité: fichiers différents > même fichier, puis date la plus proche. 2e passe: fichiers différents, jusqu'à {{ tolerance_jours }} jours d'écart. Les libellés EDF et « Report à nouveau » ne demandent pas de contrepartie.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

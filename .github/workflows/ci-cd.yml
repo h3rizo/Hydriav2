@@ -1,0 +1,302 @@
+name: CI/CD Pipeline - Hydria
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  NODE_VERSION: '20'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # Tests Backend Django
+  test-backend:
+    name: Tests Backend (Django)
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: hydria_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ env.PYTHON_VERSION }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install Python dependencies
+      working-directory: ./backend
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run Django tests
+      working-directory: ./backend
+      env:
+        DATABASE_URL: postgres://postgres:postgres@localhost:5432/hydria_test
+        SECRET_KEY: test-secret-key-for-github-actions
+        DEBUG: 'False'
+        ALLOWED_HOSTS: 'localhost,127.0.0.1'
+      run: |
+        python manage.py collectstatic --noinput
+        python manage.py migrate --noinput
+        python manage.py test
+    
+    - name: Run Django security checks
+      working-directory: ./backend
+      env:
+        DATABASE_URL: postgres://postgres:postgres@localhost:5432/hydria_test
+        SECRET_KEY: test-secret-key-for-github-actions
+      run: |
+        python manage.py check --deploy
+    
+    - name: Run code quality checks
+      working-directory: ./backend
+      run: |
+        # Vérification de la syntaxe Python
+        python -m py_compile **/*.py || true
+        
+        # Vérification des migrations
+        python manage.py makemigrations --check --dry-run
+
+  # Tests Frontend Nuxt.js
+  test-frontend:
+    name: Tests Frontend (Nuxt.js)
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Node.js ${{ env.NODE_VERSION }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: './frontend/package-lock.json'
+    
+    - name: Install frontend dependencies
+      working-directory: ./frontend
+      run: npm ci
+    
+    - name: Run ESLint
+      working-directory: ./frontend
+      run: npm run lint
+    
+    - name: Build frontend
+      working-directory: ./frontend
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        API_BASE_URL: https://hydria-backend.onrender.com/api
+      run: |
+        npm run build
+    
+    - name: Generate static files
+      working-directory: ./frontend
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        API_BASE_URL: https://hydria-backend.onrender.com/api
+      run: |
+        npm run generate
+
+  # Analyse de sécurité
+  security-scan:
+    name: Analyse de sécurité
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  # Build et déploiement Backend sur Render
+  deploy-backend:
+    name: Déployer Backend (Render)
+    needs: [test-backend, security-scan]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Deploy to Render
+      uses: johnbeynon/render-deploy-action@v0.0.8
+      with:
+        service-id: ${{ secrets.RENDER_BACKEND_SERVICE_ID }}
+        api-key: ${{ secrets.RENDER_API_KEY }}
+        wait-for-success: true
+    
+    - name: Verify deployment
+      run: |
+        sleep 30
+        curl -f https://hydria-backend.onrender.com/health/ || exit 1
+
+  # Build et déploiement Frontend sur Render
+  deploy-frontend:
+    name: Déployer Frontend (Render)
+    needs: [test-frontend, security-scan]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: './frontend/package-lock.json'
+    
+    - name: Install dependencies
+      working-directory: ./frontend
+      run: npm ci
+    
+    - name: Build and generate
+      working-directory: ./frontend
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        API_BASE_URL: https://hydria-backend.onrender.com/api
+        NODE_ENV: production
+      run: |
+        npm run build
+        npm run generate
+    
+    - name: Deploy to Render Static Site
+      uses: johnbeynon/render-deploy-action@v0.0.8
+      with:
+        service-id: ${{ secrets.RENDER_FRONTEND_SERVICE_ID }}
+        api-key: ${{ secrets.RENDER_API_KEY }}
+        wait-for-success: true
+    
+    - name: Verify PWA deployment
+      run: |
+        sleep 30
+        curl -f https://hydria-frontend.onrender.com/ || exit 1
+        # Vérifier que le manifest PWA est accessible
+        curl -f https://hydria-frontend.onrender.com/manifest.json || exit 1
+
+  # Tests d'intégration post-déploiement
+  integration-tests:
+    name: Tests d'intégration
+    needs: [deploy-backend, deploy-frontend]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Test API endpoints
+      run: |
+        # Test de santé du backend
+        curl -f https://hydria-backend.onrender.com/health/
+        
+        # Test de l'API root
+        curl -f https://hydria-backend.onrender.com/api/
+        
+        # Test des endpoints principaux
+        curl -f https://hydria-backend.onrender.com/inspections/api/
+    
+    - name: Test PWA functionality
+      run: |
+        # Test du manifest PWA
+        response=$(curl -s https://hydria-frontend.onrender.com/manifest.json)
+        echo "$response" | grep -q "Hydria" || exit 1
+        
+        # Test des service workers
+        curl -f https://hydria-frontend.onrender.com/sw.js || exit 1
+    
+    - name: Performance tests
+      run: |
+        # Test de performance simple avec curl
+        time curl -w "@curl-format.txt" -o /dev/null -s https://hydria-frontend.onrender.com/
+      env:
+        curl-format: |
+          time_namelookup:  %{time_namelookup}\n
+          time_connect:     %{time_connect}\n
+          time_appconnect:  %{time_appconnect}\n
+          time_pretransfer: %{time_pretransfer}\n
+          time_redirect:    %{time_redirect}\n
+          time_starttransfer: %{time_starttransfer}\n
+          time_total:       %{time_total}\n
+
+  # Notification de déploiement réussi
+  notify-success:
+    name: Notification de succès
+    needs: [integration-tests]
+    runs-on: ubuntu-latest
+    if: success() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: Send success notification
+      uses: 8398a7/action-slack@v3
+      if: always()
+      with:
+        status: ${{ job.status }}
+        text: |
+          🚀 Déploiement Hydria réussi!
+          
+          ✅ Backend: https://hydria-backend.onrender.com/
+          ✅ Frontend: https://hydria-frontend.onrender.com/
+          
+          Commit: ${{ github.sha }}
+          Auteur: ${{ github.actor }}
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+
+  # Nettoyage et maintenance
+  cleanup:
+    name: Nettoyage
+    needs: [notify-success]
+    runs-on: ubuntu-latest
+    if: always() && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Cleanup old deployments
+      run: |
+        echo "🧹 Nettoyage des anciens déploiements..."
+        # Cette étape peut inclure la suppression d'anciens builds ou caches
+        
+    - name: Update deployment status
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.repos.createDeploymentStatus({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            deployment_id: context.payload.deployment?.id || 'latest',
+            state: 'success',
+            environment_url: 'https://hydria-frontend.onrender.com',
+            description: 'Déploiement PWA Hydria réussi'
+          });

@@ -1,0 +1,282 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Jours fériés{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">Jours fériés</h1>
+            <p class="text-base-content/70 mt-2">
+                Gérer les jours fériés officiels utilisés par les congés, plannings et récupérations.
+            </p>
+        </div>
+        <div class="flex flex-col sm:flex-row gap-3">
+            <label class="form-control">
+                <span class="label-text text-sm mb-1">Année</span>
+                <select id="yearFilter" class="select select-bordered" onchange="loadJoursFeries()">
+                    <option value="">Toutes</option>
+                    {% for year in years %}
+                    <option value="{{ year }}" {% if selected_year == year|stringformat:'s' %}selected{% endif %}>{{ year }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <button onclick="openCreateModal()" class="btn btn-primary self-start md:self-auto">
+                <i class="fas fa-plus mr-2"></i>
+                Nouveau jour férié
+            </button>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Nom</th>
+                            <th>Type</th>
+                            <th>Description</th>
+                            <th>Statut</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="joursFeriesTableBody">
+                        <tr>
+                            <td colspan="6" class="text-center">
+                                <span class="loading loading-spinner loading-lg"></span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<dialog id="jourFerieModal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4" id="modalTitle">Nouveau jour férié</h3>
+
+        <form id="jourFerieForm" onsubmit="handleSubmit(event)">
+            <input type="hidden" id="jourFerieId">
+
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Date <span class="text-error">*</span></span>
+                </label>
+                <input type="date" id="jourDate" class="input input-bordered" required>
+            </div>
+
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Nom <span class="text-error">*</span></span>
+                </label>
+                <input type="text" id="jourNom" class="input input-bordered" placeholder="Ex: Ascension" required>
+            </div>
+
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Type de jour férié <span class="text-error">*</span></span>
+                </label>
+                <select id="jourType" class="select select-bordered" required>
+                    <option value="officiel">Jour férié officiel (majoration 50%)</option>
+                    <option value="decret">Jour chômé et payé - décret ponctuel (majoration 30%)</option>
+                </select>
+            </div>
+
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Description</span>
+                </label>
+                <textarea id="jourDescription" class="textarea textarea-bordered" rows="3" placeholder="Précision éventuelle"></textarea>
+            </div>
+
+            <div class="form-control mb-4">
+                <label class="label cursor-pointer justify-start">
+                    <input type="checkbox" id="jourActif" class="checkbox checkbox-primary mr-3" checked>
+                    <span class="label-text">Jour férié actif</span>
+                </label>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('jourFerieModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>
+                    Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<script>
+let joursFeries = [];
+const jourFerieUpdateUrlTemplate = '{% url "employees:api_jour_ferie_update" jour_ferie_id="00000000-0000-0000-0000-000000000000" %}';
+const jourFerieDeleteUrlTemplate = '{% url "employees:api_jour_ferie_delete" jour_ferie_id="00000000-0000-0000-0000-000000000000" %}';
+
+function buildJourFerieApiUrl(urlTemplate, id) {
+    return urlTemplate.replace('00000000-0000-0000-0000-000000000000', id);
+}
+
+async function loadJoursFeries() {
+    try {
+        const params = new URLSearchParams();
+        const selectedYear = document.getElementById('yearFilter').value;
+        if (selectedYear) {
+            params.set('annee', selectedYear);
+        }
+
+        const response = await fetch(`{% url "employees:api_jours_feries_list" %}?${params.toString()}`);
+        const data = await response.json();
+        if (data.success) {
+            joursFeries = data.jours_feries;
+            displayJoursFeries();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur chargement jours feries:', error);
+        alert('Erreur lors du chargement des jours fériés');
+    }
+}
+
+function displayJoursFeries() {
+    const tbody = document.getElementById('joursFeriesTableBody');
+
+    if (!joursFeries.length) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" class="text-center text-base-content/50">
+                    Aucun jour férié défini pour ce filtre
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = joursFeries.map(jour => `
+        <tr>
+            <td class="font-semibold">${jour.date_display}</td>
+            <td>${jour.nom}</td>
+            <td>
+                ${jour.type_jour === 'decret'
+                    ? '<span class="badge badge-warning">Chômé et payé (décret) - 30%</span>'
+                    : '<span class="badge badge-info">Officiel - 50%</span>'}
+            </td>
+            <td>${jour.description || '<span class="text-base-content/50">-</span>'}</td>
+            <td>
+                ${jour.actif
+                    ? '<span class="badge badge-success">Actif</span>'
+                    : '<span class="badge badge-ghost">Inactif</span>'}
+            </td>
+            <td>
+                <div class="flex gap-2">
+                    ${jour.id ? `
+                    <button onclick="editJourFerie('${jour.id}')" class="btn btn-sm btn-info">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button onclick="deleteJourFerie('${jour.id}', '${jour.nom.replace(/'/g, "\\'")}')" class="btn btn-sm btn-error">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                    ` : '<span class="text-xs text-base-content/50">Migration requise</span>'}
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function openCreateModal() {
+    document.getElementById('modalTitle').textContent = 'Nouveau jour férié';
+    document.getElementById('jourFerieForm').reset();
+    document.getElementById('jourFerieId').value = '';
+    document.getElementById('jourType').value = 'officiel';
+    document.getElementById('jourActif').checked = true;
+    document.getElementById('jourFerieModal').showModal();
+}
+
+function editJourFerie(id) {
+    const jour = joursFeries.find(item => item.id === id);
+    if (!jour) return;
+
+    document.getElementById('modalTitle').textContent = 'Modifier jour férié';
+    document.getElementById('jourFerieId').value = jour.id;
+    document.getElementById('jourDate').value = jour.date;
+    document.getElementById('jourNom').value = jour.nom;
+    document.getElementById('jourType').value = jour.type_jour || 'officiel';
+    document.getElementById('jourDescription').value = jour.description || '';
+    document.getElementById('jourActif').checked = jour.actif;
+    document.getElementById('jourFerieModal').showModal();
+}
+
+async function deleteJourFerie(id, nom) {
+    if (!confirm(`Désactiver le jour férié "${nom}" ?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(buildJourFerieApiUrl(jourFerieDeleteUrlTemplate, id), {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        });
+        const data = await response.json();
+        if (data.success) {
+            loadJoursFeries();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur suppression jour ferie:', error);
+        alert('Erreur lors de la suppression');
+    }
+}
+
+async function handleSubmit(event) {
+    event.preventDefault();
+
+    const id = document.getElementById('jourFerieId').value;
+    const url = id
+        ? buildJourFerieApiUrl(jourFerieUpdateUrlTemplate, id)
+        : '{% url "employees:api_jour_ferie_create" %}';
+
+    const payload = {
+        date: document.getElementById('jourDate').value,
+        nom: document.getElementById('jourNom').value,
+        type_jour: document.getElementById('jourType').value,
+        description: document.getElementById('jourDescription').value,
+        actif: document.getElementById('jourActif').checked,
+    };
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            document.getElementById('jourFerieModal').close();
+            loadJoursFeries();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur enregistrement jour ferie:', error);
+        alert('Erreur lors de l\'enregistrement');
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadJoursFeries);
+</script>
+{% endblock %}

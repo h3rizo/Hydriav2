@@ -1,0 +1,1362 @@
+{% extends planning_shell_base_template %}
+{% load humanize %}
+{% load planning_filters %}
+
+{% block title %}Gestion Forfaitaire{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">Gestion des Paiements Forfaitaires</h1>
+            <p class="text-sm text-gray-500 mt-1">
+                <i class="fas fa-calendar mr-1"></i>Année : <span class="font-semibold">{{ annee_filter }}</span>
+            </p>
+        </div>
+        <div class="flex gap-2 items-center">
+            <!-- Sélecteur d'année -->
+            <div class="form-control">
+                <select name="annee_select" id="annee_select" class="select select-bordered select-sm"
+                        onchange="changeAnnee(this.value)">
+                    {% for annee in annees_disponibles %}
+                    <option value="{{ annee }}" {% if annee_filter == annee|stringformat:"s" %}selected{% endif %}>
+                        {{ annee }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <a href="{% url 'core:dashboard_payments_flat' %}" class="btn btn-outline btn-sm">
+                <i class="fas fa-arrow-left mr-2"></i>Retour au Dashboard
+            </a>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow-md mb-6">
+        <div class="card-body">
+            <h3 class="font-bold text-lg mb-4"><i class="fas fa-filter mr-2"></i>Filtres</h3>
+            <form method="GET" id="filterForm">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Commune</span></label>
+                        <select name="commune" id="commune_filter" class="select select-bordered select-sm" onchange="filterOuvrages()">
+                            <option value="">Toutes les communes</option>
+                            {% for commune in communes %}
+                            <option value="{{ commune.id }}" {% if commune_filter == commune.id|stringformat:"s" %}selected{% endif %}>
+                                {{ commune.nom_commune }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">Ouvrage</span>
+                            <span class="label-text-alt text-info" id="ouvrage_count"></span>
+                        </label>
+                        <input type="text" id="ouvrage_search" placeholder="Rechercher un ouvrage..."
+                               class="input input-bordered input-sm mb-1" onkeyup="searchOuvrages()">
+                        <select name="ouvrage" id="ouvrage_filter" class="select select-bordered select-sm" size="1">
+                            <option value="">Tous les ouvrages</option>
+                            {% for ouvrage in ouvrages %}
+                            <option value="{{ ouvrage.id }}"
+                                    data-communes="{{ ouvrage.communes_ids }}"
+                                    data-search="{{ ouvrage.nom_ouvrage|lower }}"
+                                    {% if ouvrage_filter == ouvrage.id|stringformat:"s" %}selected{% endif %}>
+                                {{ ouvrage.nom_ouvrage }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <!-- Filtre Point d'eau (en cascade avec Ouvrage) -->
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">Point d'eau</span>
+                            <span class="label-text-alt text-info" id="point_eau_count"></span>
+                        </label>
+                        <input type="text" id="point_eau_search" placeholder="Rechercher un point d'eau..."
+                               class="input input-bordered input-sm mb-1" onkeyup="searchPointsEau()">
+                        <select name="point_eau" id="point_eau_filter" class="select select-bordered select-sm" size="1">
+                            <option value="">Tous les points d'eau</option>
+                            {% for point_eau in points_eau %}
+                            <option value="{{ point_eau.id }}"
+                                    data-ouvrage="{{ point_eau.ouvrage_id_str }}"
+                                    data-search="{{ point_eau.display_name|lower }}"
+                                    {% if point_eau_filter == point_eau.id|stringformat:"s" %}selected{% endif %}>
+                                {{ point_eau.display_name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Date début</span></label>
+                        <input type="date" name="date_debut" value="{{ date_debut }}" class="input input-bordered input-sm">
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Date fin</span></label>
+                        <input type="date" name="date_fin" value="{{ date_fin }}" class="input input-bordered input-sm">
+                    </div>
+                </div>
+
+                <!-- Filtres Désignation, Statut, Tarif, Modalité et Quantité -->
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Désignation</span></label>
+                        <select name="designation" class="select select-bordered select-sm">
+                            <option value="">Toutes les désignations</option>
+                            {% for designation in designations %}
+                            <option value="{{ designation.id }}" {% if designation_filter == designation.id|stringformat:"s" %}selected{% endif %}>
+                                {{ designation.nom }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Statut</span></label>
+                        <select name="statut" class="select select-bordered select-sm">
+                            <option value="">Tous les statuts</option>
+                            <option value="en_attente" {% if statut_filter == 'en_attente' %}selected{% endif %}>En attente</option>
+                            <option value="valide" {% if statut_filter == 'valide' %}selected{% endif %}>Validé</option>
+                            <option value="annule" {% if statut_filter == 'annule' %}selected{% endif %}>Annulé</option>
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Tarif forfaitaire</span></label>
+                        <select name="tarif" class="select select-bordered select-sm">
+                            <option value="">Tous</option>
+                            <option value="with" {% if tarif_filter == 'with' %}selected{% endif %}>Avec tarif</option>
+                            <option value="without" {% if tarif_filter == 'without' %}selected{% endif %}>Sans tarif</option>
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Modalité de paiement</span></label>
+                        <select name="modalite" class="select select-bordered select-sm">
+                            <option value="">Toutes (Forfaitaire + Mixte)</option>
+                            <option value="forfaitaire" {% if modalite_filter == 'forfaitaire' %}selected{% endif %}>Forfaitaire uniquement</option>
+                            <option value="mixte" {% if modalite_filter == 'mixte' %}selected{% endif %}>Mixte uniquement</option>
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Quantité</span></label>
+                        <input type="number" name="quantite" value="{{ quantite_filter }}" placeholder="Toutes" class="input input-bordered input-sm" step="0.01" min="0">
+                    </div>
+                </div>
+
+                <!-- Indicateurs avec cases à cocher -->
+                <div class="form-control mb-4">
+                    <label class="label"><span class="label-text font-semibold">Indicateurs</span></label>
+                    <div class="flex flex-wrap gap-3">
+                        <label class="label cursor-pointer gap-2 border border-base-300 rounded-lg px-3 py-2 hover:bg-base-200 transition-colors">
+                            <input type="checkbox" name="indicateur" value="passe_imminent" class="checkbox checkbox-error checkbox-sm" {% if 'passe_imminent' in indicateurs_filter %}checked{% endif %}>
+                            <span class="label-text">🔴 Passé imminent</span>
+                        </label>
+                        <label class="label cursor-pointer gap-2 border border-base-300 rounded-lg px-3 py-2 hover:bg-base-200 transition-colors">
+                            <input type="checkbox" name="indicateur" value="passe" class="checkbox checkbox-sm" {% if 'passe' in indicateurs_filter %}checked{% endif %}>
+                            <span class="label-text">⚪ Passé</span>
+                        </label>
+                        <label class="label cursor-pointer gap-2 border border-base-300 rounded-lg px-3 py-2 hover:bg-base-200 transition-colors">
+                            <input type="checkbox" name="indicateur" value="aujourd_hui" class="checkbox checkbox-warning checkbox-sm" {% if 'aujourd_hui' in indicateurs_filter %}checked{% endif %}>
+                            <span class="label-text">🟡 Aujourd'hui</span>
+                        </label>
+                        <label class="label cursor-pointer gap-2 border border-base-300 rounded-lg px-3 py-2 hover:bg-base-200 transition-colors">
+                            <input type="checkbox" name="indicateur" value="futur_imminent" class="checkbox checkbox-info checkbox-sm" {% if 'futur_imminent' in indicateurs_filter %}checked{% endif %}>
+                            <span class="label-text">🔵 Futur imminent</span>
+                        </label>
+                        <label class="label cursor-pointer gap-2 border border-base-300 rounded-lg px-3 py-2 hover:bg-base-200 transition-colors">
+                            <input type="checkbox" name="indicateur" value="futur" class="checkbox checkbox-success checkbox-sm" {% if 'futur' in indicateurs_filter %}checked{% endif %}>
+                            <span class="label-text">🟢 Futur</span>
+                        </label>
+                        <label class="label cursor-pointer gap-2 border border-base-300 rounded-lg px-3 py-2 hover:bg-base-200 transition-colors">
+                            <input type="checkbox" name="commune_non_assignee" value="true" class="checkbox checkbox-warning checkbox-sm" {% if commune_non_assignee %}checked{% endif %}>
+                            <span class="label-text"><i class="fas fa-map-marker-slash mr-2 text-warning"></i>Commune non assignée</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="col-span-full">
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="fas fa-search mr-2"></i>Filtrer
+                    </button>
+                    <a href="{% url 'planning:gestion_forfaitaire' %}" class="btn btn-ghost btn-sm ml-2">
+                        <i class="fas fa-times mr-2"></i>Réinitialiser
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Statistiques -->
+    <div class="flex gap-4 mb-6 flex-wrap">
+        <!-- Paiement Prévu -->
+        <div class="stats shadow cursor-pointer hover:shadow-lg transition-shadow" onclick="showDetail('prevu')">
+            <div class="stat">
+                <div class="stat-figure text-info">
+                    <i class="fas fa-calendar-check text-3xl"></i>
+                </div>
+                <div class="stat-title">Paiement Prévu</div>
+                <div class="stat-value text-info">{{ montant_prevu_k|intcomma }} K Ar</div>
+                <div class="stat-desc">{{ nb_points_eau }} point{{ nb_points_eau|pluralize }} d'eau</div>
+                <div class="stat-desc text-xs">Tarif × 4 trimestres</div>
+            </div>
+        </div>
+
+        <!-- Paiement Planifié -->
+        <div class="stats shadow cursor-pointer hover:shadow-lg transition-shadow" onclick="showDetail('planifie')">
+            <div class="stat">
+                <div class="stat-figure text-warning">
+                    <i class="fas fa-tasks text-3xl"></i>
+                </div>
+                <div class="stat-title">Paiement Planifié</div>
+                <div class="stat-value text-warning">{{ montant_planifie_k|intcomma }} K Ar</div>
+                <div class="stat-desc">{{ nb_paiements_planifies }} paiement{{ nb_paiements_planifies|pluralize }}</div>
+                <div class="stat-desc text-xs">Dans les plannings</div>
+            </div>
+        </div>
+
+        <!-- Paiement Payé -->
+        <div class="stats shadow cursor-pointer hover:shadow-lg transition-shadow" onclick="showDetail('paye')">
+            <div class="stat">
+                <div class="stat-figure text-success">
+                    <i class="fas fa-check-circle text-3xl"></i>
+                </div>
+                <div class="stat-title">Paiement Payé</div>
+                <div class="stat-value text-success">{{ montant_paye_k|intcomma }} K Ar</div>
+                <div class="stat-desc">{{ nb_paiements_payes }} paiement{{ nb_paiements_payes|pluralize }}</div>
+                <div class="stat-desc text-xs">Avec DiameX</div>
+            </div>
+        </div>
+
+        <!-- Points d'eau coupés -->
+        <div class="stats shadow cursor-pointer hover:shadow-lg transition-shadow" onclick="showDetail('coupes')">
+            <div class="stat">
+                <div class="stat-figure text-error">
+                    <i class="fas fa-exclamation-triangle text-3xl"></i>
+                </div>
+                <div class="stat-title">Points d'eau Coupés</div>
+                <div class="stat-value text-error">{{ nb_coupes }}</div>
+                <div class="stat-desc">{{ nb_coupures_planifiees }} coupure{{ nb_coupures_planifiees|pluralize }}</div>
+                <div class="stat-desc text-xs">{{ nb_remises_planifiees }} remise{{ nb_remises_planifiees|pluralize }}</div>
+            </div>
+        </div>
+
+        <!-- Taux de Recouvrement -->
+        <div class="stats shadow">
+            <div class="stat">
+                <div class="stat-figure text-primary">
+                    <div class="radial-progress text-primary" style="--value:{{ taux_recouvrement }};" role="progressbar">{{ taux_recouvrement }}%</div>
+                </div>
+                <div class="stat-title">Taux de Recouvrement</div>
+                <div class="stat-value text-primary">{{ taux_recouvrement }}%</div>
+                <div class="stat-desc">Payé / Prévu</div>
+                <div class="stat-desc text-xs">{{ montant_paye_k|intcomma }} K / {{ montant_prevu_k|intcomma }} K Ar</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistiques de coupure -->
+    <div class="card bg-base-100 shadow-md mb-6">
+        <div class="card-body">
+            <h3 class="font-bold text-lg mb-4">
+                <i class="fas fa-ban mr-2 text-error"></i>Statistiques de Coupure d'Eau
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                <!-- Total Coupures -->
+                <div class="stats shadow">
+                    <div class="stat">
+                        <div class="stat-figure text-error">
+                            <i class="fas fa-power-off text-2xl"></i>
+                        </div>
+                        <div class="stat-title">Total Coupures</div>
+                        <div class="stat-value text-error">{{ total_coupures }}</div>
+                        <div class="stat-desc">Depuis le début</div>
+                    </div>
+                </div>
+
+                <!-- Total Remises -->
+                <div class="stats shadow">
+                    <div class="stat">
+                        <div class="stat-figure text-success">
+                            <i class="fas fa-plug text-2xl"></i>
+                        </div>
+                        <div class="stat-title">Total Remises</div>
+                        <div class="stat-value text-success">{{ total_remises }}</div>
+                        <div class="stat-desc">Eau rétablie</div>
+                    </div>
+                </div>
+
+                <!-- Coupures en cours -->
+                <div class="stats shadow">
+                    <div class="stat">
+                        <div class="stat-figure text-warning">
+                            <i class="fas fa-exclamation-circle text-2xl"></i>
+                        </div>
+                        <div class="stat-title">Coupures en cours</div>
+                        <div class="stat-value text-warning">{{ nb_points_eau_coupes_en_cours }}</div>
+                        <div class="stat-desc">Points d'eau actuellement</div>
+                    </div>
+                </div>
+
+                <!-- Durée moyenne -->
+                <div class="stats shadow">
+                    <div class="stat">
+                        <div class="stat-figure text-info">
+                            <i class="fas fa-chart-line text-2xl"></i>
+                        </div>
+                        <div class="stat-title">Durée moyenne</div>
+                        <div class="stat-value text-info">{{ duree_moyenne_coupure }} j</div>
+                        <div class="stat-desc">Par coupure</div>
+                    </div>
+                </div>
+
+                <!-- Durée médiane -->
+                <div class="stats shadow">
+                    <div class="stat">
+                        <div class="stat-figure text-info">
+                            <i class="fas fa-chart-bar text-2xl"></i>
+                        </div>
+                        <div class="stat-title">Durée médiane</div>
+                        <div class="stat-value text-info">{{ duree_mediane_coupure }} j</div>
+                        <div class="stat-desc">Valeur centrale</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistiques par Point d'Eau (vue Dashboard) -->
+    <div class="card bg-base-100 shadow-md mb-6">
+        <div class="card-body">
+            <h3 class="font-bold text-lg mb-4">
+                <i class="fas fa-tint mr-2 text-info"></i>Répartition des Points d'Eau par Statut de Paiement
+                <span class="badge badge-outline badge-sm ml-2">Année {{ annee_filter }}</span>
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <!-- Tout payé -->
+                <div class="stats shadow">
+                    <div class="stat">
+                        <div class="stat-figure text-success">
+                            <i class="fas fa-check-double text-2xl"></i>
+                        </div>
+                        <div class="stat-title">Tout payé</div>
+                        <div class="stat-value text-success">{{ nb_tout_paye_pe }}</div>
+                        <div class="stat-desc">4 trimestres payés</div>
+                    </div>
+                </div>
+
+                <!-- Partiellement payé -->
+                <div class="stats shadow">
+                    <div class="stat">
+                        <div class="stat-figure text-warning">
+                            <i class="fas fa-check text-2xl"></i>
+                        </div>
+                        <div class="stat-title">Partiellement payé</div>
+                        <div class="stat-value text-warning">{{ nb_partiellement_paye_pe }}</div>
+                        <div class="stat-desc">1 à 3 trimestres payés</div>
+                    </div>
+                </div>
+
+                <!-- Non payé -->
+                <div class="stats shadow">
+                    <div class="stat">
+                        <div class="stat-figure text-ghost">
+                            <i class="fas fa-times text-2xl"></i>
+                        </div>
+                        <div class="stat-title">Non payé</div>
+                        <div class="stat-value">{{ nb_non_paye_pe }}</div>
+                        <div class="stat-desc">Aucun paiement</div>
+                    </div>
+                </div>
+
+                <!-- Coupé -->
+                <div class="stats shadow">
+                    <div class="stat">
+                        <div class="stat-figure text-error">
+                            <i class="fas fa-ban text-2xl"></i>
+                        </div>
+                        <div class="stat-title">Coupé</div>
+                        <div class="stat-value text-error">{{ nb_coupe_pe }}</div>
+                        <div class="stat-desc">Eau coupée</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tableau des détails -->
+    <div class="card bg-base-100 shadow-md">
+        <div class="card-body">
+            <h3 class="font-bold text-lg mb-4 flex items-center justify-between">
+                <div>
+                    <i class="fas fa-list mr-2"></i>Détails des plannings
+                    <span class="badge badge-primary ml-2">{{ total_lignes }} ligne{{ total_lignes|pluralize }}</span>
+                    {% if page_obj.paginator.num_pages > 1 %}
+                    <span class="badge badge-outline ml-2">Page {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+                    {% endif %}
+                </div>
+            </h3>
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm w-full">
+                    <thead>
+                        <tr class="bg-base-200">
+                            <th>Date</th>
+                            <th>Indicateur</th>
+                            <th>Employé</th>
+                            <th>Ouvrage</th>
+                            <th>Commune</th>
+                            <th>Point d'eau</th>
+                            <th>Tarif (Ar)</th>
+                            <th>Modalité</th>
+                            <th>Désignation</th>
+                            <th>Quantité</th>
+                            <th>Montant</th>
+                            <th>N° DiameX</th>
+                            <th>Statut</th>
+                            <th>Nb Coupures</th>
+                            <th>Durée Tot. (j)</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for detail in details %}
+                        <tr>
+                            <td>{{ detail.planning.date|date:"d/m/Y" }}</td>
+                            <td>
+                                <span class="badge badge-{{ detail.date_indicator_badge }} badge-sm">
+                                    <i class="fas fa-{{ detail.date_indicator_icon }} mr-1"></i>{{ detail.date_indicator_label }}
+                                </span>
+                            </td>
+                            <td>{{ detail.planning.employe.surnom|default:detail.planning.employe.nom_employe }}</td>
+                            <td>{{ detail.planning.ouvrage.nom_ouvrage|default:"N/A" }}</td>
+                            <td>
+                                {% if detail.point_eau %}
+                                    {% if detail.point_eau.parcelle and detail.point_eau.parcelle.village and detail.point_eau.parcelle.village.fokontany and detail.point_eau.parcelle.village.fokontany.commune %}
+                                        {{ detail.point_eau.parcelle.village.fokontany.commune.nom_commune }}
+                                    {% else %}
+                                        <span class="badge badge-warning badge-sm" title="Point d'eau {{ detail.point_eau.nomabonne }} sans parcelle/village/fokontany/commune lié(e)">
+                                            <i class="fas fa-exclamation-triangle mr-1"></i>Parcelle manquante
+                                        </span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="badge badge-error badge-sm" title="Aucun point d'eau assigné - Action groupée par ouvrage">
+                                        <i class="fas fa-ban mr-1"></i>Non assigné
+                                    </span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if detail.point_eau %}
+                                    {{ detail.point_eau.code_point_eau|default:detail.point_eau.nomabonne|default:detail.point_eau.idxls|default:"N/A" }}
+                                {% else %}
+                                    N/A
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if detail.tarif_forfaitaire %}
+                                    <span class="badge badge-success badge-sm">{{ detail.tarif_forfaitaire|floatformat:0|intcomma }}</span>
+                                {% else %}
+                                    <span class="badge badge-error badge-sm">Aucun</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge badge-outline badge-sm">{{ detail.modalite_paiement }}</span>
+                            </td>
+                            <td>
+                                <span class="badge badge-{% if detail.designation.nom == 'Paiement forfaitaire' %}success{% elif detail.designation.nom == 'Coupure d\'eau' %}error{% else %}warning{% endif %} badge-sm">
+                                    {{ detail.designation.nom }}
+                                </span>
+                            </td>
+                            <td>{{ detail.quantity|floatformat:0 }}</td>
+                            <td class="font-semibold"><span class="montant-kar" data-montant="{{ detail.montant }}"></span></td>
+                            <td>
+                                {% if detail.numeroDiameX %}
+                                    <span class="badge badge-primary badge-sm">{{ detail.numeroDiameX }}</span>
+                                {% else %}
+                                    <span class="text-gray-400">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if detail.designation.nom == 'Paiement forfaitaire' %}
+                                    {% if detail.numeroDiameX %}
+                                    <span class="badge badge-success badge-sm">
+                                        <i class="fas fa-check mr-1"></i>Payé
+                                    </span>
+                                    {% else %}
+                                    <span class="badge badge-warning badge-sm">
+                                        <i class="fas fa-clock mr-1"></i>En attente
+                                    </span>
+                                    {% endif %}
+                                {% elif detail.designation.nom == 'Coupure d\'eau' %}
+                                <span class="badge badge-error badge-sm">
+                                    <i class="fas fa-ban mr-1"></i>Coupé
+                                </span>
+                                {% else %}
+                                <span class="badge badge-success badge-sm">
+                                    <i class="fas fa-check-circle mr-1"></i>Remis
+                                </span>
+                                {% endif %}
+                            </td>
+                            <!-- Statistiques de coupure par point d'eau -->
+                            <td class="text-center">
+                                {% if detail.point_eau and detail.point_eau.id in coupure_stats_by_pe %}
+                                    {% with nb_coupures=coupure_stats_by_pe|lookup:detail.point_eau.id|lookup:'nb_coupures' %}
+                                        {% if nb_coupures > 0 %}
+                                            <span class="badge badge-outline badge-sm">
+                                                {{ nb_coupures }}
+                                            </span>
+                                        {% else %}
+                                            <span class="text-gray-400">-</span>
+                                        {% endif %}
+                                    {% endwith %}
+                                {% else %}
+                                    <span class="text-gray-400">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                {% if detail.point_eau and detail.point_eau.id in coupure_stats_by_pe %}
+                                    {% with duree=coupure_stats_by_pe|lookup:detail.point_eau.id|lookup:'duree_totale_jours' %}
+                                        {% if duree > 0 %}
+                                            <span class="badge badge-outline badge-sm">
+                                                {{ duree }}
+                                            </span>
+                                        {% else %}
+                                            <span class="text-gray-400">-</span>
+                                        {% endif %}
+                                    {% endwith %}
+                                {% else %}
+                                    <span class="text-gray-400">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="flex gap-1">
+                                    <button onclick="openEditDetailModal('{{ detail.id }}')" class="btn btn-sm btn-ghost btn-square" title="Modifier détail (Quantité/Prix)">
+                                        <i class="fas fa-pencil-alt text-info"></i>
+                                    </button>
+                                    <button onclick="openEditModal('{{ detail.id }}', '{{ detail.planning.id }}', '{% if detail.point_eau %}{{ detail.point_eau.id }}{% endif %}', '{% if detail.planning.ouvrage %}{{ detail.planning.ouvrage.id }}{% endif %}', '{% if detail.planning.ouvrage %}{{ detail.planning.ouvrage.nom_ouvrage|escapejs }}{% endif %}')" class="btn btn-sm btn-ghost btn-square" title="Modifier">
+                                        <i class="fas fa-edit text-primary"></i>
+                                    </button>
+                                    <button onclick="deleteDetail('{{ detail.id }}', '{{ detail.designation.nom|escapejs }}', '{% if detail.point_eau %}{{ detail.point_eau.nomabonne|escapejs }}{% else %}N/A{% endif %}')" class="btn btn-sm btn-ghost btn-square" title="Supprimer">
+                                        <i class="fas fa-trash text-error"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="17" class="text-center text-gray-500 py-8">
+                                <i class="fas fa-inbox text-4xl mb-2 block"></i>
+                                Aucun détail à afficher
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            {% if page_obj.paginator.num_pages > 1 %}
+            <div class="flex justify-center items-center gap-2 mt-6">
+                <div class="join">
+                    {% if page_obj.has_previous %}
+                    <a href="?page=1{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}"
+                       class="join-item btn btn-sm">«</a>
+                    <a href="?page={{ page_obj.previous_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}"
+                       class="join-item btn btn-sm">‹</a>
+                    {% endif %}
+
+                    <button class="join-item btn btn-sm btn-active">Page {{ page_obj.number }}</button>
+
+                    {% if page_obj.has_next %}
+                    <a href="?page={{ page_obj.next_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}"
+                       class="join-item btn btn-sm">›</a>
+                    <a href="?page={{ page_obj.paginator.num_pages }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}"
+                       class="join-item btn btn-sm">»</a>
+                    {% endif %}
+                </div>
+                <span class="text-sm text-base-content/70 ml-4">
+                    {{ page_obj.start_index }} - {{ page_obj.end_index }} sur {{ total_lignes }}
+                </span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Modal édition point d'eau -->
+<dialog id="editDetailModal" class="modal">
+    <div class="modal-box w-11/12 max-w-4xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-edit mr-2 text-primary"></i>Modifier le Point d'eau et Tarif
+            <span id="ouvrage_filter_info" class="badge badge-info badge-sm ml-2"></span>
+        </h3>
+        <form id="editDetailForm">
+            {% csrf_token %}
+
+            <!-- Champ de recherche -->
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text"><i class="fas fa-search mr-2"></i>Rechercher</span>
+                </label>
+                <input type="text" id="search_point_eau" placeholder="Rechercher par nom, IDXls, village, ouvrage..."
+                       class="input input-bordered w-full"
+                       onkeyup="filterPointsEau()">
+                <label class="label">
+                    <span class="label-text-alt text-info">Tapez pour filtrer la liste ci-dessous</span>
+                </label>
+            </div>
+
+            <!-- Liste avec radio buttons -->
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Point d'eau <span id="points_count" class="badge badge-sm badge-neutral"></span></span>
+                </label>
+                <div id="points_eau_list" class="border border-base-300 rounded-lg p-3 overflow-y-auto bg-base-100" style="max-height: 400px; min-height: 300px;">
+                    <!-- Radio buttons seront ajoutés ici via JavaScript -->
+                </div>
+                <label class="label">
+                    <span class="label-text-alt">
+                        <strong>Format:</strong> Nom [IDXls] (Type) - Village - Ouvrage - Tarif
+                    </span>
+                </label>
+            </div>
+
+            <!-- Champ Tarif forfaitaire -->
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text"><i class="fas fa-money-bill-wave mr-2"></i>Tarif forfaitaire (Ar)</span>
+                </label>
+                <input type="number" id="tarif_forfaitaire_input"
+                       class="input input-bordered w-full"
+                       placeholder="Ex: 75000"
+                       min="0"
+                       step="1000">
+                <label class="label">
+                    <span class="label-text-alt text-info">Laissez vide pour supprimer le tarif</span>
+                </label>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" onclick="saveDetailUpdate()" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+                <button type="button" onclick="editDetailModal.close()" class="btn">Annuler</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Modal édition quantité/prix -->
+<dialog id="editQuantityModal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-pencil-alt mr-2 text-info"></i>Modifier Quantité et Prix Unitaire
+        </h3>
+        <form id="editQuantityForm">
+            {% csrf_token %}
+            <input type="hidden" id="edit_detail_id" name="detail_id">
+
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Quantité</span>
+                </label>
+                <input type="number" id="edit_quantity" name="quantity"
+                       class="input input-bordered w-full"
+                       step="0.01" min="0"
+                       placeholder="Ex: 0.5, 1, 2.5..."
+                       autocomplete="off">
+            </div>
+
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Prix unitaire (Ar)</span>
+                </label>
+                <input type="number" id="edit_prix" name="prix"
+                       class="input input-bordered w-full"
+                       step="1" min="0"
+                       placeholder="Ex: 75000, 100000..."
+                       autocomplete="off">
+            </div>
+
+            <div class="modal-action">
+                <button type="button" onclick="saveQuantityUpdate()" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+                <button type="button" onclick="editQuantityModal.close()" class="btn">Annuler</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Modal détails -->
+<dialog id="detailModal" class="modal">
+    <div class="modal-box w-11/12 max-w-5xl">
+        <h3 class="font-bold text-lg mb-4" id="modalTitle">Détails</h3>
+        <div class="overflow-x-auto" id="modalContent">
+            <!-- Contenu chargé dynamiquement -->
+        </div>
+        <div class="modal-action">
+            <button onclick="detailModal.close()" class="btn">Fermer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<script>
+// Filtrage en cascade des ouvrages selon la commune sélectionnée
+function filterOuvrages() {
+    const communeSelect = document.getElementById('commune_filter');
+    const ouvrageSelect = document.getElementById('ouvrage_filter');
+    const communeId = communeSelect.value;
+    const options = ouvrageSelect.querySelectorAll('option');
+
+    let visibleCount = 0;
+
+    options.forEach((option, index) => {
+        if (index === 0) return; // Skip "Tous les ouvrages"
+
+        const communesIds = option.dataset.communes || '';
+
+        // Si aucune commune sélectionnée, montrer tous les ouvrages
+        if (!communeId) {
+            option.style.display = '';
+            visibleCount++;
+        } else {
+            // Vérifier si l'ouvrage a des points d'eau dans la commune sélectionnée
+            if (communesIds.includes(communeId)) {
+                option.style.display = '';
+                visibleCount++;
+            } else {
+                option.style.display = 'none';
+                // Déselectionner si l'option était sélectionnée
+                if (option.selected) {
+                    option.selected = false;
+                    ouvrageSelect.value = '';
+                }
+            }
+        }
+    });
+
+    updateOuvrageCount(visibleCount, options.length - 1);
+}
+
+// Recherche dans les ouvrages
+function searchOuvrages() {
+    const searchInput = document.getElementById('ouvrage_search');
+    const ouvrageSelect = document.getElementById('ouvrage_filter');
+    const searchText = searchInput.value.toLowerCase();
+    const options = ouvrageSelect.querySelectorAll('option');
+
+    let visibleCount = 0;
+
+    options.forEach((option, index) => {
+        if (index === 0) return; // Skip "Tous les ouvrages"
+
+        // Ne chercher que dans les options déjà visibles (après filtrage commune)
+        if (option.style.display === 'none') return;
+
+        const searchableText = option.dataset.search || option.textContent.toLowerCase();
+
+        if (searchText === '' || searchableText.includes(searchText)) {
+            option.style.display = '';
+            visibleCount++;
+        } else {
+            option.style.display = 'none';
+        }
+    });
+
+    const totalVisible = Array.from(options).filter((o, i) => i > 0 && o.style.display !== 'none').length;
+    updateOuvrageCount(totalVisible, options.length - 1);
+}
+
+// Mettre à jour le compteur d'ouvrages
+function updateOuvrageCount(visible, total) {
+    const badge = document.getElementById('ouvrage_count');
+    if (visible === total) {
+        badge.textContent = `${total} ouvrage${total > 1 ? 's' : ''}`;
+    } else {
+        badge.textContent = `${visible}/${total} ouvrage${total > 1 ? 's' : ''}`;
+    }
+}
+
+// Filtrer les points d'eau en cascade avec l'ouvrage sélectionné
+function filterPointsEau() {
+    const ouvrageSelect = document.getElementById('ouvrage_filter');
+    const pointEauSelect = document.getElementById('point_eau_filter');
+    const selectedOuvrage = ouvrageSelect.value;
+    const options = pointEauSelect.querySelectorAll('option');
+
+    let visibleCount = 0;
+
+    options.forEach((option, index) => {
+        if (index === 0) return; // Skip "Tous les points d'eau"
+
+        const optionOuvrage = option.dataset.ouvrage;
+
+        if (selectedOuvrage === '' || optionOuvrage === selectedOuvrage) {
+            option.style.display = '';
+            visibleCount++;
+        } else {
+            option.style.display = 'none';
+        }
+    });
+
+    updatePointEauCount(visibleCount, options.length - 1);
+}
+
+// Rechercher parmi les points d'eau
+function searchPointsEau() {
+    const searchInput = document.getElementById('point_eau_search');
+    const pointEauSelect = document.getElementById('point_eau_filter');
+    const searchText = searchInput.value.toLowerCase();
+    const options = pointEauSelect.querySelectorAll('option');
+
+    let visibleCount = 0;
+
+    options.forEach((option, index) => {
+        if (index === 0) return; // Skip "Tous les points d'eau"
+
+        // Ne chercher que dans les options déjà visibles (après filtrage ouvrage)
+        if (option.style.display === 'none') return;
+
+        const searchableText = option.dataset.search || option.textContent.toLowerCase();
+
+        if (searchText === '' || searchableText.includes(searchText)) {
+            option.style.display = '';
+            visibleCount++;
+        } else {
+            option.style.display = 'none';
+        }
+    });
+
+    const totalVisible = Array.from(options).filter((o, i) => i > 0 && o.style.display !== 'none').length;
+    updatePointEauCount(totalVisible, options.length - 1);
+}
+
+// Mettre à jour le compteur de points d'eau
+function updatePointEauCount(visible, total) {
+    const badge = document.getElementById('point_eau_count');
+    if (visible === total) {
+        badge.textContent = `${total} point${total > 1 ? 's' : ''} d'eau`;
+    } else {
+        badge.textContent = `${visible}/${total} point${total > 1 ? 's' : ''} d'eau`;
+    }
+}
+
+// Initialiser les filtres au chargement
+document.addEventListener('DOMContentLoaded', function() {
+    filterOuvrages();
+    filterPointsEau();
+
+    // Écouter les changements d'ouvrage pour filtrer les points d'eau
+    const ouvrageSelect = document.getElementById('ouvrage_filter');
+    ouvrageSelect.addEventListener('change', function() {
+        filterPointsEau();
+        // Réinitialiser la recherche
+        document.getElementById('point_eau_search').value = '';
+    });
+});
+
+async function showDetail(type) {
+    const modal = document.getElementById('detailModal');
+    const modalTitle = document.getElementById('modalTitle');
+    const modalContent = document.getElementById('modalContent');
+
+    // Récupérer les filtres actuels
+    const commune = '{{ commune_filter }}';
+    const ouvrage = '{{ ouvrage_filter }}';
+    const dateDebut = '{{ date_debut }}';
+    const dateFin = '{{ date_fin }}';
+
+    // Titres selon le type
+    const titles = {
+        'prevu': 'Détail des Paiements Prévus',
+        'planifie': 'Détail des Paiements Planifiés',
+        'paye': 'Détail des Paiements Payés',
+        'coupes': 'Détail des Points d\'eau Coupés'
+    };
+
+    modalTitle.textContent = titles[type] || 'Détails';
+    modalContent.innerHTML = '<div class="flex justify-center py-8"><span class="loading loading-spinner loading-lg"></span></div>';
+
+    modal.showModal();
+
+    try {
+        let url = `{% url 'planning:api_detail_forfaitaire' %}?type=${type}&commune=${commune}&ouvrage=${ouvrage}`;
+        if (dateDebut) url += `&date_debut=${dateDebut}`;
+        if (dateFin) url += `&date_fin=${dateFin}`;
+        const response = await fetch(url);
+        const result = await response.json();
+
+        if (result.success && result.data.length > 0) {
+            let html = '<table class="table table-zebra table-sm w-full">';
+
+            if (type === 'prevu') {
+                html += `
+                    <thead>
+                        <tr class="bg-base-200">
+                            <th>Point d'eau</th>
+                            <th>Ouvrage</th>
+                            <th>Commune</th>
+                            <th class="text-right">Prévu (K Ar)</th>
+                            <th class="text-right">Planifié (K Ar)</th>
+                            <th class="text-right">Payé (K Ar)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                `;
+                result.data.forEach(row => {
+                    html += `
+                        <tr>
+                            <td>${row.point_eau}</td>
+                            <td>${row.ouvrage}</td>
+                            <td>${row.commune}</td>
+                            <td class="text-right font-semibold">${Math.round(row.prevu / 1000).toLocaleString('fr-FR')}</td>
+                            <td class="text-right">${Math.round(row.planifie / 1000).toLocaleString('fr-FR')}</td>
+                            <td class="text-right text-success">${Math.round(row.paye / 1000).toLocaleString('fr-FR')}</td>
+                        </tr>
+                    `;
+                });
+            } else if (type === 'planifie' || type === 'paye') {
+                html += `
+                    <thead>
+                        <tr class="bg-base-200">
+                            <th>Date</th>
+                            <th>Point d'eau</th>
+                            <th>Ouvrage</th>
+                            <th class="text-right">Montant (K Ar)</th>
+                            ${type === 'planifie' ? '<th>Statut</th>' : '<th>N° DiameX</th>'}
+                        </tr>
+                    </thead>
+                    <tbody>
+                `;
+                result.data.forEach(row => {
+                    html += `
+                        <tr>
+                            <td>${row.date}</td>
+                            <td>${row.point_eau}</td>
+                            <td>${row.ouvrage}</td>
+                            <td class="text-right font-semibold">${Math.round(row.montant / 1000).toLocaleString('fr-FR')}</td>
+                            <td>${type === 'planifie' ? (row.paye ? '<span class="badge badge-success badge-sm">Payé</span>' : '<span class="badge badge-warning badge-sm">En attente</span>') : row.numero_diamex}</td>
+                        </tr>
+                    `;
+                });
+            } else if (type === 'coupes') {
+                html += `
+                    <thead>
+                        <tr class="bg-base-200">
+                            <th>Point d'eau</th>
+                            <th>Ouvrage</th>
+                            <th>Commune</th>
+                            <th>Date d'arrêt</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                `;
+                result.data.forEach(row => {
+                    html += `
+                        <tr>
+                            <td>${row.point_eau}</td>
+                            <td>${row.ouvrage}</td>
+                            <td>${row.commune}</td>
+                            <td><span class="badge badge-error">${row.date_arret}</span></td>
+                        </tr>
+                    `;
+                });
+            }
+
+            html += '</tbody></table>';
+            modalContent.innerHTML = html;
+        } else {
+            modalContent.innerHTML = '<div class="text-center text-gray-500 py-8">Aucune donnée à afficher</div>';
+        }
+    } catch (error) {
+        console.error('Erreur lors du chargement des détails:', error);
+        modalContent.innerHTML = '<div class="alert alert-error">Erreur lors du chargement des détails</div>';
+    }
+}
+
+// Formatter les montants en K Ar avec séparateurs
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.montant-kar').forEach(el => {
+        const montant = parseFloat(el.dataset.montant) || 0;
+        const montantK = Math.round(montant / 1000);
+        el.textContent = montantK.toLocaleString('fr-FR') + ' K Ar';
+    });
+});
+
+// Variable globale pour stocker tous les points d'eau
+let allPointsEau = [];
+let currentOuvrageId = null;
+
+// Modal pour éditer le point d'eau
+async function openEditModal(detailId, planningId, pointEauId, ouvrageId, ouvrageNom) {
+    const modal = document.getElementById('editDetailModal');
+    const form = document.getElementById('editDetailForm');
+    const ouvrageFilterInfo = document.getElementById('ouvrage_filter_info');
+
+    currentOuvrageId = ouvrageId;
+
+    // Afficher l'ouvrage filtré
+    if (ouvrageNom) {
+        ouvrageFilterInfo.textContent = `Filtré: ${ouvrageNom}`;
+        ouvrageFilterInfo.style.display = 'inline-block';
+    } else {
+        ouvrageFilterInfo.style.display = 'none';
+    }
+
+    // Charger les points d'eau
+    try {
+        const response = await fetch(`/plannings/forfaitaire/api/points-eau/`);
+
+        if (!response.ok) {
+            throw new Error(`Erreur HTTP: ${response.status}`);
+        }
+
+        allPointsEau = await response.json();
+        console.log('Points d\'eau chargés:', allPointsEau.length);
+
+        // Filtrer par ouvrage STRICTEMENT - afficher uniquement les points d'eau de l'ouvrage
+        let filteredPointsEau = allPointsEau;
+        if (ouvrageId) {
+            filteredPointsEau = allPointsEau.filter(pe => pe.ouvrage_id == ouvrageId);
+            console.log('Points d\'eau filtrés par ouvrage (strict):', filteredPointsEau.length, 'ouvrage_id:', ouvrageId);
+        }
+
+        form.dataset.detailId = detailId;
+        form.dataset.planningId = planningId;
+
+        // Pré-remplir le tarif forfaitaire si un point d'eau est sélectionné
+        console.log('Recherche du point d\'eau avec ID:', pointEauId);
+        let selectedPointEau = allPointsEau.find(pe => pe.id == pointEauId);
+        console.log('Point d\'eau trouvé dans la liste initiale:', selectedPointEau);
+
+        // Si le point d'eau n'est pas dans la liste, le charger individuellement
+        if (!selectedPointEau && pointEauId) {
+            console.log('Chargement individuel du point d\'eau:', pointEauId);
+            try {
+                const peResponse = await fetch(`/organisations/api/point-eau/${pointEauId}/`);
+                if (peResponse.ok) {
+                    const peData = await peResponse.json();
+                    selectedPointEau = {
+                        id: pointEauId,
+                        nomabonne: peData.nomabonne || 'N/A',
+                        tarif: peData.tarifforfaitaire || 0,
+                        ouvrage_id: peData.ouvrage,
+                        ouvrage_nom: peData.ouvrage_nom || 'N/A',
+                        type: peData.type_point_eau_nom || 'N/A',
+                        village: peData.village_nom || 'N/A',
+                        idxls: peData.idxls || '',
+                        code: peData.code_point_eau || ''
+                    };
+
+                    // VÉRIFIER si le point d'eau appartient à l'ouvrage filtré
+                    if (ouvrageId && selectedPointEau.ouvrage_id == ouvrageId) {
+                        // Point d'eau du bon ouvrage, l'ajouter à la liste
+                        filteredPointsEau.unshift(selectedPointEau);
+                        console.log('Point d\'eau ajouté à la liste (bon ouvrage)');
+                    } else if (ouvrageId && selectedPointEau.ouvrage_id != ouvrageId) {
+                        console.warn('⚠️ Point d\'eau appartient à un autre ouvrage:', selectedPointEau.ouvrage_nom);
+                        // Afficher un avertissement mais l'ajouter quand même pour correction
+                        ouvrageFilterInfo.textContent = `⚠️ Point d'eau actuel (${selectedPointEau.nomabonne}) de ${selectedPointEau.ouvrage_nom}`;
+                        ouvrageFilterInfo.className = 'badge badge-warning badge-sm ml-2';
+                        ouvrageFilterInfo.style.display = 'inline-block';
+                        filteredPointsEau.unshift(selectedPointEau);
+                    }
+                    console.log('Point d\'eau chargé individuellement:', selectedPointEau);
+                }
+            } catch (err) {
+                console.error('Erreur lors du chargement individuel:', err);
+            }
+        }
+
+        // Remplir la liste APRÈS chargement individuel
+        populatePointsEauSelect(filteredPointsEau, pointEauId);
+        updatePointsCount(filteredPointsEau.length, allPointsEau.length);
+
+        // Afficher message si toujours aucun point d'eau après chargement
+        if (ouvrageId && filteredPointsEau.length === 0) {
+            console.warn('Aucun point d\'eau disponible pour cet ouvrage');
+            ouvrageFilterInfo.textContent = `⚠️ Aucun point d'eau pour ${ouvrageNom}`;
+            ouvrageFilterInfo.className = 'badge badge-error badge-sm ml-2';
+            ouvrageFilterInfo.style.display = 'inline-block';
+        }
+
+        const tarifInput = document.getElementById('tarif_forfaitaire_input');
+        if (selectedPointEau) {
+            if (selectedPointEau.tarif) {
+                tarifInput.value = selectedPointEau.tarif;
+                console.log('Tarif pré-rempli:', selectedPointEau.tarif, 'pour', selectedPointEau.nomabonne);
+            } else {
+                tarifInput.value = '';
+                console.log('Point d\'eau trouvé mais tarif = 0 ou null:', selectedPointEau.nomabonne);
+            }
+        } else {
+            tarifInput.value = '';
+            console.log('Point d\'eau non trouvé même après chargement individuel');
+        }
+        form.dataset.pointEauId = pointEauId;
+
+        // Reset search
+        document.getElementById('search_point_eau').value = '';
+
+        modal.showModal();
+    } catch (error) {
+        console.error('Erreur lors du chargement des points d\'eau:', error);
+        alert('Erreur lors du chargement des points d\'eau: ' + error.message);
+    }
+}
+
+// Fonction pour remplir la liste avec les points d'eau (radio buttons)
+function populatePointsEauSelect(pointsEau, selectedId) {
+    const listContainer = document.getElementById('points_eau_list');
+    listContainer.innerHTML = '';
+
+    console.log('Remplissage de la liste avec', pointsEau.length, 'points d\'eau');
+    console.log('Point d\'eau sélectionné:', selectedId);
+
+    if (pointsEau.length === 0) {
+        listContainer.innerHTML = '<div class="text-center text-gray-500 py-4">Aucun point d\'eau disponible</div>';
+        return;
+    }
+
+    pointsEau.forEach((pe, index) => {
+        const checked = pe.id == selectedId ? 'checked' : '';
+        // Format : Nom | IDXls | Type | Village | Ouvrage | Tarif
+        const idxls = pe.idxls ? `[${pe.idxls}]` : '';
+        const type = pe.type !== 'N/A' ? `(${pe.type})` : '';
+        const village = pe.village !== 'N/A' ? pe.village : '';
+        const ouvrage = pe.ouvrage_nom !== 'N/A' ? `${pe.ouvrage_nom}` : '';
+        const tarif = pe.tarif ? `${(pe.tarif/1000).toFixed(0)}K Ar` : '';
+
+        const label = `${pe.nomabonne} ${idxls} ${type} - ${village} - ${ouvrage} - ${tarif}`.replace(/\s+/g, ' ').trim();
+
+        // Créer l'élément radio avec label
+        const radioDiv = document.createElement('div');
+        radioDiv.className = 'form-control';
+        radioDiv.dataset.searchtext = label.toLowerCase();
+        radioDiv.innerHTML = `
+            <label class="label cursor-pointer hover:bg-base-200 rounded-lg px-3 py-2 transition-colors">
+                <span class="label-text flex-1">${label}</span>
+                <input type="radio" name="point_eau_radio" value="${pe.id}" class="radio radio-primary" ${checked}>
+            </label>
+        `;
+        listContainer.appendChild(radioDiv);
+    });
+
+    console.log('Liste remplie avec', listContainer.children.length, 'éléments');
+}
+
+// Fonction pour filtrer les points d'eau dans la liste
+function filterPointsEau() {
+    const searchText = document.getElementById('search_point_eau').value.toLowerCase();
+    const listContainer = document.getElementById('points_eau_list');
+    const radioItems = listContainer.querySelectorAll('.form-control');
+
+    let visibleCount = 0;
+
+    radioItems.forEach(item => {
+        const searchableText = item.dataset.searchtext || '';
+
+        if (searchText === '' || searchableText.includes(searchText)) {
+            item.style.display = '';
+            visibleCount++;
+        } else {
+            item.style.display = 'none';
+        }
+    });
+
+    // Mettre à jour le compteur
+    const totalCount = radioItems.length;
+    updatePointsCount(visibleCount, totalCount);
+}
+
+// Fonction pour mettre à jour le compteur de points d'eau
+function updatePointsCount(visible, total) {
+    const badge = document.getElementById('points_count');
+    if (visible === total) {
+        badge.textContent = `${total} point${total > 1 ? 's' : ''}`;
+        badge.className = 'badge badge-sm badge-neutral';
+    } else {
+        badge.textContent = `${visible}/${total} point${total > 1 ? 's' : ''}`;
+        badge.className = 'badge badge-sm badge-primary';
+    }
+}
+
+async function saveDetailUpdate() {
+    const form = document.getElementById('editDetailForm');
+    const detailId = form.dataset.detailId;
+    const planningId = form.dataset.planningId;
+
+    // Récupérer le radio button sélectionné
+    const selectedRadio = document.querySelector('input[name="point_eau_radio"]:checked');
+    const pointEauId = selectedRadio ? selectedRadio.value : '';
+
+    if (!pointEauId) {
+        alert('Veuillez sélectionner un point d\'eau');
+        return;
+    }
+
+    // Récupérer le tarif forfaitaire
+    const tarifInput = document.getElementById('tarif_forfaitaire_input');
+    const tarif = tarifInput.value.trim() !== '' ? parseFloat(tarifInput.value) : null;
+
+    try {
+        const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+
+        // 1. Mettre à jour le point d'eau du détail
+        const response1 = await fetch(`/plannings/forfaitaire/api/update-detail/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrftoken
+            },
+            body: JSON.stringify({
+                detail_id: detailId,
+                point_eau_id: pointEauId
+            })
+        });
+
+        const result1 = await response1.json();
+        if (!result1.success) {
+            alert('Erreur lors de la mise à jour du point d\'eau: ' + (result1.error || 'Erreur inconnue'));
+            return;
+        }
+
+        // 2. Mettre à jour le tarif forfaitaire du point d'eau
+        const response2 = await fetch(`/plannings/forfaitaire/api/update-tarif/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrftoken
+            },
+            body: JSON.stringify({
+                point_eau_id: pointEauId,
+                tarif: tarif
+            })
+        });
+
+        const result2 = await response2.json();
+        if (result2.success) {
+            alert('Point d\'eau et tarif mis à jour avec succès');
+            location.reload();
+        } else {
+            alert('Point d\'eau mis à jour mais erreur sur le tarif: ' + (result2.error || 'Erreur inconnue'));
+            location.reload();
+        }
+    } catch (error) {
+        console.error('Erreur lors de la mise à jour:', error);
+        alert('Erreur lors de la mise à jour');
+    }
+}
+
+// Fonction pour supprimer un détail de planning
+async function deleteDetail(detailId, designation, pointEau) {
+    if (!confirm(`Êtes-vous sûr de vouloir supprimer ce détail?\n\nDésignation: ${designation}\nPoint d'eau: ${pointEau}`)) {
+        return;
+    }
+
+    try {
+        const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+        const response = await fetch(`/plannings/forfaitaire/api/delete-detail/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrftoken
+            },
+            body: JSON.stringify({
+                detail_id: detailId
+            })
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            alert('Détail supprimé avec succès');
+            location.reload();
+        } else {
+            alert('Erreur: ' + (result.error || 'Erreur inconnue'));
+        }
+    } catch (error) {
+        console.error('Erreur lors de la suppression:', error);
+        alert('Erreur lors de la suppression');
+    }
+}
+
+// Fonction pour ouvrir le modal d'édition de quantité/prix
+async function openEditDetailModal(detailId) {
+    const modal = document.getElementById('editQuantityModal');
+
+    try {
+        // Charger les données du détail
+        const response = await fetch(`/plannings/forfaitaire/api/get-detail/${detailId}/`);
+        const result = await response.json();
+
+        if (result.success) {
+            document.getElementById('edit_detail_id').value = detailId;
+            document.getElementById('edit_quantity').value = result.data.quantity || 0;
+            document.getElementById('edit_prix').value = result.data.pu || 0;
+            modal.showModal();
+        } else {
+            alert('Erreur lors du chargement du détail: ' + (result.error || 'Erreur inconnue'));
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors du chargement du détail');
+    }
+}
+
+// Fonction pour enregistrer la modification de quantité/prix
+async function saveQuantityUpdate() {
+    const detailId = document.getElementById('edit_detail_id').value;
+    const quantity = document.getElementById('edit_quantity').value;
+    const prix = document.getElementById('edit_prix').value;
+
+    if (!quantity || !prix) {
+        alert('Veuillez remplir tous les champs');
+        return;
+    }
+
+    try {
+        const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+        const response = await fetch(`/plannings/forfaitaire/api/update-quantity-prix/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrftoken
+            },
+            body: JSON.stringify({
+                detail_id: detailId,
+                quantity: parseFloat(quantity),
+                prix: parseFloat(prix)
+            })
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            alert('Quantité et prix mis à jour avec succès');
+            location.reload();
+        } else {
+            alert('Erreur: ' + (result.error || 'Erreur inconnue'));
+        }
+    } catch (error) {
+        console.error('Erreur lors de la mise à jour:', error);
+        alert('Erreur lors de la mise à jour');
+    }
+}
+
+// Fonction pour changer l'année
+function changeAnnee(annee) {
+    const urlParams = new URLSearchParams(window.location.search);
+    urlParams.set('annee', annee);
+    // Réinitialiser la pagination lors du changement d'année
+    urlParams.delete('page');
+    window.location.search = urlParams.toString();
+}
+</script>
+{% endblock %}

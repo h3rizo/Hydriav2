@@ -1,0 +1,711 @@
+{% extends "accounting/base.html" %}
+{% load static %}
+{% load humanize %}
+{% load pagination_tags %}
+
+{% block title %}Recoupement Achats - Comptabilité{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <!-- Header -->
+    <div class="mb-6">
+        <h1 class="text-3xl font-bold mb-2">
+            <i class="fas fa-shopping-cart mr-2 text-primary"></i>
+            Recoupement Achats - Comptabilité
+        </h1>
+        <p class="text-base-content/70">
+            Vérification de la cohérence entre les achats enregistrés et la comptabilité DiameX
+        </p>
+    </div>
+
+    <!-- Navigation entre toutes les pages de recoupement -->
+    {% include 'accounting/includes/recoupement_nav.html' with current_page='achats' %}
+
+    <!-- Filtres -->
+    <div class="card bg-base-200 shadow-md mb-6">
+        <div class="card-body">
+            <h3 class="card-title text-sm mb-4"><i class="fas fa-filter mr-2"></i>Filtres</h3>
+            <form method="GET" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Status</span></label>
+                    <select name="status" class="select select-bordered select-sm">
+                        <option value="">Tous les status</option>
+                        <option value="ok" {% if request.GET.status == 'ok' %}selected{% endif %}>✓ OK</option>
+                        <option value="warning" {% if request.GET.status == 'warning' %}selected{% endif %}>⚠ Attention</option>
+                        <option value="error" {% if request.GET.status == 'error' %}selected{% endif %}>✗ Erreur</option>
+                        <option value="missing" {% if request.GET.status == 'missing' %}selected{% endif %}>? Manquant</option>
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Fournisseur</span></label>
+                    <select name="fournisseur" class="select select-bordered select-sm">
+                        <option value="">Tous les fournisseurs</option>
+                        {% for fournisseur in fournisseurs_list %}
+                        <option value="{{ fournisseur }}" {% if request.GET.fournisseur == fournisseur %}selected{% endif %}>{{ fournisseur }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Base DiameX</span></label>
+                    <select name="base" class="select select-bordered select-sm">
+                        <option value="">Toutes les bases</option>
+                        {% for base in bases_list %}
+                        <option value="{{ base }}" {% if request.GET.base == base %}selected{% endif %}>{{ base }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mois</span></label>
+                    <input type="month" name="mois" value="{{ request.GET.mois }}" class="input input-bordered input-sm" />
+                </div>
+
+                <div class="form-control flex flex-row gap-2 items-end">
+                    <button type="submit" class="btn btn-primary btn-sm flex-1"><i class="fas fa-search mr-2"></i>Filtrer</button>
+                    <a href="{% url 'accounting:recoupement_achats' %}" class="btn btn-ghost btn-sm"><i class="fas fa-times"></i></a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Statistics Dashboard (cliquables pour filtrer) -->
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
+        <!-- Total -->
+        <a href="{% query_string status='' %}" class="stat bg-base-200 rounded-lg p-4 shadow hover:shadow-lg transition-shadow cursor-pointer">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-list text-3xl"></i>
+            </div>
+            <div class="stat-title">Total</div>
+            <div class="stat-value text-primary">{{ stats.total|intcomma }}</div>
+            <div class="stat-desc">couples (Num, Base) DiameX</div>
+        </a>
+
+        <!-- OK -->
+        <a href="{% query_string status='ok' %}" class="stat bg-success/10 rounded-lg p-4 shadow hover:shadow-lg transition-shadow cursor-pointer">
+            <div class="stat-figure text-success">
+                <i class="fas fa-check-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">OK</div>
+            <div class="stat-value text-success">{{ stats_global.ok|intcomma }}</div>
+            <div class="stat-desc">Écart &lt; 0.01 Ar</div>
+        </a>
+
+        <!-- Warning -->
+        <a href="{% query_string status='warning' %}" class="stat bg-warning/10 rounded-lg p-4 shadow hover:shadow-lg transition-shadow cursor-pointer">
+            <div class="stat-figure text-warning">
+                <i class="fas fa-exclamation-triangle text-3xl"></i>
+            </div>
+            <div class="stat-title">Attention</div>
+            <div class="stat-value text-warning">{{ stats_global.warning|intcomma }}</div>
+            <div class="stat-desc">Écart &lt; 100 Ar</div>
+        </a>
+
+        <!-- Error -->
+        <a href="{% query_string status='error' %}" class="stat bg-error/10 rounded-lg p-4 shadow hover:shadow-lg transition-shadow cursor-pointer">
+            <div class="stat-figure text-error">
+                <i class="fas fa-times-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Erreur</div>
+            <div class="stat-value text-error">{{ stats_global.error|intcomma }}</div>
+            <div class="stat-desc">Écart ≥ 100 Ar</div>
+        </a>
+
+        <!-- Missing -->
+        <a href="{% query_string status='missing' %}" class="stat bg-base-300 rounded-lg p-4 shadow hover:shadow-lg transition-shadow cursor-pointer">
+            <div class="stat-figure text-base-content/50">
+                <i class="fas fa-question-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Manquant</div>
+            <div class="stat-value text-base-content/50">{{ stats_global.missing|intcomma }}</div>
+            <div class="stat-desc">Non trouvé en compta</div>
+        </a>
+    </div>
+
+    <!-- Boutons de navigation rapide -->
+    <div class="flex gap-3 mb-6" id="verification-normale">
+        <a href="#verification-inverse" class="btn btn-secondary btn-sm">
+            <i class="fas fa-arrow-down mr-2"></i>
+            Aller à la vérification inverse
+        </a>
+        <button onclick="collapseAllBases()" class="btn btn-ghost btn-sm">
+            <i class="fas fa-compress-alt mr-2"></i>
+            Tout plier
+        </button>
+        <button onclick="expandAllBases()" class="btn btn-ghost btn-sm">
+            <i class="fas fa-expand-alt mr-2"></i>
+            Tout déplier
+        </button>
+    </div>
+
+    <!-- Results Table - Grouped by Base DiameX -->
+    {% if recoupements_par_base %}
+        {% for base_id, base_groupe in recoupements_par_base.items %}
+        <div class="card bg-base-100 shadow-xl mb-8 base-card">
+            <div class="card-body">
+                <div class="flex items-center justify-between mb-6">
+                    <h1 class="text-2xl font-bold flex items-center gap-3">
+                        <i class="fas fa-database text-info"></i>
+                        {{ base_groupe.base_nom }}
+                        <span class="badge badge-info badge-lg">{{ base_groupe.total_recoupements }} recoupement(s)</span>
+                        <span class="badge badge-success badge-sm">{{ base_groupe.ok }} OK</span>
+                        <span class="badge badge-warning badge-sm">{{ base_groupe.warning }} Warning</span>
+                        <span class="badge badge-error badge-sm">{{ base_groupe.error }} Error</span>
+                        <span class="badge badge-ghost badge-sm">{{ base_groupe.missing }} Missing</span>
+                    </h1>
+                    <button onclick="toggleBase(this)" class="btn btn-sm btn-ghost">
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                </div>
+
+                <div class="base-content" style="display: none;">
+
+                <div class="overflow-x-auto">
+                    <table class="table table-zebra w-full">
+                        <thead>
+                            <tr>
+                                <th class="bg-base-200">Numéro DiameX</th>
+                                <th class="bg-base-200">Base DiameX</th>
+                                <th class="bg-base-200">Fournisseur</th>
+                                <th class="bg-base-200">Date</th>
+                                <th class="bg-base-200 text-center">Nb Items</th>
+                                <th class="bg-base-200 text-right">Total Achats (Ar)</th>
+                                <th class="bg-base-200 text-right">Compta OUT (Ar)</th>
+                                <th class="bg-base-200 text-right">Écart Total (Ar)</th>
+                                <th class="bg-base-200 text-center">Status</th>
+                                <th class="bg-base-200 text-center">Détails</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for rec in base_groupe.recoupements %}
+                            <tr>
+                                <td class="font-mono">{{ rec.numero_diamex }}</td>
+                                <td class="font-semibold">{{ rec.base_diamex }}</td>
+                                <td>
+                                    {% if rec.fournisseur %}
+                                        <span class="badge badge-sm badge-outline">{{ rec.fournisseur }}</span>
+                                    {% else %}
+                                        <span class="text-base-content/50">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if rec.date_achat %}
+                                        {{ rec.date_achat|date:"d/m/Y" }}
+                                    {% else %}
+                                        <span class="text-base-content/50">-</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    <span class="badge badge-sm badge-info">{{ rec.nb_items }}</span>
+                                </td>
+                                <td class="text-right font-mono text-error">{{ rec.total_achats|floatformat:2|intcomma }}</td>
+                                <td class="text-right font-mono text-sm">
+                                    {% if rec.comptabilite_out is not None %}
+                                        {{ rec.comptabilite_out|floatformat:2|intcomma }}
+                                    {% else %}
+                                        <span class="text-base-content/50">-</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-right font-mono font-bold
+                                    {% if rec.status == 'ok' %}text-success
+                                    {% elif rec.status == 'warning' %}text-warning
+                                    {% elif rec.status == 'error' %}text-error
+                                    {% else %}text-base-content/50{% endif %}">
+                                    {% if rec.ecart_total is not None %}
+                                        {{ rec.ecart_total|floatformat:2|intcomma }}
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if rec.status == 'ok' %}
+                                        <span class="badge badge-success gap-2">
+                                            <i class="fas fa-check"></i> OK
+                                        </span>
+                                    {% elif rec.status == 'warning' %}
+                                        <span class="badge badge-warning gap-2">
+                                            <i class="fas fa-exclamation-triangle"></i> Attention
+                                        </span>
+                                    {% elif rec.status == 'error' %}
+                                        <span class="badge badge-error gap-2">
+                                            <i class="fas fa-times"></i> Erreur
+                                        </span>
+                                    {% else %}
+                                        <span class="badge badge-ghost gap-2">
+                                            <i class="fas fa-question"></i> Manquant
+                                        </span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    <button class="btn btn-sm btn-outline btn-info"
+                                            onclick="toggleDetails('details-{{ organisation_id }}-{{ forloop.counter }}')">
+                                        <i class="fas fa-eye"></i>
+                                        Voir ({{ rec.purchase_items|length }})
+                                    </button>
+                                </td>
+                            </tr>
+                            <!-- Details Row (hidden by default) -->
+                            <tr id="details-{{ organisation_id }}-{{ forloop.counter }}" class="hidden">
+                                <td colspan="10" class="bg-base-200/50">
+                                    <div class="p-4">
+                                        <h4 class="font-semibold mb-3">
+                                            <i class="fas fa-list mr-2"></i>
+                                            Détails des articles achetés ({{ rec.purchase_items|length }} article{{ rec.purchase_items|length|pluralize }})
+                                        </h4>
+
+                                        <div class="overflow-x-auto">
+                                            <table class="table table-sm w-full">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Désignation</th>
+                                                        <th>Unité</th>
+                                                        <th class="text-center">Quantité</th>
+                                                        <th class="text-right">PU (Ar)</th>
+                                                        <th class="text-right">Montant (Ar)</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {% for item in rec.purchase_items %}
+                                                    <tr>
+                                                        <td>{{ item.designation.nom }}</td>
+                                                        <td>
+                                                            {% if item.designation.unite_designation %}
+                                                                <span class="badge badge-sm badge-outline">{{ item.designation.unite_designation }}</span>
+                                                            {% else %}
+                                                                <span class="text-base-content/50">-</span>
+                                                            {% endif %}
+                                                        </td>
+                                                        <td class="text-center">{{ item.quantity|floatformat:0 }}</td>
+                                                        <td class="text-right font-mono text-sm">{{ item.unit_price|floatformat:2|intcomma }}</td>
+                                                        <td class="text-right font-mono font-semibold">{{ item.total_price|floatformat:2|intcomma }}</td>
+                                                    </tr>
+                                                    {% endfor %}
+                                                </tbody>
+                                                <tfoot>
+                                                    <tr class="font-bold bg-primary/10">
+                                                        <td colspan="4" class="text-right">Total Achat</td>
+                                                        <td class="text-right text-primary">{{ rec.total_achats|floatformat:2|intcomma }}</td>
+                                                    </tr>
+                                                </tfoot>
+                                            </table>
+                                        </div>
+
+                                        {% if rec.comptabilite_entry %}
+                                        <div class="mt-4 p-3 bg-info/10 rounded-lg">
+                                            <h5 class="font-semibold mb-2">
+                                                <i class="fas fa-calculator mr-2"></i>
+                                                Entrée comptabilité correspondante
+                                            </h5>
+                                            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                                                <div>
+                                                    <span class="text-base-content/70">ID:</span>
+                                                    <span class="font-mono ml-2">{{ rec.comptabilite_entry.id_access }}</span>
+                                                </div>
+                                                <div>
+                                                    <span class="text-base-content/70">Prog:</span>
+                                                    <span class="font-mono ml-2">{{ rec.comptabilite_entry.prog }}</span>
+                                                </div>
+                                                <div>
+                                                    <span class="text-base-content/70">OUT:</span>
+                                                    <span class="font-mono ml-2">{{ rec.comptabilite_entry.montant_out|floatformat:2|intcomma }}</span>
+                                                </div>
+                                                <div>
+                                                    <span class="text-base-content/70">Fournisseur IDxls:</span>
+                                                    <span class="font-mono ml-2">{{ rec.comptabilite_entry.fournisseur|default:"-" }}</span>
+                                                </div>
+                                                <div class="md:col-span-4">
+                                                    <span class="text-base-content/70">Description:</span>
+                                                    <span class="ml-2">{{ rec.comptabilite_entry.description|default:"-" }}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {% else %}
+                                        <div class="mt-4 p-3 bg-warning/10 rounded-lg">
+                                            <i class="fas fa-exclamation-triangle mr-2 text-warning"></i>
+                                            <span class="text-warning font-semibold">Aucune entrée comptabilité trouvée pour ce couple (ID={{ rec.numero_diamex }}, Prog={{ rec.base_diamex }})</span>
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}  <!-- End recoupements loop -->
+                        </tbody>
+                    </table>
+                </div>
+                </div> <!-- Fin base-content -->
+            </div>
+        </div>
+        {% endfor %}  <!-- End base loop -->
+
+    {% else %}
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <div class="text-center py-12">
+                    <i class="fas fa-inbox text-6xl text-base-content/20 mb-4"></i>
+                    <p class="text-lg text-base-content/50">
+                        Aucun achat avec numeroDiameX et baseDiameX trouvé.
+                    </p>
+                    <p class="text-sm text-base-content/40 mt-2">
+                        Assurez-vous que les achats ont été exportés vers DiameX.
+                    </p>
+                </div>
+            </div>
+        </div>
+    {% endif %}
+
+    <!-- ===== VÉRIFICATION INVERSE : DiameX → Application (Achats) ===== -->
+    <div class="divider my-12"></div>
+
+    <div class="mb-6" id="verification-inverse">
+        <div class="flex items-center justify-between">
+            <div>
+                <h2 class="text-2xl font-bold mb-2">
+                    <i class="fas fa-exchange-alt mr-2 text-secondary"></i>
+                    Vérification Inverse : DiameX → Application
+                </h2>
+            </div>
+            <a href="#verification-normale" class="btn btn-primary btn-sm">
+                <i class="fas fa-arrow-up mr-2"></i>
+                Retour en haut
+            </a>
+        </div>
+        <p class="text-base-content/70">
+            Pour chaque ligne DiameX avec les comptes autorisés pour achats
+            {% if comptes_cat_achats %}
+                ({% for compte in comptes_cat_achats %}<span class="badge badge-sm badge-outline">{{ compte }}</span>{% if not forloop.last %}, {% endif %}{% endfor %})
+            {% endif %},
+            vérifier qu'elle correspond bien à des données de l'application
+        </p>
+    </div>
+
+    <!-- Filtres pour vérification inverse -->
+    <div class="card bg-base-200 shadow-md mb-6">
+        <div class="card-body">
+            <h3 class="card-title text-sm mb-4">
+                <i class="fas fa-filter mr-2"></i>
+                Filtres Vérification Inverse
+            </h3>
+            <form method="GET" class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {% if request.GET.status %}<input type="hidden" name="status" value="{{ request.GET.status }}">{% endif %}
+                {% if request.GET.fournisseur %}<input type="hidden" name="fournisseur" value="{{ request.GET.fournisseur }}">{% endif %}
+                {% if request.GET.base %}<input type="hidden" name="base" value="{{ request.GET.base }}">{% endif %}
+                {% if request.GET.mois %}<input type="hidden" name="mois" value="{{ request.GET.mois }}">{% endif %}
+                {% if request.GET.page %}<input type="hidden" name="page" value="{{ request.GET.page }}">{% endif %}
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold"><i class="fas fa-code-branch mr-1"></i>Prog</span>
+                    </label>
+                    <select name="prog_inverse" class="select select-bordered select-sm">
+                        <option value="">Tous les progs</option>
+                        {% for prog in progs_list_inverse %}
+                        <option value="{{ prog }}" {% if filter_prog_inverse == prog %}selected{% endif %}>{{ prog }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold"><i class="fas fa-calendar mr-1"></i>Mois</span>
+                    </label>
+                    <input type="month" name="mois_inverse" value="{{ filter_mois_inverse }}" class="input input-bordered input-sm" />
+                </div>
+
+                <div class="form-control flex flex-row gap-2 items-end">
+                    <button type="submit" class="btn btn-secondary btn-sm flex-1">
+                        <i class="fas fa-search mr-2"></i>Filtrer
+                    </button>
+                    <a href="{% url 'accounting:recoupement_achats' %}" class="btn btn-ghost btn-sm">
+                        <i class="fas fa-times"></i>
+                    </a>
+                </div>
+
+                <div class="form-control flex items-end">
+                    <a href="#resultats-inverses" class="btn btn-info btn-sm w-full">
+                        <i class="fas fa-arrow-down mr-2"></i>Voir résultats
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Statistics Dashboard Inverses -->
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+        <div class="stat bg-base-200 rounded-lg p-4 shadow">
+            <div class="stat-figure text-secondary"><i class="fas fa-database text-3xl"></i></div>
+            <div class="stat-title">Total</div>
+            <div class="stat-value">{{ stats_inverses.total|intcomma }}</div>
+            <div class="stat-desc">Lignes DiameX</div>
+        </div>
+        <div class="stat bg-success/10 rounded-lg p-4 shadow">
+            <div class="stat-figure text-success"><i class="fas fa-check-circle text-3xl"></i></div>
+            <div class="stat-title">OK</div>
+            <div class="stat-value text-success">{{ stats_inverses.ok|intcomma }}</div>
+            <div class="stat-desc">Correspondance exacte</div>
+        </div>
+        <div class="stat bg-warning/10 rounded-lg p-4 shadow">
+            <div class="stat-figure text-warning"><i class="fas fa-exclamation-triangle text-3xl"></i></div>
+            <div class="stat-title">Attention</div>
+            <div class="stat-value text-warning">{{ stats_inverses.warning|intcomma }}</div>
+            <div class="stat-desc">Écart < 100 Ar</div>
+        </div>
+        <div class="stat bg-error/10 rounded-lg p-4 shadow">
+            <div class="stat-figure text-error"><i class="fas fa-times-circle text-3xl"></i></div>
+            <div class="stat-title">Erreur</div>
+            <div class="stat-value text-error">{{ stats_inverses.error|intcomma }}</div>
+            <div class="stat-desc">Écart ≥ 100 Ar</div>
+        </div>
+        <div class="stat bg-base-300 rounded-lg p-4 shadow">
+            <div class="stat-figure text-base-content/50"><i class="fas fa-question-circle text-3xl"></i></div>
+            <div class="stat-title">Manquant</div>
+            <div class="stat-value text-base-content/50">{{ stats_inverses.missing|intcomma }}</div>
+            <div class="stat-desc">Non trouvé en appli</div>
+        </div>
+    </div>
+
+    <!-- Information sur les résultats -->
+    <div class="alert alert-info mb-6" id="resultats-inverses">
+        <i class="fas fa-info-circle"></i>
+        <div>
+            <p class="font-semibold">Résultats de la vérification inverse</p>
+            <p class="text-sm">
+                {% if recoupements_inverses_par_prog %}
+                    {{ recoupements_inverses_par_prog|length }} programme(s) trouvé(s) -
+                    <span class="badge badge-success badge-sm">{{ stats_inverses.ok }} OK</span>
+                    <span class="badge badge-warning badge-sm">{{ stats_inverses.warning }} Warning</span>
+                    <span class="badge badge-error badge-sm">{{ stats_inverses.error }} Error</span>
+                    <span class="badge badge-ghost badge-sm">{{ stats_inverses.missing }} Missing</span>
+                {% else %}
+                    Aucun résultat trouvé pour les filtres sélectionnés
+                {% endif %}
+            </p>
+        </div>
+    </div>
+
+    {% if recoupements_inverses_par_prog %}
+        {% for prog_id, prog_groupe in recoupements_inverses_par_prog.items %}
+        <div class="card bg-base-100 shadow-xl mb-8 prog-card-achats">
+            <div class="card-body">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-2xl font-bold flex items-center gap-3">
+                        <i class="fas fa-code-branch text-secondary"></i>
+                        Prog: {{ prog_groupe.prog }}
+                        <span class="badge badge-secondary badge-lg">{{ prog_groupe.total_recoupements }} transaction(s)</span>
+                        <span class="badge badge-success badge-sm">{{ prog_groupe.ok }} OK</span>
+                        <span class="badge badge-warning badge-sm">{{ prog_groupe.warning }} Warning</span>
+                        <span class="badge badge-error badge-sm">{{ prog_groupe.error }} Error</span>
+                        <span class="badge badge-ghost badge-sm">{{ prog_groupe.missing }} Missing</span>
+                    </h2>
+                    <button onclick="toggleProgAchats(this)" class="btn btn-sm btn-ghost">
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                </div>
+
+                <div class="prog-content-achats" style="display: none;">
+                    <div class="overflow-x-auto">
+                        <table class="table table-zebra w-full">
+                            <thead>
+                                <tr>
+                                    <th class="bg-base-200">ID Access</th>
+                                    <th class="bg-base-200">Prog</th>
+                                    <th class="bg-base-200">Date</th>
+                                    <th class="bg-base-200">Description</th>
+                                    <th class="bg-base-200">Compte</th>
+                                    <th class="bg-base-200 text-right">IN (Ar)</th>
+                                    <th class="bg-base-200 text-right">OUT (Ar)</th>
+                                    <th class="bg-base-200 text-center">Status</th>
+                                    <th class="bg-base-200 text-center">Détails</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for rec in prog_groupe.recoupements %}
+                                <tr class="{% if rec.status == 'missing' %}bg-error/5{% endif %}">
+                                    <td class="font-mono">{{ rec.id_access }}</td>
+                                    <td class="font-semibold text-xs">{{ rec.prog }}</td>
+                                    <td>{% if rec.date_m %}{{ rec.date_m|date:"d/m/Y" }}{% else %}-{% endif %}</td>
+                                    <td class="max-w-xs truncate" title="{{ rec.description }}">{{ rec.description|truncatewords:8 }}</td>
+                                    <td><span class="badge badge-sm">{{ rec.compte_code }}</span></td>
+                                    <td class="text-right font-mono text-sm">{{ rec.montant_in|floatformat:2|intcomma }}</td>
+                                    <td class="text-right font-mono text-sm">{{ rec.montant_out|floatformat:2|intcomma }}</td>
+                                    <td class="text-center">
+                                        {% if rec.status == 'ok' %}
+                                            <span class="badge badge-success gap-2"><i class="fas fa-check"></i> OK</span>
+                                        {% elif rec.status == 'warning' %}
+                                            <span class="badge badge-warning gap-2"><i class="fas fa-exclamation-triangle"></i> Attention</span>
+                                        {% elif rec.status == 'error' %}
+                                            <span class="badge badge-error gap-2"><i class="fas fa-times"></i> Erreur</span>
+                                        {% else %}
+                                            <span class="badge badge-ghost gap-2"><i class="fas fa-question"></i> Manquant</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-center">
+                                        {% if rec.application_records %}
+                                        <button class="btn btn-sm btn-outline btn-secondary" onclick="toggleDetailsInverseAchats('details-inv-achats-{{ rec.id_diamex }}')">
+                                            <i class="fas fa-eye"></i> Voir ({{ rec.application_records|length }})
+                                        </button>
+                                        {% else %}
+                                        <span class="text-base-content/50 text-xs">Aucun</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% if rec.application_records %}
+                                <tr id="details-inv-achats-{{ rec.id_diamex }}" class="hidden">
+                                    <td colspan="9" class="bg-base-200/50">
+                                        <div class="p-4">
+                                            <h4 class="font-semibold mb-3"><i class="fas fa-list mr-2"></i>Achats correspondants ({{ rec.application_records|length }})</h4>
+                                            <div class="overflow-x-auto">
+                                                <table class="table table-sm w-full">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>Type</th>
+                                                            <th>ID</th>
+                                                            <th>Fournisseur</th>
+                                                            <th>Date</th>
+                                                            <th class="text-right">Montant (Ar)</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {% for record in rec.application_records %}
+                                                        <tr>
+                                                            <td><span class="badge badge-sm badge-info">{{ record.type }}</span></td>
+                                                            <td class="font-mono text-xs">{{ record.id|truncatewords:2 }}</td>
+                                                            <td>{{ record.fournisseur|default:"-" }}</td>
+                                                            <td>{% if record.date %}{{ record.date|date:"d/m/Y" }}{% else %}-{% endif %}</td>
+                                                            <td class="text-right font-mono">{{ record.montant|floatformat:2|intcomma }}</td>
+                                                        </tr>
+                                                        {% endfor %}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endif %}
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+    <div class="alert alert-info mb-8">
+        <i class="fas fa-info-circle mr-2"></i>
+        <span>Aucune ligne DiameX trouvée avec les comptes autorisés pour achats.</span>
+    </div>
+    {% endif %}
+
+    <!-- Legend -->
+    <div class="mt-6 p-4 bg-base-200 rounded-lg">
+        <h3 class="font-semibold mb-3">
+            <i class="fas fa-info-circle mr-2"></i>
+            Légende
+        </h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+            <div>
+                <span class="badge badge-success mr-2">OK</span>
+                <span>Écart inférieur à 0.01 Ar (négligeable)</span>
+            </div>
+            <div>
+                <span class="badge badge-warning mr-2">Attention</span>
+                <span>Écart entre 0.01 et 100 Ar</span>
+            </div>
+            <div>
+                <span class="badge badge-error mr-2">Erreur</span>
+                <span>Écart supérieur ou égal à 100 Ar</span>
+            </div>
+            <div>
+                <span class="badge badge-ghost mr-2">Manquant</span>
+                <span>Aucune entrée comptabilité correspondante</span>
+            </div>
+        </div>
+        <div class="mt-3 text-xs text-base-content/60">
+            <p>
+                <i class="fas fa-lightbulb mr-1"></i>
+                <strong>Note:</strong> La clé de recoupement est (numeroDiameX, baseDiameX) pour les achats et (ID, Prog) pour la comptabilité DiameX.
+            </p>
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleDetails(detailsId) {
+    const detailsRow = document.getElementById(detailsId);
+    if (detailsRow.classList.contains('hidden')) {
+        detailsRow.classList.remove('hidden');
+    } else {
+        detailsRow.classList.add('hidden');
+    }
+}
+
+function toggleDetailsInverseAchats(detailsId) {
+    const detailsRow = document.getElementById(detailsId);
+    if (detailsRow.classList.contains('hidden')) {
+        detailsRow.classList.remove('hidden');
+    } else {
+        detailsRow.classList.add('hidden');
+    }
+}
+
+function toggleProgAchats(button) {
+    const card = button.closest('.prog-card-achats');
+    const content = card.querySelector('.prog-content-achats');
+    const icon = button.querySelector('i');
+
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        icon.classList.remove('fa-chevron-down');
+        icon.classList.add('fa-chevron-up');
+    } else {
+        content.style.display = 'none';
+        icon.classList.remove('fa-chevron-up');
+        icon.classList.add('fa-chevron-down');
+    }
+}
+
+// Fonctions pour les regroupements Base DiameX (vérification normale)
+function toggleBase(button) {
+    const card = button.closest('.base-card');
+    const content = card.querySelector('.base-content');
+    const icon = button.querySelector('i');
+
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        icon.classList.remove('fa-chevron-down');
+        icon.classList.add('fa-chevron-up');
+    } else {
+        content.style.display = 'none';
+        icon.classList.remove('fa-chevron-up');
+        icon.classList.add('fa-chevron-down');
+    }
+}
+
+function collapseAllBases() {
+    const baseCards = document.querySelectorAll('.base-card');
+    baseCards.forEach(card => {
+        const content = card.querySelector('.base-content');
+        const icon = card.querySelector('.btn i');
+        if (content && icon) {
+            content.style.display = 'none';
+            icon.classList.remove('fa-chevron-up');
+            icon.classList.add('fa-chevron-down');
+        }
+    });
+}
+
+function expandAllBases() {
+    const baseCards = document.querySelectorAll('.base-card');
+    baseCards.forEach(card => {
+        const content = card.querySelector('.base-content');
+        const icon = card.querySelector('.btn i');
+        if (content && icon) {
+            content.style.display = 'block';
+            icon.classList.remove('fa-chevron-down');
+            icon.classList.add('fa-chevron-up');
+        }
+    });
+}
+</script>
+{% endblock %}

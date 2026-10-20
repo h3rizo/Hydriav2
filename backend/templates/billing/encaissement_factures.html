@@ -1,0 +1,1466 @@
+﻿{% extends "base.html" %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <!-- En-tÃªte -->
+    <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content mb-2">
+                <i class="fas fa-cash-register mr-3"></i>Encaissement des factures - Caissiere
+            </h1>
+            <p class="text-base-content/70">Sélectionner et encaisser les factures non payées</p>
+        </div>
+        <div class="mt-4 lg:mt-0">
+            <a href="/" class="btn btn-outline btn-sm">
+                <i class="fas fa-home mr-2"></i>Accueil
+            </a>
+        </div>
+    </div>
+
+    <!-- Zone de filtres unique -->
+    <div class="card bg-base-100 shadow-xl mb-8">
+        <div class="card-body">
+            <h2 class="card-title text-lg mb-4">
+                <i class="fas fa-filter mr-2"></i>Filtres
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Année</span></label>
+                    <select id="filtre-annee" class="select select-bordered select-sm" onchange="appliquerFiltres()">
+                        {% for year in annees %}
+                            <option value="{{ year }}" {% if year|stringformat:"s" == annee_filter %}selected{% endif %}>{{ year }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Ouvrage</span></label>
+                    <select id="filtre-ouvrage" class="select select-bordered select-sm" onchange="chargerFactures()">
+                        <option value="all">Tous les ouvrages</option>
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Mois</span></label>
+                    <input type="month" id="filtre-mois" class="input input-bordered input-sm" onchange="chargerFactures()">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Recherche</span></label>
+                    <input type="text" id="recherche" class="input input-bordered input-sm" placeholder="IDXls ou nom abonné..." onkeyup="chargerFactures()">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistiques -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div class="stat bg-error/10 rounded-lg shadow border border-error/30">
+            <div class="stat-figure text-error">
+                <i class="fas fa-exclamation-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Très en retard (+2 mois)</div>
+            <div class="stat-value text-error text-lg">{{ stats.tres_en_retard|intcomma }}</div>
+            <div class="stat-desc text-error font-mono">{{ stats.montant_tres_retard|floatformat:0|intcomma }} Ar</div>
+        </div>
+        <div class="stat bg-warning/10 rounded-lg shadow border border-warning/30">
+            <div class="stat-figure text-warning">
+                <i class="fas fa-clock text-3xl"></i>
+            </div>
+            <div class="stat-title">En retard (+1 mois)</div>
+            <div class="stat-value text-warning text-lg">{{ stats.en_retard|intcomma }}</div>
+            <div class="stat-desc text-warning font-mono">{{ stats.montant_retard|floatformat:0|intcomma }} Ar</div>
+        </div>
+        <div class="stat bg-info/10 rounded-lg shadow border border-info/30">
+            <div class="stat-figure text-info">
+                <i class="fas fa-file-invoice text-3xl"></i>
+            </div>
+            <div class="stat-title">En attente</div>
+            <div class="stat-value text-info text-lg">{{ stats.en_attente|intcomma }}</div>
+            <div class="stat-desc text-info font-mono">{{ stats.montant_attente|floatformat:0|intcomma }} Ar</div>
+        </div>
+        <div class="stat bg-success/10 rounded-lg shadow border border-success/30">
+            <div class="stat-figure text-success">
+                <i class="fas fa-coins text-3xl"></i>
+            </div>
+            <div class="stat-title">Total à encaisser</div>
+            <div class="stat-value text-success text-lg">{{ stats.montant_total|floatformat:0|intcomma }} Ar</div>
+            <div class="stat-desc text-success">{{ stats.tres_en_retard|add:stats.en_retard|add:stats.en_attente|intcomma }} factures</div>
+        </div>
+    </div>
+
+    <!-- Zone de travail -->
+    <div class="grid grid-cols-1 xl:grid-cols-[1.15fr,0.85fr] gap-6 mb-8">
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body gap-5">
+                <div>
+                    <h2 class="card-title">
+                        <i class="fas fa-bolt mr-2"></i>Scanner et traiter
+                    </h2>
+                    <p class="text-sm text-base-content/70">Workflow mobile: scanner, voir la file des factures ajoutées, puis valider juste en dessous.</p>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-[1.05fr,0.95fr] gap-4 items-start">
+                    <div class="rounded-xl border border-base-300 bg-base-200/60 p-4">
+                        <h3 class="font-semibold text-base mb-1">
+                            <i class="fas fa-qrcode mr-2"></i>Scanner QR de la souche
+                        </h3>
+                        <p class="text-sm text-base-content/70 mb-3">Chaque scan coche la facture et l'ajoute à la liste juste à côté ou juste en dessous sur téléphone.</p>
+                        <div class="aspect-video rounded-xl overflow-hidden border border-base-300 bg-black/80 flex items-center justify-center mb-3">
+                            <video id="qr-scanner-video" class="w-full h-full object-cover hidden" playsinline muted></video>
+                            <div id="qr-scanner-placeholder" class="text-center text-base-100/70 px-4">
+                                <i class="fas fa-camera text-2xl mb-2"></i>
+                                <div class="text-sm">Aperçu caméra</div>
+                            </div>
+                        </div>
+                        <div class="flex flex-wrap gap-2 mb-3">
+                            <button type="button" id="btn-start-qr-scan" class="btn btn-sm btn-primary" onclick="demarrerQrScanner()">
+                                <i class="fas fa-camera mr-2"></i>Démarrer le scanner
+                            </button>
+                            <button type="button" id="btn-stop-qr-scan" class="btn btn-sm btn-outline" onclick="arreterQrScanner()" disabled>
+                                <i class="fas fa-stop mr-2"></i>Arrêter
+                            </button>
+                        </div>
+                        <div class="join w-full mb-3">
+                            <input type="text" id="qr-manual-input" class="input input-bordered input-sm join-item w-full font-mono" placeholder="Coller ici le contenu du QR si la caméra n'est pas disponible">
+                            <button type="button" class="btn btn-sm join-item" onclick="soumettreQrManuel()">
+                                <i class="fas fa-check mr-1"></i>Valider
+                            </button>
+                        </div>
+                        <div id="qr-scan-status" class="text-sm text-base-content/70">Scanner inactif.</div>
+                    </div>
+
+                    <div class="rounded-xl border border-base-300 bg-base-200/40 p-4">
+                        <h3 class="font-semibold text-base mb-3">
+                            <i class="fas fa-receipt mr-2"></i>Factures ajoutées au fil du scan
+                        </h3>
+                        <div id="qr-scanned-factures-list" class="space-y-2">
+                            <div class="rounded-lg border border-dashed border-base-300 px-3 py-4 text-sm text-base-content/60 text-center">
+                                Aucune facture scannée pour le moment.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="rounded-xl border border-base-300 bg-base-200/30 p-4">
+                    <h3 class="font-semibold text-base mb-4">
+                        <i class="fas fa-money-bill-wave mr-2"></i>Traiter les encaissements
+                    </h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="form-control">
+                            <label class="label"><span class="label-text font-semibold">Date d'encaissement</span></label>
+                            <input type="date" id="date-encaissement" class="input input-bordered" value="{{ today|date:'Y-m-d' }}" required>
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label"><span class="label-text font-semibold">Journal</span></label>
+                            <select id="journal-code" class="select select-bordered">
+                                <option value="">Chargement...</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info mt-4">
+                        <i class="fas fa-info-circle"></i>
+                        <div>
+                            <div class="font-bold">Factures sélectionnées</div>
+                            <div class="text-sm">
+                                <span id="nb-selections">0</span> facture(s) pour un montant total de
+                                <span id="montant-total-selections" class="font-mono font-bold">0</span> Ar
+                            </div>
+                        </div>
+                    </div>
+
+                    <button id="btn-valider" class="btn btn-success btn-block mt-4" onclick="validerEncaissement()" disabled>
+                        <i class="fas fa-check mr-2"></i>Valider l'encaissement
+                    </button>
+                    <div id="encaissement-recap-actions" class="hidden rounded-lg border border-success/30 bg-success/10 p-4 mt-4">
+                        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <div class="font-bold text-success">Recap d'encaissement pret</div>
+                                <div class="text-sm text-base-content/70">Imprimer ou consulter le dernier recap genere apres validation.</div>
+                            </div>
+                            <button type="button" class="btn btn-outline btn-success" onclick="imprimerRecapEncaissement()">
+                                <i class="fas fa-print mr-2"></i>Imprimer le recap
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Liste des derniers encaissements -->
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-history mr-2"></i>Derniers encaissements (7 derniers jours)
+                    <button class="btn btn-circle btn-ghost btn-xs" onclick="chargerDerniersEncaissements()">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </h2>
+                <div id="derniers-encaissements-container">
+                    <div class="text-center py-8">
+                        <span class="loading loading-spinner loading-lg text-primary"></span>
+                        <p class="mt-2 text-base-content/70">Chargement...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tableau des factures -->
+    <div class="mt-12">
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="card-title">
+                        <i class="fas fa-file-invoice-dollar mr-2"></i>
+                        Factures Ã  encaisser (<span id="count-factures">0</span>)
+                    </h2>
+                    <div class="flex flex-wrap gap-2">
+                        <div class="join">
+                            <button type="button" id="btn-view-table" class="btn btn-sm btn-outline join-item" onclick="setFactureDisplayMode('table')"><i class="fas fa-table mr-1"></i>Tableau</button>
+                            <button type="button" id="btn-view-cards" class="btn btn-sm btn-primary join-item" onclick="setFactureDisplayMode('cards')"><i class="fas fa-id-card mr-1"></i>Cards</button>
+                        </div>
+                        <button class="btn btn-sm btn-outline" onclick="toutSelectionner()"><i class="fas fa-check-square mr-1"></i>Tout sélectionner</button>
+                        <button class="btn btn-sm btn-outline" onclick="toutDeselectionner()"><i class="fas fa-square mr-1"></i>Tout désélectionner</button>
+                    </div>
+                </div>
+
+                <div id="factures-table-wrapper" class="overflow-x-auto hidden">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th><input type="checkbox" id="checkbox-all" class="checkbox checkbox-sm" onchange="toggleToutSelectionner(this.checked)"></th>
+                                <th>IDXls</th>
+                                <th>Type PE</th>
+                                <th>IDXls</th>
+                                <th>Abonné</th>
+                                <th>Parcelle</th>
+                                <th>Village</th>
+                                <th>Date relevé</th>
+                                <th class="text-right">Montant</th>
+                                <th>Statut</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-factures-a-encaisser">
+                            <tr><td colspan="10" class="text-center py-4"><span class="loading loading-spinner loading-sm"></span> Chargement...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div id="factures-cards-wrapper">
+                    <div id="cards-factures-a-encaisser" class="space-y-4">
+                        <div class="text-center py-4"><span class="loading loading-spinner loading-sm"></span> Miandry kely...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<div id="encaissement-recap-print" class="hidden"></div>
+<dialog id="modal-detail-encaissement" class="modal">
+    <div class="modal-box max-w-4xl">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">âœ•</button>
+        </form>
+        <h3 class="font-bold text-lg mb-4">Détail de l'encaissement</h3>
+        <div id="modal-detail-encaissement-content"></div>
+    </div>
+</dialog>
+
+<script>
+let facturesSelectionnees = new Set();
+let toutesFactures = [];
+let dernierRecapEncaissement = null;
+let qrScannedFactures = [];
+let pageDerniersEncaissements = 1;
+let derniersEncaissementsData = [];
+let factureDisplayMode = 'cards';
+let qrVideoStream = null;
+let qrScannerInterval = null;
+let qrDetector = null;
+let qrScanBusy = false;
+let lastQrPayloadHandled = '';
+let lastQrPayloadHandledAt = 0;
+let qrAudioContext = null;
+
+function ensureQrAudioContext() {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) {
+        return null;
+    }
+    if (!qrAudioContext) {
+        qrAudioContext = new AudioContextClass();
+    }
+    if (qrAudioContext.state === 'suspended') {
+        qrAudioContext.resume().catch(() => {});
+    }
+    return qrAudioContext;
+}
+
+function jouerSonQr(type = 'success') {
+    const audioContext = ensureQrAudioContext();
+    if (!audioContext) {
+        return;
+    }
+
+    const now = audioContext.currentTime;
+    const makeBeep = (frequency, startAt, duration, gainValue) => {
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(frequency, startAt);
+        gainNode.gain.setValueAtTime(0.0001, startAt);
+        gainNode.gain.exponentialRampToValueAtTime(gainValue, startAt + 0.01);
+        gainNode.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        oscillator.start(startAt);
+        oscillator.stop(startAt + duration + 0.02);
+    };
+
+    if (type === 'error') {
+        makeBeep(240, now, 0.16, 0.08);
+        makeBeep(180, now + 0.12, 0.2, 0.08);
+        return;
+    }
+
+    if (type === 'warning') {
+        makeBeep(520, now, 0.12, 0.05);
+        return;
+    }
+
+    makeBeep(880, now, 0.1, 0.06);
+    makeBeep(1175, now + 0.09, 0.14, 0.06);
+}
+
+function getFactureById(factureId) {
+    return toutesFactures.find(facture => facture.id === factureId) || null;
+}
+
+function getSelectionScope() {
+    const selectedFactures = Array.from(facturesSelectionnees).map(getFactureById).filter(Boolean);
+    if (!selectedFactures.length) {
+        return null;
+    }
+    return {
+        ouvrageId: selectedFactures[0].ouvrage_id || '',
+        anneeMois: selectedFactures[0].annee_mois || '',
+    };
+}
+
+function renderQrScannedFactures() {
+    const container = document.getElementById('qr-scanned-factures-list');
+    if (!container) return;
+
+    if (!qrScannedFactures.length) {
+        container.innerHTML = `
+            <div class="rounded-lg border border-dashed border-base-300 px-3 py-4 text-sm text-base-content/60 text-center">
+                Aucune facture scannée pour le moment.
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = qrScannedFactures.map(facture => `
+        <div class="rounded-lg border border-base-300 bg-base-100 px-3 py-2.5 shadow-sm">
+            <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="font-mono text-sm font-bold text-primary">${facture.idxls || '-'}</span>
+                        <span class="badge badge-outline badge-xs">${facture.mois_annee_display || '-'}</span>
+                    </div>
+                    <div class="text-sm font-semibold truncate mt-1" title="${facture.abonne || '-'}">${facture.abonne || '-'}</div>
+                    <div class="text-xs text-base-content/60 truncate mt-0.5" title="${facture.ouvrage || '-'}">${facture.ouvrage || '-'}</div>
+                </div>
+                <div class="text-right shrink-0">
+                    <div class="font-mono font-bold text-sm">${Number(facture.montant || 0).toLocaleString('fr-FR')} Ar</div>
+                    <div class="text-[11px] text-base-content/50 mt-1">${facture.numero_facture || '-'}</div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function enregistrerFactureScannee(facture) {
+    if (!facture?.id) return;
+    qrScannedFactures = [facture, ...qrScannedFactures.filter(item => item.id !== facture.id)].slice(0, 8);
+    renderQrScannedFactures();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    chargerJournaux();
+    chargerOuvrages();
+    chargerFactures();
+    chargerDerniersEncaissements();
+    document.getElementById('journal-code').addEventListener('change', mettreAJourCompteurs);
+    renderQrScannedFactures();
+    if ('BarcodeDetector' in window) {
+        try {
+            qrDetector = new BarcodeDetector({ formats: ['qr_code'] });
+        } catch (error) {
+            console.warn('BarcodeDetector indisponible pour QR:', error);
+        }
+    }
+});
+
+function appliquerFiltres() {
+    // Recharger Ã  la fois les statistiques (page) et le tableau
+    const annee = document.getElementById('filtre-annee').value;
+    const ouvrage = document.getElementById('filtre-ouvrage').value;
+    window.location.href = `?annee=${annee}&ouvrage=${ouvrage}`;
+}
+
+async function chargerJournaux() {
+    try {
+        const response = await fetch('{% url "billing:api_liste_journaux" %}');
+        const data = await response.json();
+        const selectJournal = document.getElementById('journal-code');
+        selectJournal.innerHTML = '<option value="">-- Sélectionner un journal --</option>';
+
+        // Ajouter 00PERS en premier
+        const option00PERS = document.createElement('option');
+        option00PERS.value = '00PERS';
+        option00PERS.textContent = '00PERS - Personnel';
+        option00PERS.selected = true; // Sélectionné par défaut
+        selectJournal.appendChild(option00PERS);
+
+        // Ajouter les autres journaux
+        if (data.success && data.journaux) {
+            data.journaux.forEach(journal => {
+                const option = document.createElement('option');
+                option.value = journal.code || '';
+                option.textContent = `${journal.code || ''} - ${journal.nom}${journal.base ? ' (' + journal.base + ')' : ''}`;
+                selectJournal.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error('Erreur chargement journaux:', error);
+    }
+}
+
+async function chargerOuvrages() {
+    try {
+        const response = await fetch('{% url "billing:api_liste_ouvrages_encaissement" %}');
+        const data = await response.json();
+        const select = document.getElementById('filtre-ouvrage');
+        select.innerHTML = '<option value="all">Tous les ouvrages</option>';
+        if (data.success && data.ouvrages) {
+            data.ouvrages.forEach(ouvrage => {
+                const option = document.createElement('option');
+                option.value = ouvrage.id;
+                option.textContent = ouvrage.nom;
+                if (ouvrage.id === '{{ ouvrage_filter }}') option.selected = true;
+                select.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error('Erreur chargement ouvrages:', error);
+    }
+}
+
+async function chargerFactures() {
+    const tbody = document.getElementById('table-factures-a-encaisser');
+    const cardsContainer = document.getElementById('cards-factures-a-encaisser');
+    tbody.innerHTML = '<tr><td colspan="10" class="text-center py-4"><span class="loading loading-spinner loading-sm"></span> Chargement...</td></tr>';
+    cardsContainer.innerHTML = '<div class="text-center py-4"><span class="loading loading-spinner loading-sm"></span> Chargement...</div>';
+
+    try {
+        const annee = document.getElementById('filtre-annee').value;
+        const ouvrage = document.getElementById('filtre-ouvrage').value;
+        const mois = document.getElementById('filtre-mois').value;
+        const recherche = document.getElementById('recherche').value;
+
+        console.log('Filtres appliqués:', { annee, ouvrage, mois, recherche });
+
+        const params = new URLSearchParams();
+        if (annee) params.append('annee', annee);
+        if (ouvrage && ouvrage !== 'all') params.append('ouvrage', ouvrage);
+        if (mois) params.append('mois', mois);
+        if (recherche) params.append('recherche', recherche);
+
+        const url = `{% url "billing:api_factures_a_encaisser" %}?${params}`;
+        console.log('URL appelée:', url);
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        console.log('Résultat API:', data.success, 'Nombre:', data.count);
+
+        if (!data.success) {
+            tbody.innerHTML = `<tr><td colspan="10" class="text-center text-error py-4">Erreur: ${data.error}</td></tr>`;
+            return;
+        }
+
+        toutesFactures = data.factures || [];
+        facturesSelectionnees.forEach(factureId => {
+            if (!toutesFactures.some(facture => facture.id === factureId)) {
+                facturesSelectionnees.delete(factureId);
+            }
+        });
+        document.getElementById('count-factures').textContent = toutesFactures.length.toLocaleString('fr-FR');
+
+        if (toutesFactures.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="10" class="text-center text-base-content/50 py-8">Aucune facture Ã  encaisser</td></tr>';
+            cardsContainer.innerHTML = '<div class="text-center text-base-content/50 py-8">Aucune facture Ã  encaisser</div>';
+            return;
+        }
+
+        // Regrouper par mois â†’ ouvrage, puis trier les lignes par IDXls
+        const groupes = {};
+        toutesFactures.forEach(facture => {
+            const moisKey = facture.annee_mois || 'Sans date';
+            const ouvrageKey = facture.ouvrage || 'Sans ouvrage';
+
+            if (!groupes[moisKey]) groupes[moisKey] = {};
+            if (!groupes[moisKey][ouvrageKey]) groupes[moisKey][ouvrageKey] = [];
+
+            groupes[moisKey][ouvrageKey].push(facture);
+        });
+
+        const compareFacturesByIdxls = (a, b) => {
+            const idxA = (a.idxls ?? '').toString();
+            const idxB = (b.idxls ?? '').toString();
+            const idxCompare = idxA.localeCompare(idxB, 'fr', { numeric: true, sensitivity: 'base' });
+            if (idxCompare !== 0) return idxCompare;
+
+            const abonneCompare = (a.abonne || '').toString().localeCompare((b.abonne || '').toString(), 'fr', { numeric: true, sensitivity: 'base' });
+            if (abonneCompare !== 0) return abonneCompare;
+
+            return (a.numero_facture || '').toString().localeCompare((b.numero_facture || '').toString(), 'fr', { numeric: true, sensitivity: 'base' });
+        };
+
+        Object.keys(groupes).forEach(moisKey => {
+            Object.keys(groupes[moisKey]).forEach(ouvrageKey => {
+                groupes[moisKey][ouvrageKey].sort(compareFacturesByIdxls);
+            });
+        });
+
+        tbody.innerHTML = '';
+        cardsContainer.innerHTML = '';
+
+        const moisTries = Object.keys(groupes).sort().reverse();
+
+        moisTries.forEach(moisKey => {
+            const ouvrages = groupes[moisKey];
+            const moisDisplay = toutesFactures.find(f => f.annee_mois === moisKey)?.mois_annee_display || moisKey;
+
+            // Ligne de regroupement MOIS
+            const trMois = document.createElement('tr');
+            trMois.className = 'bg-primary text-primary-content font-bold';
+            trMois.innerHTML = `<td colspan="10" class="py-3"><i class="fas fa-calendar-alt mr-2"></i>${moisDisplay}</td>`;
+            tbody.appendChild(trMois);
+
+            Object.keys(ouvrages).sort().forEach(ouvrageKey => {
+                const factures = ouvrages[ouvrageKey];
+
+                const trOuvrage = document.createElement('tr');
+                trOuvrage.className = 'bg-secondary text-secondary-content font-semibold';
+                trOuvrage.innerHTML = `<td colspan="10" class="py-2 pl-8"><i class="fas fa-building mr-2"></i>${ouvrageKey} <span class="opacity-80">(${factures.length} facture${factures.length > 1 ? 's' : ''})</span></td>`;
+                tbody.appendChild(trOuvrage);
+
+                factures.forEach(facture => {
+                    const tr = document.createElement('tr');
+                    tr.className = 'hover:bg-base-200';
+                    const isChecked = facturesSelectionnees.has(facture.id);
+
+                    const typeIcone = facture.type_pe_icone || 'fa-tint';
+                    const typeColor = facture.type_pe_color || 'info';
+                    const typeLabel = facture.type_pe || 'N/A';
+
+                    tr.innerHTML = `
+                        <td class="pl-20"><input type="checkbox" class="checkbox checkbox-sm checkbox-facture" data-facture-id="${facture.id}" data-montant="${facture.montant}" ${isChecked ? 'checked' : ''} onchange="toggleSelection('${facture.id}', ${facture.montant})"></td>
+                        <td class="font-mono text-xs text-${typeColor}">${facture.idxls || '-'}</td>
+                        <td><i class="fas ${typeIcone} text-${typeColor}" title="${typeLabel}"></i>${facture.est_institutionnel ? ' <span class="badge badge-info badge-xs" title="Branchement institutionnel">Inst.</span>' : ''}</td>
+                        <td class="font-mono text-xs">${facture.numero_facture || '-'}</td>
+                        <td>${facture.abonne || '-'}</td>
+                        <td class="text-xs text-base-content/50">${facture.parcelle || '-'}</td>
+                        <td class="text-xs text-base-content/50">${facture.village || '-'}</td>
+                        <td>${facture.date_releve_display}</td>
+                        <td class="text-right font-mono">${parseFloat(facture.montant).toLocaleString('fr-FR')} Ar</td>
+                        <td><span class="badge badge-${facture.statut === 'en_attente' ? 'warning' : 'error'} badge-sm">${facture.statut === 'en_attente' ? 'Attente' : 'Impayé'}</span></td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+
+                const cardSection = document.createElement('section');
+                cardSection.className = 'space-y-3';
+                cardSection.innerHTML = `
+                    <div class="rounded-xl bg-primary text-primary-content px-4 py-3 font-bold">
+                        <i class="fas fa-calendar-alt mr-2"></i>${moisDisplay}
+                    </div>
+                    <div class="rounded-xl bg-secondary text-secondary-content px-4 py-2 font-semibold">
+                        <i class="fas fa-building mr-2"></i>${ouvrageKey}
+                        <span class="opacity-80">(${factures.length} facture${factures.length > 1 ? 's' : ''})</span>
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 2xl:grid-cols-6 gap-2" data-cards-group></div>
+                `;
+                const cardGrid = cardSection.querySelector('[data-cards-group]');
+
+                factures.forEach(facture => {
+                    const isChecked = facturesSelectionnees.has(facture.id);
+                    const typeColor = facture.type_pe_color || 'info';
+                    const montant = parseFloat(facture.montant || 0).toLocaleString('fr-FR');
+                    const card = document.createElement('label');
+                    card.className = 'card bg-base-100 border border-base-300 shadow-sm cursor-pointer hover:shadow-md transition-shadow';
+                    card.innerHTML = `
+                        <div class="card-body p-2.5 gap-2">
+                            <div class="flex items-center justify-between gap-2">
+                                <div class="flex items-center gap-1.5 min-w-0">
+                                    <span class="font-mono text-base font-bold text-${typeColor} truncate">${facture.idxls || '-'}</span>
+                                    <span class="badge badge-outline badge-xs whitespace-nowrap" title="${facture.type_pe || 'Type point dâ€™eau'}">
+                                        ${facture.type_pe || '-'}
+                                    </span>${facture.est_institutionnel ? ' <span class="badge badge-info badge-xs" title="Branchement institutionnel">Inst.</span>' : ''}
+                                </div>
+
+                                <div class="flex flex-col items-end gap-1">
+                                    <input type="checkbox" class="checkbox checkbox-primary checkbox-xs checkbox-facture mt-0.5" data-facture-id="${facture.id}" data-montant="${facture.montant}" ${isChecked ? 'checked' : ''} onchange="toggleSelection('${facture.id}', ${facture.montant})">
+                                    <span class="badge badge-${facture.statut === 'en_attente' ? 'warning' : 'error'} badge-xs">
+                                        ${facture.statut === 'en_attente' ? 'Attente' : 'Impayé'}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div class="text-[11px] font-semibold truncate" title="${facture.abonne || '-'}">${facture.abonne || '-'}</div>
+                            <div class="font-mono font-bold text-base">${montant}</div>
+                        </div>
+                    `;
+                    cardGrid.appendChild(card);
+                });
+
+                cardsContainer.appendChild(cardSection);
+            });
+        });
+
+        updateFactureDisplayModeUI();
+        mettreAJourCompteurs();
+    } catch (error) {
+        console.error('Erreur chargement factures:', error);
+        tbody.innerHTML = `<tr><td colspan="10" class="text-center text-error py-4">Erreur réseau: ${error.message}</td></tr>`;
+        cardsContainer.innerHTML = `<div class="text-center text-error py-4">Erreur réseau: ${error.message}</div>`;
+    }
+}
+
+function setFactureDisplayMode(mode) {
+    factureDisplayMode = mode === 'cards' ? 'cards' : 'table';
+    updateFactureDisplayModeUI();
+}
+
+function updateFactureDisplayModeUI() {
+    const tableWrapper = document.getElementById('factures-table-wrapper');
+    const cardsWrapper = document.getElementById('factures-cards-wrapper');
+    const tableBtn = document.getElementById('btn-view-table');
+    const cardsBtn = document.getElementById('btn-view-cards');
+    const isCards = factureDisplayMode === 'cards';
+
+    tableWrapper.classList.toggle('hidden', isCards);
+    cardsWrapper.classList.toggle('hidden', !isCards);
+    tableBtn.classList.toggle('btn-primary', !isCards);
+    tableBtn.classList.toggle('btn-outline', isCards);
+    cardsBtn.classList.toggle('btn-primary', isCards);
+    cardsBtn.classList.toggle('btn-outline', !isCards);
+}
+
+function toggleSelection(factureId, montant) {
+    if (facturesSelectionnees.has(factureId)) {
+        facturesSelectionnees.delete(factureId);
+    } else {
+        const facture = getFactureById(factureId);
+        const selectionScope = getSelectionScope();
+        if (facture && selectionScope && (
+            selectionScope.ouvrageId !== (facture.ouvrage_id || '') ||
+            selectionScope.anneeMois !== (facture.annee_mois || '')
+        )) {
+            alert("Un encaissement ne peut contenir que des factures d'un seul ouvrage et d'un seul mois.");
+            document.querySelectorAll(`.checkbox-facture[data-facture-id="${factureId}"]`).forEach(cb => {
+                cb.checked = false;
+            });
+            return;
+        }
+        facturesSelectionnees.add(factureId);
+    }
+    mettreAJourCompteurs();
+}
+
+function setQrStatus(message, tone = '') {
+    const status = document.getElementById('qr-scan-status');
+    if (!status) return;
+    status.className = 'mt-3 text-sm';
+    if (tone === 'success') {
+        status.classList.add('text-success');
+    } else if (tone === 'error') {
+        status.classList.add('text-error');
+    } else if (tone === 'warning') {
+        status.classList.add('text-warning');
+    } else {
+        status.classList.add('text-base-content/70');
+    }
+    status.textContent = message;
+}
+
+function updateQrScannerUi(active) {
+    const startBtn = document.getElementById('btn-start-qr-scan');
+    const stopBtn = document.getElementById('btn-stop-qr-scan');
+    const video = document.getElementById('qr-scanner-video');
+    const placeholder = document.getElementById('qr-scanner-placeholder');
+    if (startBtn) startBtn.disabled = active;
+    if (stopBtn) stopBtn.disabled = !active;
+    if (video) video.classList.toggle('hidden', !active);
+    if (placeholder) placeholder.classList.toggle('hidden', active);
+}
+
+async function demarrerQrScanner() {
+    ensureQrAudioContext();
+    if (!navigator.mediaDevices?.getUserMedia) {
+        setQrStatus("La caméra n'est pas disponible sur ce navigateur. Utilisez la saisie manuelle.", 'warning');
+        jouerSonQr('warning');
+        return;
+    }
+    if (!qrDetector) {
+        setQrStatus("Le scan QR automatique n'est pas supporté ici. Utilisez la saisie manuelle.", 'warning');
+        jouerSonQr('warning');
+        return;
+    }
+    if (qrVideoStream) {
+        setQrStatus('Scanner déjà actif.');
+        return;
+    }
+
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: 'environment' } },
+            audio: false
+        });
+        qrVideoStream = stream;
+        const video = document.getElementById('qr-scanner-video');
+        video.srcObject = stream;
+        await video.play();
+        updateQrScannerUi(true);
+        setQrStatus('Scanner actif. Présentez une souche devant la caméra.');
+        qrScannerInterval = window.setInterval(scannerFrameQr, 700);
+    } catch (error) {
+        console.error('Erreur caméra QR:', error);
+        setQrStatus(`Impossible d'accéder à la caméra: ${error.message}`, 'error');
+        arreterQrScanner();
+    }
+}
+
+function arreterQrScanner() {
+    if (qrScannerInterval) {
+        clearInterval(qrScannerInterval);
+        qrScannerInterval = null;
+    }
+    if (qrVideoStream) {
+        qrVideoStream.getTracks().forEach(track => track.stop());
+        qrVideoStream = null;
+    }
+    const video = document.getElementById('qr-scanner-video');
+    if (video) {
+        video.pause();
+        video.srcObject = null;
+    }
+    qrScanBusy = false;
+    updateQrScannerUi(false);
+    setQrStatus('Scanner inactif.');
+}
+
+async function scannerFrameQr() {
+    if (!qrDetector || qrScanBusy) return;
+    const video = document.getElementById('qr-scanner-video');
+    if (!video || video.readyState < 2) return;
+
+    try {
+        qrScanBusy = true;
+        const barcodes = await qrDetector.detect(video);
+        if (Array.isArray(barcodes) && barcodes.length > 0) {
+            const payload = (barcodes[0].rawValue || '').trim();
+            if (!payload) return;
+
+            const now = Date.now();
+            if (payload === lastQrPayloadHandled && now - lastQrPayloadHandledAt < 2500) {
+                return;
+            }
+
+            lastQrPayloadHandled = payload;
+            lastQrPayloadHandledAt = now;
+            await traiterQrPayload(payload);
+        }
+    } catch (error) {
+        console.error('Erreur detection QR:', error);
+    } finally {
+        qrScanBusy = false;
+    }
+}
+
+function soumettreQrManuel() {
+    ensureQrAudioContext();
+    const input = document.getElementById('qr-manual-input');
+    const payload = (input?.value || '').trim();
+    if (!payload) {
+        setQrStatus('Aucun contenu QR saisi.', 'warning');
+        jouerSonQr('warning');
+        return;
+    }
+    traiterQrPayload(payload).then(() => {
+        input.value = '';
+    });
+}
+
+async function traiterQrPayload(qrPayload) {
+    setQrStatus('QR détecté. Recherche de la facture...');
+    try {
+        const response = await fetch('{% url "billing:api_resoudre_facture_qr" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ qr_payload: qrPayload })
+        });
+        const data = await response.json();
+        if (!data.success || !data.facture) {
+            setQrStatus(data.error || 'Facture introuvable pour ce QR.', 'error');
+            jouerSonQr('error');
+            return;
+        }
+
+        await chargerEtSelectionnerFactureParQr(data.facture);
+        setQrStatus(`Facture ${data.facture.numero_facture || ''} cochée. Prêt pour la suivante.`, 'success');
+        jouerSonQr('success');
+    } catch (error) {
+        console.error('Erreur traitement QR:', error);
+        setQrStatus(`Erreur réseau pendant le scan: ${error.message}`, 'error');
+        jouerSonQr('error');
+    }
+}
+
+async function chargerEtSelectionnerFactureParQr(facture) {
+    const annee = facture.annee_mois ? facture.annee_mois.slice(0, 4) : '';
+    const ouvrageId = facture.ouvrage_id || 'all';
+    const mois = facture.annee_mois || '';
+
+    if (annee) {
+        document.getElementById('filtre-annee').value = annee;
+    }
+    document.getElementById('filtre-ouvrage').value = ouvrageId || 'all';
+    document.getElementById('filtre-mois').value = mois;
+    document.getElementById('recherche').value = '';
+
+    await chargerFactures();
+    selectionnerFactureParId(facture.id, { exclusive: false, scroll: true, scanned: true });
+}
+
+function selectionnerFactureParId(factureId, options = {}) {
+    const { exclusive = false, scroll = false, scanned = false } = options;
+    const facture = getFactureById(factureId);
+    if (!facture) {
+        setQrStatus('La facture scannée ne correspond pas à la liste affichée.', 'error');
+        jouerSonQr('error');
+        return false;
+    }
+
+    const selectionScope = getSelectionScope();
+    if (selectionScope && (
+        selectionScope.ouvrageId !== (facture.ouvrage_id || '') ||
+        selectionScope.anneeMois !== (facture.annee_mois || '')
+    )) {
+        if (!exclusive) {
+            toutDeselectionner();
+        }
+    }
+
+    if (exclusive) {
+        toutDeselectionner();
+    }
+
+    facturesSelectionnees.add(factureId);
+    document.querySelectorAll(`.checkbox-facture[data-facture-id="${factureId}"]`).forEach(cb => {
+        cb.checked = true;
+    });
+    if (scanned) {
+        enregistrerFactureScannee(facture);
+    }
+    mettreAJourCompteurs();
+
+    if (scroll) {
+        const target = document.querySelector(`.checkbox-facture[data-facture-id="${factureId}"]`);
+        target?.closest('tr, label')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    return true;
+}
+
+function toutSelectionner() {
+    let selectionScope = getSelectionScope();
+    if (!selectionScope) {
+        const firstFacture = toutesFactures[0];
+        if (firstFacture) {
+            selectionScope = {
+                ouvrageId: firstFacture.ouvrage_id || '',
+                anneeMois: firstFacture.annee_mois || '',
+            };
+        }
+    }
+
+    document.querySelectorAll('.checkbox-facture').forEach(cb => {
+        const facture = getFactureById(cb.dataset.factureId);
+        const isAllowed = !selectionScope || (
+            (facture?.ouvrage_id || '') === selectionScope.ouvrageId &&
+            (facture?.annee_mois || '') === selectionScope.anneeMois
+        );
+        cb.checked = isAllowed;
+        if (isAllowed) {
+            facturesSelectionnees.add(cb.dataset.factureId);
+        } else {
+            facturesSelectionnees.delete(cb.dataset.factureId);
+        }
+    });
+    document.getElementById('checkbox-all').checked = true;
+    mettreAJourCompteurs();
+}
+
+function toutDeselectionner() {
+    document.querySelectorAll('.checkbox-facture').forEach(cb => { cb.checked = false; });
+    facturesSelectionnees.clear();
+    document.getElementById('checkbox-all').checked = false;
+    mettreAJourCompteurs();
+}
+
+function toggleToutSelectionner(checked) {
+    if (checked) { toutSelectionner(); } else { toutDeselectionner(); }
+}
+
+function mettreAJourCompteurs() {
+    const nbSelections = facturesSelectionnees.size;
+    document.getElementById('nb-selections').textContent = nbSelections;
+
+    let montantTotal = 0;
+    document.querySelectorAll('.checkbox-facture:checked').forEach(cb => {
+        montantTotal += parseFloat(cb.dataset.montant || 0);
+    });
+    document.getElementById('montant-total-selections').textContent = montantTotal.toLocaleString('fr-FR');
+
+    const btnValider = document.getElementById('btn-valider');
+    const journalCode = document.getElementById('journal-code').value;
+    btnValider.disabled = nbSelections === 0 || !journalCode;
+
+    const selectionScope = getSelectionScope();
+    document.querySelectorAll('.checkbox-facture').forEach(cb => {
+        const facture = getFactureById(cb.dataset.factureId);
+        const mustDisable = !!selectionScope &&
+            !facturesSelectionnees.has(cb.dataset.factureId) &&
+            (
+                selectionScope.ouvrageId !== (facture?.ouvrage_id || '') ||
+                selectionScope.anneeMois !== (facture?.annee_mois || '')
+            );
+        cb.disabled = mustDisable;
+        const row = cb.closest('tr, label');
+        if (row) {
+            row.classList.toggle('opacity-50', mustDisable);
+        }
+    });
+}
+
+function formatMontantRecap(value) {
+    return Number(value || 0).toLocaleString('fr-FR');
+}
+
+function construireRecapEncaissement(data, dateEncaissement, journalCode) {
+    const facturesDetails = toutesFactures.filter(f => (data.factures_ids || []).includes(f.id));
+    const totalMontant = (data.lignes || []).reduce((sum, ligne) => sum + Number(ligne.montant || 0), 0);
+
+    return {
+        generatedAt: new Date(),
+        dateEncaissement,
+        journalCode,
+        nbFactures: data.nb_factures_traitees || 0,
+        totalMontant,
+        lignes: data.lignes || [],
+        factures: facturesDetails
+    };
+}
+
+function renderRecapEncaissementHtml(recap) {
+    const ouvrages = [...new Set((recap.factures || []).map(facture => (facture.ouvrage || '').trim()).filter(Boolean))];
+    const ouvragesLabel = ouvrages.length ? ouvrages.join(', ') : '-';
+    const lignesHtml = recap.lignes.map(ligne => `
+        <tr>
+            <td style="padding:4px 6px;border:1px solid #d1d5db;">${ligne.description || ''}</td>
+            <td style="padding:4px 6px;border:1px solid #d1d5db;text-align:right;white-space:nowrap;">${formatMontantRecap(ligne.montant)} Ar</td>
+            <td style="padding:4px 6px;border:1px solid #d1d5db;text-align:center;white-space:nowrap;">${ligne.nb_factures || 0}</td>
+        </tr>
+    `).join('');
+
+    const facturesHtml = recap.factures.map(facture => `
+        <tr>
+            <td style="padding:4px 6px;border:1px solid #d1d5db;white-space:nowrap;">${facture.idxls || '-'}</td>
+            <td style="padding:4px 6px;border:1px solid #d1d5db;">${facture.abonne || '-'}</td>
+            <td style="padding:4px 6px;border:1px solid #d1d5db;white-space:nowrap;">${facture.mois_annee_display || '-'}</td>
+            <td style="padding:4px 6px;border:1px solid #d1d5db;">${facture.type_pe || '-'}${facture.est_institutionnel ? ' (Inst.)' : ''}</td>
+            <td style="padding:4px 6px;border:1px solid #d1d5db;text-align:right;white-space:nowrap;">${formatMontantRecap(facture.montant)} Ar</td>
+        </tr>
+    `).join('');
+
+    const grilleHtml = renderGrillePointageHtml(recap);
+
+    return `
+        <div style="font-family: Arial, sans-serif; color: #111827; padding: 10px; font-size: 11px; line-height: 1.25;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+                <div>
+                    <h1 style="margin:0 0 4px;font-size:16px;line-height:1.1;">Recap d'encaissement</h1>
+                    <p style="margin:0;color:#4b5563;font-size:10px;">Hydria - Encaissement des factures</p>
+                </div>
+                <div style="text-align:right;padding:6px 10px;border:1px solid #d1d5db;border-radius:8px;background:#f3f4f6;white-space:nowrap;">
+                    <div><strong>Cat :</strong> 707401</div>
+                    <div><strong>Journal :</strong> ${recap.journalCode}</div>
+                </div>
+            </div>
+            <div style="margin:10px 0;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;background:#f9fafb;">
+                <div><strong>Date d'encaissement :</strong> ${recap.dateEncaissement}</div>
+                <div><strong>Journal :</strong> ${recap.journalCode}</div>
+                <div><strong>Factures encaissees :</strong> ${recap.nbFactures}</div>
+                <div><strong>Montant total :</strong> ${formatMontantRecap(recap.totalMontant)} Ar</div>
+                <div><strong>Ouvrage :</strong> ${ouvragesLabel}</div>
+                <div><strong>Genere le :</strong> ${recap.generatedAt.toLocaleString('fr-FR')}</div>
+            </div>
+            <h2 style="margin:12px 0 6px;font-size:13px;line-height:1.1;">Lignes DiameX creees</h2>
+            <table style="width:100%;border-collapse:collapse;margin-bottom:12px;font-size:10px;">
+                <thead>
+                    <tr style="background:#f3f4f6;">
+                        <th style="padding:4px 6px;border:1px solid #d1d5db;text-align:left;">Description</th>
+                        <th style="padding:4px 6px;border:1px solid #d1d5db;text-align:right;white-space:nowrap;">Montant</th>
+                        <th style="padding:4px 6px;border:1px solid #d1d5db;text-align:center;white-space:nowrap;">Nb factures</th>
+                    </tr>
+                </thead>
+                <tbody>${lignesHtml}</tbody>
+            </table>
+            <h2 style="margin:12px 0 6px;font-size:13px;line-height:1.1;">Factures concernees</h2>
+            <table style="width:100%;border-collapse:collapse;margin-bottom:12px;font-size:10px;">
+                <thead>
+                    <tr style="background:#f3f4f6;">
+                        <th style="padding:4px 6px;border:1px solid #d1d5db;text-align:left;white-space:nowrap;">IDXls</th>
+                        <th style="padding:4px 6px;border:1px solid #d1d5db;text-align:left;">Abonne</th>
+                        <th style="padding:4px 6px;border:1px solid #d1d5db;text-align:left;white-space:nowrap;">Mois facture</th>
+                        <th style="padding:4px 6px;border:1px solid #d1d5db;text-align:left;">Type de point d'eau</th>
+                        <th style="padding:4px 6px;border:1px solid #d1d5db;text-align:right;white-space:nowrap;">Montant</th>
+                    </tr>
+                </thead>
+                <tbody>${facturesHtml}</tbody>
+            </table>
+            ${grilleHtml}
+        </div>
+    `;
+}
+
+/**
+ * Construit la grille de pointage IDXls (dernier chiffre en colonne, reste en ligne).
+ * Noir = IDXls des factures du recap courant. Gris = IDXls deja pointes DiameX
+ * (autres factures payees du meme ouvrage/mois), recuperes via API avant impression.
+ */
+function renderGrillePointageHtml(recap) {
+    const idxlsNoirsSet = new Set(
+        (recap.factures || [])
+            .map(f => String(f.idxls || '').trim())
+            .filter(v => v && /^\d+$/.test(v))
+    );
+    const idxlsGrisSet = new Set(
+        (recap.idxlsDejaPointes || [])
+            .map(v => String(v).trim())
+            .filter(v => v && /^\d+$/.test(v) && !idxlsNoirsSet.has(v))
+    );
+
+    const tousIdxls = [...idxlsNoirsSet, ...idxlsGrisSet].map(Number);
+    if (tousIdxls.length === 0) {
+        return '';
+    }
+
+    const maxValeur = Math.max(...tousIdxls);
+    const maxLigne = Math.floor(maxValeur / 10);
+
+    // Repartir chaque IDXls dans sa cellule (ligne = dizaines et plus, colonne = unite)
+    const cellules = {};
+    idxlsGrisSet.forEach(idxls => {
+        const n = Number(idxls);
+        const ligne = Math.floor(n / 10);
+        const col = n % 10;
+        cellules[`${ligne}_${col}`] = { valeur: idxls, pointe: true };
+    });
+    idxlsNoirsSet.forEach(idxls => {
+        const n = Number(idxls);
+        const ligne = Math.floor(n / 10);
+        const col = n % 10;
+        cellules[`${ligne}_${col}`] = { valeur: idxls, pointe: false };
+    });
+
+    let theadCols = '<th style="padding:3px 4px;border:1px solid #d1d5db;background:#e5e7eb;width:30px;"></th>';
+    for (let col = 0; col <= 9; col++) {
+        theadCols += `<th style="padding:3px 4px;border:1px solid #d1d5db;background:#e5e7eb;text-align:center;">${col}</th>`;
+    }
+
+    let bodyRows = '';
+    for (let ligne = 0; ligne <= maxLigne; ligne++) {
+        let rowCells = `<td style="padding:3px 4px;border:1px solid #d1d5db;background:#f3f4f6;text-align:center;font-weight:bold;">${ligne}</td>`;
+        for (let col = 0; col <= 9; col++) {
+            const cell = cellules[`${ligne}_${col}`];
+            if (cell) {
+                const couleur = cell.pointe ? '#9ca3af' : '#111827';
+                rowCells += `<td style="padding:3px 4px;border:1px solid #d1d5db;text-align:center;color:${couleur};">${cell.valeur}</td>`;
+            } else {
+                rowCells += `<td style="padding:3px 4px;border:1px solid #d1d5db;text-align:center;">&nbsp;</td>`;
+            }
+        }
+        bodyRows += `<tr>${rowCells}</tr>`;
+    }
+
+    return `
+        <h2 style="margin:12px 0 6px;font-size:13px;line-height:1.1;">Grille de pointage (controle des ecarts versement)</h2>
+        <p style="margin:0 0 6px;color:#4b5563;font-size:9px;">
+            Colonne = dernier chiffre de l'IDXls, Ligne = reste du nombre.
+            <span style="color:#111827;font-weight:bold;">Noir</span> = factures de ce recap.
+            <span style="color:#9ca3af;font-weight:bold;">Gris</span> = deja pointees DiameX.
+        </p>
+        <table style="border-collapse:collapse;font-size:10px;">
+            <thead><tr>${theadCols}</tr></thead>
+            <tbody>${bodyRows}</tbody>
+        </table>
+    `;
+}
+
+async function chargerIdxlsDejaPointesPourRecap(recap) {
+    try {
+        const ouvrageIds = [...new Set((recap.factures || []).map(f => f.ouvrage_id).filter(Boolean))];
+        const annexMois = [...new Set((recap.factures || []).map(f => f.annee_mois).filter(Boolean))];
+
+        // Le workflow n'autorise qu'un seul ouvrage et un seul mois par recap
+        if (ouvrageIds.length !== 1 || annexMois.length !== 1) {
+            return [];
+        }
+
+        const excludeIds = (recap.factures || []).map(f => f.id).join(',');
+        const params = new URLSearchParams({
+            ouvrage_id: ouvrageIds[0],
+            annee_mois: annexMois[0],
+            exclude_ids: excludeIds
+        });
+
+        const response = await fetch(`{% url "billing:api_idxls_deja_pointes" %}?${params.toString()}`);
+        const data = await response.json();
+        return data.success ? (data.idxls_pointes || []) : [];
+    } catch (error) {
+        console.error('Erreur chargement IDXls deja pointes:', error);
+        return [];
+    }
+}
+
+async function imprimerRecapEncaissement() {
+    if (!dernierRecapEncaissement) {
+        alert("Aucun recap d'encaissement a imprimer.");
+        return;
+    }
+
+    if (!dernierRecapEncaissement.idxlsDejaPointes) {
+        dernierRecapEncaissement.idxlsDejaPointes = await chargerIdxlsDejaPointesPourRecap(dernierRecapEncaissement);
+    }
+
+    const recapHtml = renderRecapEncaissementHtml(dernierRecapEncaissement);
+    const printWindow = window.open('', '_blank', 'width=960,height=720');
+    if (!printWindow) {
+        alert("Impossible d'ouvrir la fenetre d'impression.");
+        return;
+    }
+
+    printWindow.document.open();
+    printWindow.document.write(`
+        <!DOCTYPE html>
+        <html lang="fr">
+        <head>
+            <meta charset="utf-8">
+            <title>Recap d'encaissement</title>
+            <style>
+                @page { size: A4 portrait; margin: 8mm; }
+                html, body { margin: 0; padding: 0; }
+                body { font-family: Arial, sans-serif; }
+                table { page-break-inside: auto; }
+                tr { page-break-inside: avoid; page-break-after: auto; }
+                @media print {
+                    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                }
+            </style>
+        </head>
+        <body>${recapHtml}</body>
+        </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+}
+
+async function validerEncaissement() {
+    if (facturesSelectionnees.size === 0) {
+        alert('Veuillez sélectionner au moins une facture');
+        return;
+    }
+
+    const dateEncaissement = document.getElementById('date-encaissement').value;
+    const journalCode = document.getElementById('journal-code').value;
+
+    if (!dateEncaissement || !journalCode) {
+        alert('Veuillez remplir tous les champs');
+        return;
+    }
+
+    if (!confirm(`Valider l'encaissement de ${facturesSelectionnees.size} facture(s) ?`)) {
+        return;
+    }
+
+    const btnValider = document.getElementById('btn-valider');
+    btnValider.disabled = true;
+    btnValider.innerHTML = '<span class="loading loading-spinner loading-sm"></span> Traitement...';
+
+    try {
+        const response = await fetch('{% url "billing:api_valider_encaissement_groupe" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                factures_ids: Array.from(facturesSelectionnees),
+                date_encaissement: dateEncaissement,
+                journal_code: journalCode
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            dernierRecapEncaissement = construireRecapEncaissement(data, dateEncaissement, journalCode);
+            document.getElementById('encaissement-recap-actions').classList.remove('hidden');
+            alert(`âœ“ ${data.message}\n${data.nb_factures_traitees} facture(s) marquée(s) comme payée(s)`);
+            facturesSelectionnees.clear();
+            chargerFactures();
+            chargerDerniersEncaissements();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    } finally {
+        btnValider.disabled = false;
+        btnValider.innerHTML = '<i class="fas fa-check mr-2"></i>Valider l\'encaissement';
+    }
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+function ouvrirModalDetailEncaissement(index) {
+    const enc = derniersEncaissementsData[index];
+    if (!enc) return;
+    const facturesTriees = [...(enc.factures || [])].sort((a, b) => (a.point_eau_idxls || '').localeCompare(b.point_eau_idxls || '', 'fr', {numeric: true, sensitivity: 'base'}));
+
+    const lignesHtml = (enc.lignes || []).map(ligne => `
+        <tr>
+            <td class="border px-2 py-1">${ligne.description || ''}</td>
+            <td class="border px-2 py-1 text-right">${parseFloat(ligne.montant || 0).toLocaleString('fr-FR')} Ar</td>
+            <td class="border px-2 py-1 text-center">${ligne.journal || ''}</td>
+        </tr>
+    `).join('');
+
+    const facturesHtml = facturesTriees.map(facture => `
+        <tr>
+            <td class="border px-2 py-1 font-mono text-xs">${facture.numero_facture || '-'}</td>
+            <td class="border px-2 py-1">${facture.point_eau_nom || '-'}</td>
+            <td class="border px-2 py-1 font-mono text-xs">${facture.point_eau_idxls || '-'}</td>
+            <td class="border px-2 py-1">${facture.mois_facture_display || '-'}</td>
+            <td class="border px-2 py-1">${facture.parcelle || '-'}</td>
+            <td class="border px-2 py-1">${facture.ouvrage || '-'}</td>
+            <td class="border px-2 py-1 text-right">${parseFloat(facture.montant || 0).toLocaleString('fr-FR')} Ar</td>
+        </tr>
+    `).join('');
+
+    document.getElementById('modal-detail-encaissement-content').innerHTML = `
+        <div class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                <div><span class="font-semibold">Date :</span> ${enc.date_encaissement_display || '-'}</div>
+                <div><span class="font-semibold">Factures :</span> ${enc.nb_factures || 0}</div>
+                <div><span class="font-semibold">Montant total :</span> ${parseFloat(enc.montant_total || 0).toLocaleString('fr-FR')} Ar</div>
+            </div>
+            <div>
+                <div class="font-semibold mb-2">Lignes DiameX</div>
+                <div class="overflow-x-auto">
+                    <table class="table table-xs">
+                        <thead><tr><th>Description</th><th class="text-right">Montant</th><th>Journal</th></tr></thead>
+                        <tbody>${lignesHtml}</tbody>
+                    </table>
+                </div>
+                <div id="factures-cards-wrapper" class="hidden">
+                    <div id="cards-factures-a-encaisser" class="space-y-4">
+                        <div class="text-center py-4"><span class="loading loading-spinner loading-sm"></span> Chargement...</div>
+                    </div>
+                </div>
+            </div>
+            <div>
+                <div class="font-semibold mb-2">Factures concernées</div>
+                <div class="overflow-x-auto">
+                    <table class="table table-xs">
+                        <thead><tr><th>N° facture</th><th>Point d'eau</th><th>IDXls</th><th>Mois facture</th><th>Parcelle</th><th>Ouvrage</th><th class="text-right">Montant</th></tr></thead>
+                        <tbody>${facturesHtml}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    `;
+    document.getElementById('modal-detail-encaissement').showModal();
+}
+
+function renderPaginationDerniersEncaissements(pagination) {
+    if (!pagination || pagination.total_pages <= 1) return '';
+    return `
+        <div class="flex items-center justify-between mt-4 text-sm">
+            <button class="btn btn-xs btn-outline" ${pagination.has_previous ? '' : 'disabled'} onclick="changerPageDerniersEncaissements(${pagination.page - 1})">Précédent</button>
+            <span>Page ${pagination.page} / ${pagination.total_pages}</span>
+            <button class="btn btn-xs btn-outline" ${pagination.has_next ? '' : 'disabled'} onclick="changerPageDerniersEncaissements(${pagination.page + 1})">Suivant</button>
+        </div>
+    `;
+}
+
+function changerPageDerniersEncaissements(page) {
+    pageDerniersEncaissements = page;
+    chargerDerniersEncaissements();
+}
+
+async function chargerDerniersEncaissements() {
+    const container = document.getElementById('derniers-encaissements-container');
+    container.innerHTML = '<div class="text-center py-8"><span class="loading loading-spinner loading-lg text-primary"></span><p class="mt-2 text-base-content/70">Chargement...</p></div>';
+
+    try {
+        const response = await fetch(`{% url "billing:api_derniers_encaissements" %}?page=${pageDerniersEncaissements}`);
+        const data = await response.json();
+
+        if (!data.success) {
+            container.innerHTML = `<div class="alert alert-error"><i class="fas fa-exclamation-circle mr-2"></i>${data.error}</div>`;
+            return;
+        }
+
+        if (data.encaissements.length === 0) {
+            container.innerHTML = '<p class="text-center py-8 text-base-content/50">Aucun encaissement dans les 7 derniers jours</p>';
+            return;
+        }
+
+        derniersEncaissementsData = data.encaissements || [];
+        let html = '<div class="space-y-4">';
+
+        data.encaissements.forEach((enc, index) => {
+            html += `
+                <div class="card bg-base-200 shadow">
+                    <div class="card-body p-4">
+                        <div class="flex justify-between items-start">
+                            <div class="flex-1">
+                                <div class="flex items-center gap-2 mb-2">
+                                    <i class="fas fa-calendar-day text-primary"></i>
+                                    <span class="font-bold">${enc.date_encaissement_display}</span>
+                                    <span class="badge badge-info badge-sm">${enc.nb_factures} facture${enc.nb_factures > 1 ? 's' : ''}</span>
+                                </div>
+                                <div class="text-sm space-y-1">
+            `;
+
+            // Afficher quelques factures (max 3)
+            const maxFactures = 3;
+            enc.factures.slice(0, maxFactures).forEach(facture => {
+                html += `
+                    <div class="pl-4">
+                        <i class="fas fa-file-invoice text-xs text-base-content/50 mr-1"></i>
+                        <span class="font-mono text-xs">${facture.numero_facture || 'N/A'}</span>
+                        ${facture.point_eau_nom ? `<span class="text-base-content/70"> - ${facture.point_eau_nom}</span>` : ''}
+                        ${facture.point_eau_idxls ? `<span class="badge badge-outline badge-xs ml-1">${facture.point_eau_idxls}</span>` : ''}
+                        ${facture.ouvrage ? `<span class="text-base-content/70"> - ${facture.ouvrage}</span>` : ''}
+                        <span class="text-base-content/50"> - ${parseFloat(facture.montant).toLocaleString('fr-FR')} Ar</span>
+                    </div>
+                `;
+            });
+
+            if (enc.factures.length > maxFactures) {
+                html += `<div class="pl-4 text-xs text-base-content/50">... et ${enc.factures.length - maxFactures} autre${enc.factures.length - maxFactures > 1 ? 's' : ''}</div>`;
+            }
+
+            html += `
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <div class="font-bold text-lg">${parseFloat(enc.montant_total).toLocaleString('fr-FR')} Ar</div>
+                                <div class="flex flex-col gap-2 mt-2">
+                                    <button class="btn btn-info btn-xs" onclick="ouvrirModalDetailEncaissement(${index})">
+                                        <i class="fas fa-eye mr-1"></i>Voir détail
+                                    </button>
+                                    <button class="btn btn-error btn-xs" onclick="annulerEncaissement('${enc.date_encaissement}', ${enc.nb_factures})">
+                                        <i class="fas fa-times-circle mr-1"></i>Annuler
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+
+        html += '</div>' + renderPaginationDerniersEncaissements(data.pagination);
+        container.innerHTML = html;
+
+    } catch (error) {
+        console.error('Erreur chargement derniers encaissements:', error);
+        container.innerHTML = `<div class="alert alert-error"><i class="fas fa-exclamation-circle mr-2"></i>Erreur réseau: ${error.message}</div>`;
+    }
+}
+
+async function annulerEncaissement(dateEncaissement, nbFactures) {
+    if (!confirm(`âš ï¸ ATTENTION !\n\nVoulez-vous vraiment annuler cet encaissement ?\n\nðŸ“… Date: ${dateEncaissement}\nðŸ“„ ${nbFactures} facture(s) concernée(s)\n\nCette action va :\n- Supprimer les lignes DiameX temporaires\n- Réinitialiser les factures (elles réapparaÃ®tront dans le tableau)\n\nContinuer ?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('{% url "billing:api_annuler_encaissement" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                date_encaissement: dateEncaissement
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(`âœ“ ${data.message}`);
+
+            // Recharger les deux sections
+            chargerDerniersEncaissements();
+            chargerFactures();
+        } else {
+            alert(`âŒ Erreur: ${data.error}`);
+        }
+
+    } catch (error) {
+        console.error('Erreur annulation encaissement:', error);
+        alert(`âŒ Erreur réseau: ${error.message}`);
+    }
+}
+</script>
+{% endblock %}
+

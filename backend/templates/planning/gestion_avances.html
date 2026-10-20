@@ -1,0 +1,1513 @@
+{% extends planning_shell_base_template %}
+{% load static %}
+{% load humanize %}
+{% load l10n %}
+{% load employee_grouping %}
+
+{% block title %}{{ title|default:"Gestion des avances" }}{% endblock %}
+
+{% block breadcrumb %}
+<div class="breadcrumbs text-sm container mx-auto px-4 pt-4">
+    <ul>
+        <li><a href="{% url 'core:home' %}">Accueil</a></li>
+        <li><a href="{% url 'planning:dashboard' %}">Planning</a></li>
+        <li>{{ title|default:"Gestion des avances" }}</li>
+    </ul>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.avance-row.is-selected {
+    background-color: hsl(var(--p) / 0.08);
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">{{ title|default:"Gestion des avances, recettes et forfaitaires" }}</h1>
+            <p class="text-sm text-base-content/70">
+                {% if forfaitaire_only %}
+                Preparation des factures A4 et du recapitulatif de depart pour les recettes forfaitaires.
+                {% else %}
+                Preparation des factures A4 et du recapitulatif de depart agent.
+                {% endif %}
+            </p>
+        </div>
+        {% if is_directeur %}
+        <div class="flex items-center gap-2">
+            <a href="{% url 'planning:maintenance_avances' %}" class="btn btn-ghost btn-outline btn-sm text-warning">
+                <i class="fas fa-tools mr-2"></i>Nettoyage BA
+            </a>
+        </div>
+        {% endif %}
+
+        <div class="flex flex-wrap items-stretch gap-4">
+            <div class="stats shadow">
+                <div class="stat">
+                    <div class="stat-figure text-primary">
+                        <i class="fas fa-money-bill-wave text-2xl"></i>
+                    </div>
+                    <div class="stat-title">Elements en attente</div>
+                    <div class="stat-value text-primary" id="totalArticles">{{ total_pending_count }}</div>
+                    <div class="stat-desc">{% if forfaitaire_only %}Recettes forfaitaires non payees{% else %}Avances, recettes et forfaitaires non payes{% endif %}</div>
+                </div>
+            </div>
+
+            <div class="flex flex-wrap gap-2">
+                <button id="btnAvancer" class="btn btn-success btn-lg" disabled onclick="traiterAvances()">
+                    <i class="fas fa-file-pdf mr-2"></i>
+                    Imprimer recap depart
+                </button>
+                {% if forfaitaire_only %}
+                <button class="btn btn-outline btn-lg" type="button" onclick="openRecapFacturesModal()">
+                    <i class="fas fa-print mr-2"></i>
+                    Imprimer recap factures
+                </button>
+                {% endif %}
+                <button id="btnImprimerTickets" class="btn btn-info btn-lg" disabled onclick="imprimerTicketsRecettes()" style="display: none;">
+                    <i class="fas fa-receipt mr-2"></i>
+                    {% if forfaitaire_only %}Imprimer recettes forfaitaires A4{% else %}Imprimer factures A4{% endif %}
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-filter mr-2"></i>Filtres
+            </h2>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-5">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Mois</span>
+                    </label>
+                    <input type="month" class="input input-bordered input-sm" id="filtreMois" value="{{ current_month }}" onchange="filtrerArticles()">
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Employe</span>
+                    </label>
+                    <select class="select select-bordered select-sm" id="filtreEmploye" onchange="filtrerArticles()">
+                        {% grouped_employee_options employe_options "" "Tous les employes" %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Ouvrage</span>
+                    </label>
+                    <select class="select select-bordered select-sm" id="filtreOuvrage" onchange="filtrerArticles()">
+                        <option value="">Tous les ouvrages</option>
+                        {% for ouvrage in ouvrage_options %}
+                        <option value="{{ ouvrage.id }}">{{ ouvrage.nom }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                {% if not forfaitaire_only %}
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Type designation</span>
+                    </label>
+                    <select class="select select-bordered select-sm" id="typeDesignation" onchange="filtrerArticles()">
+                        <option value="">Tous les types</option>
+                        {% for type_designation in type_designations %}
+                        <option value="{{ type_designation.id }}">{{ type_designation.nom }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Actions</span>
+                    </label>
+                    <div class="flex gap-2">
+                        <button class="btn btn-outline btn-sm" type="button" onclick="selectionnerTout()">
+                            <i class="fas fa-check-double mr-1"></i>Tout
+                        </button>
+                        <button class="btn btn-outline btn-sm" type="button" onclick="deselectionnerTout()">
+                            <i class="fas fa-times mr-1"></i>Aucun
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-lg" id="resumeCard" style="display: none;">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-calculator mr-2"></i>{% if forfaitaire_only %}Resume des recettes{% else %}Resume du depart{% endif %}
+            </h2>
+            <div class="overflow-x-auto">
+                <table class="table w-full">
+                    <thead>
+                        <tr>
+                            {% if not forfaitaire_only %}
+                            <th class="bg-success text-success-content">Total avances</th>
+                            {% endif %}
+                            <th class="bg-error text-error-content">Total recettes</th>
+                            {% if not forfaitaire_only %}
+                            <th class="bg-primary text-primary-content">Avance a faire</th>
+                            {% endif %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr class="text-lg font-bold">
+                            {% if not forfaitaire_only %}
+                            <td class="text-success"><span id="totalAvances">0</span> Ar</td>
+                            {% endif %}
+                            <td class="text-error"><span id="totalRecettes">0</span> Ar</td>
+                            {% if not forfaitaire_only %}
+                            <td class="text-primary"><span id="avanceAFaire">0</span> Ar</td>
+                            {% endif %}
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="alert alert-info mt-4">
+                <i class="fas fa-info-circle"></i>
+                <span>Les recettes et paiements forfaitaires s impriment maintenant en A4, plusieurs factures par page, sans QR code.</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-coins mr-2"></i>{% if forfaitaire_only %}Elements en attente - recettes forfaitaires{% else %}Elements en attente - avances, recettes et forfaitaires{% endif %}
+                <span class="badge badge-primary" id="compteurSelection">0 selectionne(s)</span>
+            </h2>
+
+            <div class="tabs tabs-boxed mb-4 w-fit">
+                <a class="tab tab-active" id="tab-courant" onclick="setPeriod('courant')">Passé & Mois en cours <span class="badge badge-sm ml-2">{{ articles_avances|length }}</span></a>
+                <a class="tab" id="tab-futur" onclick="setPeriod('futur')">À venir <span class="badge badge-sm ml-2">{{ articles_avances_futur|length }}</span></a>
+            </div>
+
+            {% if articles_avances or articles_avances_futur %}
+            <div class="overflow-x-auto">
+                <table class="table table-zebra w-full" id="articlesTable">
+                    <thead>
+                        <tr>
+                            <th>
+                                <label>
+                                    <input type="checkbox" class="checkbox" id="selectAll" onchange="toggleSelectAll(this)">
+                                </label>
+                            </th>
+                            <th>Employe / Ouvrage</th>
+                            <th>Date</th>
+                            <th>Libelle</th>
+                            <th>Source</th>
+                            <th>Type</th>
+                            <th>Quantite</th>
+                            <th>P.U.</th>
+                            <th>Montant</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for article in articles_avances %}
+                        <tr class="avance-row hover:bg-base-200"
+                            data-period="courant"
+                            data-item-id="{{ article.item_id }}"
+                            data-source-type="{{ article.source_type }}"
+                            data-detail-id="{{ article.detail_id }}"
+                            data-paiement-id="{{ article.paiement_id }}"
+                            data-planning-date="{{ article.planning_date|date:'Y-m-d' }}"
+                            data-date-display="{{ article.planning_date|date:'d/m/Y' }}"
+                            data-type-designation="{{ article.type_designation_id }}"
+                            data-type-avance="{{ article.type_avance }}"
+                            data-montant="{{ article.montant|unlocalize }}"
+                            data-frais-mvola="{{ article.frais_mvola|unlocalize }}"
+                            data-quantite="{{ article.quantite|unlocalize }}"
+                            data-pu="{{ article.pu|unlocalize }}"
+                            data-employe-id="{{ article.employe_id }}"
+                            data-employe-nom="{{ article.employe_nom }}"
+                            data-ouvrage-id="{{ article.ouvrage_id }}"
+                            data-ouvrage-nom="{{ article.ouvrage_nom }}"
+                            data-designation="{{ article.designation_nom }}"
+                            data-ticket-designation="{{ article.designation_nom }}"
+                            data-point-eau-label="{{ article.point_eau_label }}"
+                            data-point-eau-idxls="{{ article.point_eau_idxls }}"
+                            data-nom-abonne="{{ article.nom_abonne }}"
+                            data-forfaitaire-tranches-header="{{ article.forfaitaire_tranches_header }}"
+                            data-forfaitaire-prochaine-date="{% if article.forfaitaire_prochaine_date %}{{ article.forfaitaire_prochaine_date|date:'Y-m-d' }}{% endif %}"
+                            data-forfaitaire-prochaine-montant="{{ article.forfaitaire_prochaine_montant }}"
+                            data-base-nom="{{ article.base_nom }}"
+                            data-base-telephone="{{ article.base_telephone }}"
+                            data-compte-nom="{{ article.compte_nom }}"
+                            data-organisation="{{ article.organisation_nom }}"
+                            data-logo-url="{{ article.organisation_logo_url }}"
+                            data-nif="{{ article.organisation_nif }}"
+                            data-stat="{{ article.organisation_stat }}"
+                            data-ticket-numero="{{ article.ticket_numero }}"
+                            data-debug-db="{{ article.debug_db }}"
+                            data-debug-livraison="{{ article.debug_livraison }}"
+                            data-debug-retour="{{ article.debug_retour }}"
+                            data-debug-paye="{{ article.debug_paye }}"
+                            data-debug-est-valide="{{ article.debug_est_valide }}">
+                            <td>
+                                <label>
+                                    <input type="checkbox" class="checkbox checkbox-primary article-checkbox" value="{{ article.item_id }}" onchange="updateSelectionCounter()">
+                                </label>
+                            </td>
+                            <td>
+                                <div class="flex items-center space-x-3">
+                                    <div class="avatar placeholder">
+                                        <div class="bg-primary text-primary-content rounded-full w-10 h-10">
+                                            <span class="text-xs">{{ article.employe_initials }}</span>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div class="font-bold">{{ article.employe_nom }}
+                                            {% if forfaitaire_only and article.source_type == 'paiement_forfaitaire' %}
+                                            <button class="btn btn-ghost btn-xs text-primary !p-0 px-1" onclick="openChangerEmploye(this)" title="Changer l'employe">
+                                                <i class="fas fa-pen"></i>
+                                            </button>
+                                            {% endif %}
+                                        </div>
+                                        <div class="text-sm opacity-60">{{ article.ouvrage_nom|truncatechars:36 }}</div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="font-medium">{{ article.planning_date|date:'d/m/Y' }}</div>
+                            </td>
+                            <td>
+                                <div class="font-medium">{{ article.designation_nom }}</div>
+                                {% if article.point_eau_label %}
+                                <div class="text-sm opacity-60">{{ article.point_eau_label }}</div>
+                                {% elif article.designation_description %}
+                                <div class="text-sm opacity-60">{{ article.designation_description|truncatechars:50 }}</div>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="flex items-center gap-2">
+                                    {% if article.source_type == 'paiement_forfaitaire' %}
+                                    <span class="badge badge-info gap-2">
+                                        <i class="fas fa-tint"></i>
+                                        Forfaitaire
+                                    </span>
+                                    {% else %}
+                                    <span class="badge badge-outline">Planning</span>
+                                    {% endif %}
+                                    <button class="btn btn-ghost btn-xs text-info !p-0 px-1" onclick="showDebugModal(this)" title="Voir informations de table parent">
+                                        <i class="fas fa-info-circle"></i>
+                                    </button>
+                                </div>
+                            </td>
+                            <td>
+                                {% if article.type_avance == 'Avance' %}
+                                <span class="badge badge-success gap-2">
+                                    <i class="fas fa-arrow-up"></i>
+                                    Avance
+                                </span>
+                                {% else %}
+                                <span class="badge badge-error gap-2">
+                                    <i class="fas fa-arrow-down"></i>
+                                    Recette
+                                </span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <input type="number"
+                                       class="input input-bordered input-sm w-20 quantite-input"
+                                       value="{{ article.quantite|unlocalize }}"
+                                       step="{% if article.source_type == 'paiement_forfaitaire' %}1{% else %}0.1{% endif %}"
+                                       min="0"
+                                       onchange="updateMontant(this)">
+                                {% if article.designation_unite %}
+                                <div class="text-xs opacity-50">{{ article.designation_unite }}</div>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <input type="number"
+                                       class="input input-bordered input-sm w-24 pu-input"
+                                       value="{{ article.pu|unlocalize }}"
+                                       step="1"
+                                       min="0"
+                                       {% if article.source_type == 'paiement_forfaitaire' %}readonly{% endif %}
+                                       onchange="updateMontant(this)">
+                                <div class="text-xs opacity-50">
+                                    Ar{% if article.source_type == 'paiement_forfaitaire' %} · verrouille{% endif %}
+                                </div>
+                            </td>
+                            <td>
+                                <span class="font-bold text-lg montant-display">{{ article.montant|floatformat:0|intcomma }} Ar</span>
+                            </td>
+                            <td>
+                                <button class="btn btn-ghost btn-sm text-error"
+                                        onclick="deleteRowDirect(this)"
+                                        title="Supprimer cette ligne">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+
+                        {% for article in articles_avances_futur %}
+                        <tr class="avance-row hover:bg-base-200" style="display: none;"
+                            data-period="futur"
+                            data-item-id="{{ article.item_id }}"
+                            data-source-type="{{ article.source_type }}"
+                            data-detail-id="{{ article.detail_id }}"
+                            data-paiement-id="{{ article.paiement_id }}"
+                            data-planning-date="{{ article.planning_date|date:'Y-m-d' }}"
+                            data-date-display="{{ article.planning_date|date:'d/m/Y' }}"
+                            data-type-designation="{{ article.type_designation_id }}"
+                            data-type-avance="{{ article.type_avance }}"
+                            data-montant="{{ article.montant|unlocalize }}"
+                            data-frais-mvola="{{ article.frais_mvola|unlocalize }}"
+                            data-quantite="{{ article.quantite|unlocalize }}"
+                            data-pu="{{ article.pu|unlocalize }}"
+                            data-employe-id="{{ article.employe_id }}"
+                            data-employe-nom="{{ article.employe_nom }}"
+                            data-ouvrage-id="{{ article.ouvrage_id }}"
+                            data-ouvrage-nom="{{ article.ouvrage_nom }}"
+                            data-designation="{{ article.designation_nom }}"
+                            data-ticket-designation="{{ article.designation_nom }}"
+                            data-point-eau-label="{{ article.point_eau_label }}"
+                            data-point-eau-idxls="{{ article.point_eau_idxls }}"
+                            data-nom-abonne="{{ article.nom_abonne }}"
+                            data-forfaitaire-tranches-header="{{ article.forfaitaire_tranches_header }}"
+                            data-forfaitaire-prochaine-date="{% if article.forfaitaire_prochaine_date %}{{ article.forfaitaire_prochaine_date|date:'Y-m-d' }}{% endif %}"
+                            data-forfaitaire-prochaine-montant="{{ article.forfaitaire_prochaine_montant }}"
+                            data-base-nom="{{ article.base_nom }}"
+                            data-base-telephone="{{ article.base_telephone }}"
+                            data-compte-nom="{{ article.compte_nom }}"
+                            data-organisation="{{ article.organisation_nom }}"
+                            data-logo-url="{{ article.organisation_logo_url }}"
+                            data-nif="{{ article.organisation_nif }}"
+                            data-stat="{{ article.organisation_stat }}"
+                            data-ticket-numero="{{ article.ticket_numero }}"
+                            data-debug-db="{{ article.debug_db }}"
+                            data-debug-livraison="{{ article.debug_livraison }}"
+                            data-debug-retour="{{ article.debug_retour }}"
+                            data-debug-paye="{{ article.debug_paye }}"
+                            data-debug-est-valide="{{ article.debug_est_valide }}">
+                            <td>
+                                <label>
+                                    <input type="checkbox" class="checkbox checkbox-primary article-checkbox" value="{{ article.item_id }}" onchange="updateSelectionCounter()">
+                                </label>
+                            </td>
+                            <td>
+                                <div class="flex items-center space-x-3">
+                                    <div class="avatar placeholder">
+                                        <div class="bg-primary text-primary-content rounded-full w-10 h-10">
+                                            <span class="text-xs">{{ article.employe_initials }}</span>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div class="font-bold">{{ article.employe_nom }}
+                                            {% if forfaitaire_only and article.source_type == 'paiement_forfaitaire' %}
+                                            <button class="btn btn-ghost btn-xs text-primary !p-0 px-1" onclick="openChangerEmploye(this)" title="Changer l'employe">
+                                                <i class="fas fa-pen"></i>
+                                            </button>
+                                            {% endif %}
+                                        </div>
+                                        <div class="text-sm opacity-60">{{ article.ouvrage_nom|truncatechars:36 }}</div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="font-medium">{{ article.planning_date|date:'d/m/Y' }}</div>
+                            </td>
+                            <td>
+                                <div class="font-medium">{{ article.designation_nom }}</div>
+                                {% if article.point_eau_label %}
+                                <div class="text-sm opacity-60">{{ article.point_eau_label }}</div>
+                                {% elif article.designation_description %}
+                                <div class="text-sm opacity-60">{{ article.designation_description|truncatechars:50 }}</div>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="flex items-center gap-2">
+                                    {% if article.source_type == 'paiement_forfaitaire' %}
+                                    <span class="badge badge-info gap-2">
+                                        <i class="fas fa-tint"></i>
+                                        Forfaitaire
+                                    </span>
+                                    {% else %}
+                                    <span class="badge badge-outline">Planning</span>
+                                    {% endif %}
+                                    <button class="btn btn-ghost btn-xs text-info !p-0 px-1" onclick="showDebugModal(this)" title="Voir informations de table parent">
+                                        <i class="fas fa-info-circle"></i>
+                                    </button>
+                                </div>
+                            </td>
+                            <td>
+                                {% if article.type_avance == 'Avance' %}
+                                <span class="badge badge-success gap-2">
+                                    <i class="fas fa-arrow-up"></i>
+                                    Avance
+                                </span>
+                                {% else %}
+                                <span class="badge badge-error gap-2">
+                                    <i class="fas fa-arrow-down"></i>
+                                    Recette
+                                </span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <input type="number"
+                                       class="input input-bordered input-sm w-20 quantite-input"
+                                       value="{{ article.quantite|unlocalize }}"
+                                       step="0.1"
+                                       min="0"
+                                       onchange="updateMontant(this)">
+                                {% if article.designation_unite %}
+                                <div class="text-xs opacity-50">{{ article.designation_unite }}</div>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <input type="number"
+                                       class="input input-bordered input-sm w-24 pu-input"
+                                       value="{{ article.pu|unlocalize }}"
+                                       step="1"
+                                       min="0"
+                                       {% if article.source_type == 'paiement_forfaitaire' %}readonly{% endif %}
+                                       onchange="updateMontant(this)">
+                                <div class="text-xs opacity-50">
+                                    Ar{% if article.source_type == 'paiement_forfaitaire' %} · verrouille{% endif %}
+                                </div>
+                            </td>
+                            <td>
+                                <span class="font-bold text-lg montant-display">{{ article.montant|floatformat:0|intcomma }} Ar</span>
+                            </td>
+                            <td>
+                                <button class="btn btn-ghost btn-sm text-error"
+                                        onclick="deleteRowDirect(this)"
+                                        title="Supprimer cette ligne">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-8">
+                <div class="text-base-content/50">
+                    <i class="fas fa-inbox text-4xl mb-4"></i>
+                    <p>Aucun element en attente</p>
+                    <p class="text-sm">{% if forfaitaire_only %}Les recettes forfaitaires liees aux plannings valides apparaitront ici.{% else %}Les avances, recettes et paiements forfaitaires lies aux plannings valides apparaitront ici.{% endif %}</p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Modal Debug Enregistrement Parent -->
+<dialog id="modalDebug" class="modal">
+  <div class="modal-box">
+    <h3 class="font-bold text-lg mb-4 text-info"><i class="fas fa-database mr-2"></i>Informations Base de Données</h3>
+    <p class="py-2 text-sm text-base-content/70">Ces détails expliquent pourquoi cet élément est encore en attente.</p>
+    <table class="table table-sm border">
+        <tbody>
+            <tr><th class="bg-base-200">Table Source</th><td id="debugTable" class="font-mono"></td></tr>
+            <tr><th class="bg-base-200">Identifiant (ID)</th><td id="debugId" class="text-xs"></td></tr>
+            <tr><th class="bg-base-200">Est Valide (Planning)</th><td><div class="badge badge-sm" id="debugEstValide"></div></td></tr>
+            <tr><th class="bg-base-200">Cash Livré ?</th><td><div class="badge badge-sm" id="debugLivraison"></div></td></tr>
+            <tr><th class="bg-base-200">Justif Retourné ?</th><td><div class="badge badge-sm" id="debugRetour"></div></td></tr>
+            <tr><th class="bg-base-200">Payé ? (Forfaitaire)</th><td><div class="badge badge-sm" id="debugPaye"></div></td></tr>
+        </tbody>
+    </table>
+    {% if is_directeur %}
+    <div class="alert alert-error alert-sm mt-4 py-2">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span class="text-sm">Zone Directeur : suppression définitive de la ligne source en base de données.</span>
+    </div>
+    {% endif %}
+    <div class="modal-action">
+      <form method="dialog">
+        <button class="btn btn-sm">Fermer</button>
+      </form>
+      {% if is_directeur %}
+      <button class="btn btn-sm btn-error" onclick="deleteSourceRecord()" id="btnDeleteSource">
+          <i class="fas fa-trash mr-1"></i>Supprimer définitivement
+      </button>
+      {% endif %}
+    </div>
+  </div>
+</dialog>
+
+<!-- Modal ajustement des avances avant impression -->
+<dialog id="modalAjustementAvances" class="modal">
+  <div class="modal-box max-w-5xl">
+    <h3 class="font-bold text-lg mb-2">
+        <i class="fas fa-pen-to-square mr-2 text-success"></i>Ajuster les quantites et prix unitaires
+    </h3>
+    <p class="text-sm text-base-content/70 mb-4">
+        {% if forfaitaire_only %}
+        Verifiez les lignes selectionnees avant impression. Les montants ajustes seront utilises dans le recapitulatif.
+        {% else %}
+        Verifiez les lignes selectionnees avant de faire l'avance. Les montants ajustes seront enregistres et utilises dans le recapitulatif.
+        {% endif %}
+    </p>
+    <div class="overflow-x-auto max-h-[55vh]">
+        <table class="table table-sm">
+            <thead>
+                <tr>
+                    <th>Employe / Ouvrage</th>
+                    <th>Libelle</th>
+                    <th>Type</th>
+                    <th class="text-right">Quantite</th>
+                    <th class="text-right">P.U.</th>
+                    <th class="text-right">Montant</th>
+                </tr>
+            </thead>
+            <tbody id="ajustementAvancesBody"></tbody>
+        </table>
+    </div>
+    <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+        {% if not forfaitaire_only %}
+        <div class="stat bg-base-200 rounded-box">
+            <div class="stat-title">Total avances</div>
+            <div class="stat-value text-success text-xl"><span id="ajustementTotalAvances">0</span> Ar</div>
+        </div>
+        {% endif %}
+        <div class="stat bg-base-200 rounded-box">
+            <div class="stat-title">Total recettes</div>
+            <div class="stat-value text-error text-xl"><span id="ajustementTotalRecettes">0</span> Ar</div>
+        </div>
+        {% if not forfaitaire_only %}
+        <div class="stat bg-base-200 rounded-box">
+            <div class="stat-title">Avance a faire</div>
+            <div class="stat-value text-primary text-xl"><span id="ajustementAvanceAFaire">0</span> Ar</div>
+        </div>
+        {% endif %}
+    </div>
+    <div class="modal-action">
+        <form method="dialog">
+            <button class="btn">Annuler</button>
+        </form>
+        <button class="btn btn-success" id="btnConfirmerAjustementAvances" onclick="confirmerTraitementAvancesDepuisModal()">
+            <i class="fas fa-file-pdf mr-2"></i>Confirmer et imprimer
+        </button>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+{% if forfaitaire_only %}
+<dialog id="modalChangerEmploye" class="modal">
+  <div class="modal-box max-w-md">
+    <h3 class="font-bold text-lg"><i class="fas fa-user-edit mr-2"></i>Changer l'employe</h3>
+    <p class="py-2 text-sm text-base-content/70">
+        L'employe est porte par le planning : toutes les lignes de ce planning seront reassignees.
+    </p>
+    <select id="changerEmployeSelect" class="select select-bordered w-full">
+        {% grouped_employee_options employes_assignables "" "Choisir un employe" %}
+    </select>
+    <div class="modal-action">
+        <form method="dialog"><button class="btn">Annuler</button></form>
+        <button class="btn btn-primary" type="button" id="changerEmployeBtn" onclick="confirmChangerEmploye()">Enregistrer</button>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<dialog id="modalRecapFactures" class="modal">
+  <div class="modal-box max-w-lg">
+    <h3 class="font-bold text-lg">
+        <i class="fas fa-print mr-2"></i>Imprimer le recap des factures
+    </h3>
+    <p class="py-2 text-sm text-base-content/70">
+        Choisissez le mois et la base. Le recapitulatif inclura les factures forfaitaires du mois, marquees ou non livrees.
+    </p>
+    <div class="grid grid-cols-1 gap-4">
+        <div class="form-control">
+            <label class="label">
+                <span class="label-text">Mois</span>
+            </label>
+            <input type="month" id="recapFacturesMois" class="input input-bordered" value="{{ current_month }}">
+        </div>
+        <div class="form-control">
+            <label class="label">
+                <span class="label-text">Base</span>
+            </label>
+            <select id="recapFacturesBase" class="select select-bordered">
+                <option value="">Choisir une base</option>
+                {% for base in bases_options %}
+                <option value="{{ base.id }}">{{ base.nom_base }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+    <div class="modal-action">
+        <form method="dialog">
+            <button class="btn">Annuler</button>
+        </form>
+        <button class="btn btn-primary" type="button" onclick="launchRecapFacturesPrint()">
+            <i class="fas fa-external-link-alt mr-2"></i>Lancer l impression
+        </button>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+{% endif %}
+
+<script src="{% static 'js/workflow_terrain.js' %}?v=2026032501"></script>
+<script src="{% static 'js/print_recettes_avances_a4.js' %}?v=2026081502"></script>
+<script>
+let articlesSelectionnes = new Set();
+const defaultEmployeFilter = "{{ employe_connecte_id|default:''|escapejs }}";
+const defaultMonthFilter = "{{ current_month|default:''|escapejs }}";
+const forfaitaireOnly = {% if forfaitaire_only %}true{% else %}false{% endif %};
+let currentPeriod = 'courant';
+let hasShownMultiEmployeAlert = false;
+
+function getAllRows() {
+    return Array.from(document.querySelectorAll('.avance-row'));
+}
+
+function getVisibleRows() {
+    return getAllRows().filter(function(row) { return row.style.display !== 'none'; });
+}
+
+function getSelectedRows() {
+    return getAllRows().filter(function(row) {
+        const checkbox = row.querySelector('.article-checkbox');
+        return checkbox && checkbox.checked;
+    });
+}
+
+function getRowItemId(row) {
+    return row.getAttribute('data-item-id');
+}
+
+function getSelectedEmployeIds() {
+    const employeIds = [];
+    getSelectedRows().forEach(function(row) {
+        const employeId = row.getAttribute('data-employe-id') || '';
+        if (employeId && employeIds.indexOf(employeId) === -1) {
+            employeIds.push(employeId);
+        }
+    });
+    return employeIds;
+}
+
+function formatAr(value) {
+    return (Number(value) || 0).toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+
+function updateMontant(inputElement) {
+    const row = inputElement.closest('.avance-row');
+    if (!row) return;
+
+    const quantiteInput = row.querySelector('.quantite-input');
+    const puInput = row.querySelector('.pu-input');
+    const currentMontant = parseFloat(row.getAttribute('data-montant')) || 0;
+    const currentPu = parseFloat(row.getAttribute('data-pu')) || 0;
+    if (quantiteInput && !quantiteInput.value && currentPu > 0 && currentMontant > 0) {
+        quantiteInput.value = currentMontant / currentPu;
+    }
+
+    const quantite = parseFloat((quantiteInput && quantiteInput.value) || '0') || 0;
+    const pu = parseFloat((puInput && puInput.value) || '0') || 0;
+    const montant = quantite * pu;
+
+    row.setAttribute('data-quantite', quantite.toString());
+    row.setAttribute('data-pu', pu.toString());
+    row.setAttribute('data-montant', montant.toString());
+
+    const montantDisplay = row.querySelector('.montant-display');
+    if (montantDisplay) {
+        montantDisplay.textContent = formatAr(montant) + ' Ar';
+    }
+
+    updateSelectionCounter();
+}
+
+function hydraterQuantitesManquantes() {
+    getAllRows().forEach((row) => {
+        const quantiteInput = row.querySelector('.quantite-input');
+        const montant = parseFloat(row.getAttribute('data-montant')) || 0;
+        const pu = parseFloat(row.getAttribute('data-pu')) || 0;
+        const quantite = parseFloat(row.getAttribute('data-quantite')) || 0;
+
+        if (quantiteInput && (!quantiteInput.value || quantite <= 0) && pu > 0 && montant > 0) {
+            const computedQuantity = montant / pu;
+            row.setAttribute('data-quantite', computedQuantity.toString());
+            quantiteInput.value = Number.isInteger(computedQuantity)
+                ? computedQuantity.toString()
+                : computedQuantity.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+        }
+    });
+}
+
+function appliquerFiltresParDefaut() {
+    const monthInput = document.getElementById('filtreMois');
+    const employeSelect = document.getElementById('filtreEmploye');
+
+    if (monthInput && defaultMonthFilter) {
+        monthInput.value = defaultMonthFilter;
+    }
+    if (employeSelect && defaultEmployeFilter) {
+        employeSelect.value = defaultEmployeFilter;
+    }
+}
+
+function toggleSelectAll(selectAllCheckbox) {
+    getVisibleRows().forEach((row) => {
+        const checkbox = row.querySelector('.article-checkbox');
+        const itemId = getRowItemId(row);
+        checkbox.checked = selectAllCheckbox.checked;
+        if (selectAllCheckbox.checked) {
+            articlesSelectionnes.add(itemId);
+        } else {
+            articlesSelectionnes.delete(itemId);
+        }
+    });
+    updateSelectionCounter();
+}
+
+function updateSelectionCounter() {
+    let totalAvances = 0;
+    let totalRecettes = 0;
+    let nbRecettes = 0;
+
+    articlesSelectionnes.clear();
+
+    const selectedRows = getSelectedRows();
+    const firstEmployeId = selectedRows.length ? (selectedRows[0].getAttribute('data-employe-id') || '') : '';
+    if (firstEmployeId) {
+        selectedRows.forEach(function(row, index) {
+            const employeId = row.getAttribute('data-employe-id') || '';
+            if (index > 0 && employeId && employeId !== firstEmployeId) {
+                const checkbox = row.querySelector('.article-checkbox');
+                if (checkbox) {
+                    checkbox.checked = false;
+                }
+            }
+        });
+    }
+
+    const filteredSelectedEmployeIds = getSelectedEmployeIds();
+    if (filteredSelectedEmployeIds.length > 1 && !hasShownMultiEmployeAlert) {
+        hasShownMultiEmployeAlert = true;
+        alert('Veuillez selectionner un seul employe par operation.');
+    } else if (filteredSelectedEmployeIds.length <= 1) {
+        hasShownMultiEmployeAlert = false;
+    }
+
+    getAllRows().forEach((row) => {
+        const checkbox = row.querySelector('.article-checkbox');
+        if (!checkbox) {
+            return;
+        }
+
+        row.classList.toggle('is-selected', checkbox.checked);
+
+        if (!checkbox.checked) {
+            return;
+        }
+
+        const itemId = getRowItemId(row);
+        const typeAvance = row.getAttribute('data-type-avance');
+        const montant = parseFloat(row.getAttribute('data-montant')) || 0;
+
+        articlesSelectionnes.add(itemId);
+
+        if (typeAvance === 'Avance') {
+            totalAvances += montant;
+        } else if (typeAvance === 'Recette') {
+            totalRecettes += montant;
+            nbRecettes += 1;
+        }
+    });
+
+    const selectedCount = articlesSelectionnes.size;
+    const avanceAFaire = Math.max(0, totalAvances - totalRecettes);
+
+    document.getElementById('compteurSelection').textContent = selectedCount + ' selectionne(s)';
+    const btnAvancer = document.getElementById('btnAvancer');
+    if (btnAvancer) {
+        btnAvancer.disabled = selectedCount === 0;
+    }
+
+    const btnImprimerTickets = document.getElementById('btnImprimerTickets');
+    if (nbRecettes > 0) {
+        btnImprimerTickets.style.display = 'inline-flex';
+        btnImprimerTickets.disabled = false;
+    } else {
+        btnImprimerTickets.style.display = 'none';
+        btnImprimerTickets.disabled = true;
+    }
+
+    const resumeCard = document.getElementById('resumeCard');
+    if (resumeCard) {
+        if (selectedCount > 0) {
+            resumeCard.style.display = 'block';
+            document.getElementById('totalRecettes').textContent = totalRecettes.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+            if (!forfaitaireOnly) {
+                document.getElementById('totalAvances').textContent = totalAvances.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+                document.getElementById('avanceAFaire').textContent = avanceAFaire.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+            }
+        } else {
+            resumeCard.style.display = 'none';
+        }
+    }
+
+    const selectAllCheckbox = document.getElementById('selectAll');
+    const visibleRows = getVisibleRows();
+    const selectedVisibleCount = visibleRows.filter(function(row) {
+        const checkbox = row.querySelector('.article-checkbox');
+        return checkbox && checkbox.checked;
+    }).length;
+    if (selectAllCheckbox) {
+        selectAllCheckbox.checked = visibleRows.length > 0 && selectedVisibleCount === visibleRows.length;
+        selectAllCheckbox.indeterminate = selectedVisibleCount > 0 && selectedVisibleCount < visibleRows.length;
+    }
+}
+
+function selectionnerTout() {
+    const visibleRows = getVisibleRows();
+    const firstEmployeId = visibleRows.length ? (visibleRows[0].getAttribute('data-employe-id') || '') : '';
+    if (!firstEmployeId) {
+        return;
+    }
+    getVisibleRows().forEach((row) => {
+        const checkbox = row.querySelector('.article-checkbox');
+        const employeId = row.getAttribute('data-employe-id') || '';
+        checkbox.checked = employeId === firstEmployeId;
+        if (checkbox.checked) {
+            articlesSelectionnes.add(getRowItemId(row));
+        }
+    });
+    if (visibleRows.some(function(row) { return (row.getAttribute('data-employe-id') || '') !== firstEmployeId; })) {
+        alert('Selection automatique limitee a un seul employe.');
+    }
+    const selectAllCheckbox = document.getElementById('selectAll');
+    if (selectAllCheckbox) {
+        selectAllCheckbox.checked = true;
+    }
+    updateSelectionCounter();
+}
+
+function deselectionnerTout() {
+    getAllRows().forEach((row) => {
+        const checkbox = row.querySelector('.article-checkbox');
+        checkbox.checked = false;
+        articlesSelectionnes.delete(getRowItemId(row));
+    });
+    const selectAllCheckbox = document.getElementById('selectAll');
+    if (selectAllCheckbox) {
+        selectAllCheckbox.checked = false;
+    }
+    updateSelectionCounter();
+}
+
+function setPeriod(period) {
+    currentPeriod = period;
+    document.getElementById('tab-courant').classList.remove('tab-active');
+    document.getElementById('tab-futur').classList.remove('tab-active');
+    document.getElementById('tab-' + period).classList.add('tab-active');
+    filtrerArticles();
+}
+
+function filtrerArticles() {
+    const filtreMois = document.getElementById('filtreMois').value;
+    const typeDesignationElement = document.getElementById('typeDesignation');
+    const typeDesignation = typeDesignationElement ? typeDesignationElement.value : '';
+    const filtreEmploye = document.getElementById('filtreEmploye').value;
+    const filtreOuvrage = document.getElementById('filtreOuvrage').value;
+
+    let visibleCount = 0;
+
+    getAllRows().forEach((row) => {
+        let visible = true;
+
+        if (row.getAttribute('data-period') !== currentPeriod) {
+            visible = false;
+        }
+
+        const planningMonth = (row.getAttribute('data-planning-date') || '').slice(0, 7);
+        const rowTypeDesignation = row.getAttribute('data-type-designation');
+        const rowEmployeId = row.getAttribute('data-employe-id');
+        const rowOuvrageId = row.getAttribute('data-ouvrage-id');
+
+        if (filtreMois && planningMonth !== filtreMois) {
+            visible = false;
+        }
+        if (typeDesignation && rowTypeDesignation !== typeDesignation) {
+            visible = false;
+        }
+        if (filtreEmploye && rowEmployeId !== filtreEmploye) {
+            visible = false;
+        }
+        if (filtreOuvrage && rowOuvrageId !== filtreOuvrage) {
+            visible = false;
+        }
+
+        if (visible) {
+            row.style.display = '';
+            visibleCount += 1;
+        } else {
+            row.style.display = 'none';
+            const checkbox = row.querySelector('.article-checkbox');
+            if (checkbox && checkbox.checked) {
+                checkbox.checked = false;
+                articlesSelectionnes.delete(getRowItemId(row));
+            }
+        }
+    });
+
+    document.getElementById('totalArticles').textContent = visibleCount;
+    updateSelectionCounter();
+}
+
+function buildSelectedPayload() {
+    const payload = {
+        detail_ids: [],
+        paiement_ids: [],
+        line_overrides: {},
+    };
+
+    getSelectedRows().forEach((row) => {
+        const sourceType = row.getAttribute('data-source-type');
+        const itemId = getRowItemId(row);
+        payload.line_overrides[itemId] = {
+            source_type: sourceType,
+            quantite: parseFloat(row.getAttribute('data-quantite')) || 0,
+            pu: parseFloat(row.getAttribute('data-pu')) || 0,
+        };
+
+        if (sourceType === 'paiement_forfaitaire') {
+            const paiementId = row.getAttribute('data-paiement-id');
+            if (paiementId) {
+                payload.paiement_ids.push(paiementId);
+            }
+        } else {
+            const detailId = row.getAttribute('data-detail-id');
+            if (detailId) {
+                payload.detail_ids.push(detailId);
+            }
+        }
+    });
+
+    return payload;
+}
+
+function traiterAvances() {
+    const selectedRows = getSelectedRows();
+    const selectedCount = selectedRows.length;
+
+    if (selectedCount === 0) {
+        alert('Veuillez selectionner au moins un element.');
+        return;
+    }
+
+    openAjustementAvancesModal(selectedRows);
+}
+
+function submitTraitementAvances(payload) {
+    try {
+        const csrfInput = document.querySelector('[name=csrfmiddlewaretoken]');
+        const csrfToken = (csrfInput && csrfInput.value) || '{{ csrf_token }}';
+        return fetch('{% url "planning:traiter_avances" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify(payload)
+        }).then(async function(response) {
+            if (!response.ok) {
+                const contentType = response.headers.get('content-type') || '';
+                if (contentType.includes('application/json')) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Erreur lors de la generation du recapitulatif');
+                }
+                const errorText = (await response.text()).trim();
+                throw new Error(errorText || 'Erreur lors de la generation du recapitulatif');
+            }
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const printWindow = window.open(url, '_blank');
+
+            if (printWindow) {
+                printWindow.addEventListener('load', function() {
+                    try {
+                        printWindow.focus();
+                        printWindow.print();
+                    } catch (printError) {
+                        console.error('Erreur impression recap:', printError);
+                    }
+                });
+            } else {
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = 'recap_depart_agent_' + new Date().toISOString().slice(0, 10) + '.pdf';
+                document.body.appendChild(a);
+                a.click();
+            }
+
+            setTimeout(function() {
+                window.URL.revokeObjectURL(url);
+                location.reload();
+            }, 1500);
+        }).catch(function(error) {
+            console.error('Erreur:', error);
+            alert('Erreur lors du traitement des avances : ' + (error && error.message ? error.message : 'Erreur inconnue'));
+        });
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors du traitement des avances : ' + (error && error.message ? error.message : 'Erreur inconnue'));
+    }
+}
+
+function openAjustementAvancesModal(selectedRows) {
+    const tbody = document.getElementById('ajustementAvancesBody');
+    tbody.innerHTML = selectedRows.map(function(row) {
+        const itemId = getRowItemId(row);
+        const typeAvance = row.getAttribute('data-type-avance') || '';
+        const sourceType = row.getAttribute('data-source-type') || '';
+        const isPaiementForfaitaire = sourceType === 'paiement_forfaitaire';
+        return ''
+            + '<tr data-source-row-id="' + itemId + '" data-source-type="' + sourceType + '">'
+            + '<td><div class="font-semibold">' + (row.getAttribute('data-employe-nom') || '-') + '</div><div class="text-xs opacity-60">' + (row.getAttribute('data-ouvrage-nom') || '-') + '</div></td>'
+            + '<td><div class="font-medium">' + (row.getAttribute('data-designation') || '-') + '</div><div class="text-xs opacity-60">' + (row.getAttribute('data-date-display') || '') + '</div></td>'
+            + '<td><span class="badge ' + (typeAvance === 'Avance' ? 'badge-success' : 'badge-error') + ' badge-sm">' + (typeAvance || '-') + '</span></td>'
+            + '<td class="text-right"><input type="number" class="input input-bordered input-sm w-24 text-right ajustement-quantite" value="' + (row.getAttribute('data-quantite') || 0) + '" min="0" step="' + (isPaiementForfaitaire ? '1' : '0.1') + '" oninput="recalculerLigneAjustement(this)"></td>'
+            + '<td class="text-right"><input type="number" class="input input-bordered input-sm w-28 text-right ajustement-pu" value="' + (row.getAttribute('data-pu') || 0) + '" min="0" step="1" ' + (isPaiementForfaitaire ? 'readonly' : '') + ' oninput="recalculerLigneAjustement(this)">' + (isPaiementForfaitaire ? '<div class="text-xs opacity-50 mt-1">P.U. verrouille pour PaiementForfaitaire</div>' : '') + '</td>'
+            + '<td class="text-right font-bold"><span class="ajustement-montant">' + formatAr(row.getAttribute('data-montant')) + '</span> Ar</td>'
+            + '</tr>';
+    }).join('');
+
+    recalculerTotauxAjustement();
+    document.getElementById('modalAjustementAvances').showModal();
+}
+
+function recalculerLigneAjustement(inputElement) {
+    const modalRow = inputElement.closest('tr');
+    const quantiteInput = modalRow.querySelector('.ajustement-quantite');
+    const puInput = modalRow.querySelector('.ajustement-pu');
+    const quantite = parseFloat((quantiteInput && quantiteInput.value) || '0') || 0;
+    const pu = parseFloat((puInput && puInput.value) || '0') || 0;
+    const montant = quantite * pu;
+    modalRow.querySelector('.ajustement-montant').textContent = formatAr(montant);
+    recalculerTotauxAjustement();
+}
+
+function recalculerTotauxAjustement() {
+    let totalAvances = 0;
+    let totalRecettes = 0;
+    document.querySelectorAll('#ajustementAvancesBody tr').forEach((modalRow) => {
+        const sourceRow = document.querySelector('.avance-row[data-item-id="' + modalRow.getAttribute('data-source-row-id') + '"]');
+        const typeAvance = sourceRow ? sourceRow.getAttribute('data-type-avance') : '';
+        const quantiteInput = modalRow.querySelector('.ajustement-quantite');
+        const puInput = modalRow.querySelector('.ajustement-pu');
+        const quantite = parseFloat((quantiteInput && quantiteInput.value) || '0') || 0;
+        const pu = parseFloat((puInput && puInput.value) || '0') || 0;
+        const montant = quantite * pu;
+        if (typeAvance === 'Avance') {
+            totalAvances += montant;
+        } else if (typeAvance === 'Recette') {
+            totalRecettes += montant;
+        }
+    });
+
+    document.getElementById('ajustementTotalRecettes').textContent = formatAr(totalRecettes);
+    if (!forfaitaireOnly) {
+        document.getElementById('ajustementTotalAvances').textContent = formatAr(totalAvances);
+        document.getElementById('ajustementAvanceAFaire').textContent = formatAr(Math.max(0, totalAvances - totalRecettes));
+    }
+}
+
+function appliquerAjustementsModalAuxLignes() {
+    document.querySelectorAll('#ajustementAvancesBody tr').forEach((modalRow) => {
+        const itemId = modalRow.getAttribute('data-source-row-id');
+        const sourceRow = document.querySelector('.avance-row[data-item-id="' + itemId + '"]');
+        if (!sourceRow) return;
+
+        const modalQuantiteInput = modalRow.querySelector('.ajustement-quantite');
+        const modalPuInput = modalRow.querySelector('.ajustement-pu');
+        const quantite = parseFloat((modalQuantiteInput && modalQuantiteInput.value) || '0') || 0;
+        const sourceType = sourceRow.getAttribute('data-source-type') || '';
+        const pu = sourceType === 'paiement_forfaitaire'
+            ? (parseFloat(sourceRow.getAttribute('data-pu')) || 0)
+            : (parseFloat((modalPuInput && modalPuInput.value) || '0') || 0);
+        const montant = quantite * pu;
+
+        sourceRow.setAttribute('data-quantite', quantite.toString());
+        sourceRow.setAttribute('data-pu', pu.toString());
+        sourceRow.setAttribute('data-montant', montant.toString());
+
+        const sourceQuantiteInput = sourceRow.querySelector('.quantite-input');
+        const sourcePuInput = sourceRow.querySelector('.pu-input');
+        const montantDisplay = sourceRow.querySelector('.montant-display');
+        if (sourceQuantiteInput) sourceQuantiteInput.value = quantite;
+        if (sourcePuInput) sourcePuInput.value = pu;
+        if (montantDisplay) montantDisplay.textContent = formatAr(montant) + ' Ar';
+    });
+    updateSelectionCounter();
+}
+
+function confirmerTraitementAvancesDepuisModal() {
+    appliquerAjustementsModalAuxLignes();
+    const payload = buildSelectedPayload();
+    const selectedCount = payload.detail_ids.length + payload.paiement_ids.length;
+    const recetteRows = getSelectedRows().filter(function(row) {
+        return row.getAttribute('data-type-avance') === 'Recette';
+    });
+    const selectedEmployeIds = getSelectedEmployeIds();
+    if (selectedCount === 0) {
+        alert('Aucun element selectionne.');
+        return;
+    }
+    if (selectedEmployeIds.length > 1) {
+        alert('Veuillez selectionner un seul employe par operation.');
+        return;
+    }
+
+    if (recetteRows.length > 0) {
+        const confirmation = confirm(
+            'Cette action va imprimer 2 documents :\n' +
+            '1. Les factures / recus A4 pour les recettes selectionnees\n' +
+            '2. Le recapitulatif de depart agent\n\n' +
+            'Continuer ?'
+        );
+        if (!confirmation) {
+            return;
+        }
+        imprimerTicketsRecettes(recetteRows, true);
+    }
+
+    document.getElementById('btnConfirmerAjustementAvances').disabled = true;
+    submitTraitementAvances(payload).finally(function() {
+        document.getElementById('btnConfirmerAjustementAvances').disabled = false;
+    });
+}
+
+function buildTicketData(row, index) {
+    const montant = parseFloat(row.getAttribute('data-montant')) || 0;
+    const quantite = parseFloat(row.getAttribute('data-quantite')) || 0;
+    const pu = parseFloat(row.getAttribute('data-pu')) || 0;
+    const ticketNumero = row.getAttribute('data-ticket-numero') || ('PAY-' + Date.now() + '-' + (index + 1));
+    const sourceType = row.getAttribute('data-source-type') || '';
+
+    return {
+        type: sourceType === 'paiement_forfaitaire' ? 'Paiement forfaitaire' : 'Recette',
+        designation: row.getAttribute('data-ticket-designation') || 'Paiement forfaitaire',
+        montant: montant,
+        frais_mvola: row.getAttribute('data-frais-mvola') || '',
+        date: row.getAttribute('data-date-display') || new Date().toLocaleDateString('fr-FR'),
+        employe: row.getAttribute('data-employe-nom') || '-',
+        ouvrage: row.getAttribute('data-ouvrage-nom') || '-',
+        point_eau: row.getAttribute('data-point-eau-label') || '',
+        point_eau_idxls: row.getAttribute('data-point-eau-idxls') || '',
+        nom_abonne: row.getAttribute('data-nom-abonne') || '',
+        forfaitaire_tranches_header: row.getAttribute('data-forfaitaire-tranches-header') || '',
+        forfaitaire_prochaine_date: row.getAttribute('data-forfaitaire-prochaine-date') || '',
+        forfaitaire_prochaine_montant: parseFloat(row.getAttribute('data-forfaitaire-prochaine-montant')) || 0,
+        organisation: row.getAttribute('data-organisation') || 'HYDRIA',
+        logo_url: row.getAttribute('data-logo-url') || '',
+        nif: row.getAttribute('data-nif') || '',
+        stat: row.getAttribute('data-stat') || '',
+        base: row.getAttribute('data-base-nom') || '',
+        base_telephone: row.getAttribute('data-base-telephone') || '',
+        compte: row.getAttribute('data-compte-nom') || '',
+        source_type: sourceType,
+        numero_bon: ticketNumero,
+        isBonPaiement: sourceType === 'paiement_forfaitaire',
+        lignes: [{
+            designation: row.getAttribute('data-ticket-designation') || 'Paiement forfaitaire',
+            quantity: quantite,
+            pu: pu,
+            montant: montant
+        }]
+    };
+}
+
+function imprimerTicketsRecettes(recetteRows, skipConfirm) {
+    recetteRows = recetteRows || getSelectedRows().filter(function(row) {
+        return row.getAttribute('data-type-avance') === 'Recette';
+    });
+    skipConfirm = !!skipConfirm;
+
+    if (recetteRows.length === 0) {
+        if (!skipConfirm) {
+            alert('Aucune recette selectionnee.');
+        }
+        return;
+    }
+
+    if (typeof window.imprimerTicketsRecettesA4 !== 'function') {
+        alert('La fonction d impression A4 n est pas disponible sur cette page.');
+        return;
+    }
+
+    if (!skipConfirm) {
+        const confirmation = confirm(
+            'Imprimer ' + recetteRows.length + ' facture(s) / recu(s) en A4 ?\n\n' +
+            'Les documents seront regroupes plusieurs par page, sans QR code.'
+        );
+        if (!confirmation) {
+            return;
+        }
+    }
+
+    const tickets = recetteRows.map(function(row, index) { return buildTicketData(row, index); });
+    const organisationData = {
+        nom_organisation: '{{ user.employe.base.organisation.nom_organisation|default:"HYDRIA"|escapejs }}',
+        logo_url: '{% if user.employe and user.employe.base and user.employe.base.organisation and user.employe.base.organisation.logo %}{{ user.employe.base.organisation.logo.url }}{% endif %}',
+        nif: '{{ user.employe.base.organisation.nif|default:""|escapejs }}',
+        stat: '{{ user.employe.base.organisation.stat|default:""|escapejs }}',
+        telephone: '{{ user.employe.base.organisation.telephone|default:""|escapejs }}',
+        base: '{{ user.employe.base.nom_base|default:""|escapejs }}',
+        base_telephone: '{{ user.employe.base.telephone|default:""|escapejs }}'
+    };
+    window.imprimerTicketsRecettesA4(tickets, organisationData, { showToolbar: true });
+}
+
+function showDebugModal(btnElement) {
+    const row = btnElement.closest('.avance-row');
+    if (!row) return;
+
+    document.getElementById('debugTable').textContent = row.getAttribute('data-debug-db') || 'N/A';
+    document.getElementById('debugId').textContent = row.getAttribute('data-item-id') || 'N/A';
+    
+    function setBadge(elementId, value) {
+        const el = document.getElementById(elementId);
+        el.textContent = value;
+        el.className = 'badge badge-sm';
+        if (value === 'Oui') el.classList.add('badge-success');
+        else if (value === 'Non') el.classList.add('badge-error');
+        else el.classList.add('badge-ghost');
+    }
+
+    setBadge('debugEstValide', row.getAttribute('data-debug-est-valide') || 'N/A');
+    setBadge('debugLivraison', row.getAttribute('data-debug-livraison') || 'N/A');
+    setBadge('debugRetour', row.getAttribute('data-debug-retour') || 'N/A');
+    setBadge('debugPaye', row.getAttribute('data-debug-paye') || 'N/A');
+
+    document.getElementById('modalDebug').showModal();
+}
+
+let _currentDebugRow = null;
+
+function showDebugModal(btnElement) {
+    _currentDebugRow = btnElement.closest('.avance-row');
+    if (!_currentDebugRow) return;
+
+    document.getElementById('debugTable').textContent = _currentDebugRow.getAttribute('data-debug-db') || 'N/A';
+    document.getElementById('debugId').textContent = _currentDebugRow.getAttribute('data-item-id') || 'N/A';
+
+    function setBadge(elementId, value) {
+        const el = document.getElementById(elementId);
+        el.textContent = value;
+        el.className = 'badge badge-sm';
+        if (value === 'Oui') el.classList.add('badge-success');
+        else if (value === 'Non') el.classList.add('badge-error');
+        else el.classList.add('badge-ghost');
+    }
+
+    setBadge('debugEstValide', _currentDebugRow.getAttribute('data-debug-est-valide') || 'N/A');
+    setBadge('debugLivraison', _currentDebugRow.getAttribute('data-debug-livraison') || 'N/A');
+    setBadge('debugRetour', _currentDebugRow.getAttribute('data-debug-retour') || 'N/A');
+    setBadge('debugPaye', _currentDebugRow.getAttribute('data-debug-paye') || 'N/A');
+
+    document.getElementById('modalDebug').showModal();
+}
+
+function deleteSourceRecord() {
+    if (!_currentDebugRow) return;
+    const sourceType = _currentDebugRow.getAttribute('data-source-type');
+    const itemId = _currentDebugRow.getAttribute('data-item-id');
+    const designation = _currentDebugRow.getAttribute('data-designation') || 'cet élément';
+
+    if (!confirm('Supprimer définitivement "' + designation + '" (' + sourceType + ') de la base de données ?\n\nCette action est irréversible.')) {
+        return;
+    }
+
+    try {
+        const csrfInput = document.querySelector('[name=csrfmiddlewaretoken]');
+        const csrfToken = (csrfInput && csrfInput.value) || '{{ csrf_token }}';
+        fetch('{% url "planning:api_delete_avance_source" %}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+            body: JSON.stringify({ source_type: sourceType, item_id: itemId })
+        }).then(function(response) {
+            return response.json();
+        }).then(function(data) {
+            if (data.success) {
+                document.getElementById('modalDebug').close();
+                _currentDebugRow.remove();
+                _currentDebugRow = null;
+                updateSelectionCounter();
+            } else {
+                alert('Erreur: ' + (data.error || 'Suppression échouée'));
+            }
+        }).catch(function(e) {
+            alert('Erreur réseau: ' + e.message);
+        });
+    } catch (e) {
+        alert('Erreur réseau: ' + e.message);
+    }
+}
+
+/**
+ * Supprimer directement une ligne du tableau (sans modal)
+ * @param {HTMLElement} btnElement - Le bouton supprimer cliqué
+ */
+function deleteRowDirect(btnElement) {
+    const row = btnElement.closest('tr');
+    if (!row) return;
+
+    const sourceType = row.getAttribute('data-source-type');
+    const itemId = row.getAttribute('data-item-id');
+    const designation = row.getAttribute('data-designation') || 'cet élément';
+
+    if (!confirm('Supprimer définitivement "' + designation + '" ?\n\nCette action est irréversible.')) {
+        return;
+    }
+
+    try {
+        const csrfInput = document.querySelector('[name=csrfmiddlewaretoken]');
+        const csrfToken = (csrfInput && csrfInput.value) || '{{ csrf_token }}';
+        fetch('{% url "planning:api_delete_avance_source" %}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+            body: JSON.stringify({ source_type: sourceType, item_id: itemId })
+        }).then(function(response) {
+            return response.json();
+        }).then(function(data) {
+            if (data.success) {
+                row.remove();
+                updateSelectionCounter();
+            } else {
+                alert('Erreur: ' + (data.error || 'Suppression échouée'));
+            }
+        }).catch(function(e) {
+            alert('Erreur réseau: ' + e.message);
+        });
+    } catch (e) {
+        alert('Erreur réseau: ' + e.message);
+    }
+}
+
+let changerEmployePaiementId = '';
+
+function openChangerEmploye(btnElement) {
+    const row = btnElement.closest('tr');
+    const modal = document.getElementById('modalChangerEmploye');
+    if (!row || !modal) return;
+    changerEmployePaiementId = row.getAttribute('data-paiement-id') || '';
+    document.getElementById('changerEmployeSelect').value = row.getAttribute('data-employe-id') || '';
+    modal.showModal();
+}
+
+function confirmChangerEmploye() {
+    const employeId = document.getElementById('changerEmployeSelect').value;
+    if (!employeId) {
+        alert('Veuillez choisir un employe.');
+        return;
+    }
+    const btn = document.getElementById('changerEmployeBtn');
+    btn.disabled = true;
+    const csrfInput = document.querySelector('[name=csrfmiddlewaretoken]');
+    const csrfToken = (csrfInput && csrfInput.value) || '{{ csrf_token }}';
+    fetch('{% url "planning:api_changer_employe_recette_forfaitaire" %}', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+        body: JSON.stringify({ paiement_id: changerEmployePaiementId, employe_id: employeId })
+    }).then(function(response) {
+        return response.json();
+    }).then(function(data) {
+        btn.disabled = false;
+        if (data.success) {
+            // Mise a jour en place : on garde filtres et selection
+            const ids = new Set(data.paiement_ids || []);
+            document.querySelectorAll('tr.avance-row').forEach(function(row) {
+                if (!ids.has(row.getAttribute('data-paiement-id'))) return;
+                row.setAttribute('data-employe-id', data.employe_id);
+                row.setAttribute('data-employe-nom', data.employe_nom);
+                const nameDiv = row.querySelector('div.font-bold');
+                if (nameDiv && nameDiv.firstChild) nameDiv.firstChild.nodeValue = data.employe_nom + ' ';
+                const initials = row.querySelector('.avatar span');
+                if (initials) initials.textContent = data.employe_initials;
+            });
+            document.getElementById('modalChangerEmploye').close();
+            filtrerArticles();
+            updateSelectionCounter();
+        } else {
+            alert('Erreur: ' + (data.error || 'Modification echouee'));
+        }
+    }).catch(function(e) {
+        alert('Erreur reseau: ' + e.message);
+        btn.disabled = false;
+    });
+}
+
+function openRecapFacturesModal() {
+    const modal = document.getElementById('modalRecapFactures');
+    if (modal) {
+        modal.showModal();
+    }
+}
+
+function launchRecapFacturesPrint() {
+    const monthInput = document.getElementById('recapFacturesMois');
+    const baseSelect = document.getElementById('recapFacturesBase');
+    const monthValue = monthInput ? monthInput.value : '';
+    const baseValue = baseSelect ? baseSelect.value : '';
+
+    if (!monthValue) {
+        alert('Veuillez choisir un mois.');
+        return;
+    }
+    if (!baseValue) {
+        alert('Veuillez choisir une base.');
+        return;
+    }
+
+    const params = new URLSearchParams();
+    params.set('mois', monthValue);
+    params.set('base_id', baseValue);
+
+    window.open('{% url "planning:imprimer_recap_factures_forfaitaires" %}?' + params.toString(), '_blank');
+
+    const modal = document.getElementById('modalRecapFactures');
+    if (modal) {
+        modal.close();
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    hydraterQuantitesManquantes();
+    appliquerFiltresParDefaut();
+    filtrerArticles();
+});
+
+window.updateSelectionCounter = updateSelectionCounter;
+window.updateMontant = updateMontant;
+window.toggleSelectAll = toggleSelectAll;
+window.selectionnerTout = selectionnerTout;
+window.deselectionnerTout = deselectionnerTout;
+window.setPeriod = setPeriod;
+window.filtrerArticles = filtrerArticles;
+window.traiterAvances = traiterAvances;
+window.imprimerTicketsRecettes = imprimerTicketsRecettes;
+window.recalculerLigneAjustement = recalculerLigneAjustement;
+window.confirmerTraitementAvancesDepuisModal = confirmerTraitementAvancesDepuisModal;
+window.showDebugModal = showDebugModal;
+window.deleteSourceRecord = deleteSourceRecord;
+window.deleteRowDirect = deleteRowDirect;
+window.openRecapFacturesModal = openRecapFacturesModal;
+window.launchRecapFacturesPrint = launchRecapFacturesPrint;
+</script>
+
+{% csrf_token %}
+{% endblock %}

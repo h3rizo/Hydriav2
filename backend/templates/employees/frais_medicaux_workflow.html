@@ -1,0 +1,831 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Remboursement Frais Médicaux{% endblock %}
+
+{% block content %}
+<div class="space-y-6" id="mainContent">
+    <!-- Header -->
+    <div class="flex flex-wrap justify-between items-center gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">
+                <i class="fas fa-hospital-user mr-2 text-error"></i>
+                Remboursement Frais Médicaux
+            </h1>
+            <p class="text-base-content/70 mt-1">
+                Workflow de remboursement des frais médicaux (80% plafonné)
+            </p>
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'employees:liste_frais_medicaux' %}" class="btn btn-ghost">
+                <i class="fas fa-list mr-2"></i>Voir la liste
+            </a>
+        </div>
+    </div>
+
+    <!-- Formulaire de saisie -->
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <h2 class="card-title mb-4">
+                <i class="fas fa-file-medical mr-2 text-primary"></i>
+                Nouvelle demande de remboursement
+            </h2>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <!-- Employé -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Employé *</span></label>
+                    <select id="selectEmploye" class="select select-bordered w-full" onchange="loadFamille()">
+                        <option value="">Sélectionner un employé</option>
+                        {% for emp in employes %}
+                            <option value="{{ emp.id }}">{{ emp.nom_affichage }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Bénéficiaire -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Bénéficiaire *</span>
+                        <div class="flex items-center gap-1">
+                            {% if user_is_directeur %}
+                            <button type="button" class="btn btn-xs btn-ghost" onclick="openEditMembreModal()">
+                                <i class="fas fa-pen"></i> Modifier membre
+                            </button>
+                            {% endif %}
+                            <button type="button" class="btn btn-xs btn-ghost" onclick="openAddMembreModal()">
+                                <i class="fas fa-plus"></i> Ajouter membre
+                            </button>
+                        </div>
+                    </label>
+                    <select id="selectMembre" class="select select-bordered w-full" disabled>
+                        <option value="">Sélectionner d'abord un employé</option>
+                    </select>
+                </div>
+
+                <!-- Mois concerné -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Mois concerné *</span></label>
+                    <input type="month" id="inputMois" class="input input-bordered w-full">
+                </div>
+
+                <!-- Affection -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Affection / Motif *</span></label>
+                    <input type="text" id="inputAffection" class="input input-bordered w-full"
+                           placeholder="Ex: Consultation, Fièvre, Lunettes...">
+                </div>
+
+                <!-- Type de soin -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Type de soin *</span></label>
+                    <select id="selectTypeSoin" class="select select-bordered w-full">
+                        <option value="soins">Soins médicaux</option>
+                        <option value="lunettes">Lunettes / soins dentaires / accouchement</option>
+                        <option value="hospitalisation">Hospitalisation</option>
+                    </select>
+                </div>
+
+                <!-- Repos médical -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Repos médical</span></label>
+                    <label class="flex items-center gap-2">
+                        <input type="checkbox" id="inputReposMedical" class="checkbox checkbox-sm">
+                        <span class="text-sm">Ajouter un repos médical (employé uniquement)</span>
+                    </label>
+                </div>
+
+                <!-- Montant des soins -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Montant des soins remboursables (sans fortifiants) (Ar) *</span></label>
+                    <input type="number" id="inputMontant" class="input input-bordered w-full"
+                           placeholder="Ex: 50000" min="0" step="100">
+                </div>
+
+                <!-- Début repos médical -->
+                <div class="form-control hidden" id="reposDateWrapper">
+                    <label class="label"><span class="label-text font-semibold">Début repos médical *</span></label>
+                    <input type="date" id="inputReposDebut" class="input input-bordered w-full">
+                </div>
+
+                <!-- Nombre de jours -->
+                <div class="form-control hidden" id="reposJoursWrapper">
+                    <label class="label"><span class="label-text font-semibold">Nombre de jours *</span></label>
+                    <input type="number" id="inputReposJours" class="input input-bordered w-full" min="1" step="1">
+                </div>
+
+                <!-- Justificatifs hospitalisation -->
+                <div class="form-control hidden" id="justificatifHospitalisationWrapper">
+                    <label class="label"><span class="label-text font-semibold">Justificatif hospitalisation *</span></label>
+                    <input type="file" id="inputJustificatifHospitalisation" class="file-input file-input-bordered w-full"
+                           accept=".pdf,image/*">
+                </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- Résultat du calcul -->
+            <div id="resultatCalcul" class="hidden">
+                <div class="alert alert-info">
+                    <div class="flex flex-col md:flex-row md:items-center gap-4 w-full">
+                        <div class="flex-1">
+                            <h3 class="font-bold">Calcul du remboursement</h3>
+                            <p>Bénéficiaire: <span id="beneficiaire" class="font-semibold"></span></p>
+                        </div>
+                        <div class="text-right">
+                            <p>Montant soins: <span id="montantSoins" class="font-mono"></span> Ar</p>
+                            <p>Taux: <span id="tauxRemboursement">80</span>%</p>
+                            <p class="text-sm text-base-content/70">Plafond: <span id="plafondApplique" class="font-mono"></span> Ar</p>
+                        </div>
+                        <div class="text-2xl font-bold text-success">
+                            <span id="montantRembourse"></span> Ar
+                        </div>
+                    </div>
+                </div>
+                <div id="alertExiste" class="alert alert-warning mt-2 hidden">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>Un remboursement existe déjà pour cette affection/mois</span>
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="card-actions justify-end mt-4">
+                <button type="button" class="btn btn-primary" onclick="calculerRemboursement()">
+                    <i class="fas fa-calculator mr-2"></i>Calculer
+                </button>
+                <button type="button" id="btnEnregistrer" class="btn btn-success hidden" onclick="enregistrerEtImprimer()">
+                    <i class="fas fa-print mr-2"></i>Enregistrer & Imprimer
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal ajout membre famille -->
+<dialog id="modalAddMembre" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-user-plus mr-2 text-primary"></i>
+            Ajouter un membre de famille
+        </h3>
+        <form id="formAddMembre">
+            <div class="form-control mb-3">
+                <label class="label"><span class="label-text">Nom complet *</span></label>
+                <input type="text" id="membreNom" class="input input-bordered w-full" required>
+            </div>
+            <div class="form-control mb-3">
+                <label class="label"><span class="label-text">Date de naissance</span></label>
+                <input type="date" id="membreDateNaissance" class="input input-bordered w-full">
+            </div>
+            <div class="form-control mb-3">
+                <label class="label"><span class="label-text">Lien de parenté</span></label>
+                <select id="membreLien" class="select select-bordered w-full">
+                    <option value="conjoint">Conjoint(e)</option>
+                    <option value="enfant" selected>Enfant</option>
+                </select>
+            </div>
+            <div class="form-control mb-3">
+                <label class="label"><span class="label-text">École (si applicable)</span></label>
+                <input type="text" id="membreEcole" class="input input-bordered w-full">
+            </div>
+            <div class="form-control mb-3">
+                <label class="label"><span class="label-text">Classe</span></label>
+                <input type="text" id="membreClasse" class="input input-bordered w-full">
+            </div>
+        </form>
+        <div class="modal-action">
+            <button type="button" class="btn btn-ghost" onclick="document.getElementById('modalAddMembre').close()">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="ajouterMembre()">Ajouter</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal modifier membre famille -->
+<dialog id="modalEditMembre" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-user-edit mr-2 text-primary"></i>
+            Modifier un membre de famille
+        </h3>
+        <form id="formEditMembre">
+            <input type="hidden" id="editMembreId">
+            <div class="form-control mb-3">
+                <label class="label"><span class="label-text">Nom complet *</span></label>
+                <input type="text" id="editMembreNom" class="input input-bordered w-full" required>
+            </div>
+            <div class="form-control mb-3">
+                <label class="label"><span class="label-text">Date de naissance</span></label>
+                <input type="date" id="editMembreDateNaissance" class="input input-bordered w-full">
+            </div>
+            <div class="form-control mb-3">
+                <label class="label"><span class="label-text">Lien de parenté</span></label>
+                <select id="editMembreLien" class="select select-bordered w-full">
+                    <option value="conjoint">Conjoint(e)</option>
+                    <option value="enfant">Enfant</option>
+                </select>
+            </div>
+            <div class="form-control mb-3">
+                <label class="label"><span class="label-text">Ã‰cole (si applicable)</span></label>
+                <input type="text" id="editMembreEcole" class="input input-bordered w-full">
+            </div>
+            <div class="form-control mb-3">
+                <label class="label"><span class="label-text">Classe</span></label>
+                <input type="text" id="editMembreClasse" class="input input-bordered w-full">
+            </div>
+        </form>
+        <div class="modal-action">
+            <button type="button" class="btn btn-ghost" onclick="document.getElementById('modalEditMembre').close()">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="enregistrerMembreModifie()">Enregistrer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Zone d'impression -->
+<div id="printArea" class="hidden print:block">
+    <!-- Généré dynamiquement -->
+</div>
+
+<style>
+@media print {
+    /* Masquer tous les enfants directs du body */
+    body > * {
+        display: none !important;
+    }
+
+    /* Afficher uniquement main et forcer l'affichage */
+    body > main {
+        display: block !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+    }
+
+    /* Masquer tout le contenu de main sauf printArea */
+    main > *:not(#printArea) {
+        display: none !important;
+    }
+
+    /* Afficher uniquement la zone d'impression */
+    #printArea {
+        display: block !important;
+        position: relative !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+    /* Réinitialiser les styles de page */
+    body {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+    /* Styles de facture */
+    .facture {
+        page-break-after: avoid;
+        padding: 20px 40px;
+        font-family: Arial, sans-serif;
+        font-size: 12px;
+    }
+
+    .facture * {
+        display: block !important;
+    }
+
+    .facture table,
+    .facture tbody,
+    .facture tr,
+    .facture td {
+        display: table !important;
+    }
+
+    .facture tbody {
+        display: table-row-group !important;
+    }
+
+    .facture tr {
+        display: table-row !important;
+    }
+
+    .facture td {
+        display: table-cell !important;
+    }
+
+    .facture-header {
+        text-align: center;
+        border-bottom: 2px solid #333;
+        padding-bottom: 15px;
+        margin-bottom: 20px;
+    }
+    .facture-header h1 {
+        font-size: 20px;
+        margin: 8px 0;
+    }
+    .facture-header h2 {
+        font-size: 16px;
+        margin: 5px 0;
+    }
+    .facture-info {
+        margin: 15px 0;
+        font-size: 11px;
+    }
+    .facture-info p {
+        margin: 3px 0;
+    }
+    .facture-montant {
+        font-size: 22px;
+        font-weight: bold;
+        text-align: center;
+        margin: 20px 0;
+        padding: 15px;
+        border: 2px solid #333;
+    }
+    .facture-signature {
+        margin-top: 40px;
+        display: flex !important;
+        justify-content: space-between;
+    }
+    .signature-box {
+        width: 40%;
+        text-align: center;
+        font-size: 11px;
+        display: inline-block !important;
+    }
+    .signature-line {
+        border-top: 1px solid #333;
+        margin-top: 40px;
+        padding-top: 5px;
+    }
+    table {
+        font-size: 11px;
+        width: 100%;
+        border-collapse: collapse;
+    }
+}
+</style>
+
+<script>
+let dernierCalcul = null;
+let reposMedicalActif = false;
+let hospitalisationActif = false;
+let familleCourante = [];
+
+async function loadFamille() {
+    const employeId = document.getElementById('selectEmploye').value;
+    const selectMembre = document.getElementById('selectMembre');
+    const selectEmploye = document.getElementById('selectEmploye');
+
+    if (!employeId) {
+        selectMembre.innerHTML = '<option value="">Sélectionner d\'abord un employé</option>';
+        selectMembre.disabled = true;
+        return;
+    }
+
+    try {
+        const response = await fetch(`{% url 'employees:api_famille_employe' employe_id='00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', employeId));
+        const data = await response.json();
+
+        if (data.success) {
+            // Option pour l'employé lui-même
+            familleCourante = Array.isArray(data.membres) ? data.membres : [];
+            const employeNom = selectEmploye.options[selectEmploye.selectedIndex].text;
+            selectMembre.innerHTML = `<option value="">Sélectionner un bénéficiaire</option>`;
+            selectMembre.innerHTML += `<option value="EMPLOYE:${employeId}"><strong>${employeNom} (Employé lui-même)</strong></option>`;
+
+            // Ajouter les membres de famille
+            familleCourante.forEach(m => {
+                const age = m.date_naissance ? calcAge(m.date_naissance) : '';
+                selectMembre.innerHTML += `<option value="${m.id}">${m.nom} (${m.lien_parente})${age ? ' - ' + age + ' ans' : ''}</option>`;
+            });
+            selectMembre.disabled = false;
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+    }
+}
+
+function calcAge(dateNaissance) {
+    const today = new Date();
+    const birth = new Date(dateNaissance);
+    let age = today.getFullYear() - birth.getFullYear();
+    const m = today.getMonth() - birth.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+    return age;
+}
+
+function openAddMembreModal() {
+    if (!document.getElementById('selectEmploye').value) {
+        alert('Veuillez d\'abord sélectionner un employé');
+        return;
+    }
+    document.getElementById('modalAddMembre').showModal();
+}
+
+function openEditMembreModal() {
+    const membreId = document.getElementById('selectMembre').value;
+    if (!membreId || membreId.startsWith('EMPLOYE:')) {
+        alert('Veuillez sélectionner un membre de famille Ã  modifier');
+        return;
+    }
+
+    const membre = familleCourante.find(item => String(item.id) === String(membreId));
+    if (!membre) {
+        alert('Membre introuvable');
+        return;
+    }
+
+    document.getElementById('editMembreId').value = membre.id || '';
+    document.getElementById('editMembreNom').value = membre.nom || '';
+    document.getElementById('editMembreDateNaissance').value = membre.date_naissance || '';
+    document.getElementById('editMembreLien').value = membre.lien_parente || 'enfant';
+    document.getElementById('editMembreEcole').value = membre.ecole || '';
+    document.getElementById('editMembreClasse').value = membre.classe || '';
+    document.getElementById('modalEditMembre').showModal();
+}
+
+async function ajouterMembre() {
+    const employeId = document.getElementById('selectEmploye').value;
+    const nom = document.getElementById('membreNom').value;
+    const dateNaissance = document.getElementById('membreDateNaissance').value;
+    const lien = document.getElementById('membreLien').value;
+    const ecole = document.getElementById('membreEcole').value;
+    const classe = document.getElementById('membreClasse').value;
+
+    if (!nom) {
+        alert('Le nom est obligatoire');
+        return;
+    }
+
+    try {
+        const response = await fetch('{% url "employees:api_ajouter_membre_famille" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                employe_id: employeId,
+                nom: nom,
+                date_naissance: dateNaissance || null,
+                lien_parente: lien,
+                ecole: ecole || null,
+                classe: classe || null
+            })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            document.getElementById('modalAddMembre').close();
+            document.getElementById('formAddMembre').reset();
+            loadFamille();
+            alert('Membre ajouté avec succès');
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau');
+    }
+}
+
+async function enregistrerMembreModifie() {
+    const membreId = document.getElementById('editMembreId').value;
+    if (!membreId) {
+        alert('Membre introuvable');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/famille/${membreId}/modifier/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                nom: document.getElementById('editMembreNom').value,
+                date_naissance: document.getElementById('editMembreDateNaissance').value || null,
+                lien_parente: document.getElementById('editMembreLien').value,
+                ecole: document.getElementById('editMembreEcole').value || null,
+                classe: document.getElementById('editMembreClasse').value || null
+            })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            document.getElementById('modalEditMembre').close();
+            await loadFamille();
+            document.getElementById('selectMembre').value = membreId;
+            alert('Membre modifié avec succès');
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau');
+    }
+}
+
+function isBeneficiaireEmploye() {
+    const membreId = document.getElementById('selectMembre').value || '';
+    return membreId.startsWith('EMPLOYE:');
+}
+
+function toggleReposMedicalUI() {
+    const checkbox = document.getElementById('inputReposMedical');
+    const dateWrap = document.getElementById('reposDateWrapper');
+    const joursWrap = document.getElementById('reposJoursWrapper');
+
+    if (checkbox.checked && !isBeneficiaireEmploye()) {
+        checkbox.checked = false;
+        alert('Le repos médical ne peut être ajouté que pour l\'employé lui-même.');
+    }
+
+    const active = checkbox.checked;
+    reposMedicalActif = active;
+    dateWrap.classList.toggle('hidden', !active);
+    joursWrap.classList.toggle('hidden', !active);
+}
+
+function toggleHospitalisationUI() {
+    const typeSoin = document.getElementById('selectTypeSoin').value;
+    const justificatifWrap = document.getElementById('justificatifHospitalisationWrapper');
+    hospitalisationActif = typeSoin === 'hospitalisation';
+    justificatifWrap.classList.toggle('hidden', !hospitalisationActif);
+
+    const btnEnregistrer = document.getElementById('btnEnregistrer');
+    if (hospitalisationActif) {
+        btnEnregistrer.innerHTML = '<i class="fas fa-paper-plane mr-2"></i>Soumettre';
+    } else {
+        btnEnregistrer.innerHTML = '<i class="fas fa-print mr-2"></i>Enregistrer & Imprimer';
+    }
+}
+
+async function calculerRemboursement() {
+    const membreId = document.getElementById('selectMembre').value;
+    const mois = document.getElementById('inputMois').value;
+    const affection = document.getElementById('inputAffection').value;
+    const typeSoin = document.getElementById('selectTypeSoin').value;
+    const montant = document.getElementById('inputMontant').value;
+
+    if (!membreId || !mois || !affection || !montant) {
+        alert('Veuillez remplir tous les champs obligatoires');
+        return;
+    }
+
+    // Extraire employeId si c'est l'employé lui-même (format: "EMPLOYE:uuid")
+    let beneficiaire = {};
+    if (membreId.startsWith('EMPLOYE:')) {
+        beneficiaire.employe_id = membreId.split(':')[1];
+        beneficiaire.membre_id = null;
+    } else {
+        beneficiaire.membre_id = membreId;
+        beneficiaire.employe_id = null;
+    }
+
+    try {
+        const response = await fetch('{% url "employees:api_calculer_frais_medicaux" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                membre_id: beneficiaire.membre_id,
+                employe_id: beneficiaire.employe_id,
+                montant_soins: parseFloat(montant),
+                type_soin: typeSoin,
+                affection: affection,
+                mois_concerne: mois
+            })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            dernierCalcul = {
+                membre_id: beneficiaire.membre_id,
+                employe_id: beneficiaire.employe_id,
+                montant_soins: data.montant_soins,
+                montant_rembourse: data.montant_rembourse,
+                type_soin: typeSoin,
+                affection: affection,
+                mois_concerne: mois,
+                repos_medical: reposMedicalActif,
+                repos_date_debut: reposMedicalActif ? document.getElementById('inputReposDebut').value : null,
+                repos_nb_jours: reposMedicalActif ? parseInt(document.getElementById('inputReposJours').value || '0', 10) : null
+            };
+
+            document.getElementById('beneficiaire').textContent = `${data.membre.nom} (${data.membre.employe})`;
+            document.getElementById('montantSoins').textContent = data.montant_soins.toLocaleString('fr-FR');
+            document.getElementById('plafondApplique').textContent = data.plafond_applique.toLocaleString('fr-FR');
+            document.getElementById('tauxRemboursement').textContent = data.taux_remboursement;
+            document.getElementById('montantRembourse').textContent = data.taux_remboursement === 0
+                ? 'À définir'
+                : data.montant_rembourse.toLocaleString('fr-FR');
+            document.getElementById('resultatCalcul').classList.remove('hidden');
+            document.getElementById('btnEnregistrer').classList.remove('hidden');
+
+            if (data.deja_existe) {
+                document.getElementById('alertExiste').classList.remove('hidden');
+            } else {
+                document.getElementById('alertExiste').classList.add('hidden');
+            }
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau');
+    }
+}
+
+async function enregistrerEtImprimer() {
+    if (!dernierCalcul) {
+        alert('Veuillez d\'abord calculer le remboursement');
+        return;
+    }
+
+    if (dernierCalcul.repos_medical) {
+        if (!dernierCalcul.repos_date_debut || !dernierCalcul.repos_nb_jours) {
+            alert('Veuillez renseigner les dates du repos médical');
+            return;
+        }
+    }
+
+    if (hospitalisationActif) {
+        const justificatifInput = document.getElementById('inputJustificatifHospitalisation');
+        if (!justificatifInput || !justificatifInput.files || justificatifInput.files.length === 0) {
+            alert('Veuillez joindre les justificatifs de l\'hospitalisation');
+            return;
+        }
+    }
+
+    const confirmMessage = hospitalisationActif
+        ? 'Confirmer la soumission de cette demande d\'hospitalisation ?'
+        : 'Confirmer l\'enregistrement et l\'impression de ce remboursement ?';
+    if (!confirm(confirmMessage)) return;
+
+    try {
+        let response;
+        const justificatifInput = document.getElementById('inputJustificatifHospitalisation');
+        const hasJustificatif = justificatifInput && justificatifInput.files && justificatifInput.files.length > 0;
+
+        if (hospitalisationActif || hasJustificatif) {
+            const formData = new FormData();
+            Object.keys(dernierCalcul).forEach(key => {
+                if (dernierCalcul[key] !== null && typeof dernierCalcul[key] !== 'undefined') {
+                    formData.append(key, dernierCalcul[key]);
+                }
+            });
+            if (hasJustificatif) {
+                formData.append('justificatif_hospitalisation', justificatifInput.files[0]);
+            }
+
+            response = await fetch('{% url "employees:api_enregistrer_frais_medicaux" %}', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                body: formData
+            });
+        } else {
+            response = await fetch('{% url "employees:api_enregistrer_frais_medicaux" %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                body: JSON.stringify(dernierCalcul)
+            });
+        }
+
+        const data = await response.json();
+        if (data.success) {
+            if (hospitalisationActif) {
+                alert(data.message || 'Demande enregistrée.');
+                location.reload();
+                return;
+            }
+            // Générer et imprimer la facture
+            genererFacture(data.facture, data.frais_id);
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau');
+    }
+}
+
+function genererFacture(facture, fraisId) {
+    const printArea = document.getElementById('printArea');
+    printArea.innerHTML = `
+        <div class="facture">
+            <div class="facture-header">
+                ${facture.organisation.logo ? `<img src="${facture.organisation.logo}" style="max-height:80px;">` : ''}
+                <h1>${facture.organisation.nom}</h1>
+                <h2>FACTURE DE REMBOURSEMENT - FRAIS MÉDICAUX</h2>
+            </div>
+            <div class="facture-info">
+                <p><strong>Date:</strong> ${facture.date}</p>
+                <p><strong>Employé:</strong> ${facture.employe.nom}</p>
+                <p><strong>Poste:</strong> ${facture.employe.poste}</p>
+                <p><strong>Base:</strong> ${facture.employe.base}</p>
+            </div>
+            <div class="facture-info">
+                <p><strong>Bénéficiaire:</strong> ${facture.membre.nom} (${facture.membre.lien})</p>
+                <p><strong>Mois concerné:</strong> ${facture.mois}</p>
+                <p><strong>Affection:</strong> ${facture.affection}</p>
+                <p><strong>Type de soin:</strong> ${facture.type_soin === 'lunettes'
+                    ? 'Lunettes / soins dentaires / accouchement'
+                    : (facture.type_soin === 'hospitalisation' ? 'Hospitalisation' : 'Soins médicaux')}</p>
+            </div>
+            <table style="width:100%; border-collapse:collapse; margin:20px 0;">
+                <tr>
+                    <td style="border:1px solid #333; padding:10px;">Montant des soins remboursables</td>
+                    <td style="border:1px solid #333; padding:10px; text-align:right;">${facture.montant_soins.toLocaleString('fr-FR')} Ar</td>
+                </tr>
+                <tr>
+                    <td style="border:1px solid #333; padding:10px;">Taux de remboursement</td>
+                    <td style="border:1px solid #333; padding:10px; text-align:right;">80%</td>
+                </tr>
+            </table>
+            <div class="facture-montant">
+                MONTANT REMBOURSÉ: ${facture.montant_rembourse.toLocaleString('fr-FR')} Ar
+            </div>
+            <div class="facture-signature">
+                <div class="signature-box">
+                    <p>Signature de l'employé</p>
+                    <div class="signature-line">${facture.employe.nom}</div>
+                </div>
+                <div class="signature-box">
+                    <p>Visa du responsable</p>
+                    <div class="signature-line">Date: _______________</div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    setTimeout(() => {
+        window.print();
+        marquerImprimes([fraisId]);
+    }, 100);
+}
+
+async function marquerImprimes(fraisIds) {
+    setTimeout(async () => {
+        if (!confirm('Avez-vous terminé l\'impression ? Cliquez OK pour exporter vers DiameX.')) return;
+
+        try {
+            const response = await fetch('{% url "employees:api_imprimer_frais_medicaux" %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                body: JSON.stringify({ frais_ids: fraisIds })
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                alert(data.message);
+                location.reload();
+            } else {
+                alert('Erreur: ' + data.error);
+            }
+        } catch (error) {
+            console.error('Erreur:', error);
+        }
+    }, 2000);
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Initialiser le mois courant
+document.addEventListener('DOMContentLoaded', function() {
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    document.getElementById('inputMois').value = currentMonth;
+
+    document.getElementById('inputReposMedical').addEventListener('change', toggleReposMedicalUI);
+    document.getElementById('selectMembre').addEventListener('change', toggleReposMedicalUI);
+    document.getElementById('selectTypeSoin').addEventListener('change', toggleHospitalisationUI);
+    toggleHospitalisationUI();
+});
+</script>
+{% endblock %}

@@ -1,0 +1,825 @@
+{% extends planning_shell_base_template %}
+{% load humanize %}
+{% load employee_grouping %}
+
+{% block title %}Indemnites Journalieres{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-wrap justify-between items-center gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">
+                <i class="fas fa-coins mr-2 text-warning"></i>
+                Indemnites Journalieres
+            </h1>
+            <p class="text-base-content/70 mt-1">
+                Flux simplifie : calcul, validation et impression de facture
+            </p>
+        </div>
+        <div class="flex gap-2">
+            <button onclick="document.getElementById('modalImport').showModal()" class="btn btn-info">
+                <i class="fas fa-file-upload mr-2"></i>Import Excel
+            </button>
+            <a href="{% url 'planning:export_excel_indemnites' %}" class="btn btn-success">
+                <i class="fas fa-file-excel mr-2"></i>Export Excel
+            </a>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <h2 class="card-title mb-4">
+                <i class="fas fa-filter mr-2 text-primary"></i>Filtres et generation
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mois</span></label>
+                    <select id="filterMois" class="select select-bordered w-full">
+                        <option value="">Tous les mois</option>
+                        {% for m in mois_disponibles %}
+                        <option value="{{ m.value }}">{{ m.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Base</span></label>
+                    <select id="filterBase" class="select select-bordered w-full" onchange="onBaseChange()">
+                        <option value="">Toutes les bases</option>
+                        {% for base in bases %}
+                        <option value="{{ base.id }}" {% if default_base_id and default_base_id == base.id|stringformat:"s" %}selected{% endif %}>
+                            {{ base.nom_base }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Employe</span></label>
+                    <select id="filterEmploye" class="select select-bordered w-full">
+                        {% grouped_employee_options employes "" "Tous les employes" %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Statut</span></label>
+                    <select id="filterStatut" class="select select-bordered w-full">
+                        <option value="">Tous les statuts</option>
+                        <option value="calculee">Calculee</option>
+                        <option value="validee">Validee</option>
+                        <option value="imprimee">Imprimee</option>
+                        <option value="exportee">Exportee</option>
+                    </select>
+                </div>
+                <div class="form-control justify-end">
+                    <label class="label"><span class="label-text">&nbsp;</span></label>
+                    <div class="flex gap-2">
+                        <button onclick="loadIndemnites()" class="btn btn-primary">
+                            <i class="fas fa-search"></i>
+                        </button>
+                        <button onclick="genererIndemnites()" class="btn btn-warning">
+                            <i class="fas fa-calculator mr-2"></i>Generer
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="stats stats-vertical lg:stats-horizontal shadow w-full bg-base-100">
+        <div class="stat">
+            <div class="stat-figure text-warning">
+                <i class="fas fa-coins text-4xl"></i>
+            </div>
+            <div class="stat-title">Total indemnites</div>
+            <div class="stat-value text-warning" id="statTotal">0</div>
+            <div class="stat-desc">Ar</div>
+        </div>
+        <div class="stat">
+            <div class="stat-figure text-info">
+                <i class="fas fa-calendar-day text-4xl"></i>
+            </div>
+            <div class="stat-title">Jours terrain</div>
+            <div class="stat-value text-info" id="statJours">0</div>
+            <div class="stat-desc">jours</div>
+        </div>
+        <div class="stat">
+            <div class="stat-figure text-success">
+                <i class="fas fa-check-circle text-4xl"></i>
+            </div>
+            <div class="stat-title">Validees</div>
+            <div class="stat-value text-success" id="statValidees">0</div>
+        </div>
+        <div class="stat">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-print text-4xl"></i>
+            </div>
+            <div class="stat-title">Imprimees</div>
+            <div class="stat-value text-primary" id="statImprimees">0</div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <div class="flex flex-wrap justify-between items-center gap-3 mb-4">
+                <h2 class="card-title">
+                    <i class="fas fa-list mr-2 text-primary"></i>
+                    Liste des indemnites
+                </h2>
+                <div class="flex gap-2">
+                    <button onclick="annulerIndemnites()" class="btn btn-error btn-sm" id="btnAnnulerIndemnites" disabled>
+                        <i class="fas fa-rotate-left mr-2"></i>Annuler
+                    </button>
+                    <button onclick="validerIndemnites()" class="btn btn-success btn-sm" id="btnValiderIndemnites" disabled>
+                        <i class="fas fa-check-circle mr-2"></i>Valider
+                    </button>
+                    <button onclick="imprimerFactures()" class="btn btn-primary btn-sm" id="btnImprimerFactures" disabled>
+                        <i class="fas fa-print mr-2"></i>Imprimer facture
+                    </button>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm">
+                    <thead>
+                        <tr>
+                            <th><input type="checkbox" id="selectAll" class="checkbox checkbox-sm" onchange="toggleSelectAll()"></th>
+                            <th>Date</th>
+                            <th>Employe</th>
+                            <th>Base</th>
+                            <th>Ouvrages visites</th>
+                            <th>Activites</th>
+                            <th class="text-right">Montant</th>
+                            <th>Statut</th>
+                            <th>DiameX</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody">
+                        <tr>
+                            <td colspan="9" class="text-center py-8 text-base-content/50">
+                                <i class="fas fa-info-circle mr-2"></i>
+                                Selectionnez un mois et cliquez sur Rechercher
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="printArea" class="hidden print:block"></div>
+
+<style>
+@media print {
+    body * {
+        visibility: hidden;
+    }
+
+    #printArea,
+    #printArea * {
+        visibility: visible;
+    }
+
+    #printArea {
+        position: absolute;
+        inset: 0;
+        background: white;
+    }
+
+    .facture-indemnite {
+        page-break-after: always;
+        padding: 10px 12px;
+        font-family: Arial, sans-serif;
+        font-size: 10px;
+        line-height: 1.15;
+    }
+
+    .facture-indemnite:last-child {
+        page-break-after: auto;
+    }
+
+    .facture-header {
+        text-align: center;
+        margin-bottom: 8px;
+        border-bottom: 2px solid #333;
+        padding-bottom: 6px;
+    }
+
+    .facture-header img {
+        max-height: 42px;
+        margin: 0 auto 4px;
+    }
+
+    .facture-header h1 {
+        font-size: 16px;
+        margin: 2px 0;
+    }
+
+    .facture-header h2 {
+        font-size: 13px;
+        margin: 2px 0;
+    }
+
+    .facture-header p {
+        margin: 2px 0;
+    }
+
+    .facture-info {
+        margin-bottom: 8px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 2px 12px;
+    }
+
+    .facture-info p {
+        margin: 1px 0;
+    }
+
+    .facture-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 6px 0;
+        font-size: 8.5px;
+        line-height: 1.1;
+        table-layout: fixed;
+    }
+
+    .facture-table th,
+    .facture-table td {
+        border: 1px solid #333;
+        padding: 2px 3px;
+        text-align: left;
+        vertical-align: top;
+        word-break: break-word;
+    }
+
+    .facture-table th {
+        background-color: #f0f0f0;
+    }
+
+    .facture-table .montant {
+        text-align: right;
+    }
+
+    .facture-total {
+        text-align: right;
+        font-size: 12px;
+        font-weight: bold;
+        margin-top: 6px;
+    }
+
+    @page {
+        size: A4 portrait;
+        margin: 8mm;
+    }
+}
+</style>
+
+<dialog id="modalImport" class="modal">
+    <div class="modal-box w-11/12 max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-file-upload text-info mr-2"></i>
+            Import Excel - Indemnites Journalieres
+        </h3>
+
+        <div class="alert alert-info mb-4">
+            <i class="fas fa-info-circle"></i>
+            <div>
+                <p class="font-semibold">Format du fichier Excel attendu :</p>
+                <ul class="list-disc ml-4 text-sm mt-2">
+                    <li><strong>Colonne A</strong> : ID Employe (UUID) ou Surnom</li>
+                    <li><strong>Colonne B</strong> : Date (JJ/MM/AAAA ou AAAA-MM-JJ)</li>
+                    <li><strong>Colonne C</strong> : Ouvrages visites</li>
+                    <li><strong>Colonne D</strong> : Activites (optionnel)</li>
+                    <li><strong>Colonne E</strong> : Montant (optionnel)</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="flex gap-2 mb-4">
+            <a href="{% url 'planning:template_excel_indemnites' %}" class="btn btn-outline btn-sm">
+                <i class="fas fa-download mr-2"></i>Telecharger le template
+            </a>
+        </div>
+
+        <form id="formImport" enctype="multipart/form-data">
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text">Fichier Excel (.xlsx, .xls)</span>
+                </label>
+                <input type="file" id="fileImport" name="file" accept=".xlsx,.xls" class="file-input file-input-bordered w-full" required>
+            </div>
+
+            <div id="importProgress" class="hidden mt-4">
+                <div class="flex items-center gap-3">
+                    <span class="loading loading-spinner loading-lg text-info"></span>
+                    <span class="text-sm">Import en cours...</span>
+                </div>
+                <progress class="progress progress-info w-full mt-2"></progress>
+            </div>
+
+            <div id="importResult" class="hidden mt-4"></div>
+        </form>
+
+        <div class="modal-action">
+            <button onclick="document.getElementById('modalImport').close()" class="btn btn-ghost">Annuler</button>
+            <button onclick="importerExcel()" class="btn btn-info" id="btnImporter">
+                <i class="fas fa-upload mr-2"></i>Importer
+            </button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>Fermer</button>
+    </form>
+</dialog>
+
+<script>
+let indemnites = [];
+let selectedIds = new Set();
+
+function getSelectedIndemnites() {
+    return indemnites.filter((ind) => selectedIds.has(ind.id));
+}
+
+async function loadIndemnites() {
+    const mois = document.getElementById('filterMois').value;
+    const base_id = document.getElementById('filterBase').value;
+    const employe_id = document.getElementById('filterEmploye').value;
+    const statut = document.getElementById('filterStatut').value;
+
+    const params = new URLSearchParams();
+    if (mois) params.append('mois', mois);
+    if (base_id) params.append('base_id', base_id);
+    if (employe_id) params.append('employe_id', employe_id);
+    if (statut) params.append('statut', statut);
+
+    try {
+        const response = await fetch(`{% url 'planning:api_indemnites_list' %}?${params.toString()}`);
+        const data = await response.json();
+
+        if (!data.success) {
+            alert('Erreur: ' + (data.error || 'Erreur inconnue'));
+            return;
+        }
+
+        indemnites = data.indemnites || [];
+        displayIndemnites();
+        updateStats();
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur reseau');
+    }
+}
+
+function displayIndemnites() {
+    const tbody = document.getElementById('tableBody');
+    selectedIds.clear();
+    document.getElementById('selectAll').checked = false;
+
+    if (!indemnites.length) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="9" class="text-center py-8 text-base-content/50">
+                    <i class="fas fa-inbox text-4xl mb-2"></i>
+                    <p>Aucune indemnite trouvee</p>
+                </td>
+            </tr>
+        `;
+        updateButtonState();
+        return;
+    }
+
+    tbody.innerHTML = indemnites.map((ind) => `
+        <tr>
+            <td>
+                ${(ind.can_validate || ind.can_print || ind.can_reset)
+                    ? `<input type="checkbox" class="checkbox checkbox-sm ind-checkbox" data-id="${ind.id}" onchange="toggleSelect('${ind.id}')">`
+                    : ''}
+            </td>
+            <td class="font-mono">${formatDate(ind.date)}</td>
+            <td class="font-semibold">${ind.employe_nom}</td>
+            <td>${ind.employe_base}</td>
+            <td class="max-w-xs truncate" title="${ind.ouvrages_visites || ''}">${ind.ouvrages_visites || 'N/A'}</td>
+            <td class="max-w-xs truncate" title="${ind.activites || ''}">${ind.activites || 'N/A'}</td>
+            <td class="text-right font-mono font-bold">${Number(ind.montant || 0).toLocaleString('fr-FR')} Ar</td>
+            <td>${getStatutBadge(ind.statut_ui || ind.statut)}</td>
+            <td>${ind.numero_diamex ? `<span class="badge badge-success badge-sm">${ind.numero_diamex}</span>` : '-'}</td>
+        </tr>
+    `).join('');
+
+    updateButtonState();
+}
+
+function getStatutBadge(statut) {
+    const badges = {
+        calculee: '<span class="badge badge-warning badge-sm">Calculee</span>',
+        validee: '<span class="badge badge-success badge-sm">Validee</span>',
+        imprimee: '<span class="badge badge-primary badge-sm">Imprimee</span>',
+        exportee: '<span class="badge badge-secondary badge-sm">Exportee</span>',
+    };
+    return badges[statut] || `<span class="badge badge-ghost badge-sm">${statut || 'N/A'}</span>`;
+}
+
+function updateStats() {
+    const total = indemnites.reduce((sum, ind) => sum + Number(ind.montant || 0), 0);
+    const validees = indemnites.filter((ind) => (ind.statut_ui || ind.statut) === 'validee').length;
+    const imprimees = indemnites.filter((ind) => ['imprimee', 'exportee'].includes(ind.statut)).length;
+
+    document.getElementById('statTotal').textContent = total.toLocaleString('fr-FR');
+    document.getElementById('statJours').textContent = indemnites.length;
+    document.getElementById('statValidees').textContent = validees;
+    document.getElementById('statImprimees').textContent = imprimees;
+}
+
+function toggleSelectAll() {
+    const checked = document.getElementById('selectAll').checked;
+    document.querySelectorAll('.ind-checkbox').forEach((cb) => {
+        cb.checked = checked;
+        if (checked) {
+            selectedIds.add(cb.dataset.id);
+        } else {
+            selectedIds.delete(cb.dataset.id);
+        }
+    });
+    updateButtonState();
+}
+
+function toggleSelect(id) {
+    if (selectedIds.has(id)) {
+        selectedIds.delete(id);
+    } else {
+        selectedIds.add(id);
+    }
+    updateButtonState();
+}
+
+function updateButtonState() {
+    const btnAnnuler = document.getElementById('btnAnnulerIndemnites');
+    const btnValider = document.getElementById('btnValiderIndemnites');
+    const btnImprimer = document.getElementById('btnImprimerFactures');
+    const selected = getSelectedIndemnites();
+    const selectedEmployeIds = new Set(selected.map((ind) => ind.employe_id));
+    const canReset = selected.length > 0 && selected.every((ind) => ind.can_reset);
+    const canValidate = selected.some((ind) => ind.can_validate);
+    const canPrint = selected.length > 0 && selected.every((ind) => ind.can_print) && selectedEmployeIds.size <= 1;
+
+    btnAnnuler.disabled = !canReset;
+    btnValider.disabled = !canValidate;
+    btnImprimer.disabled = !canPrint;
+
+    if (selected.some((ind) => !ind.can_reset)) {
+        btnAnnuler.title = 'Les indemnites exportees vers DiameX ne peuvent pas etre annulees ici.';
+    } else {
+        btnAnnuler.title = '';
+    }
+
+    if (selected.length > 0 && selectedEmployeIds.size > 1) {
+        btnImprimer.title = 'Selectionnez les indemnites d un seul employe pour imprimer une facture.';
+    } else if (selected.some((ind) => !ind.can_print)) {
+        btnImprimer.title = 'Les indemnites doivent etre validees avant impression.';
+    } else {
+        btnImprimer.title = '';
+    }
+}
+
+async function annulerIndemnites() {
+    const selected = getSelectedIndemnites();
+    const ids = selected.map((ind) => ind.id);
+
+    if (!ids.length) {
+        alert('Aucune indemnite annulable selectionnee.');
+        return;
+    }
+
+    if (selected.some((ind) => !ind.can_reset)) {
+        alert('Les indemnites exportees vers DiameX ne peuvent pas etre annulees ici.');
+        return;
+    }
+
+    if (!confirm(`Annuler ${ids.length} indemnites pour pouvoir les refaire ?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('{% url "planning:api_annuler_indemnites" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ indemnite_ids: ids })
+        });
+        const data = await response.json();
+
+        if (!data.success) {
+            alert('Erreur: ' + (data.error || 'Erreur inconnue'));
+            return;
+        }
+
+        alert(data.message);
+        loadIndemnites();
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur reseau');
+    }
+}
+
+async function genererIndemnites() {
+    const mois = document.getElementById('filterMois').value;
+    const base_id = document.getElementById('filterBase').value;
+    const employe_id = document.getElementById('filterEmploye').value;
+
+    if (!mois) {
+        alert('Veuillez selectionner un mois');
+        return;
+    }
+
+    if (!confirm('Generer les indemnites pour ce mois ?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('{% url "planning:api_generer_indemnites" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ mois, base_id, employe_id })
+        });
+        const data = await response.json();
+
+        if (!data.success) {
+            alert('Erreur: ' + (data.error || 'Erreur inconnue'));
+            return;
+        }
+
+        alert(data.message);
+        loadIndemnites();
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur reseau');
+    }
+}
+
+async function validerIndemnites() {
+    const ids = getSelectedIndemnites()
+        .filter((ind) => ind.can_validate)
+        .map((ind) => ind.id);
+
+    if (!ids.length) {
+        alert('Aucune indemnite calculee selectionnee.');
+        return;
+    }
+
+    if (!confirm(`Valider ${ids.length} indemnites ?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('{% url "planning:api_confirmer_indemnites" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ indemnite_ids: ids })
+        });
+        const data = await response.json();
+
+        if (!data.success) {
+            alert('Erreur: ' + (data.error || 'Erreur inconnue'));
+            return;
+        }
+
+        alert(data.message);
+        loadIndemnites();
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur reseau');
+    }
+}
+
+async function imprimerFactures() {
+    const selected = getSelectedIndemnites();
+
+    if (!selected.length) {
+        alert('Veuillez selectionner au moins une indemnite.');
+        return;
+    }
+
+    const employeIds = [...new Set(selected.map((ind) => ind.employe_id))];
+    if (employeIds.length !== 1) {
+        alert('Selectionnez les indemnites d un seul employe pour imprimer une facture.');
+        return;
+    }
+
+    if (selected.some((ind) => !ind.can_print)) {
+        alert('Toutes les indemnites selectionnees doivent etre validees avant impression.');
+        return;
+    }
+
+    if (!confirm(`Imprimer la facture pour ${selected.length} indemnites ?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('{% url "planning:api_imprimer_facture_indemnite" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ indemnite_ids: selected.map((ind) => ind.id) })
+        });
+        const data = await response.json();
+
+        if (!data.success) {
+            alert('Erreur: ' + (data.error || 'Erreur inconnue'));
+            return;
+        }
+
+        const factures = Array.isArray(data.factures) && data.factures.length
+            ? data.factures
+            : (data.facture ? [data.facture] : []);
+
+        if (!factures.length) {
+            alert('Aucune facture a imprimer.');
+            return;
+        }
+
+        renderFactures(factures);
+        setTimeout(() => {
+            window.print();
+        }, 100);
+        setTimeout(() => {
+            loadIndemnites();
+        }, 1200);
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur reseau');
+    }
+}
+
+function renderFactures(factures) {
+    const printArea = document.getElementById('printArea');
+    printArea.innerHTML = factures.map((facture) => `
+        <div class="facture-indemnite">
+            <div class="facture-header">
+                ${facture.organisation && facture.organisation.logo ? `<img src="${facture.organisation.logo}" alt="Logo">` : ''}
+                <h1>${facture.organisation ? facture.organisation.nom : ''}</h1>
+                <h2>FACTURE D INDEMNITE</h2>
+                <p>${facture.mois || ''}</p>
+            </div>
+
+            <div class="facture-info">
+                <p><strong>Employe :</strong> ${facture.employe ? facture.employe.nom : ''}</p>
+                <p><strong>Poste :</strong> ${facture.employe ? facture.employe.poste : ''}</p>
+                <p><strong>Base :</strong> ${facture.employe ? facture.employe.base : ''}</p>
+                <p><strong>Nombre de jours terrain :</strong> ${facture.nb_jours || 0}</p>
+            </div>
+
+            <table class="facture-table" style="width: 100%; font-size: 8.5px; border-collapse: collapse; table-layout: fixed; line-height: 1.1;">
+                <thead>
+                    <tr style="background-color: #f2f2f2;">
+                        <th style="width: 13%; padding: 2px 3px; border: 1px solid #ddd;">Date</th>
+                        <th style="width: 35%; padding: 2px 3px; border: 1px solid #ddd;">Activites</th>
+                        <th style="width: 35%; padding: 2px 3px; border: 1px solid #ddd;">Ouvrages visites</th>
+                        <th class="montant" style="width: 17%; padding: 2px 3px; border: 1px solid #ddd;">Montant</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${(facture.lignes || []).map((ligne) => `
+                        <tr>
+                            <td style="padding: 2px 3px; border: 1px solid #ddd;">${ligne.date || ''}</td>
+                            <td style="padding: 2px 3px; border: 1px solid #ddd;">${ligne.activites || 'N/A'}</td>
+                            <td style="padding: 2px 3px; border: 1px solid #ddd;">${ligne.ouvrages || 'N/A'}</td>
+                            <td class="montant" style="padding: 2px 3px; border: 1px solid #ddd; text-align: right; white-space: nowrap;">
+                                ${Number(ligne.montant || 0).toLocaleString('fr-FR')} Ar
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+
+            <div class="facture-total">
+                TOTAL : ${Number(facture.total || 0).toLocaleString('fr-FR')} Ar
+            </div>
+        </div>
+    `).join('');
+}
+
+async function importerExcel() {
+    const fileInput = document.getElementById('fileImport');
+    const file = fileInput.files[0];
+
+    if (!file) {
+        alert('Veuillez selectionner un fichier');
+        return;
+    }
+
+    document.getElementById('importProgress').classList.remove('hidden');
+    document.getElementById('importResult').classList.add('hidden');
+    document.getElementById('btnImporter').disabled = true;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const response = await fetch('{% url "planning:import_excel_indemnites" %}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: formData
+        });
+        const data = await response.json();
+
+        document.getElementById('importProgress').classList.add('hidden');
+        document.getElementById('btnImporter').disabled = false;
+
+        const resultDiv = document.getElementById('importResult');
+        resultDiv.classList.remove('hidden');
+
+        if (!data.success) {
+            resultDiv.innerHTML = `<div class="alert alert-error"><span>Erreur: ${data.error || 'Erreur inconnue'}</span></div>`;
+            return;
+        }
+
+        let html = `<div class="alert alert-success"><span>${data.message}</span></div>`;
+        if (data.erreurs && data.erreurs.length) {
+            html += `
+                <details class="mt-2">
+                    <summary class="cursor-pointer text-warning">${data.erreurs.length} erreur(s)</summary>
+                    <ul class="list-disc ml-4 text-sm mt-2">
+                        ${data.erreurs.map((e) => `<li>${e}</li>`).join('')}
+                    </ul>
+                </details>
+            `;
+        }
+        resultDiv.innerHTML = html;
+
+        setTimeout(() => {
+            document.getElementById('modalImport').close();
+            fileInput.value = '';
+            resultDiv.classList.add('hidden');
+            loadIndemnites();
+        }, 1200);
+    } catch (error) {
+        console.error('Erreur:', error);
+        document.getElementById('importProgress').classList.add('hidden');
+        document.getElementById('btnImporter').disabled = false;
+        document.getElementById('importResult').classList.remove('hidden');
+        document.getElementById('importResult').innerHTML = `<div class="alert alert-error"><span>Erreur reseau: ${error.message}</span></div>`;
+    }
+}
+
+function onBaseChange() {
+    const baseId = document.getElementById('filterBase').value;
+    const employeSelect = document.getElementById('filterEmploye');
+
+    employeSelect.value = '';
+
+    Array.from(employeSelect.options).forEach((option, index) => {
+        if (index === 0) {
+            return;
+        }
+
+        const optionBaseId = option.getAttribute('data-base-id');
+        option.style.display = !baseId || optionBaseId === baseId ? '' : 'none';
+    });
+}
+
+function formatDate(dateStr) {
+    if (!dateStr) {
+        return '';
+    }
+    const parts = String(dateStr).split('-');
+    if (parts.length !== 3) {
+        return dateStr;
+    }
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i += 1) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    document.getElementById('filterMois').value = currentMonth;
+    onBaseChange();
+    loadIndemnites();
+});
+</script>
+{% endblock %}

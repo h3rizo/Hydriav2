@@ -1,0 +1,206 @@
+{% extends admin_shell_base_template %}
+{% load humanize %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex justify-between items-center">
+        <h1 class="text-3xl font-bold text-base-content">
+            <i class="fas fa-envelope-open-text mr-2 text-warning"></i>Rappel mensuel — Factures non pointées
+        </h1>
+    </div>
+
+    <div class="alert alert-info">
+        <i class="fas fa-info-circle"></i>
+        <span>
+            Cette page calcule un aperçu avec les données réelles, sans jamais envoyer d'email ni écrire
+            de trace. Utilisez le formulaire de test pour envoyer un exemplaire réel vers une adresse de contrôle.
+        </span>
+    </div>
+
+    <!-- Sélecteur de période -->
+    <div class="card bg-base-200">
+        <div class="card-body">
+            <form method="get" class="flex flex-wrap items-end gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mois</span></label>
+                    <select name="mois" class="select select-bordered w-40" title="Mois">
+                        <option value="1" {% if resultat.mois == 1 %}selected{% endif %}>Janvier</option>
+                        <option value="2" {% if resultat.mois == 2 %}selected{% endif %}>Février</option>
+                        <option value="3" {% if resultat.mois == 3 %}selected{% endif %}>Mars</option>
+                        <option value="4" {% if resultat.mois == 4 %}selected{% endif %}>Avril</option>
+                        <option value="5" {% if resultat.mois == 5 %}selected{% endif %}>Mai</option>
+                        <option value="6" {% if resultat.mois == 6 %}selected{% endif %}>Juin</option>
+                        <option value="7" {% if resultat.mois == 7 %}selected{% endif %}>Juillet</option>
+                        <option value="8" {% if resultat.mois == 8 %}selected{% endif %}>Août</option>
+                        <option value="9" {% if resultat.mois == 9 %}selected{% endif %}>Septembre</option>
+                        <option value="10" {% if resultat.mois == 10 %}selected{% endif %}>Octobre</option>
+                        <option value="11" {% if resultat.mois == 11 %}selected{% endif %}>Novembre</option>
+                        <option value="12" {% if resultat.mois == 12 %}selected{% endif %}>Décembre</option>
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Année</span></label>
+                    <input type="number" name="annee" class="input input-bordered w-32"
+                           value="{{ resultat.annee }}" placeholder="Année" title="Année">
+                </div>
+                <button type="submit" class="btn btn-outline">
+                    <i class="fas fa-sync-alt mr-2"></i>Recalculer l'aperçu
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Résumé -->
+    <div class="stats shadow w-full">
+        <div class="stat">
+            <div class="stat-title">Période cible</div>
+            <div class="stat-value text-lg">{{ resultat.mois|stringformat:"02d" }}/{{ resultat.annee }}</div>
+            <div class="stat-desc">jusqu'au {{ resultat.date_fin_periode|date:"d/m/Y" }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-title">Responsables concernés</div>
+            <div class="stat-value text-lg">{{ resultat.nb_responsables }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-title">Supérieurs notifiés (info)</div>
+            <div class="stat-value text-lg">{{ resultat.nb_superieurs }}</div>
+        </div>
+        {% if resultat.factures_sans_responsable %}
+        <div class="stat">
+            <div class="stat-title">Factures sans responsable</div>
+            <div class="stat-value text-lg text-warning">{{ resultat.factures_sans_responsable }}</div>
+            <div class="stat-desc">exclues (point d'eau/ouvrage non renseigné)</div>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if aucun_email %}
+    <div class="alert alert-success">
+        <i class="fas fa-check-circle"></i>
+        <span><strong>Aucun email ne serait envoyé pour {{ resultat.mois|stringformat:"02d" }}/{{ resultat.annee }}</strong> — aucune facture non pointée trouvée pour cette période.</span>
+    </div>
+    {% else %}
+
+    <!-- Liste des responsables -->
+    <div class="card bg-base-200">
+        <div class="card-body">
+            <h2 class="card-title">Emails qui seraient envoyés</h2>
+            <div class="overflow-x-auto">
+                <table class="table table-zebra w-full">
+                    <thead>
+                        <tr>
+                            <th>Destinataire</th>
+                            <th>Rôle</th>
+                            <th>Email</th>
+                            <th class="text-right">Points d'eau</th>
+                            <th class="text-right">Factures</th>
+                            <th class="text-right">Montant total</th>
+                            <th>Aperçu</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for detail in resultat.details %}
+                        <tr>
+                            <td>{{ detail.employe.surnom|default:detail.employe.nom_employe }}</td>
+                            <td>
+                                {% if detail.type_destinataire == 'superieur' %}
+                                    <span class="badge badge-warning badge-sm">Supérieur (info)</span>
+                                {% else %}
+                                    <span class="badge badge-primary badge-sm">Responsable</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if detail.employe.mail %}
+                                    {{ detail.employe.mail }}
+                                {% else %}
+                                    <span class="text-error"><i class="fas fa-exclamation-triangle mr-1"></i>Email manquant</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-right">{{ detail.nb_points_eau }}</td>
+                            <td class="text-right">{{ detail.nb_factures }}</td>
+                            <td class="text-right">
+                                {% if detail.montant_total is not None %}{{ detail.montant_total|floatformat:0|intcomma }} Ar{% else %}—{% endif %}
+                            </td>
+                            <td>
+                                <a href="{% url 'system:preview_relance_detail' employe_id=detail.employe.id %}?annee={{ resultat.annee }}&mois={{ resultat.mois }}&format=html&type={{ detail.type_destinataire }}"
+                                   target="_blank" class="btn btn-xs btn-outline">
+                                    <i class="fas fa-eye mr-1"></i>HTML
+                                </a>
+                                <a href="{% url 'system:preview_relance_detail' employe_id=detail.employe.id %}?annee={{ resultat.annee }}&mois={{ resultat.mois }}&format=text&type={{ detail.type_destinataire }}"
+                                   target="_blank" class="btn btn-xs btn-outline">
+                                    <i class="fas fa-file-alt mr-1"></i>Texte
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Dernier traitement réel -->
+    {% if stats_dernier_traitement %}
+    <div class="card bg-base-200">
+        <div class="card-body">
+            <h2 class="card-title">Dernier traitement réel</h2>
+            <p class="text-sm text-base-content/70 mb-2">
+                Période {{ stats_dernier_traitement.mois|stringformat:"02d" }}/{{ stats_dernier_traitement.annee }}
+            </p>
+            <div class="stats shadow">
+                <div class="stat"><div class="stat-title">Total</div><div class="stat-value text-lg">{{ stats_dernier_traitement.total }}</div></div>
+                <div class="stat"><div class="stat-title">Envoyés</div><div class="stat-value text-lg text-success">{{ stats_dernier_traitement.envoyes }}</div></div>
+                <div class="stat"><div class="stat-title">Échecs</div><div class="stat-value text-lg text-error">{{ stats_dernier_traitement.echecs }}</div></div>
+                <div class="stat"><div class="stat-title">Email manquant</div><div class="stat-value text-lg text-warning">{{ stats_dernier_traitement.email_manquant }}</div></div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Envoi de test -->
+    <div class="card bg-base-200 border border-info">
+        <div class="card-body">
+            <h2 class="card-title"><i class="fas fa-flask mr-2"></i>Envoi de test</h2>
+            <p class="text-sm text-base-content/70">
+                Tous les emails générés pour cette période seront envoyés vers l'adresse ci-dessous
+                (pas aux responsables réels), avec la mention TEST dans l'objet et le contenu.
+            </p>
+            <form method="post" action="{% url 'system:envoyer_relances_test' %}" class="flex flex-wrap items-end gap-4 mt-2">
+                {% csrf_token %}
+                <input type="hidden" name="annee" value="{{ resultat.annee }}">
+                <input type="hidden" name="mois" value="{{ resultat.mois }}">
+                <div class="form-control flex-1 min-w-64">
+                    <label class="label"><span class="label-text">Adresse email de test</span></label>
+                    <input type="email" name="email_test" class="input input-bordered" required placeholder="admin@exemple.mg">
+                </div>
+                <button type="submit" class="btn btn-info">
+                    <i class="fas fa-paper-plane mr-2"></i>Envoyer le test
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Envoi réel -->
+    {% if not aucun_email %}
+    <div class="card bg-base-200 border border-error">
+        <div class="card-body">
+            <h2 class="card-title text-error"><i class="fas fa-exclamation-triangle mr-2"></i>Envoi réel</h2>
+            <p class="text-sm text-base-content/70">
+                Envoie réellement le rappel à chaque responsable listé ci-dessus. Action irréversible pour cette période
+                (un envoi réel déjà effectué pour {{ resultat.mois|stringformat:"02d" }}/{{ resultat.annee }} ne sera pas dupliqué).
+            </p>
+            <form method="post" action="{% url 'system:envoyer_relances_reelles' %}" class="mt-2"
+                  onsubmit="return confirm('Confirmer l\'envoi réel des rappels pour {{ resultat.mois|stringformat:"02d" }}/{{ resultat.annee }} à {{ resultat.nb_responsables }} responsable(s) ?');">
+                {% csrf_token %}
+                <input type="hidden" name="annee" value="{{ resultat.annee }}">
+                <input type="hidden" name="mois" value="{{ resultat.mois }}">
+                <button type="submit" class="btn btn-error">
+                    <i class="fas fa-paper-plane mr-2"></i>Envoyer réellement à {{ resultat.nb_responsables }} responsable(s)
+                </button>
+            </form>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

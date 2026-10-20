@@ -1,0 +1,604 @@
+{% extends "accounting/base.html" %}
+{% load static %}
+
+{% block title %}Demandes d'Envoi de Fonds{% endblock %}
+
+{% block content %}
+{{ journaux_suggeres|json_script:"journaux-suggeres-data" }}
+<div class="container mx-auto px-4 py-6">
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">
+                <i class="fas fa-hand-holding-usd mr-2 text-primary"></i>
+                Demandes d'Envoi de Fonds
+            </h1>
+            <p class="text-base-content/70 mt-2">
+                Saisir d'abord les soldes journaux, puis calculer le reste du mois en cours, le mois suivant et le montant à demander.
+            </p>
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'accounting:budgets_list' %}" class="btn btn-outline btn-info">
+                <i class="fas fa-list-alt mr-2"></i>
+                Gérer les Budgets
+            </a>
+            <button onclick="openCreateModal()" class="btn btn-primary">
+                <i class="fas fa-plus mr-2"></i>
+                Nouvelle Demande
+            </button>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-title">Total demandes</div>
+            <div class="stat-value text-primary text-2xl" id="stat-total">0</div>
+        </div>
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-title">En cours</div>
+            <div class="stat-value text-warning text-2xl" id="stat-en-cours">0</div>
+        </div>
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-title">Validées</div>
+            <div class="stat-value text-success text-2xl" id="stat-validees">0</div>
+        </div>
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-title">Montant total</div>
+            <div class="stat-value text-info text-2xl" id="stat-montant">0 Ar</div>
+        </div>
+    </div>
+
+    <div class="card bg-base-200 shadow-xl mb-6">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-filter mr-2"></i>
+                Filtres
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Budget</span></label>
+                    <select id="filtre-budget" class="select select-bordered">
+                        <option value="">Tous les budgets</option>
+                        {% for budget in budgets %}
+                        <option value="{{ budget.id }}">{{ budget.nom }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Année</span></label>
+                    <input type="number" id="filtre-annee" class="input input-bordered" placeholder="2026">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Statut</span></label>
+                    <select id="filtre-statut" class="select select-bordered">
+                        <option value="">Tous les statuts</option>
+                        <option value="brouillon">Brouillon</option>
+                        <option value="en_cours">En cours</option>
+                        <option value="validee">Validée</option>
+                        <option value="envoyee">Envoyée</option>
+                        <option value="recue">Fonds reçus</option>
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">&nbsp;</span></label>
+                    <div class="flex gap-2">
+                        <button onclick="loadDemandes()" class="btn btn-primary flex-1">
+                            <i class="fas fa-search mr-2"></i>
+                            Filtrer
+                        </button>
+                        <button onclick="resetFilters()" class="btn btn-ghost">
+                            <i class="fas fa-redo mr-2"></i>
+                            Réinitialiser
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-list mr-2"></i>
+                Liste des Demandes
+            </h2>
+            <div class="overflow-x-auto">
+                <table class="table table-zebra">
+                    <thead>
+                        <tr>
+                            <th>Période</th>
+                            <th>Budget</th>
+                            <th>Date demande</th>
+                            <th>Soldes journaux</th>
+                            <th>Reste mois en cours</th>
+                            <th>Mois suivant</th>
+                            <th>Mois ultérieurs</th>
+                            <th class="font-bold">Montant demandé</th>
+                            <th>Statut</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody-demandes">
+                        <tr>
+                            <td colspan="10" class="text-center text-base-content/50">
+                                <i class="fas fa-spinner fa-spin mr-2"></i>
+                                Chargement...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<dialog id="modal-create" class="modal">
+    <div class="modal-box max-w-6xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-plus text-primary mr-2"></i>
+            Nouvelle Demande de Fonds
+        </h3>
+
+        <div class="alert alert-info mb-4">
+            <i class="fas fa-info-circle"></i>
+            <div class="text-sm">
+                <p>1. Saisir les soldes journaux à la date de la demande.</p>
+                <p>2. Calculer le reste du mois en cours et le mois suivant.</p>
+                <p>3. La demande = besoins des 2 mois moins les soldes journaux.</p>
+            </div>
+        </div>
+
+        <form id="form-create" class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-bold">Budget</span></label>
+                    <select id="create-budget" required class="select select-bordered">
+                        <option value="">Sélectionner un budget</option>
+                        {% for budget in budgets %}
+                        <option value="{{ budget.id }}" data-annee="{{ budget.annee }}">{{ budget.nom }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-bold">Date de demande</span></label>
+                    <input type="date" id="create-date-demande" required class="input input-bordered">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-bold">Mois courant</span></label>
+                    <select id="create-mois" required class="select select-bordered"></select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-bold">Année</span></label>
+                    <input type="number" id="create-annee" required class="input input-bordered">
+                </div>
+            </div>
+
+            <div class="card bg-base-200">
+                <div class="card-body">
+                    <div class="flex justify-between items-center">
+                        <h4 class="font-bold">
+                            <i class="fas fa-wallet mr-2"></i>
+                            Soldes journaux saisis
+                        </h4>
+                        <button type="button" class="btn btn-sm btn-outline" onclick="addJournalRow()">
+                            <i class="fas fa-plus mr-2"></i>
+                            Ajouter un journal
+                        </button>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Journal</th>
+                                    <th>Montant</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="journal-balances-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex gap-2 justify-end">
+                <button type="button" class="btn btn-outline" onclick="previewDemande()">
+                    <i class="fas fa-calculator mr-2"></i>
+                    Calculer l'aperçu
+                </button>
+            </div>
+
+            <div id="preview-container" class="hidden space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                    <div class="stat bg-base-200 rounded-lg">
+                        <div class="stat-title">Soldes journaux</div>
+                        <div class="stat-value text-lg text-info" id="preview-total-journaux">0 Ar</div>
+                    </div>
+                    <div class="stat bg-base-200 rounded-lg">
+                        <div class="stat-title">Reste mois en cours</div>
+                        <div class="stat-value text-lg text-warning" id="preview-total-courant">0 Ar</div>
+                    </div>
+                    <div class="stat bg-base-200 rounded-lg">
+                        <div class="stat-title" id="preview-next-label">Mois suivant</div>
+                        <div class="stat-value text-lg text-secondary" id="preview-total-next">0 Ar</div>
+                    </div>
+                    <div class="stat bg-base-200 rounded-lg">
+                        <div class="stat-title">Mois ultérieurs</div>
+                        <div class="stat-value text-lg" id="preview-total-future">0 Ar</div>
+                    </div>
+                    <div class="stat bg-success text-success-content rounded-lg">
+                        <div class="stat-title text-success-content">Montant demandé</div>
+                        <div class="stat-value text-xl" id="preview-total-requested">0 Ar</div>
+                    </div>
+                </div>
+
+                <div class="card bg-base-100 border border-base-300">
+                    <div class="card-body">
+                        <h4 class="font-bold">Détail des comptes</h4>
+                        <div class="overflow-x-auto">
+                            <table class="table table-xs">
+                                <thead>
+                                    <tr>
+                                        <th>Compte</th>
+                                        <th>Libellé</th>
+                                        <th>Dépenses à date</th>
+                                        <th>Reste mois en cours</th>
+                                        <th>Mois suivant</th>
+                                        <th>Mois ultérieurs</th>
+                                        <th>Solde imputé</th>
+                                        <th>Montant demandé</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="preview-rows-body">
+                                    <tr>
+                                        <td colspan="8" class="text-center text-base-content/50">Aucun calcul pour le moment</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card bg-base-100 border border-base-300">
+                    <div class="card-body">
+                        <h4 class="font-bold">Prévisions des mois suivants</h4>
+                        <div class="overflow-x-auto">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Mois</th>
+                                        <th>Total prévisionnel</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="future-months-body">
+                                    <tr>
+                                        <td colspan="2" class="text-center text-base-content/50">Aucun mois ultérieur sur cette période</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('modal-create').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>
+                    Créer la Demande
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>Fermer</button>
+    </form>
+</dialog>
+
+<script>
+const suggestedJournaux = JSON.parse(document.getElementById('journaux-suggeres-data').textContent || '[]');
+const monthNames = [
+    '', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+    'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
+];
+
+let demandes = [];
+let currentPreview = null;
+
+function formatMoney(value) {
+    return Number(value || 0).toLocaleString('fr-FR') + ' Ar';
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+async function parseJsonResponse(response) {
+    const text = await response.text();
+    try {
+        return JSON.parse(text);
+    } catch (error) {
+        throw new Error(text.startsWith('<') ? 'Réponse HTML reçue au lieu de JSON.' : text);
+    }
+}
+
+function populateMonthSelect() {
+    const select = document.getElementById('create-mois');
+    select.innerHTML = monthNames.slice(1).map((label, index) => (
+        `<option value="${index + 1}">${label}</option>`
+    )).join('');
+}
+
+function defaultFormValues() {
+    const today = new Date();
+    document.getElementById('create-date-demande').value = today.toISOString().split('T')[0];
+    document.getElementById('create-mois').value = String(today.getMonth() + 1);
+    document.getElementById('create-annee').value = String(today.getFullYear());
+}
+
+function buildJournalOptions(selectedValue = '') {
+    const options = ['<option value="">Choisir un journal</option>'];
+    suggestedJournaux.forEach(journal => {
+        const selected = journal === selectedValue ? 'selected' : '';
+        options.push(`<option value="${journal}" ${selected}>${journal}</option>`);
+    });
+    return options.join('');
+}
+
+function addJournalRow(journal = '', montant = '') {
+    const tbody = document.getElementById('journal-balances-body');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+        <td>
+            <select class="select select-bordered select-sm journal-input">
+                ${buildJournalOptions(journal)}
+            </select>
+        </td>
+        <td>
+            <input type="number" step="0.01" class="input input-bordered input-sm montant-input" value="${montant}">
+        </td>
+        <td class="text-right">
+            <button type="button" class="btn btn-xs btn-ghost text-error" onclick="this.closest('tr').remove()">
+                <i class="fas fa-trash"></i>
+            </button>
+        </td>
+    `;
+    tbody.appendChild(tr);
+}
+
+function collectJournalBalances() {
+    return Array.from(document.querySelectorAll('#journal-balances-body tr')).map(row => ({
+        journal: row.querySelector('.journal-input').value,
+        montant: row.querySelector('.montant-input').value
+    }));
+}
+
+function collectCreatePayload() {
+    return {
+        budget_id: document.getElementById('create-budget').value,
+        date_demande: document.getElementById('create-date-demande').value,
+        mois: parseInt(document.getElementById('create-mois').value || '0', 10),
+        annee: parseInt(document.getElementById('create-annee').value || '0', 10),
+        journal_balances: collectJournalBalances()
+    };
+}
+
+function ensurePreviewVisible() {
+    document.getElementById('preview-container').classList.remove('hidden');
+}
+
+function renderPreview(data) {
+    currentPreview = data;
+    ensurePreviewVisible();
+
+    document.getElementById('preview-total-journaux').textContent = formatMoney(data.summary.total_journal_balances);
+    document.getElementById('preview-total-courant').textContent = formatMoney(data.summary.total_current_remaining);
+    document.getElementById('preview-next-label').textContent = data.summary.next_month_label;
+    document.getElementById('preview-total-next').textContent = formatMoney(data.summary.total_next_month);
+    document.getElementById('preview-total-future').textContent = formatMoney(data.summary.total_future_months);
+    document.getElementById('preview-total-requested').textContent = formatMoney(data.summary.total_requested);
+
+    const rowsBody = document.getElementById('preview-rows-body');
+    if (!data.rows.length) {
+        rowsBody.innerHTML = '<tr><td colspan="8" class="text-center text-base-content/50">Aucune ligne budgétaire</td></tr>';
+    } else {
+        rowsBody.innerHTML = data.rows.map(row => `
+            <tr>
+                <td class="font-bold">${row.compte}</td>
+                <td>${row.libelle_compte}</td>
+                <td class="text-right font-mono">${formatMoney(row.depenses_mois_a_date)}</td>
+                <td class="text-right font-mono">${formatMoney(row.reste_mois_courant)}</td>
+                <td class="text-right font-mono">${formatMoney(row.depenses_mois_suivant)}</td>
+                <td class="text-right font-mono">${formatMoney(row.previsions_mois_suivants)}</td>
+                <td class="text-right font-mono">${formatMoney(row.solde_impute)}</td>
+                <td class="text-right font-mono font-bold">${formatMoney(row.montant_demande)}</td>
+            </tr>
+        `).join('');
+    }
+
+    const futureBody = document.getElementById('future-months-body');
+    if (!data.future_months_breakdown.length) {
+        futureBody.innerHTML = '<tr><td colspan="2" class="text-center text-base-content/50">Aucun mois ultérieur sur cette période</td></tr>';
+    } else {
+        futureBody.innerHTML = data.future_months_breakdown.map(item => `
+            <tr>
+                <td>${item.mois_nom} ${item.annee}</td>
+                <td class="text-right font-mono">${formatMoney(item.total)}</td>
+            </tr>
+        `).join('');
+    }
+}
+
+async function previewDemande() {
+    const payload = collectCreatePayload();
+    if (!payload.budget_id || !payload.date_demande || !payload.mois || !payload.annee) {
+        alert('Veuillez remplir le budget, la date, le mois et l’année.');
+        return;
+    }
+
+    const response = await fetch('{% url "accounting:api_demande_fonds_preview" %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify(payload)
+    });
+    const data = await parseJsonResponse(response);
+    if (!data.success) {
+        throw new Error(data.error || 'Erreur inconnue.');
+    }
+    renderPreview(data);
+}
+
+async function loadDemandes() {
+    const budget = document.getElementById('filtre-budget').value;
+    const annee = document.getElementById('filtre-annee').value;
+    const statut = document.getElementById('filtre-statut').value;
+
+    let url = '{% url "accounting:api_demandes_fonds_list" %}?';
+    if (budget) url += `budget_id=${encodeURIComponent(budget)}&`;
+    if (annee) url += `annee=${encodeURIComponent(annee)}&`;
+    if (statut) url += `statut=${encodeURIComponent(statut)}`;
+
+    try {
+        const response = await fetch(url);
+        const data = await parseJsonResponse(response);
+        if (!data.success) throw new Error(data.error || 'Erreur inconnue.');
+        demandes = data.demandes;
+        displayDemandes();
+        updateStats();
+    } catch (error) {
+        alert('Erreur: ' + error.message);
+    }
+}
+
+function displayDemandes() {
+    const tbody = document.getElementById('tbody-demandes');
+    if (!demandes.length) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="10" class="text-center text-base-content/50">
+                    <i class="fas fa-inbox mr-2"></i>
+                    Aucune demande trouvée
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = demandes.map(demande => {
+        const statutBadge = {
+            brouillon: 'badge-ghost',
+            en_cours: 'badge-warning',
+            validee: 'badge-success',
+            envoyee: 'badge-info',
+            recue: 'badge-primary',
+            annulee: 'badge-error'
+        }[demande.statut] || 'badge-ghost';
+
+        const detailUrl = '{% url "accounting:demande_fonds_detail" "00000000-0000-0000-0000-000000000000" %}'
+            .replace('00000000-0000-0000-0000-000000000000', demande.id);
+
+        return `
+            <tr>
+                <td class="font-bold">${demande.periode}</td>
+                <td>${demande.budget_nom}</td>
+                <td>${demande.date_demande || '-'}</td>
+                <td class="font-mono">${formatMoney(demande.solde_initial)}</td>
+                <td class="font-mono">${formatMoney(demande.depenses_reelles)}</td>
+                <td class="font-mono">${formatMoney(demande.previsions_futures)}</td>
+                <td class="font-mono">${formatMoney(demande.future_months_total || 0)}</td>
+                <td class="font-mono font-bold text-primary">${formatMoney(demande.montant_demande)}</td>
+                <td><span class="badge ${statutBadge}">${demande.statut_display}</span></td>
+                <td>
+                    <a href="${detailUrl}" class="btn btn-sm btn-info">
+                        <i class="fas fa-eye"></i>
+                    </a>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function updateStats() {
+    document.getElementById('stat-total').textContent = demandes.length;
+    document.getElementById('stat-en-cours').textContent = demandes.filter(d => ['brouillon', 'en_cours'].includes(d.statut)).length;
+    document.getElementById('stat-validees').textContent = demandes.filter(d => ['validee', 'envoyee', 'recue'].includes(d.statut)).length;
+    document.getElementById('stat-montant').textContent = formatMoney(demandes.reduce((sum, d) => sum + Number(d.montant_demande || 0), 0));
+}
+
+function resetFilters() {
+    document.getElementById('filtre-budget').value = '';
+    document.getElementById('filtre-annee').value = '';
+    document.getElementById('filtre-statut').value = '';
+    loadDemandes();
+}
+
+function openCreateModal() {
+    document.getElementById('form-create').reset();
+    document.getElementById('preview-container').classList.add('hidden');
+    document.getElementById('preview-rows-body').innerHTML = '<tr><td colspan="8" class="text-center text-base-content/50">Aucun calcul pour le moment</td></tr>';
+    document.getElementById('future-months-body').innerHTML = '<tr><td colspan="2" class="text-center text-base-content/50">Aucun mois ultérieur sur cette période</td></tr>';
+    document.getElementById('journal-balances-body').innerHTML = '';
+    defaultFormValues();
+    addJournalRow(suggestedJournaux[0] || '', '');
+    currentPreview = null;
+    document.getElementById('modal-create').showModal();
+}
+
+document.getElementById('create-budget').addEventListener('change', function() {
+    const selected = this.selectedOptions[0];
+    const annee = selected ? selected.getAttribute('data-annee') : '';
+    if (annee) {
+        document.getElementById('create-annee').value = annee;
+    }
+});
+
+document.getElementById('form-create').addEventListener('submit', async function(event) {
+    event.preventDefault();
+
+    const submitButton = this.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    submitButton.innerHTML = '<span class="loading loading-spinner loading-sm"></span> Création...';
+
+    try {
+        if (!currentPreview) {
+            await previewDemande();
+        }
+
+        const response = await fetch('{% url "accounting:api_demande_fonds_create" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(collectCreatePayload())
+        });
+        const data = await parseJsonResponse(response);
+        if (!data.success) throw new Error(data.error || 'Erreur inconnue.');
+
+        document.getElementById('modal-create').close();
+        window.location.href = '{% url "accounting:demande_fonds_detail" "00000000-0000-0000-0000-000000000000" %}'
+            .replace('00000000-0000-0000-0000-000000000000', data.demande_id);
+    } catch (error) {
+        alert('Erreur: ' + error.message);
+    } finally {
+        submitButton.disabled = false;
+        submitButton.innerHTML = '<i class="fas fa-save mr-2"></i> Créer la Demande';
+    }
+});
+
+populateMonthSelect();
+loadDemandes();
+</script>
+{% endblock %}

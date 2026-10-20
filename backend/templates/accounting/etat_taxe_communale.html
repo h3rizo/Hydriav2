@@ -1,0 +1,763 @@
+{% extends "accounting/base.html" %}
+{% load humanize %}
+
+{% block title %}Etat des Taxes Communales{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <div class="flex justify-between items-center mb-8">
+        <h1 class="text-3xl font-bold">
+            <i class="fas fa-university text-primary mr-3"></i>
+            Etat des Taxes Communales {{ annee }}
+        </h1>
+
+        <div class="flex gap-2">
+            <a href="?annee={{ annee }}&print=true{% if selected_organisation_id %}&organisation_id={{ selected_organisation_id }}{% endif %}{% if selected_region_id %}&region_id={{ selected_region_id }}{% endif %}{% if selected_district_id %}&district_id={{ selected_district_id }}{% endif %}" target="_blank" class="btn btn-primary">
+                <i class="fas fa-print mr-2"></i>
+                Imprimer Toutes les Factures
+            </a>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-200 shadow mb-8">
+        <div class="card-body">
+            <div class="alert alert-info py-2 mb-4">
+                <i class="fas fa-info-circle"></i>
+                <span>
+                    Règle de calcul: l'année des taxes est basée sur la <strong>DateRec</strong> (date de paiement comptable),
+                    même si la description "Paiement au volume ... 01/MM/YYYY" indique une période facturée d'une autre année.
+                </span>
+            </div>
+            <h3 class="card-title text-lg mb-4">
+                <i class="fas fa-filter mr-2"></i>Filtres
+            </h3>
+            <form method="get" id="taxes-filter-form" class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Année</span></label>
+                    <input type="number" name="annee" value="{{ annee }}" class="input input-bordered">
+                </div>
+                
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Région</span></label>
+                    <select name="region_id" id="region-select" class="select select-bordered" onchange="onRegionChange(this.form)">
+                        <option value="">Toutes les régions</option>
+                        {% for region in all_regions %}
+                        <option value="{{ region.id }}" {% if selected_region_id == region.id|stringformat:"s" %}selected{% endif %}>
+                            {{ region.nom_region }}
+                        </option>
+                        {% endfor %}
+                    </select>
+
+                    <label class="label mt-2"><span class="label-text">District</span></label>
+                    <select name="district_id" id="district-select" class="select select-bordered" onchange="this.form.submit()">
+                        <option value="">Tous les districts</option>
+                        {% for district in all_districts %}
+                        <option value="{{ district.id }}" {% if selected_district_id == district.id|stringformat:"s" %}selected{% endif %}>
+                            {{ district.nom_district }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Communes</span></label>
+                    <select name="commune_id" id="commune-select" class="select select-bordered" multiple size="3">
+                        {% for commune in all_communes %}
+                        <option value="{{ commune.id }}" {% if commune.id|stringformat:"s" in selected_commune_ids %}selected{% endif %}>
+                            {{ commune.nom_commune }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <label class="label"><span class="label-text-alt">Ctrl+clic pour multi-sélection</span></label>
+                </div>
+                
+                <div class="form-control justify-end">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-search mr-2"></i>Filtrer
+                    </button>
+                    <a href="?annee={{ annee }}" class="btn btn-ghost btn-sm mt-2">
+                        <i class="fas fa-times mr-1"></i>Réinitialiser
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Résumé global -->
+    <div class="stats shadow w-full mb-8">
+        <div class="stat">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-coins text-3xl"></i>
+            </div>
+            <div class="stat-title">Total Taxes à Payer</div>
+            <div class="stat-value text-primary">{{ total_general_taxe|floatformat:0|intcomma }} Ar</div>
+            <div class="stat-desc">Pour l'année {{ annee }}</div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-figure text-secondary">
+                <i class="fas fa-map-marked-alt text-3xl"></i>
+            </div>
+            <div class="stat-title">Communes Concernées</div>
+            <div class="stat-value text-secondary">{{ rapport|length }}</div>
+        </div>
+        
+        <div class="stat">
+            <div class="stat-figure text-accent">
+                <i class="fas fa-water text-3xl"></i>
+            </div>
+            <div class="stat-title">Total Ouvrages</div>
+            <div class="stat-value text-accent">{{ total_ouvrages }}</div>
+        </div>
+    </div>
+
+    <!-- Graphiques comparatifs -->
+    {% if rapport|length > 1 %}
+    <div class="collapse collapse-arrow bg-base-100 shadow mb-8">
+        <input id="charts-collapse-toggle" type="checkbox" />
+        <div class="collapse-title text-lg font-semibold">
+            <i class="fas fa-chart-bar mr-2 text-primary"></i>
+            Graphiques comparatifs
+        </div>
+        <div class="collapse-content">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-2">
+                <div class="card bg-base-100 shadow-xl">
+                    <div class="card-body">
+                        <h3 class="card-title"><i class="fas fa-chart-bar mr-2 text-primary"></i>Taxes par Commune</h3>
+                        <canvas id="taxesChart" height="300"></canvas>
+                    </div>
+                </div>
+                
+                <div class="card bg-base-100 shadow-xl">
+                    <div class="card-body">
+                        <h3 class="card-title"><i class="fas fa-chart-bar mr-2 text-accent"></i>Ouvrages par Commune</h3>
+                        <canvas id="ouvragesChart" height="300"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Liste par Commune -->
+    {% for item in rapport %}
+    <div class="card bg-base-100 shadow-xl mb-6">
+        <div class="card-body">
+            <div class="flex justify-between items-center">
+                <h2 class="card-title text-2xl">
+                    {{ item.commune.nom_commune }}
+                    <span class="text-sm font-normal opacity-70">({{ item.commune.district.nom_district }})</span>
+                </h2>
+                <div class="flex items-center gap-3">
+                    <div class="flex flex-col items-end">
+                        <span class="text-xs opacity-60">Taxe Finale à payer</span>
+                        <div class="badge badge-lg badge-primary font-bold">{{ item.total_taxe|floatformat:0|intcomma }} Ar</div>
+                    </div>
+                    <span class="badge badge-outline">{{ item.nb_ouvrages }} ouvrage{{ item.nb_ouvrages|pluralize }}</span>
+                    <a href="?annee={{ annee }}&print=true&print_commune_id={{ item.commune.id }}{% if selected_organisation_id %}&organisation_id={{ selected_organisation_id }}{% endif %}{% if selected_region_id %}&region_id={{ selected_region_id }}{% endif %}{% if selected_district_id %}&district_id={{ selected_district_id }}{% endif %}" target="_blank"
+                        class="btn btn-sm btn-outline btn-primary" title="Imprimer cette facture">
+                        <i class="fas fa-print"></i>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Section Mode de Paiement -->
+            <div class="bg-base-200 rounded-lg p-4 mt-4">
+                <h3 class="font-bold text-sm uppercase tracking-wider text-base-content/70 mb-3">
+                    <i class="fas fa-credit-card mr-2"></i>
+                    Instructions de paiement pour la commune
+                </h3>
+                <div class="flex flex-wrap items-end gap-4">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Mode de paiement</span></label>
+                        <select class="select select-bordered select-sm" id="mode-paiement-{{ item.commune.id }}" onchange="toggleAccountField('{{ item.commune.id }}')">
+                            <option value="caisse" {% if not item.info_paiement or item.info_paiement.mode_paiement == 'caisse' %}selected{% endif %}>Paiement direct à la caisse</option>
+                            <option value="versement" {% if item.info_paiement.mode_paiement == 'versement' %}selected{% endif %}>Versement avec numéro de compte</option>
+                        </select>
+                    </div>
+                    <div class="form-control {% if item.info_paiement.mode_paiement != 'versement' %}hidden{% endif %}" id="account-field-{{ item.commune.id }}">
+                        <label class="label"><span class="label-text">Numéro de compte / Référence</span></label>
+                        <input type="text" class="input input-bordered input-sm" id="numero-compte-{{ item.commune.id }}" value="{{ item.info_paiement.numero_compte|default:'' }}" placeholder="RIB ou N° de compte">
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Montant à rembourser cette année</span></label>
+                        <input type="number" class="input input-bordered input-sm" id="montant-imputation-{{ item.commune.id }}" value="{{ item.montant_imputation_saisi|floatformat:0 }}" step="0.01" min="0" placeholder="0">
+                        <label class="label"><span class="label-text-alt">Le reliquat sera recalculé automatiquement</span></label>
+                    </div>
+                    <button class="btn btn-sm btn-secondary" onclick="updateInfoPaiement('{{ item.commune.id }}')">
+                        <i class="fas fa-save mr-1"></i> Enregistrer
+                    </button>
+                </div>
+            </div>
+
+            <!-- Section Remboursements -->
+            <div class="bg-base-200 rounded-lg p-4 mt-4">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="font-bold text-sm uppercase tracking-wider text-base-content/70">
+                        <i class="fas fa-hand-holding-usd mr-2"></i>
+                        Solde à rembourser par la commune
+                    </h3>
+                    <button class="btn btn-xs btn-outline btn-secondary" onclick="openAddRemboursementModal('{{ item.commune.id }}', '{{ item.commune.nom_commune|escapejs }}')">
+                        <i class="fas fa-plus mr-1"></i> Ajouter un montant au solde
+                    </button>
+                </div>
+
+                {% if item.remboursements %}
+                <div class="overflow-x-auto">
+                    <table class="table table-compact w-full bg-base-100">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Désignation</th>
+                                <th class="text-right">Montant</th>
+                                <th class="text-center">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for remb in item.remboursements %}
+                            <tr>
+                                <td class="text-xs">{{ remb.date_remboursement|date:"d/m/Y" }}</td>
+                                <td class="text-xs">{{ remb.designation }}</td>
+                                <td class="text-right text-xs font-semibold text-secondary">- {{ remb.montant|floatformat:0|intcomma }} Ar</td>
+                                <td class="text-center">
+                                    <button class="btn btn-ghost btn-xs text-error" onclick="deleteRemboursement('{{ remb.id }}')" title="Supprimer">
+                                        <i class="fas fa-trash-alt"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                        <tfoot>
+                            <tr class="bg-base-300 font-bold">
+                                <td colspan="2">TOTAL REMBOURSEMENTS ENREGISTRES</td>
+                                <td class="text-right text-secondary">{{ item.total_remboursements|floatformat:0|intcomma }} Ar</td>
+                                <td></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-2 text-sm opacity-50 italic">
+                    Aucun remboursement enregistré pour cette commune en {{ annee }}.
+                </div>
+                {% endif %}
+
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 mt-3">
+                    <div class="bg-base-100 rounded border border-base-300 p-3 text-sm">
+                        <div class="opacity-60 text-xs">Solde reporté avant {{ annee }}</div>
+                        <div class="font-bold">{{ item.solde_reporte_avant_annee|floatformat:0|intcomma }} Ar</div>
+                    </div>
+                    <div class="bg-base-100 rounded border border-base-300 p-3 text-sm">
+                        <div class="opacity-60 text-xs">Montants ajoutés en {{ annee }}</div>
+                        <div class="font-bold">{{ item.total_remboursements|floatformat:0|intcomma }} Ar</div>
+                    </div>
+                    <div class="bg-base-100 rounded border border-base-300 p-3 text-sm">
+                        <div class="opacity-60 text-xs">Total disponible à rembourser</div>
+                        <div class="font-bold text-secondary">{{ item.total_disponible_a_rembourser|floatformat:0|intcomma }} Ar</div>
+                    </div>
+                    <div class="bg-base-100 rounded border border-base-300 p-3 text-sm">
+                        <div class="opacity-60 text-xs">Imputé sur la taxe {{ annee }}</div>
+                        <div class="font-bold text-secondary">- {{ item.montant_rembourse_cette_annee|floatformat:0|intcomma }} Ar</div>
+                    </div>
+                    <div class="bg-base-100 rounded border border-base-300 p-3 text-sm">
+                        <div class="opacity-60 text-xs">Reliquat à reporter</div>
+                        <div class="font-bold text-warning">{{ item.montant_rembourse_reporte|floatformat:0|intcomma }} Ar</div>
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-6 mt-3 border-t border-base-300 pt-2">
+                    <div class="text-right">
+                        <span class="text-xs opacity-60">Taxe Brute :</span>
+                        <span class="font-semibold ml-2">{{ item.total_taxe_brute|floatformat:0|intcomma }} Ar</span>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-xs opacity-60">Imputé sur cette année :</span>
+                        <span class="font-semibold text-secondary ml-2">- {{ item.montant_rembourse_cette_annee|floatformat:0|intcomma }} Ar</span>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-xs opacity-60">Reste à rembourser années suivantes :</span>
+                        <span class="font-semibold text-warning ml-2">{{ item.montant_rembourse_reporte|floatformat:0|intcomma }} Ar</span>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-xs font-bold">NET À PAYER :</span>
+                        <span class="font-bold text-primary ml-2">{{ item.total_taxe|floatformat:0|intcomma }} Ar</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto mt-4">
+                <table class="table table-zebra w-full">
+                    <thead>
+                        <tr>
+                            <th>Ouvrage</th>
+                            <th class="text-right">Base 7%</th>
+                            <th class="text-right">Taxe 7%</th>
+                            <th class="text-right">Base 50%</th>
+                            <th class="text-right">Taxe 50%</th>
+                            <th class="text-right">Total Taxe</th>
+                            <th class="text-center">Sources</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for ouvrage_key, data in item.ouvrages.items %}
+                        {% if data.comptes %}
+                        {% for code, compte in data.comptes.items %}
+                        <tr>
+                            <td class="font-medium">
+                                {{ data.nom_ouvrage }}
+                                <div class="badge badge-sm badge-outline">{{ compte.label }}</div>
+                            </td>
+                            <td class="text-right">
+                                {% if compte.taux_str == '7%' %}
+                                {{ compte.montant|floatformat:0|intcomma }} Ar
+                                {% endif %}
+                            </td>
+                            <td class="text-right text-warning">
+                                {% if compte.taux_str == '7%' %}
+                                {{ compte.taxe|floatformat:0|intcomma }} Ar
+                                {% endif %}
+                            </td>
+                            <td class="text-right">
+                                {% if compte.taux_str == '50%' %}
+                                {{ compte.montant|floatformat:0|intcomma }} Ar
+                                {% endif %}
+                            </td>
+                            <td class="text-right text-error">
+                                {% if compte.taux_str == '50%' %}
+                                {{ compte.taxe|floatformat:0|intcomma }} Ar
+                                {% endif %}
+                            </td>
+                            <td class="text-right font-bold">{{ compte.taxe|floatformat:0|intcomma }} Ar</td>
+                            <td class="text-center">
+                                <button class="btn btn-ghost btn-xs text-info" 
+                                        onclick='showSourceDetails("{{ data.nom_ouvrage|escapejs }}", "{{ compte.label|escapejs }}", this)'
+                                        data-details='{{ compte.details_json }}'
+                                        title="Voir les sources DiameX">
+                                    <i class="fas fa-search-plus"></i>
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% else %}
+                        <tr class="opacity-70">
+                            <td class="font-medium">
+                                {{ data.nom_ouvrage }}
+                                <div class="badge badge-sm badge-outline">Aucune recette taxable</div>
+                            </td>
+                            <td class="text-right">0 Ar</td>
+                            <td class="text-right text-warning">0 Ar</td>
+                            <td class="text-right">0 Ar</td>
+                            <td class="text-right text-error">0 Ar</td>
+                            <td class="text-right font-bold">0 Ar</td>
+                            <td class="text-center">-</td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+
+    <!-- Transactions non identifiées -->
+    {% if inconnus %}
+    <div class="collapse collapse-arrow bg-base-200 mt-8">
+        <input type="checkbox" />
+        <div class="collapse-title text-xl font-medium text-warning">
+            <i class="fas fa-exclamation-triangle mr-2"></i>
+            {{ inconnus|length }} Transactions sans commune identifiée
+        </div>
+        <div class="collapse-content">
+            <table class="table table-compact w-full">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Compte</th>
+                        <th>Ouvrage Extrait</th>
+                        <th>Description</th>
+                        <th class="text-right">Taxe potentielle</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for inc in inconnus %}
+                    <tr>
+                        <td>{{ inc.date|date:"d/m/Y" }}</td>
+                        <td>{{ inc.compte }}</td>
+                        <td>{{ inc.ouvrage_nom }}</td>
+                        <td class="text-xs">{{ inc.description|truncatechars:100 }}</td>
+                        <td class="text-right">{{ inc.taxe|floatformat:0|intcomma }} Ar</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<!-- Modal pour les détails -->
+<input type="checkbox" id="details-modal" class="modal-toggle" />
+<div class="modal">
+    <div class="modal-box w-11/12 max-w-5xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-list-ul mr-2 text-primary"></i>
+            Détails DiameX : <span id="modal-ouvrage-name" class="text-primary"></span>
+            <div class="badge badge-outline ml-2" id="modal-compte-label"></div>
+        </h3>
+        
+        <div class="overflow-x-auto max-h-96">
+            <table class="table table-zebra table-compact w-full">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Description</th>
+                        <th class="text-right">Montant</th>
+                        <th class="text-right">Taxe</th>
+                    </tr>
+                </thead>
+                <tbody id="modal-details-body">
+                    <!-- Rempli par JS -->
+                </tbody>
+                <tfoot>
+                    <tr class="font-bold">
+                        <td colspan="2">TOTAL</td>
+                        <td class="text-right" id="modal-total-montant"></td>
+                        <td class="text-right" id="modal-total-taxe"></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+        
+        <div class="modal-action">
+            <label for="details-modal" class="btn">Fermer</label>
+        </div>
+    </div>
+</div>
+
+<!-- Modal pour ajouter un remboursement -->
+<input type="checkbox" id="add-remboursement-modal" class="modal-toggle" />
+<div class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-plus-circle mr-2 text-secondary"></i>
+            Ajouter un remboursement : <span id="add-remb-commune-name" class="text-secondary"></span>
+        </h3>
+        
+        <form id="add-remboursement-form">
+            <input type="hidden" id="add-remb-commune-id" name="commune_id">
+            
+            <div class="form-control mb-3">
+                <label class="label"><span class="label-text">Date du remboursement</span></label>
+                <input type="date" id="add-remb-date" class="input input-bordered w-full" required>
+            </div>
+            
+            <div class="form-control mb-3">
+                <label class="label"><span class="label-text">Désignation / Motif</span></label>
+                <input type="text" id="add-remb-designation" class="input input-bordered w-full" placeholder="Ex: Remboursement pièces de rechange" required>
+            </div>
+            
+            <div class="form-control mb-6">
+                <label class="label"><span class="label-text">Montant (Ar)</span></label>
+                <input type="number" id="add-remb-montant" class="input input-bordered w-full" step="0.01" required>
+            </div>
+            
+            <div class="modal-action">
+                <label for="add-remboursement-modal" class="btn">Annuler</label>
+                <button type="submit" class="btn btn-secondary">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function onRegionChange(form) {
+    const districtSelect = form.querySelector('#district-select');
+    if (districtSelect) {
+        districtSelect.value = '';
+    }
+
+    const communeSelect = form.querySelector('#commune-select');
+    if (communeSelect) {
+        Array.from(communeSelect.options).forEach(option => {
+            option.selected = false;
+        });
+    }
+
+    form.submit();
+}
+
+function showSourceDetails(ouvrage, label, btn) {
+    const details = JSON.parse(btn.getAttribute('data-details'));
+    const body = document.getElementById('modal-details-body');
+    const ouvrageSpan = document.getElementById('modal-ouvrage-name');
+    const labelBadge = document.getElementById('modal-compte-label');
+    
+    ouvrageSpan.textContent = ouvrage;
+    labelBadge.textContent = label;
+    body.innerHTML = '';
+    
+    let totalMontant = 0;
+    let totalTaxe = 0;
+    
+    details.forEach(d => {
+        totalMontant += parseFloat(d.montant);
+        totalTaxe += parseFloat(d.taxe);
+        
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td class="whitespace-nowrap">${d.date}</td>
+            <td class="text-xs">${d.description}</td>
+            <td class="text-right">${Math.round(d.montant).toLocaleString()} Ar</td>
+            <td class="text-right text-warning">${Math.round(d.taxe).toLocaleString()} Ar</td>
+        `;
+        body.appendChild(row);
+    });
+    
+    document.getElementById('modal-total-montant').textContent = Math.round(totalMontant).toLocaleString() + ' Ar';
+    document.getElementById('modal-total-taxe').textContent = Math.round(totalTaxe).toLocaleString() + ' Ar';
+    
+    document.getElementById('details-modal').checked = true;
+}
+
+function openAddRemboursementModal(communeId, communeName) {
+    document.getElementById('add-remb-commune-id').value = communeId;
+    document.getElementById('add-remb-commune-name').textContent = communeName;
+    document.getElementById('add-remb-date').value = new Date().toISOString().split('T')[0];
+    document.getElementById('add-remb-designation').value = '';
+    document.getElementById('add-remb-montant').value = '';
+    document.getElementById('add-remboursement-modal').checked = true;
+}
+
+function toggleAccountField(communeId) {
+    const mode = document.getElementById(`mode-paiement-${communeId}`).value;
+    const field = document.getElementById(`account-field-${communeId}`);
+    if (mode === 'versement') {
+        field.classList.remove('hidden');
+    } else {
+        field.classList.add('hidden');
+    }
+}
+
+function updateInfoPaiement(communeId) {
+    const mode = document.getElementById(`mode-paiement-${communeId}`).value;
+    const num = document.getElementById(`numero-compte-${communeId}`).value;
+    const montantImpute = document.getElementById(`montant-imputation-${communeId}`).value || '0';
+    
+    const data = {
+        action: 'update_info_paiement',
+        commune_id: communeId,
+        mode_paiement: mode,
+        numero_compte: num,
+        annee: "{{ annee }}",
+        montant_impute: montantImpute
+    };
+    
+    fetch('', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}'
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (!result.success) {
+            throw new Error(result.error);
+        }
+        return fetch('', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify({
+                action: 'update_imputation_remboursement',
+                commune_id: communeId,
+                montant_impute: montantImpute,
+                annee: "{{ annee }}"
+            })
+        });
+    })
+    .then(response => response.json())
+    .then(imputationResult => {
+        if (!imputationResult.success) {
+            throw new Error(imputationResult.error);
+        }
+        window.location.reload();
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert("Erreur: " + error.message);
+    });
+}
+
+document.getElementById('add-remboursement-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const data = {
+        action: 'add_remboursement',
+        commune_id: document.getElementById('add-remb-commune-id').value,
+        date: document.getElementById('add-remb-date').value,
+        designation: document.getElementById('add-remb-designation').value,
+        montant: document.getElementById('add-remb-montant').value,
+        annee: "{{ annee }}"
+    };
+    
+    fetch('', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}'
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            window.location.reload();
+        } else {
+            alert("Erreur lors de l'ajout: " + result.error);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert("Erreur réseau");
+    });
+});
+
+function deleteRemboursement(rembId) {
+    if (!confirm("Voulez-vous vraiment supprimer ce remboursement ?")) return;
+    
+    const data = {
+        action: 'delete_remboursement',
+        remboursement_id: rembId
+    };
+    
+    fetch('', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}'
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            window.location.reload();
+        } else {
+            alert("Erreur lors de la suppression: " + result.error);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert("Erreur réseau");
+    });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Données des graphiques
+    const labels = {{ chart_labels|safe }};
+    const taxesData = {{ chart_taxes|safe }};
+    const ouvragesData = {{ chart_ouvrages|safe }};
+    const chartsToggle = document.getElementById('charts-collapse-toggle');
+    let chartsInitialized = false;
+    
+    // Couleurs
+    const colors = [
+        '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6',
+        '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#6366f1'
+    ];
+
+    function initCharts() {
+        if (chartsInitialized) {
+            return;
+        }
+
+        const taxesCtx = document.getElementById('taxesChart');
+        if (taxesCtx) {
+            new Chart(taxesCtx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Montant des Taxes (Ar)',
+                        data: taxesData,
+                        backgroundColor: colors.slice(0, labels.length),
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    return value.toLocaleString() + ' Ar';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        const ouvragesCtx = document.getElementById('ouvragesChart');
+        if (ouvragesCtx) {
+            new Chart(ouvragesCtx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Nombre d\'Ouvrages',
+                        data: ouvragesData,
+                        backgroundColor: '#14b8a6',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                stepSize: 1
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        chartsInitialized = true;
+    }
+
+    if (chartsToggle) {
+        if (chartsToggle.checked) {
+            initCharts();
+        }
+        chartsToggle.addEventListener('change', function() {
+            if (this.checked) {
+                initCharts();
+            }
+        });
+    } else {
+        initCharts();
+    }
+});
+</script>
+{% endblock %}

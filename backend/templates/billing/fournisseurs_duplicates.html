@@ -1,0 +1,351 @@
+{% extends 'accounting/base.html' %}
+{% load humanize %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">{{ title }}</h1>
+            <p class="text-sm text-base-content/70 mt-1">
+                Module separe pour analyser et traiter les doublons fournisseurs sans ralentir la liste principale.
+            </p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <a href="{% url 'billing:fournisseurs_list' %}" class="btn btn-ghost">
+                <i class="fas fa-arrow-left mr-2"></i>Retour fournisseurs
+            </a>
+            <button id="open-merge-modal-btn" type="button" class="btn btn-secondary">
+                <i class="fas fa-code-branch mr-2"></i>Fusionner
+            </button>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-[1.2fr_1fr] gap-4">
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex items-center gap-2">
+                        <h2 class="card-title">Doublons suggeres</h2>
+                        <span class="badge badge-outline">{{ duplicate_groups|length }}</span>
+                    </div>
+                    <label class="label cursor-pointer gap-3 py-0">
+                        <input
+                            id="duplicate-groups-select-all"
+                            type="checkbox"
+                            class="checkbox checkbox-sm"
+                        >
+                        <span class="label-text">Tout selectionner</span>
+                    </label>
+                </div>
+
+                {% if duplicate_groups %}
+                <div class="mt-4 mb-2 flex justify-end">
+                    <button
+                        id="bulk-ignore-duplicates-btn"
+                        type="button"
+                        class="btn btn-ghost btn-sm"
+                        disabled
+                    >
+                        Ne pas fusionner la selection
+                    </button>
+                </div>
+                <div class="space-y-3">
+                    {% for group in duplicate_groups %}
+                    <div class="rounded-xl border border-base-300 p-4">
+                        <div class="flex items-center justify-between gap-3 mb-2">
+                            <div class="flex items-start gap-3">
+                                <input
+                                    type="checkbox"
+                                    class="checkbox checkbox-sm mt-1 duplicate-group-checkbox"
+                                    data-signature="{{ group.signature|escape }}"
+                                    data-label="{{ group.label|escape }}"
+                                    data-item-ids="{{ group.item_ids|join:',' }}"
+                                >
+                                <div>
+                                    <div class="font-semibold">{{ group.label }}</div>
+                                    <div class="text-sm text-base-content/70">{{ group.items|length }} fiches a verifier</div>
+                                    <div class="text-xs text-base-content/60">{{ group.match_label }}</div>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <button type="button" class="btn btn-outline btn-xs duplicate-merge-btn" data-source-id="{{ group.items.0.id }}">Fusionner</button>
+                                <button type="button" class="btn btn-ghost btn-xs text-base-content/70 duplicate-ignore-btn" data-signature="{{ group.signature|escape }}" data-label="{{ group.label|escape }}" data-item-ids="{{ group.item_ids|join:',' }}">Ne pas fusionner</button>
+                            </div>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="table table-sm">
+                                <thead><tr><th>ID XLS</th><th>Nom</th><th>CIN</th><th>NIF</th><th>Adresse</th></tr></thead>
+                                <tbody>
+                                    {% for fournisseur in group.items %}
+                                    <tr>
+                                        <td>{{ fournisseur.idxls|default:"-" }}</td>
+                                        <td>{{ fournisseur.nom_fournisseur }}</td>
+                                        <td>{{ fournisseur.cin|default:"-" }}</td>
+                                        <td>{{ fournisseur.numero_nif|default:"-" }}</td>
+                                        <td>{{ fournisseur.adresse_fournisseur.adresse|default:fournisseur.adresse|default:"-" }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="alert mt-4"><span>Aucun doublon evident detecte.</span></div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <div class="flex items-center gap-2">
+                    <h2 class="card-title">Instructions DiameX</h2>
+                    <span class="badge badge-outline">{{ merge_instructions|length }}</span>
+                </div>
+                {% if merge_instructions %}
+                <div class="space-y-3 max-h-[36rem] overflow-y-auto pr-1 mt-4">
+                    {% for instruction in merge_instructions %}
+                    <div class="rounded-xl border border-base-300 p-4">
+                        <div class="flex items-start justify-between gap-3">
+                            <div>
+                                <div class="font-semibold">{{ instruction.source_nom_display }} -> {{ instruction.target_nom_display }}</div>
+                                <div class="text-sm text-base-content/70">Ancien code: {{ instruction.ancien_idxls|default:"-" }} | Nouveau code: {{ instruction.nouvel_idxls|default:"-" }}</div>
+                            </div>
+                            <span class="badge {% if instruction.statut == 'done' %}badge-success{% else %}badge-warning{% endif %}">{{ instruction.get_statut_display }}</span>
+                        </div>
+                        <p class="text-sm mt-3">{{ instruction.note }}</p>
+                        <textarea id="merge-instruction-comment-{{ instruction.id }}" class="textarea textarea-bordered w-full mt-3" rows="2" placeholder="Commentaire admin">{{ instruction.commentaire_admin }}</textarea>
+                        <div class="mt-3 flex gap-2">
+                            <button type="button" class="btn btn-success btn-xs" onclick="updateMergeInstruction('{{ instruction.id }}', 'done')">Marquer corrige</button>
+                            <button type="button" class="btn btn-outline btn-xs" onclick="updateMergeInstruction('{{ instruction.id }}', 'pending')">Remettre en attente</button>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="alert mt-4"><span>Aucune instruction pour le moment.</span></div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<dialog id="modal-merge-fournisseur" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">Fusionner des fournisseurs</h3>
+        <div class="grid gap-4 mt-4">
+            <div class="form-control">
+                <label class="label"><span class="label-text">Fournisseur a fusionner</span></label>
+                <select id="merge-source-id" class="select select-bordered">
+                    <option value="">Choisir la fiche source</option>
+                    {% for fournisseur in fournisseurs %}
+                    <option value="{{ fournisseur.id }}">{{ fournisseur.nom_fournisseur }}{% if fournisseur.idxls %} [{{ fournisseur.idxls }}]{% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-control">
+                <label class="label"><span class="label-text">Fournisseur a conserver</span></label>
+                <input id="merge-target-search" type="text" list="merge-target-options" class="input input-bordered" placeholder="Rechercher le fournisseur a conserver" oninput="syncMergeTargetSelection()">
+                <input id="merge-target-id" type="hidden">
+                <datalist id="merge-target-options">
+                    {% for fournisseur in fournisseurs %}
+                    <option value="{{ fournisseur.nom_fournisseur }}{% if fournisseur.idxls %} [{{ fournisseur.idxls }}]{% endif %}"></option>
+                    {% endfor %}
+                </datalist>
+            </div>
+        </div>
+        <div class="modal-action">
+            <button type="button" class="btn" onclick="document.getElementById('modal-merge-fournisseur').close()">Annuler</button>
+            <button type="button" class="btn btn-secondary" onclick="submitMergeFournisseur()">Fusionner</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+const mergeTargetOptions = {
+    {% for fournisseur in fournisseurs %}
+    "{{ fournisseur.nom_fournisseur|escapejs }}{% if fournisseur.idxls %} [{{ fournisseur.idxls }}]{% endif %}": "{{ fournisseur.id }}",
+    {% endfor %}
+};
+
+function getCookie(name) {
+    const cookieValue = document.cookie
+        .split('; ')
+        .find(row => row.startsWith(name + '='));
+    return cookieValue ? decodeURIComponent(cookieValue.split('=')[1]) : '';
+}
+
+function openMergeModal(sourceId = '') {
+    const modal = document.getElementById('modal-merge-fournisseur');
+    const sourceSelect = document.getElementById('merge-source-id');
+    const targetIdInput = document.getElementById('merge-target-id');
+    const targetSearchInput = document.getElementById('merge-target-search');
+    if (sourceSelect) sourceSelect.value = sourceId || '';
+    if (targetIdInput) targetIdInput.value = '';
+    if (targetSearchInput) targetSearchInput.value = '';
+    modal.showModal();
+}
+
+function syncMergeTargetSelection() {
+    const targetSearchInput = document.getElementById('merge-target-search');
+    const targetIdInput = document.getElementById('merge-target-id');
+    if (!targetSearchInput || !targetIdInput) return;
+    targetIdInput.value = mergeTargetOptions[targetSearchInput.value] || '';
+}
+
+async function submitMergeFournisseur() {
+    const sourceId = document.getElementById('merge-source-id')?.value || '';
+    const targetId = document.getElementById('merge-target-id')?.value || '';
+    if (!sourceId || !targetId) {
+        alert('Selectionnez les deux fournisseurs.');
+        return;
+    }
+    if (sourceId === targetId) {
+        alert('La source et la cible doivent etre differentes.');
+        return;
+    }
+    if (!confirm('La fiche source sera supprimee apres fusion. Continuer ?')) {
+        return;
+    }
+    const response = await fetch('/facturation/api/fournisseurs/merge/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({
+            source_fournisseur_id: sourceId,
+            target_fournisseur_id: targetId
+        })
+    });
+    const data = await response.json();
+    if (data.success) {
+        window.location.reload();
+        return;
+    }
+    alert(data.error || 'Fusion impossible');
+}
+
+async function updateMergeInstruction(instructionId, statut) {
+    const textarea = document.getElementById(`merge-instruction-comment-${instructionId}`);
+    const commentaire_admin = textarea ? textarea.value : '';
+    const response = await fetch(`/facturation/api/fournisseurs/merge-instructions/${instructionId}/update/`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({ statut, commentaire_admin })
+    });
+    const data = await response.json();
+    if (data.success) {
+        window.location.reload();
+        return;
+    }
+    alert(data.error || 'Mise a jour impossible');
+}
+
+async function ignoreDuplicateSuggestion(signature, label, evt = null) {
+    if (!signature) return;
+    if (!confirm(`Retirer la suggestion "${label || 'ce doublon'}" de la liste ?`)) return;
+    const trigger = evt?.currentTarget;
+    const itemIds = trigger?.dataset?.itemIds ? trigger.dataset.itemIds.split(',').filter(Boolean) : [];
+    const response = await fetch('/facturation/api/fournisseurs/duplicate-suggestions/ignore/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({ signature, label, item_ids: itemIds })
+    });
+    const data = await response.json();
+    if (data.success) {
+        window.location.reload();
+        return;
+    }
+    alert(data.error || 'Retrait impossible');
+}
+
+function getDuplicateSuggestionCheckboxes() {
+    return Array.from(document.querySelectorAll('.duplicate-group-checkbox'));
+}
+
+function updateDuplicateSuggestionSelectionState() {
+    const checkboxes = getDuplicateSuggestionCheckboxes();
+    const selectedCount = checkboxes.filter((checkbox) => checkbox.checked).length;
+    const selectAll = document.getElementById('duplicate-groups-select-all');
+    const bulkButton = document.getElementById('bulk-ignore-duplicates-btn');
+    if (selectAll) {
+        selectAll.checked = checkboxes.length > 0 && selectedCount === checkboxes.length;
+        selectAll.indeterminate = selectedCount > 0 && selectedCount < checkboxes.length;
+    }
+    if (bulkButton) {
+        bulkButton.disabled = selectedCount === 0;
+        bulkButton.textContent = selectedCount > 0 ? `Ne pas fusionner la selection (${selectedCount})` : 'Ne pas fusionner la selection';
+    }
+}
+
+function toggleAllDuplicateSuggestions(checked) {
+    getDuplicateSuggestionCheckboxes().forEach((checkbox) => {
+        checkbox.checked = checked;
+    });
+    updateDuplicateSuggestionSelectionState();
+}
+
+async function ignoreSelectedDuplicateSuggestions() {
+    const selectedGroups = getDuplicateSuggestionCheckboxes()
+        .filter((checkbox) => checkbox.checked)
+        .map((checkbox) => ({
+            signature: checkbox.dataset.signature || '',
+            label: checkbox.dataset.label || '',
+            item_ids: (checkbox.dataset.itemIds || '').split(',').filter(Boolean),
+        }))
+        .filter((group) => group.signature);
+    if (!selectedGroups.length) {
+        alert('Selectionnez au moins un doublon suggere.');
+        return;
+    }
+    if (!confirm(`Retirer ${selectedGroups.length} suggestion(s) de doublon de la liste ?`)) return;
+    const response = await fetch('/facturation/api/fournisseurs/duplicate-suggestions/ignore-batch/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({ suggestions: selectedGroups })
+    });
+    const data = await response.json();
+    if (!data.success) {
+        alert(data.error || 'Retrait impossible');
+        return;
+    }
+    window.location.reload();
+}
+
+window.updateDuplicateSuggestionSelectionState = updateDuplicateSuggestionSelectionState;
+window.toggleAllDuplicateSuggestions = toggleAllDuplicateSuggestions;
+window.ignoreSelectedDuplicateSuggestions = ignoreSelectedDuplicateSuggestions;
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('open-merge-modal-btn')?.addEventListener('click', () => openMergeModal());
+    document.getElementById('duplicate-groups-select-all')?.addEventListener('change', (event) => {
+        toggleAllDuplicateSuggestions(Boolean(event.target?.checked));
+    });
+    document.getElementById('bulk-ignore-duplicates-btn')?.addEventListener('click', () => {
+        ignoreSelectedDuplicateSuggestions();
+    });
+
+    document.querySelectorAll('.duplicate-group-checkbox').forEach((checkbox) => {
+        checkbox.addEventListener('change', () => updateDuplicateSuggestionSelectionState());
+    });
+    document.querySelectorAll('.duplicate-merge-btn').forEach((button) => {
+        button.addEventListener('click', () => openMergeModal(button.dataset.sourceId || ''));
+    });
+    document.querySelectorAll('.duplicate-ignore-btn').forEach((button) => {
+        button.addEventListener('click', (event) => ignoreDuplicateSuggestion(button.dataset.signature || '', button.dataset.label || '', event));
+    });
+});
+</script>
+{% endblock %}

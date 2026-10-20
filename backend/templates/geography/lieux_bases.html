@@ -1,0 +1,186 @@
+{% extends 'base.html' %}
+
+{% block title %}Lieux des bases - Hydria{% endblock %}
+
+{% block content %}
+<div class="mx-auto py-4 sm:py-6">
+    <div class="mb-4">
+        <h1 class="text-3xl font-bold"><i class="fas fa-map-pin mr-2 text-warning"></i>Lieux des bases</h1>
+        <p class="text-base-content/70 mt-1">
+            Place chaque base sur la carte : c'est le point de départ des déplacements de ses agents. Il sert à calculer les
+            trajets, les durées et à contrôler les frais de déplacement. Une base en ville (qui n'est pas un village de la liste)
+            se place simplement en cliquant sur la carte.
+        </p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div class="card bg-base-100 shadow lg:col-span-1">
+            <div class="card-body p-4">
+                <h2 class="card-title text-lg">Bases <span id="badge" class="badge badge-warning">0</span></h2>
+                <div id="liste-loading" class="flex items-center gap-2 text-sm"><span class="loading loading-spinner loading-sm"></span> Chargement...</div>
+                <div id="liste" class="flex flex-col gap-2 overflow-y-auto" style="max-height: 62vh;"></div>
+            </div>
+        </div>
+
+        <div id="carte-card" class="card bg-base-100 shadow lg:col-span-2 scroll-mt-16">
+            <div class="card-body p-4">
+                <div id="panneau" class="hidden mb-2 sticky top-14 z-[1100] -mx-1 px-1 py-2 bg-base-100/95 backdrop-blur rounded-lg">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span id="titre" class="font-semibold"></span>
+                        <span id="info" class="badge badge-ghost"></span>
+                        <div class="ml-auto flex flex-wrap gap-2">
+                            <button class="btn btn-ghost btn-sm" onclick="effacer()"><i class="fas fa-eraser mr-1"></i>Retirer le lieu</button>
+                            <button id="btn-enreg" class="btn btn-success btn-sm" onclick="enregistrer()"><i class="fas fa-check mr-1"></i>Enregistrer</button>
+                        </div>
+                    </div>
+                    <div id="suggestions" class="flex flex-wrap items-center gap-2 mt-2"></div>
+                    <p class="text-xs text-base-content/60 mt-1">Clique sur la carte (ou glisse le repère) pour placer la base.</p>
+                </div>
+                <div class="relative">
+                    <div id="carte" class="rounded-lg" style="height: 62vh; min-height: 400px;"></div>
+                    <div id="vide" class="absolute inset-0 z-[500] flex items-center justify-center pointer-events-none">
+                        <p class="rounded-lg bg-base-100/85 px-4 py-2 text-sm text-center">Choisis une base dans la liste</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="toast" class="toast toast-end hidden z-50"><div id="toast-msg" class="alert alert-success"></div></div>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const URL_LISTE = "{% url 'geography:api_bases_liste' %}";
+const URL_LIEU = "{% url 'geography:api_bases_liste' %}";   // + <id>/lieu/
+let carte, repere = null, bases = [], courante = null, choix = null;   // choix = {lon, lat, village_id}
+
+function getCookie(name) {
+    const v = document.cookie.split('; ').find(r => r.startsWith(name + '='));
+    return v ? decodeURIComponent(v.split('=')[1]) : null;
+}
+function toast(msg, ok = true) {
+    const box = document.getElementById('toast'), m = document.getElementById('toast-msg');
+    m.className = 'alert ' + (ok ? 'alert-success' : 'alert-error');
+    m.textContent = msg;
+    box.classList.remove('hidden');
+    setTimeout(() => box.classList.add('hidden'), 3500);
+}
+function el(tag, classe, texte) {
+    const e = document.createElement(tag);
+    if (classe) e.className = classe;
+    if (texte !== undefined) e.textContent = texte;
+    return e;
+}
+const fmtDist = m => m >= 1000 ? (m / 1000).toFixed(1).replace('.', ',') + ' km' : Math.round(m) + ' m';
+
+function initCarte() {
+    carte = L.map('carte').setView([-18.9, 47.5], 6);
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' });
+    const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        { maxZoom: 21, maxNativeZoom: 17, attribution: 'Imagery &copy; Esri' });
+    osm.addTo(carte);
+    L.control.layers({ 'Plan': osm, 'Satellite': sat }).addTo(carte);
+    carte.on('click', e => { if (courante) placer(e.latlng.lng, e.latlng.lat, null); });
+}
+
+async function charger() {
+    try {
+        const r = await fetch(URL_LISTE);
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Erreur');
+        bases = d.bases;
+        afficherListe();
+    } catch (e) { toast('Chargement impossible : ' + e.message, false); }
+    finally { document.getElementById('liste-loading').classList.add('hidden'); }
+}
+
+function afficherListe() {
+    const box = document.getElementById('liste');
+    box.replaceChildren();
+    document.getElementById('badge').textContent = bases.filter(b => !b.lieu).length + ' à placer';
+    bases.forEach(b => {
+        const actif = courante && courante.id === b.id;
+        const item = el('button', 'text-left border rounded-lg p-2 hover:bg-base-200 ' + (actif ? 'bg-base-200 border-primary ring-1 ring-primary' : 'border-base-300'));
+        const tete = el('div', 'flex items-center gap-2 text-sm font-semibold', b.nom);
+        tete.appendChild(el('span', 'badge badge-sm ' + (b.lieu ? 'badge-success' : 'badge-warning'), b.lieu ? 'placée' : 'à placer'));
+        const detail = el('div', 'text-xs text-base-content/70');
+        detail.textContent = b.organisation + ' · ' + b.nb_employes + ' agent(s)' +
+            (b.lieu ? ' · ' + b.lieu.libelle + (b.distance_route_m != null ? ' · route à ' + fmtDist(b.distance_route_m) : '') : '');
+        item.append(tete, detail);
+        item.onclick = () => selectionner(b);
+        box.appendChild(item);
+    });
+}
+
+function selectionner(b) {
+    courante = b;
+    choix = b.lieu ? { lon: b.lieu.lon, lat: b.lieu.lat, village_id: b.lieu.village_id } : null;
+    afficherListe();
+    document.getElementById('vide').classList.add('hidden');
+    document.getElementById('panneau').classList.remove('hidden');
+    document.getElementById('titre').textContent = b.nom;
+    if (window.innerWidth < 1024) document.getElementById('carte-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const sug = document.getElementById('suggestions');
+    sug.replaceChildren();
+    b.suggestions.forEach(v => {
+        const bouton = el('button', 'btn btn-outline btn-xs', 'Utiliser le village « ' + v.nom + ' »' + (v.commune ? ' (' + v.commune + ')' : ''));
+        bouton.onclick = () => { placer(v.lon, v.lat, v.id); carte.setView([v.lat, v.lon], 13); };
+        sug.appendChild(bouton);
+    });
+    if (choix) { placer(choix.lon, choix.lat, choix.village_id); carte.setView([choix.lat, choix.lon], 13); }
+    else { if (repere) { carte.removeLayer(repere); repere = null; } majInfo(); carte.setView([-18.9, 47.5], 6); }
+}
+
+function placer(lon, lat, villageId) {
+    choix = { lon, lat, village_id: villageId };
+    if (!repere) {
+        repere = L.marker([lat, lon], { draggable: true }).addTo(carte);
+        repere.on('dragend', e => { const p = e.target.getLatLng(); choix = { lon: p.lng, lat: p.lat, village_id: null }; majInfo(); });
+    } else repere.setLatLng([lat, lon]);
+    majInfo();
+}
+
+function majInfo() {
+    const info = document.getElementById('info');
+    info.textContent = choix ? choix.lat.toFixed(5) + ', ' + choix.lon.toFixed(5) + (choix.village_id ? ' (village)' : '') : 'Pas de lieu';
+}
+
+async function envoyer(corps) {
+    const r = await fetch(URL_LIEU + courante.id + '/lieu/', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') }, body: JSON.stringify(corps) });
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error || 'Erreur');
+    const i = bases.findIndex(b => b.id === d.base.id);
+    bases[i] = d.base;
+    courante = d.base;
+    afficherListe();
+    return d.base;
+}
+
+async function enregistrer() {
+    if (!courante || !choix) { toast('Place d\'abord la base sur la carte.', false); return; }
+    const bouton = document.getElementById('btn-enreg');
+    bouton.disabled = true;
+    try {
+        const b = await envoyer({ lon: choix.lon, lat: choix.lat, village_id: choix.village_id });
+        const route = b.distance_route_m != null ? ' Route la plus proche à ' + fmtDist(b.distance_route_m) + '.' : '';
+        toast('Lieu de « ' + b.nom + ' » enregistré.' + route, !(b.distance_route_m > 5000));
+    } catch (e) { toast(e.message, false); }
+    finally { bouton.disabled = false; }
+}
+
+async function effacer() {
+    if (!courante) return;
+    try {
+        await envoyer({ effacer: true });
+        if (repere) { carte.removeLayer(repere); repere = null; }
+        choix = null; majInfo();
+        toast('Lieu retiré.');
+    } catch (e) { toast(e.message, false); }
+}
+
+document.addEventListener('DOMContentLoaded', () => { initCarte(); charger(); });
+</script>
+{% endblock %}

@@ -1,0 +1,767 @@
+{% extends planning_shell_base_template %}
+{% load humanize %}
+{% load planning_extras %}
+
+{% block title %}Gestion Paiements au Volume{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">Gestion des Paiements au Volume</h1>
+            <p class="text-sm text-gray-500 mt-1">
+                <i class="fas fa-calendar mr-1"></i>Année : <span class="font-semibold">{{ annee_filter }}</span>
+            </p>
+        </div>
+        <div class="flex gap-2 items-center">
+            <!-- Sélecteur d'année -->
+            <div class="form-control">
+                <select name="annee_select" id="annee_select" class="select select-bordered select-sm"
+                        onchange="changeAnnee(this.value)">
+                    <option value="2020" {% if annee_filter == "2020" %}selected{% endif %}>2020</option>
+                    <option value="2021" {% if annee_filter == "2021" %}selected{% endif %}>2021</option>
+                    <option value="2022" {% if annee_filter == "2022" %}selected{% endif %}>2022</option>
+                    <option value="2023" {% if annee_filter == "2023" %}selected{% endif %}>2023</option>
+                    <option value="2024" {% if annee_filter == "2024" %}selected{% endif %}>2024</option>
+                    <option value="2025" {% if annee_filter == "2025" %}selected{% endif %}>2025</option>
+                    <option value="2026" {% if annee_filter == "2026" %}selected{% endif %}>2026</option>
+                </select>
+            </div>
+            <a href="{% url 'planning:suivi_paiements_global' %}" class="btn btn-info btn-sm">
+                <i class="fas fa-globe mr-2"></i>Vue Globale
+            </a>
+            <button onclick="document.getElementById('modal_impression').showModal()" class="btn btn-success btn-sm">
+                <i class="fas fa-print mr-2"></i>Imprimer
+            </button>
+            <a href="{% url 'core:dashboard_payments_volume' %}" class="btn btn-outline btn-sm">
+                <i class="fas fa-arrow-left mr-2"></i>Retour au Dashboard
+            </a>
+        </div>
+    </div>
+
+    <!-- Statistiques -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div class="stats shadow">
+            <div class="stat">
+                <div class="stat-figure text-primary">
+                    <i class="fas fa-tint fa-2x"></i>
+                </div>
+                <div class="stat-title">Total Relevés</div>
+                <div class="stat-value text-primary">{{ total_releves|intcomma }}</div>
+                <div class="stat-desc">{{ volume_total|floatformat:0|intcomma }} m³</div>
+            </div>
+        </div>
+
+        <div class="stats shadow">
+            <div class="stat">
+                <div class="stat-figure text-success">
+                    <i class="fas fa-check-circle fa-2x"></i>
+                </div>
+                <div class="stat-title">Payé</div>
+                <div class="stat-value text-success">{{ montant_paye_k|floatformat:0|intcomma }}K</div>
+                <div class="stat-desc">{{ nb_paye|intcomma }} relevés</div>
+            </div>
+        </div>
+
+        <div class="stats shadow">
+            <div class="stat">
+                <div class="stat-figure text-warning">
+                    <i class="fas fa-clock fa-2x"></i>
+                </div>
+                <div class="stat-title">En attente</div>
+                <div class="stat-value text-warning">{{ montant_attente_k|floatformat:0|intcomma }}K</div>
+                <div class="stat-desc">{{ nb_attente|intcomma }} relevés</div>
+            </div>
+        </div>
+
+        <div class="stats shadow">
+            <div class="stat">
+                <div class="stat-figure text-info">
+                    <div class="radial-progress text-info" style="--value:{{ taux_recouvrement|floatformat:0 }}; --size:3.5rem; --thickness: 0.3rem;" role="progressbar">
+                        {{ taux_recouvrement|floatformat:0 }}%
+                    </div>
+                </div>
+                <div class="stat-title">Taux recouvrement</div>
+                <div class="stat-value text-info">{{ taux_recouvrement|floatformat:0 }}%</div>
+                <div class="stat-desc">sur {{ montant_total_k|floatformat:0|intcomma }}K Ar</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow-md mb-6">
+        <div class="card-body">
+            <h3 class="font-bold text-lg mb-4"><i class="fas fa-filter mr-2"></i>Filtres</h3>
+            <form method="GET" id="filterForm">
+                <input type="hidden" name="annee" value="{{ annee_filter }}">
+
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Commune</span></label>
+                        <select name="commune" id="commune_filter" class="select select-bordered select-sm">
+                            <option value="">Toutes les communes</option>
+                            {% for commune in communes %}
+                            <option value="{{ commune.id }}" {% if commune_id == commune.id|stringformat:"s" %}selected{% endif %}>
+                                {{ commune.nom_commune }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Ouvrage</span></label>
+                        <select name="ouvrage" id="ouvrage_filter" class="select select-bordered select-sm">
+                            <option value="">Tous les ouvrages</option>
+                            {% for ouvrage in ouvrages %}
+                            <option value="{{ ouvrage.id }}" {% if ouvrage_id == ouvrage.id|stringformat:"s" %}selected{% endif %}>
+                                {{ ouvrage.nom_ouvrage }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Point d'eau</span></label>
+                        <select name="point_eau" id="point_eau_filter" class="select select-bordered select-sm">
+                            <option value="">Tous les points d'eau</option>
+                            {% for point_eau in points_eau %}
+                            <option value="{{ point_eau.id }}"
+                                    data-ouvrage="{{ point_eau.ouvrage_id_str }}"
+                                    {% if point_eau_id == point_eau.id|stringformat:"s" %}selected{% endif %}>
+                                {{ point_eau.display_name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Statut</span></label>
+                        <select name="statut" class="select select-bordered select-sm">
+                            <option value="">Tous les statuts</option>
+                            <option value="paye" {% if statut_filter == 'paye' %}selected{% endif %}>Payé</option>
+                            <option value="en_attente" {% if statut_filter == 'en_attente' %}selected{% endif %}>En attente</option>
+                            <option value="impaye" {% if statut_filter == 'impaye' %}selected{% endif %}>Impayé</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Date début</span></label>
+                        <input type="date" name="date_debut" value="{{ date_debut }}" class="input input-bordered input-sm">
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Date fin</span></label>
+                        <input type="date" name="date_fin" value="{{ date_fin }}" class="input input-bordered input-sm">
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">N° DiameX</span></label>
+                        <select name="avec_numero_diamex" class="select select-bordered select-sm">
+                            <option value="">Tous</option>
+                            <option value="true" {% if avec_numero_diamex == 'true' %}selected{% endif %}>Avec N° DiameX (Payé)</option>
+                            <option value="false" {% if avec_numero_diamex == 'false' %}selected{% endif %}>Sans N° DiameX</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="flex gap-2">
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="fas fa-search mr-2"></i>Appliquer les filtres
+                    </button>
+                    <a href="{% url 'planning:gestion_volumetrique' %}?annee={{ annee_filter }}" class="btn btn-ghost btn-sm">
+                        <i class="fas fa-times mr-2"></i>Réinitialiser
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Tableau "Calcul depuis Comptabilité" -->
+    {% if tableau_data %}
+    <div class="card bg-base-100 shadow-md mb-6">
+        <div class="card-body">
+            <h2 class="card-title mb-4">
+                <i class="fas fa-table text-primary mr-2"></i>
+                Suivi Global des Paiements Volumétriques
+                <span class="badge badge-primary badge-sm ml-2">Calcul depuis Comptabilité</span>
+            </h2>
+            <div class="overflow-x-auto">
+                <table class="table table-xs table-pin-rows">
+                    <thead>
+                        <tr>
+                            <th class="bg-base-200">Ouvrage</th>
+                            <th class="bg-base-200 text-center">Type</th>
+                            <th class="bg-base-200 text-center">Nb PE</th>
+                            <th class="bg-base-200 text-center" title="Points d'eau coupés (datearretbranchement renseigné)">
+                                <i class="fas fa-cut text-error mr-1"></i>Coupés
+                            </th>
+                            {% for mois_nom in mois_noms %}
+                            <th class="text-center bg-base-200">{{ mois_nom }}</th>
+                            {% endfor %}
+                            <th class="bg-base-200 text-center">Total</th>
+                            <th class="bg-base-200 text-center">Payés</th>
+                            <th class="bg-base-200 text-center">Impayés</th>
+                            <th class="bg-base-200 text-center">Taux</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for data in tableau_data %}
+                        <!-- Ligne de séparation si changement d'ouvrage (sauf pour le premier) -->
+                        {% if data.nouveau_groupe_ouvrage and not forloop.first %}
+                        <tr class="border-t-4 border-primary/30">
+                            <td colspan="{{ mois_liste|length|add:'8' }}" class="p-0 h-1"></td>
+                        </tr>
+                        {% endif %}
+
+                        <!-- Ligne de sous-total au début de chaque nouveau groupe d'ouvrage -->
+                        {% if data.nouveau_groupe_ouvrage and data.sous_total_ouvrage %}
+                        <tr class="bg-primary/10 font-bold border-b-2 border-primary">
+                            <td colspan="4" class="text-sm">
+                                <i class="fas fa-building mr-2 text-primary"></i>
+                                SOUS-TOTAL : {{ data.sous_total_ouvrage.ouvrage.nom_ouvrage }}
+                            </td>
+
+                            <!-- Colonnes mois avec totaux par mois -->
+                            {% for mois in mois_liste %}
+                            <td class="text-center p-1 text-xs">
+                                {% with mois_st=data.sous_total_ouvrage.mois|lookup:mois %}
+                                    {% if mois_st.total > 0 %}
+                                        <div class="badge badge-ghost badge-sm w-full" title="{{ mois_st.payes }}/{{ mois_st.total }} payés">
+                                            {{ mois_st.total }}
+                                        </div>
+                                    {% else %}
+                                        <span class="text-base-content/20">-</span>
+                                    {% endif %}
+                                {% endwith %}
+                            </td>
+                            {% endfor %}
+
+                            <!-- Stats totales ouvrage -->
+                            <td class="text-center">
+                                <span class="badge badge-info">{{ data.sous_total_ouvrage.total_releves }}</span>
+                            </td>
+                            <td class="text-center">
+                                <span class="badge badge-success">{{ data.sous_total_ouvrage.total_payes }}</span>
+                            </td>
+                            <td class="text-center">
+                                <span class="badge badge-error">{{ data.sous_total_ouvrage.total_impayes }}</span>
+                            </td>
+                            <td class="text-center">
+                                <span class="font-bold {% if data.sous_total_ouvrage.taux >= 80 %}text-success{% elif data.sous_total_ouvrage.taux >= 50 %}text-warning{% else %}text-error{% endif %}">
+                                    {{ data.sous_total_ouvrage.taux }}%
+                                </span>
+                            </td>
+                        </tr>
+                        {% endif %}
+
+                        <tr class="hover {% if data.nouveau_groupe_ouvrage %}bg-base-200/30{% endif %}">
+                            <td class="text-sm">{{ data.ouvrage.nom_ouvrage }}</td>
+                            <td class="text-center">
+                                {% with type_nom=data.type_point_eau.nom_type|upper %}
+                                    {% if 'KIOSQUE' in type_nom %}
+                                        <i class="fas fa-store text-info text-lg" title="{{ data.type_point_eau.nom_type }}"></i>
+                                    {% elif 'BI' in type_nom or 'BORNE' in type_nom %}
+                                        <i class="fas fa-faucet text-primary text-lg" title="{{ data.type_point_eau.nom_type }}"></i>
+                                    {% elif 'BP' in type_nom or 'BRANCHEMENT' in type_nom or 'PRIVÉ' in type_nom or 'PRIVE' in type_nom %}
+                                        <i class="fas fa-home text-success text-lg" title="{{ data.type_point_eau.nom_type }}"></i>
+                                    {% else %}
+                                        <i class="fas fa-tint text-base-content/50 text-lg" title="{{ data.type_point_eau.nom_type }}"></i>
+                                    {% endif %}
+                                {% endwith %}
+                            </td>
+                            <td class="text-center">
+                                <span class="badge badge-ghost badge-sm">{{ data.nb_points_eau }}</span>
+                            </td>
+                            <td class="text-center">
+                                {% if data.nb_coupes > 0 %}
+                                    <span class="badge badge-error badge-sm" title="{{ data.nb_coupes }} point(s) d'eau coupé(s)">
+                                        <i class="fas fa-cut mr-1"></i>{{ data.nb_coupes }}
+                                    </span>
+                                {% else %}
+                                    <span class="text-base-content/20">-</span>
+                                {% endif %}
+                            </td>
+
+                            <!-- Colonnes mois avec indicateurs -->
+                            {% for mois in mois_liste %}
+                            <td class="text-center p-1">
+                                {% with mois_data=data.mois|lookup:mois %}
+                                    {% if mois_data.total > 0 %}
+                                        {% if mois_data.impayes == 0 %}
+                                            <!-- Tout payé -->
+                                            <div class="badge badge-success badge-sm w-full" title="{{ mois_data.payes }}/{{ mois_data.total }} payés">
+                                                <i class="fas fa-check"></i>
+                                            </div>
+                                        {% elif mois_data.payes == 0 %}
+                                            <!-- Rien payé -->
+                                            <div class="badge badge-error badge-sm w-full" title="0/{{ mois_data.total }} payés - {{ mois_data.impayes }} impayé(s)">
+                                                <i class="fas fa-times"></i>
+                                            </div>
+                                        {% else %}
+                                            <!-- Partiellement payé - AFFICHER LE NOMBRE D'IMPAYÉS -->
+                                            <div class="badge badge-warning badge-sm w-full font-bold" title="{{ mois_data.payes }}/{{ mois_data.total }} payés - {{ mois_data.impayes }} impayé(s)">
+                                                {{ mois_data.impayes }}
+                                            </div>
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="text-base-content/20">-</span>
+                                    {% endif %}
+                                {% endwith %}
+                            </td>
+                            {% endfor %}
+
+                            <!-- Stats -->
+                            <td class="text-center">
+                                <span class="badge badge-info badge-sm">{{ data.total_releves }}</span>
+                            </td>
+                            <td class="text-center">
+                                <span class="badge badge-success badge-sm">{{ data.total_payes }}</span>
+                            </td>
+                            <td class="text-center">
+                                <span class="badge badge-error badge-sm">{{ data.total_impayes }}</span>
+                            </td>
+                            <td class="text-center">
+                                <span class="font-semibold {% if data.taux >= 80 %}text-success{% elif data.taux >= 50 %}text-warning{% else %}text-error{% endif %}">
+                                    {{ data.taux }}%
+                                </span>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="{{ mois_liste|length|add:'8' }}" class="text-center py-8 text-base-content/50">
+                                <i class="fas fa-inbox text-4xl mb-2"></i>
+                                <p>Aucune donnée trouvée pour les filtres sélectionnés</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Tableau des relevés -->
+    <div class="card bg-base-100 shadow-md">
+        <div class="card-body">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="font-bold text-lg">
+                    <i class="fas fa-list mr-2"></i>Relevés ({{ releves|length }} affichés / {{ total_releves }} total)
+                </h3>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm w-full">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Commune</th>
+                            <th>Ouvrage</th>
+                            <th>Point d'eau</th>
+                            <th title="Point d'eau coupé"><i class="fas fa-cut text-error"></i></th>
+                            <th>Abonné</th>
+                            <th>Index</th>
+                            <th>Volume (m³)</th>
+                            <th>Volume facturé</th>
+                            <th>Montant (Ar)</th>
+                            <th>N° DiameX</th>
+                            <th>Base DiameX</th>
+                            <th>Statut</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for releve in releves %}
+                        <tr>
+                            <td>
+                                <span class="badge badge-{{ releve.date_indicator_badge }} badge-sm">
+                                    <i class="fas fa-{{ releve.date_indicator_icon }} mr-1"></i>
+                                    {{ releve.datereleve|date:"d/m/Y" }}
+                                </span>
+                            </td>
+                            <td class="text-xs">{{ releve.commune_nom }}</td>
+                            <td class="text-xs">{{ releve.ouvrage_nom }}</td>
+                            <td class="text-xs font-mono">{{ releve.point_eau_nom }}</td>
+                            <td class="text-center">
+                                {% if releve.est_coupe %}
+                                    <i class="fas fa-cut text-error" title="Point d'eau coupé"></i>
+                                {% else %}
+                                    <span class="text-base-content/20">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-xs">{{ releve.abonne|truncatechars:20 }}</td>
+                            <td class="font-mono text-xs">{{ releve.nouvelindex|floatformat:2 }}</td>
+                            <td class="font-mono text-xs">{{ releve.consommation|floatformat:2 }}</td>
+                            <td class="font-mono text-xs font-bold">{{ releve.volume_facture|floatformat:2 }}</td>
+                            <td class="font-mono text-sm" id="montant-{{ releve.id }}">
+                                {% if releve.montant %}
+                                    {{ releve.montant|floatformat:0|intcomma }}
+                                {% else %}
+                                    <span class="text-base-content/40">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="font-mono text-xs" id="numero-diamex-{{ releve.id }}">
+                                {% if releve.numeroDiameX %}
+                                    {{ releve.numeroDiameX }}
+                                {% else %}
+                                    <span class="text-base-content/40">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="font-mono text-xs" id="base-diamex-{{ releve.id }}">
+                                {% if releve.baseDiameX %}
+                                    {{ releve.baseDiameX }}
+                                {% else %}
+                                    <span class="text-base-content/40">-</span>
+                                {% endif %}
+                            </td>
+                            <td id="statut-{{ releve.id }}">
+                                {% if releve.est_paye %}
+                                    <span class="badge badge-success badge-sm">Payé</span>
+                                {% elif releve.statut == 'impaye' %}
+                                    <span class="badge badge-error badge-sm">Impayé</span>
+                                {% else %}
+                                    <span class="badge badge-warning badge-sm">En attente</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <button onclick="openEditModal('{{ releve.id }}', '{{ releve.numeroDiameX|default:'' }}', '{{ releve.baseDiameX|default:'' }}', '{{ releve.montant|default:'' }}')"
+                                        class="btn btn-ghost btn-xs text-primary"
+                                        title="Modifier">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="14" class="text-center text-base-content/60">
+                                <i class="fas fa-inbox fa-2x mb-2"></i>
+                                <p>Aucun relevé trouvé avec les filtres sélectionnés</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% if total_releves > 500 %}
+            <div class="alert alert-info mt-4">
+                <i class="fas fa-info-circle"></i>
+                <span>Seuls les 500 premiers résultats sont affichés. Utilisez les filtres pour affiner votre recherche.</span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Modal de modification DiameX et Montant -->
+<dialog id="modal-edit-diamex" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-edit mr-2"></i>Modifier le relevé
+        </h3>
+
+        <form id="form-edit-diamex" onsubmit="submitEditDiameX(event)">
+            <input type="hidden" id="edit-releve-id" name="releve_id">
+
+            <!-- Montant -->
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Montant (Ar)</span>
+                </label>
+                <input type="number"
+                       id="edit-montant"
+                       name="montant"
+                       step="0.01"
+                       min="0"
+                       class="input input-bordered"
+                       placeholder="Ex: 15000">
+            </div>
+
+            <!-- Numéro DiameX -->
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Numéro DiameX</span>
+                </label>
+                <input type="text"
+                       id="edit-numero-diamex"
+                       name="numeroDiameX"
+                       class="input input-bordered"
+                       placeholder="Ex: FAC-2025-001">
+            </div>
+
+            <!-- Base DiameX -->
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Base DiameX</span>
+                </label>
+                <input type="text"
+                       id="edit-base-diamex"
+                       name="baseDiameX"
+                       class="input input-bordered"
+                       placeholder="Ex: HYDRIA-2025">
+            </div>
+
+            <!-- Message de résultat -->
+            <div id="edit-result-message" class="hidden mb-4"></div>
+
+            <div class="modal-action">
+                <button type="button"
+                        class="btn btn-ghost"
+                        onclick="document.getElementById('modal-edit-diamex').close()">
+                    Annuler
+                </button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<script>
+// Changer d'année
+function changeAnnee(annee) {
+    const form = document.getElementById('filterForm');
+    const anneeInput = form.querySelector('input[name="annee"]');
+    if (anneeInput) {
+        anneeInput.value = annee;
+    } else {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'annee';
+        input.value = annee;
+        form.appendChild(input);
+    }
+    form.submit();
+}
+
+// Filtrage en cascade: Point d'eau selon ouvrage
+const ouvrageFilter = document.getElementById('ouvrage_filter');
+const pointEauFilter = document.getElementById('point_eau_filter');
+
+if (ouvrageFilter && pointEauFilter) {
+    ouvrageFilter.addEventListener('change', function() {
+        const ouvrageId = this.value;
+        const options = pointEauFilter.querySelectorAll('option');
+
+        options.forEach(option => {
+            if (option.value === '') {
+                option.style.display = 'block';
+                return;
+            }
+
+            const optionOuvrage = option.getAttribute('data-ouvrage');
+            if (!ouvrageId || optionOuvrage === ouvrageId) {
+                option.style.display = 'block';
+            } else {
+                option.style.display = 'none';
+            }
+        });
+
+        // Réinitialiser la sélection si l'option actuellement sélectionnée est cachée
+        if (pointEauFilter.selectedOptions[0] && pointEauFilter.selectedOptions[0].style.display === 'none') {
+            pointEauFilter.value = '';
+        }
+    });
+
+    // Déclencher le filtrage au chargement si un ouvrage est déjà sélectionné
+    if (ouvrageFilter.value) {
+        ouvrageFilter.dispatchEvent(new Event('change'));
+    }
+}
+
+// Ouvrir le modal de modification
+function openEditModal(releveId, numeroDiameX, baseDiameX, montant) {
+    document.getElementById('edit-releve-id').value = releveId;
+    document.getElementById('edit-numero-diamex').value = numeroDiameX || '';
+    document.getElementById('edit-base-diamex').value = baseDiameX || '';
+    document.getElementById('edit-montant').value = montant || '';
+    document.getElementById('edit-result-message').classList.add('hidden');
+    document.getElementById('modal-edit-diamex').showModal();
+}
+
+// Soumettre la modification
+async function submitEditDiameX(event) {
+    event.preventDefault();
+
+    const releveId = document.getElementById('edit-releve-id').value;
+    const numeroDiameX = document.getElementById('edit-numero-diamex').value.trim();
+    const baseDiameX = document.getElementById('edit-base-diamex').value.trim();
+    const montant = document.getElementById('edit-montant').value.trim();
+    const resultDiv = document.getElementById('edit-result-message');
+
+    try {
+        const response = await fetch(`/plannings/volumetrique/api/releve/${releveId}/update-diamex/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                numeroDiameX: numeroDiameX,
+                baseDiameX: baseDiameX,
+                montant: montant
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            // Mettre à jour l'affichage dans le tableau
+            const numeroCell = document.getElementById(`numero-diamex-${releveId}`);
+            const baseCell = document.getElementById(`base-diamex-${releveId}`);
+            const montantCell = document.getElementById(`montant-${releveId}`);
+            const statutCell = document.getElementById(`statut-${releveId}`);
+
+            if (numeroCell) {
+                numeroCell.textContent = numeroDiameX || '-';
+            }
+            if (baseCell) {
+                baseCell.textContent = baseDiameX || '-';
+            }
+            if (montantCell && montant) {
+                const montantFormatted = parseFloat(montant).toLocaleString('fr-FR', {
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 2
+                });
+                montantCell.textContent = montantFormatted;
+            }
+
+            // Mettre à jour le statut si le relevé est maintenant payé
+            if (statutCell && data.releve.est_paye) {
+                statutCell.innerHTML = '<span class="badge badge-success badge-sm">Payé</span>';
+            }
+
+            // Afficher le message de succès
+            resultDiv.innerHTML = `
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle"></i>
+                    <span>${data.message}</span>
+                </div>
+            `;
+            resultDiv.classList.remove('hidden');
+
+            // Fermer le modal après 1.5s
+            setTimeout(() => {
+                document.getElementById('modal-edit-diamex').close();
+            }, 1500);
+        } else {
+            resultDiv.innerHTML = `
+                <div class="alert alert-error">
+                    <i class="fas fa-exclamation-circle"></i>
+                    <span>Erreur: ${data.error}</span>
+                </div>
+            `;
+            resultDiv.classList.remove('hidden');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        resultDiv.innerHTML = `
+            <div class="alert alert-error">
+                <i class="fas fa-exclamation-circle"></i>
+                <span>Erreur réseau: ${error.message}</span>
+            </div>
+        `;
+        resultDiv.classList.remove('hidden');
+    }
+}
+
+// Fonction utilitaire pour récupérer le CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Fonction pour ouvrir la page d'impression avec les communes sélectionnées
+function ouvrirImpressionAvecCommunes() {
+    const checkboxes = document.querySelectorAll('input[name="communes_impression"]:checked:not([value="all"])');
+    const communesIds = Array.from(checkboxes).map(cb => cb.value);
+
+    if (communesIds.length === 0) {
+        alert('Veuillez sélectionner au moins une commune');
+        return;
+    }
+
+    const urlParams = new URLSearchParams(window.location.search);
+    urlParams.set('communes', communesIds.join(','));
+
+    const url = "{% url 'planning:impression_gestion_volumetrique' %}?" + urlParams.toString();
+    window.open(url, '_blank', 'width=1400,height=900,toolbar=yes,scrollbars=yes');
+    document.getElementById('modal_impression').close();
+}
+
+// Toggle sélection toutes communes
+function toggleToutesCommunes(checkbox) {
+    const checkboxes = document.querySelectorAll('input[name="communes_impression"]:not([value="all"])');
+    checkboxes.forEach(cb => cb.checked = checkbox.checked);
+}
+</script>
+
+<!-- Modal de sélection des communes pour impression -->
+<dialog id="modal_impression" class="modal">
+    <div class="modal-box max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-print mr-2"></i>Sélectionner les communes à imprimer
+        </h3>
+
+        <div class="form-control mb-4">
+            <label class="label cursor-pointer justify-start gap-3">
+                <input type="checkbox" class="checkbox checkbox-primary" value="all"
+                       onchange="toggleToutesCommunes(this)" checked>
+                <span class="label-text font-semibold">Toutes les communes</span>
+            </label>
+        </div>
+
+        <div class="divider my-2"></div>
+
+        <div class="max-h-96 overflow-y-auto">
+            {% regroup communes by district as communes_by_district %}
+            {% for district_group in communes_by_district %}
+            <div class="mb-4">
+                <div class="font-bold text-sm text-primary mb-2 sticky top-0 bg-base-100 py-1">
+                    <i class="fas fa-map-marker-alt mr-1"></i>{{ district_group.grouper.nom_district }}
+                </div>
+                <div class="grid grid-cols-2 gap-2 ml-4">
+                    {% for commune in district_group.list %}
+                    <div class="form-control">
+                        <label class="label cursor-pointer justify-start gap-2">
+                            <input type="checkbox" name="communes_impression"
+                                   value="{{ commune.id }}" class="checkbox checkbox-sm" checked>
+                            <span class="label-text text-sm">{{ commune.nom_commune }}</span>
+                        </label>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="modal-action">
+            <button type="button" onclick="ouvrirImpressionAvecCommunes()" class="btn btn-success">
+                <i class="fas fa-print mr-2"></i>Imprimer
+            </button>
+            <button type="button" onclick="document.getElementById('modal_impression').close()" class="btn btn-ghost">
+                Annuler
+            </button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+{% endblock %}

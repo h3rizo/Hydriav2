@@ -1,0 +1,908 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% load employee_grouping %}
+
+{% block title %}Analyse Croisée Paiements{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <!-- En-tête -->
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold mb-2">
+            <i class="fas fa-table text-primary mr-3"></i>
+            Analyse Croisée des Paiements Employés
+        </h1>
+        <p class="text-base-content/70">
+            Matrice de vérification : Employé × Mois × Type de paiement
+        </p>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow-xl mb-6">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-filter mr-2"></i>
+                Filtres
+            </h2>
+
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+                <!-- Année -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Année</span>
+                    </label>
+                    <select id="filter-annee" class="select select-bordered">
+                        {% for annee in annees %}
+                        <option value="{{ annee }}" {% if annee|stringformat:"s" == annee_selectionnee %}selected{% endif %}>{{ annee }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Employé spécifique (NOUVEAU) -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Employé</span>
+                    </label>
+                    <select id="filter-employe" class="select select-bordered">
+                        {% grouped_employee_options employes "" "Tous les employés" %}
+                    </select>
+                </div>
+
+                <!-- Statut employé (NOUVEAU) -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Statut</span>
+                    </label>
+                    <select id="filter-statut" class="select select-bordered">
+                        <option value="all">Tous</option>
+                        <option value="actif" selected>Actifs uniquement</option>
+                        <option value="inactif">Inactifs uniquement</option>
+                    </select>
+                </div>
+
+                <!-- Type de paiement à afficher -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Type à afficher</span>
+                    </label>
+                    <select id="filter-type" class="select select-bordered">
+                        <optgroup label="💰 Salaires">
+                            <option value="salaire">Salaire</option>
+                            <option value="ajustement_salaire">Ajustement salaire</option>
+                            <option value="prime">Prime</option>
+                            <option value="solde_tout_compte">Solde de tout compte</option>
+                            <option value="allocation_terrain">Allocation terrain</option>
+                            <option value="indemnite_compensatrice">Indemnité compensatrice</option>
+                        </optgroup>
+                        <optgroup label="📋 Charges sociales">
+                            <option value="irsa">IRSA</option>
+                            <option value="cnaps">CNaPS</option>
+                            <option value="fmfp">FMFP</option>
+                            <option value="mutuelle_sante">Mutuelle santé</option>
+                        </optgroup>
+                        <optgroup label="🏥 Remboursements">
+                            <option value="frais_medicaux">Frais médicaux</option>
+                            <option value="frais_scolarite">Frais scolarité</option>
+                        </optgroup>
+                        <optgroup label="🚗 Indemnités terrain">
+                            <option value="indemnite_terrain">Indemnité terrain</option>
+                            <option value="indemnite_hors_zone">Indemnité hors zone</option>
+                            <option value="indemnite_stage">Indemnité stage</option>
+                            <option value="frais_deplacement">Frais déplacement</option>
+                        </optgroup>
+                    </select>
+                </div>
+
+                <button class="btn btn-primary" onclick="chargerDonnees()">
+                    <i class="fas fa-sync-alt mr-2"></i>
+                    Actualiser
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistiques (NOUVEAU) -->
+    <div id="stats-container" class="hidden mb-6">
+        <div class="stats stats-vertical lg:stats-horizontal shadow w-full">
+            <div class="stat">
+                <div class="stat-figure text-primary">
+                    <i class="fas fa-users text-3xl"></i>
+                </div>
+                <div class="stat-title">Total employés</div>
+                <div class="stat-value text-primary" id="stat-total-employes">0</div>
+                <div class="stat-desc">
+                    <span id="stat-employes-actifs" class="text-success">0 actifs</span> ·
+                    <span id="stat-employes-inactifs" class="text-base-content/70">0 inactifs</span>
+                </div>
+            </div>
+
+            <div class="stat">
+                <div class="stat-figure text-warning">
+                    <i class="fas fa-exclamation-triangle text-3xl"></i>
+                </div>
+                <div class="stat-title">Employés avec anomalies</div>
+                <div class="stat-value text-warning" id="stat-employes-anomalies">0</div>
+                <div class="stat-desc" id="stat-desc-anomalies">0% du total</div>
+            </div>
+
+            <div class="stat">
+                <div class="stat-figure text-error">
+                    <i class="fas fa-times-circle text-3xl"></i>
+                </div>
+                <div class="stat-title">Total anomalies</div>
+                <div class="stat-value text-error" id="stat-total-anomalies">0</div>
+                <div class="stat-desc">Tous types confondus</div>
+            </div>
+        </div>
+
+        <!-- Détail anomalies par type -->
+        <div class="card bg-base-100 shadow-xl mt-4">
+            <div class="card-body">
+                <h3 class="card-title text-sm">
+                    <i class="fas fa-chart-bar mr-2"></i>
+                    Anomalies par type de paiement
+                </h3>
+                <div id="anomalies-par-type" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
+                    <!-- Rempli par JavaScript -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loader -->
+    <div id="loader" class="hidden text-center py-12">
+        <span class="loading loading-spinner loading-lg text-primary"></span>
+        <p class="mt-4 text-base-content/70">Chargement des données...</p>
+    </div>
+
+    <!-- Tableau matriciel -->
+    <div id="tableau-container" class="hidden">
+        <div class="card bg-base-100 shadow-xl overflow-x-auto">
+            <div class="card-body p-0">
+                <table class="table table-sm table-pin-rows table-pin-cols">
+                    <thead>
+                        <tr class="bg-base-200">
+                            <th class="sticky left-0 z-20 bg-base-200 w-48">Employé</th>
+                            <th class="bg-base-200 w-20">Préfixe</th>
+                            <th class="bg-base-200 w-20 text-center">Jan</th>
+                            <th class="bg-base-200 w-20 text-center">Fév</th>
+                            <th class="bg-base-200 w-20 text-center">Mar</th>
+                            <th class="bg-base-200 w-20 text-center">Avr</th>
+                            <th class="bg-base-200 w-20 text-center">Mai</th>
+                            <th class="bg-base-200 w-20 text-center">Juin</th>
+                            <th class="bg-base-200 w-20 text-center">Juil</th>
+                            <th class="bg-base-200 w-20 text-center">Août</th>
+                            <th class="bg-base-200 w-20 text-center">Sept</th>
+                            <th class="bg-base-200 w-20 text-center">Oct</th>
+                            <th class="bg-base-200 w-20 text-center">Nov</th>
+                            <th class="bg-base-200 w-20 text-center">Déc</th>
+                            <th class="bg-base-200 w-24 text-center">Moyenne</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableau-body">
+                        <!-- Rempli par JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Légende -->
+        <div class="alert alert-info mt-6">
+            <i class="fas fa-info-circle"></i>
+            <div class="w-full">
+                <p class="font-bold mb-2">Légende :</p>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                    <!-- Codes couleurs cellules -->
+                    <div>
+                        <p class="font-semibold mb-1">Codes couleurs cellules :</p>
+                        <ul class="space-y-1">
+                            <li><span class="badge badge-sm bg-green-500/20 text-green-700 mr-2">0-1</span> Normal</li>
+                            <li><span class="badge badge-sm bg-orange-500/20 text-orange-700 mr-2">&gt;1</span> Anomalie potentielle (plusieurs paiements dans le mois)</li>
+                            <li><span class="badge badge-sm bg-red-500/20 text-red-700 mr-2">Moyenne &gt;1</span> Employé avec anomalies récurrentes</li>
+                        </ul>
+                    </div>
+
+                    <!-- Indicateurs employés -->
+                    <div>
+                        <p class="font-semibold mb-1">Indicateurs employés :</p>
+                        <ul class="space-y-1">
+                            <li>
+                                <span class="badge badge-xs badge-warning gap-1 mr-2">
+                                    <i class="fas fa-exclamation-triangle text-xs"></i>Type
+                                </span>
+                                Types de paiement avec anomalies récurrentes
+                            </li>
+                            <li class="text-xs text-base-content/70 ml-6">
+                                Survoler le badge pour voir le nombre de mois concernés
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Message vide -->
+    <div id="message-vide" class="hidden alert alert-warning">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span>Aucune donnée trouvée pour les critères sélectionnés</span>
+    </div>
+</div>
+
+<!-- Modal Détails -->
+<dialog id="modal-details" class="modal">
+    <div class="modal-box max-w-4xl">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+        </form>
+
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-list mr-2 text-primary"></i>
+            Détails des paiements
+        </h3>
+
+        <div id="modal-info" class="bg-base-200 p-4 rounded-lg mb-4">
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <span class="font-semibold">Employé :</span>
+                    <span id="modal-employe"></span>
+                </div>
+                <div>
+                    <span class="font-semibold">Préfixe :</span>
+                    <span id="modal-prefixe"></span>
+                </div>
+                <div>
+                    <span class="font-semibold">Mois :</span>
+                    <span id="modal-mois"></span>
+                </div>
+                <div>
+                    <span class="font-semibold">Type :</span>
+                    <span id="modal-type"></span>
+                </div>
+            </div>
+        </div>
+
+        <div id="modal-loader" class="hidden text-center py-8">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+        </div>
+
+        <div id="modal-content">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm">
+                    <thead>
+                        <tr>
+                            <th class="w-16">ID</th>
+                            <th>Date</th>
+                            <th>Description</th>
+                            <th>Type</th>
+                            <th>Montant</th>
+                            <th>Compte</th>
+                            <th>Base</th>
+                        </tr>
+                    </thead>
+                    <tbody id="modal-tableau">
+                        <!-- Rempli par JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="modal-total" class="mt-4 text-right">
+                <!-- Rempli par JavaScript -->
+            </div>
+        </div>
+
+        <div id="modal-erreur" class="hidden alert alert-error mt-4">
+            <i class="fas fa-exclamation-circle"></i>
+            <span id="modal-erreur-message"></span>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Modal Anomalies par Type -->
+<dialog id="modal-anomalies-type" class="modal">
+    <div class="modal-box max-w-4xl">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+        </form>
+
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-exclamation-triangle mr-2 text-warning"></i>
+            Anomalies - <span id="modal-anomalie-type-titre"></span>
+        </h3>
+
+        <div class="alert alert-info mb-4">
+            <i class="fas fa-info-circle"></i>
+            <span>Liste des employés ayant des mois avec plus d'un paiement pour ce type</span>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="table table-zebra table-sm">
+                <thead>
+                    <tr>
+                        <th>Employé</th>
+                        <th>Préfixe</th>
+                        <th class="text-center">Nb Anomalies</th>
+                        <th>Mois concernés</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="modal-anomalies-tableau">
+                    <!-- Rempli par JavaScript -->
+                </tbody>
+            </table>
+        </div>
+
+        <div id="modal-anomalies-total" class="mt-4 text-right font-bold">
+            <!-- Rempli par JavaScript -->
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<script>
+let donneesGlobales = {};
+const INDEX_COLONNE_EMPLOYE = 0;
+const INDEX_COLONNE_PREFIXE = 1;
+const INDEX_PREMIER_MOIS = 2;
+const INDEX_COLONNE_MOYENNE = 14;
+
+function calculerColonnesVisibles(typeAffiche) {
+    const moisVisibles = new Set();
+    let afficherPrefixe = false;
+    let afficherMoyenne = false;
+
+    Object.values(donneesGlobales).forEach(data => {
+        if ((data.prefixe || '').trim()) {
+            afficherPrefixe = true;
+        }
+
+        if ((data.moyennes?.[typeAffiche] || 0) !== 0) {
+            afficherMoyenne = true;
+        }
+
+        for (let mois = 1; mois <= 12; mois++) {
+            const valeur = data.mois?.[mois.toString()]?.[typeAffiche] || 0;
+            if (valeur !== 0) {
+                moisVisibles.add(mois);
+            }
+        }
+    });
+
+    return {
+        afficherPrefixe,
+        afficherMoyenne,
+        moisVisibles,
+    };
+}
+
+function appliquerVisibiliteColonnes(colonnesVisibles) {
+    const lignes = document.querySelectorAll('#tableau-container table tr');
+    const colonnesCachees = new Set();
+
+    if (!colonnesVisibles.afficherPrefixe) {
+        colonnesCachees.add(INDEX_COLONNE_PREFIXE);
+    }
+
+    for (let mois = 1; mois <= 12; mois++) {
+        if (!colonnesVisibles.moisVisibles.has(mois)) {
+            colonnesCachees.add(INDEX_PREMIER_MOIS + (mois - 1));
+        }
+    }
+
+    if (!colonnesVisibles.afficherMoyenne) {
+        colonnesCachees.add(INDEX_COLONNE_MOYENNE);
+    }
+
+    const totalColonnesVisibles =
+        1 +
+        (colonnesVisibles.afficherPrefixe ? 1 : 0) +
+        colonnesVisibles.moisVisibles.size +
+        (colonnesVisibles.afficherMoyenne ? 1 : 0);
+
+    lignes.forEach(ligne => {
+        const cellules = Array.from(ligne.children);
+
+        if (cellules.length === 1 && cellules[0].hasAttribute('colspan')) {
+            cellules[0].colSpan = totalColonnesVisibles;
+            return;
+        }
+
+        cellules.forEach((cellule, index) => {
+            cellule.style.display = colonnesCachees.has(index) ? 'none' : '';
+        });
+    });
+}
+
+function employeAAfficher(data, typeAffiche) {
+    if ((data.moyennes?.[typeAffiche] || 0) !== 0) {
+        return true;
+    }
+
+    for (let mois = 1; mois <= 12; mois++) {
+        const valeur = data.mois?.[mois.toString()]?.[typeAffiche] || 0;
+        if (valeur !== 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// Charger les données
+async function chargerDonnees() {
+    const annee = document.getElementById('filter-annee').value;
+    const employeId = document.getElementById('filter-employe').value;
+    const statut = document.getElementById('filter-statut').value;
+
+    // Afficher loader
+    document.getElementById('loader').classList.remove('hidden');
+    document.getElementById('tableau-container').classList.add('hidden');
+    document.getElementById('stats-container').classList.add('hidden');
+    document.getElementById('message-vide').classList.add('hidden');
+
+    try {
+        // Construire l'URL avec les filtres
+        let url = `/api/verification-paiements-croisee/?annee=${annee}`;
+        if (employeId) url += `&employe_id=${employeId}`;
+        if (statut !== 'all') url += `&statut=${statut}`;
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (data.success) {
+            donneesGlobales = data.resultats;
+            afficherStatistiques(data.statistiques);  // NOUVEAU
+            afficherTableau();
+        } else {
+            document.getElementById('message-vide').classList.remove('hidden');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        document.getElementById('message-vide').classList.remove('hidden');
+    } finally {
+        document.getElementById('loader').classList.add('hidden');
+    }
+}
+
+// NOUVEAU : Afficher les statistiques
+function afficherStatistiques(stats) {
+    document.getElementById('stats-container').classList.remove('hidden');
+
+    // Statistiques générales
+    document.getElementById('stat-total-employes').textContent = stats.total_employes;
+    document.getElementById('stat-employes-actifs').textContent = `${stats.employes_actifs} actifs`;
+    document.getElementById('stat-employes-inactifs').textContent = `${stats.employes_inactifs} inactifs`;
+    document.getElementById('stat-employes-anomalies').textContent = stats.employes_avec_anomalies;
+
+    const pourcentageAnomalies = stats.total_employes > 0
+        ? Math.round((stats.employes_avec_anomalies / stats.total_employes) * 100)
+        : 0;
+    document.getElementById('stat-desc-anomalies').textContent = `${pourcentageAnomalies}% du total`;
+
+    // Total anomalies
+    const totalAnomalies = Object.values(stats.anomalies_par_type).reduce((sum, val) => sum + val, 0);
+    document.getElementById('stat-total-anomalies').textContent = totalAnomalies;
+
+    // Anomalies par type
+    const container = document.getElementById('anomalies-par-type');
+    container.innerHTML = '';
+
+    const nomsTypes = {
+        'salaire': 'Salaire',
+        'ajustement_salaire': 'Ajust. salaire',
+        'prime': 'Prime',
+        'solde_tout_compte': 'Solde',
+        'allocation_terrain': 'Alloc. terrain',
+        'indemnite_compensatrice': 'Indem. comp.',
+        'irsa': 'IRSA',
+        'cnaps': 'CNaPS',
+        'fmfp': 'FMFP',
+        'mutuelle_sante': 'Mutuelle',
+        'frais_medicaux': 'Frais méd.',
+        'frais_scolarite': 'Scolarité',
+        'indemnite_terrain': 'Indem. terrain',
+        'indemnite_hors_zone': 'Hors zone',
+        'indemnite_stage': 'Stage',
+        'frais_deplacement': 'Déplacement'
+    };
+
+    for (const [type, count] of Object.entries(stats.anomalies_par_type)) {
+        if (count > 0) {
+            const badge = document.createElement('div');
+            badge.className = 'badge badge-error badge-lg gap-2 cursor-pointer hover:badge-warning transition-colors';
+            badge.setAttribute('title', `Cliquer pour voir les détails des ${count} anomalie(s)`);
+            badge.onclick = () => afficherAnomaliesParType(type, nomsTypes[type] || type);
+            badge.innerHTML = `
+                <span class="font-semibold">${nomsTypes[type] || type}</span>
+                <span class="badge badge-sm">${count}</span>
+            `;
+            container.appendChild(badge);
+        }
+    }
+
+    if (Object.keys(stats.anomalies_par_type).length === 0) {
+        container.innerHTML = '<p class="text-success text-sm"><i class="fas fa-check-circle mr-2"></i>Aucune anomalie détectée</p>';
+    }
+}
+
+// Afficher le tableau
+function afficherTableau() {
+    const typeAffiche = document.getElementById('filter-type').value;
+    const colonnesVisibles = calculerColonnesVisibles(typeAffiche);
+    const tbody = document.getElementById('tableau-body');
+    tbody.innerHTML = '';
+
+    // Grouper les employés par base
+    const employesParBase = {};
+    Object.entries(donneesGlobales).forEach(([employeId, data]) => {
+        if (!employeAAfficher(data, typeAffiche)) {
+            return;
+        }
+
+        const baseId = data.base_id || 'sans_base';
+        const baseNom = data.base_nom || 'Sans base';
+
+        if (!employesParBase[baseId]) {
+            employesParBase[baseId] = {
+                nom: baseNom,
+                employes: []
+            };
+        }
+
+        employesParBase[baseId].employes.push([employeId, data]);
+    });
+
+    // Trier les bases par nom
+    const basesTriees = Object.entries(employesParBase).sort((a, b) => {
+        return a[1].nom.localeCompare(b[1].nom);
+    });
+
+    if (basesTriees.length === 0) {
+        document.getElementById('message-vide').classList.remove('hidden');
+        document.getElementById('tableau-container').classList.add('hidden');
+        return;
+    }
+
+    document.getElementById('tableau-container').classList.remove('hidden');
+
+    // Afficher chaque base avec ses employés
+    basesTriees.forEach(([baseId, baseData]) => {
+        // Ligne de séparation pour la base
+        const trBase = document.createElement('tr');
+        trBase.className = 'bg-primary/10';
+        trBase.innerHTML = `
+            <td colspan="15" class="font-bold text-primary py-3">
+                <i class="fas fa-building mr-2"></i>
+                ${baseData.nom}
+                <span class="badge badge-primary badge-sm ml-2">${baseData.employes.length} employé(s)</span>
+            </td>
+        `;
+        tbody.appendChild(trBase);
+
+        // Trier les employés de cette base par surnom
+        const employesTries = baseData.employes.sort((a, b) => {
+            return a[1].surnom.localeCompare(b[1].surnom);
+        });
+
+        // Afficher les employés de cette base
+        employesTries.forEach(([employeId, data]) => {
+        const tr = document.createElement('tr');
+
+        // Classe pour employé inactif
+        const classeInactif = data.actif ? '' : 'opacity-50';
+        tr.className = classeInactif;
+
+        // Colonne Employé avec indicateurs d'anomalies
+        const tdEmploye = document.createElement('td');
+        tdEmploye.className = 'sticky left-0 z-10 bg-base-100 font-semibold';
+
+        // Calculer les anomalies par type pour cet employé
+        const typesAvecAnomalies = [];
+        const nomsTypes = {
+            'salaire': 'Sal', 'ajustement_salaire': 'Ajust', 'prime': 'Prime',
+            'solde_tout_compte': 'Solde', 'allocation_terrain': 'Alloc',
+            'indemnite_compensatrice': 'Indem', 'irsa': 'IRSA', 'cnaps': 'CNaPS',
+            'fmfp': 'FMFP', 'mutuelle_sante': 'Mut', 'frais_medicaux': 'Méd',
+            'frais_scolarite': 'Scol', 'indemnite_terrain': 'IT',
+            'indemnite_hors_zone': 'IHZ', 'indemnite_stage': 'ISt',
+            'frais_deplacement': 'Dép'
+        };
+
+        // Vérifier chaque type de paiement
+        for (const [type, nomCourt] of Object.entries(nomsTypes)) {
+            const moyenne = data.moyennes[type] || 0;
+
+            // Compter le nombre de mois avec anomalie (>1 paiement)
+            let nbMoisAnomalie = 0;
+            for (let mois = 1; mois <= 12; mois++) {
+                const valeur = data.mois[mois.toString()]?.[type] || 0;
+                if (valeur > 1) nbMoisAnomalie++;
+            }
+
+            // Afficher le badge si : moyenne > 1 OU au moins 1 mois avec anomalie
+            // Cela permet de détecter les cas comme "1 anomalie en janvier" même si moyenne ≈ 1.0
+            if (moyenne > 1 || nbMoisAnomalie > 0) {
+                typesAvecAnomalies.push({type, nomCourt, nbMois: nbMoisAnomalie, moyenne});
+            }
+        }
+
+        // Construire les badges d'anomalies
+        let badgesHtml = '';
+        if (typesAvecAnomalies.length > 0) {
+            typesAvecAnomalies.forEach(anomalie => {
+                const tooltip = `${anomalie.nbMois} mois avec >1 paiement (moy: ${anomalie.moyenne.toFixed(2)})`;
+                badgesHtml += `<span class="badge badge-xs badge-warning gap-1 cursor-help" title="${tooltip}">
+                    <i class="fas fa-exclamation-triangle text-xs"></i>${anomalie.nomCourt}
+                </span>`;
+            });
+        }
+
+        tdEmploye.innerHTML = `
+            <div class="flex flex-col gap-1">
+                <div class="flex items-center gap-2">
+                    <span>${data.surnom}</span>
+                    ${!data.actif ? '<span class="badge badge-sm badge-ghost">Inactif</span>' : ''}
+                </div>
+                ${badgesHtml ? `<div class="flex flex-wrap gap-1">${badgesHtml}</div>` : ''}
+            </div>
+        `;
+        tr.appendChild(tdEmploye);
+
+        // Colonne Préfixe
+        const tdPrefixe = document.createElement('td');
+        tdPrefixe.textContent = data.prefixe || '-';
+        tdPrefixe.className = 'text-center font-mono text-sm';
+        tr.appendChild(tdPrefixe);
+
+        // Colonnes mois (1 à 12)
+        for (let mois = 1; mois <= 12; mois++) {
+            const tdMois = document.createElement('td');
+            tdMois.className = 'text-center';
+
+            const valeur = data.mois[mois.toString()]?.[typeAffiche] || 0;
+
+            if (valeur === 0) {
+                tdMois.innerHTML = '<span class="text-base-content/30">-</span>';
+            } else if (valeur === 1) {
+                tdMois.innerHTML = `<span class="badge badge-sm bg-green-500/20 text-green-700 cursor-pointer hover:bg-green-500/40" onclick="afficherDetails('${employeId}', ${mois}, '${data.surnom}', '${data.prefixe}')">${valeur}</span>`;
+            } else {
+                // Anomalie : plus d'un paiement
+                tdMois.innerHTML = `<span class="badge badge-sm bg-orange-500/30 text-orange-700 font-bold cursor-pointer hover:bg-orange-500/50" onclick="afficherDetails('${employeId}', ${mois}, '${data.surnom}', '${data.prefixe}')">${valeur}</span>`;
+            }
+
+            tr.appendChild(tdMois);
+        }
+
+        // Colonne Moyenne
+        const tdMoyenne = document.createElement('td');
+        tdMoyenne.className = 'text-center font-semibold';
+
+        const moyenne = data.moyennes[typeAffiche] || 0;
+
+        if (moyenne === 0) {
+            tdMoyenne.innerHTML = '<span class="text-base-content/30">0</span>';
+        } else if (moyenne <= 1) {
+            tdMoyenne.innerHTML = `<span class="text-success">${moyenne.toFixed(2)}</span>`;
+        } else {
+            // Moyenne > 1 = problème récurrent
+            tdMoyenne.innerHTML = `<span class="badge bg-red-500/30 text-red-700 font-bold">${moyenne.toFixed(2)}</span>`;
+        }
+
+        tr.appendChild(tdMoyenne);
+
+        tbody.appendChild(tr);
+        });
+    });
+
+    appliquerVisibiliteColonnes(colonnesVisibles);
+}
+
+// Changement de type
+document.getElementById('filter-type').addEventListener('change', () => {
+    if (Object.keys(donneesGlobales).length > 0) {
+        afficherTableau();
+    }
+});
+
+// Fonction pour afficher les détails d'un mois
+async function afficherDetails(employeId, mois, surnom, prefixe, typeGroupe = null) {
+    const annee = document.getElementById('filter-annee').value;
+    // Si typeGroupe passé en paramètre (depuis modal anomalies), l'utiliser
+    const type = typeGroupe || document.getElementById('filter-type').value;
+
+    // Récupérer le nom du mois
+    const nomsMois = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sept', 'Oct', 'Nov', 'Déc'];
+    const nomMois = nomsMois[mois - 1];
+
+    // Récupérer le nom du type
+    const nomsTypes = {
+        'salaire': 'Salaire',
+        'ajustement_salaire': 'Ajustement salaire',
+        'prime': 'Prime',
+        'solde_tout_compte': 'Solde de tout compte',
+        'allocation_terrain': 'Allocation terrain',
+        'indemnite_compensatrice': 'Indemnité compensatrice',
+        'irsa': 'IRSA',
+        'cnaps': 'CNaPS',
+        'fmfp': 'FMFP',
+        'mutuelle_sante': 'Mutuelle santé',
+        'frais_medicaux': 'Frais médicaux',
+        'frais_scolarite': 'Frais scolarité',
+        'indemnite_terrain': 'Indemnité terrain',
+        'indemnite_hors_zone': 'Indemnité hors zone',
+        'indemnite_stage': 'Indemnité stage',
+        'frais_deplacement': 'Frais déplacement'
+    };
+    const nomType = nomsTypes[type] || type;
+
+    // Remplir les infos
+    document.getElementById('modal-employe').textContent = surnom;
+    document.getElementById('modal-prefixe').textContent = prefixe || '-';
+    document.getElementById('modal-mois').textContent = `${nomMois} ${annee}`;
+    document.getElementById('modal-type').textContent = nomType;
+
+    // Afficher le modal
+    const modal = document.getElementById('modal-details');
+    modal.showModal();
+
+    // Afficher loader
+    document.getElementById('modal-loader').classList.remove('hidden');
+    document.getElementById('modal-content').classList.add('hidden');
+    document.getElementById('modal-erreur').classList.add('hidden');
+
+    try {
+        const response = await fetch(`/api/details-paiements-mois/?employe_id=${employeId}&annee=${annee}&mois=${mois}&type_paiement=${type}`);
+        const data = await response.json();
+
+        if (data.success) {
+            const tbody = document.getElementById('modal-tableau');
+            tbody.innerHTML = '';
+
+            let montantTotal = 0;
+
+            data.paiements.forEach(paiement => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="font-mono text-xs text-base-content/70" title="ID pour recherche dans Access">${paiement.id}</td>
+                    <td>${paiement.date}</td>
+                    <td class="text-sm">${paiement.description}</td>
+                    <td><span class="badge badge-sm badge-outline">${paiement.type}</span></td>
+                    <td class="text-right font-mono">${paiement.montant.toLocaleString('fr-FR')} Ar</td>
+                    <td class="text-center font-mono text-sm">${paiement.compte}</td>
+                    <td class="text-sm">${paiement.base || '-'}</td>
+                `;
+                tbody.appendChild(tr);
+
+                montantTotal += paiement.montant;
+            });
+
+            // Afficher le total
+            document.getElementById('modal-total').innerHTML = `
+                <div class="flex justify-between items-center bg-base-200 p-3 rounded-lg">
+                    <span class="font-bold">Total (${data.total} paiement${data.total > 1 ? 's' : ''}) :</span>
+                    <span class="text-xl font-bold text-primary">${montantTotal.toLocaleString('fr-FR')} Ar</span>
+                </div>
+            `;
+
+            document.getElementById('modal-content').classList.remove('hidden');
+        } else {
+            document.getElementById('modal-erreur-message').textContent = data.error || 'Erreur lors du chargement';
+            document.getElementById('modal-erreur').classList.remove('hidden');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        document.getElementById('modal-erreur-message').textContent = 'Erreur réseau';
+        document.getElementById('modal-erreur').classList.remove('hidden');
+    } finally {
+        document.getElementById('modal-loader').classList.add('hidden');
+    }
+}
+
+// Afficher les anomalies par type (nouveau modal)
+function afficherAnomaliesParType(typeGroupe, typeNom) {
+    document.getElementById('modal-anomalie-type-titre').textContent = typeNom;
+
+    const tbody = document.getElementById('modal-anomalies-tableau');
+    tbody.innerHTML = '';
+
+    // Mapping des noms de mois
+    const nomsMois = ['', 'Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
+
+    // Filtrer les employés avec anomalies pour ce type
+    const employesAvecAnomalies = [];
+
+    for (const [employeId, data] of Object.entries(donneesGlobales)) {
+        const nbAnomalies = data.anomalies?.[typeGroupe] || 0;
+        if (nbAnomalies > 0) {
+            // Trouver les mois concernés
+            const moisConcernes = [];
+            for (const [mois, counts] of Object.entries(data.mois || {})) {
+                const count = counts[typeGroupe] || 0;
+                if (count > 1) {
+                    moisConcernes.push({ mois: parseInt(mois), count });
+                }
+            }
+
+            employesAvecAnomalies.push({
+                id: employeId,
+                surnom: data.surnom,
+                prefixe: data.prefixe,
+                nbAnomalies,
+                moisConcernes: moisConcernes.sort((a, b) => a.mois - b.mois)
+            });
+        }
+    }
+
+    // Trier par nombre d'anomalies (décroissant)
+    employesAvecAnomalies.sort((a, b) => b.nbAnomalies - a.nbAnomalies);
+
+    // Remplir le tableau
+    employesAvecAnomalies.forEach(emp => {
+        const tr = document.createElement('tr');
+
+        // Colonne Employé
+        const tdEmploye = document.createElement('td');
+        tdEmploye.className = 'font-semibold';
+        tdEmploye.textContent = emp.surnom;
+        tr.appendChild(tdEmploye);
+
+        // Colonne Préfixe
+        const tdPrefixe = document.createElement('td');
+        tdPrefixe.innerHTML = `<span class="badge badge-sm">${emp.prefixe || '-'}</span>`;
+        tr.appendChild(tdPrefixe);
+
+        // Colonne Nb Anomalies
+        const tdNb = document.createElement('td');
+        tdNb.className = 'text-center';
+        tdNb.innerHTML = `<span class="badge badge-error">${emp.nbAnomalies}</span>`;
+        tr.appendChild(tdNb);
+
+        // Colonne Mois concernés
+        const tdMois = document.createElement('td');
+        const moisBadges = emp.moisConcernes.map(m =>
+            `<span class="badge badge-warning badge-sm gap-1">
+                ${nomsMois[m.mois]}
+                <span class="badge badge-xs">${m.count}</span>
+            </span>`
+        ).join(' ');
+        tdMois.innerHTML = moisBadges;
+        tr.appendChild(tdMois);
+
+        // Colonne Actions
+        const tdActions = document.createElement('td');
+        const btnDetails = document.createElement('button');
+        btnDetails.className = 'btn btn-xs btn-primary';
+        btnDetails.innerHTML = '<i class="fas fa-eye mr-1"></i>Détails';
+        btnDetails.onclick = () => {
+            // Fermer le modal anomalies
+            document.getElementById('modal-anomalies-type').close();
+            // Afficher le premier mois avec anomalie
+            const premierMois = emp.moisConcernes[0].mois;
+            afficherDetails(emp.id, premierMois, emp.surnom, emp.prefixe, typeGroupe);
+        };
+        tdActions.appendChild(btnDetails);
+        tr.appendChild(tdActions);
+
+        tbody.appendChild(tr);
+    });
+
+    // Total
+    document.getElementById('modal-anomalies-total').textContent =
+        `Total: ${employesAvecAnomalies.length} employé(s) avec anomalies`;
+
+    // Ouvrir le modal
+    document.getElementById('modal-anomalies-type').showModal();
+}
+
+// Chargement initial
+window.addEventListener('DOMContentLoaded', () => {
+    chargerDonnees();
+});
+</script>
+{% endblock %}

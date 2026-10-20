@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test GPS</title>
+</head>
+<body>
+    <h1>Test de capture GPS</h1>
+    <div id="status">Chargement...</div>
+    <div id="results"></div>
+
+    <button onclick="testGPS()">Tester maintenant</button>
+
+    <script>
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+
+        function testGPS() {
+            const status = document.getElementById('status');
+            const results = document.getElementById('results');
+
+            status.innerHTML = '<p style="color: blue;">Test en cours...</p>';
+
+            if ("geolocation" in navigator) {
+                status.innerHTML += '<p style="color: green;">✓ API Geolocation disponible</p>';
+
+                navigator.geolocation.getCurrentPosition(
+                    function(position) {
+                        status.innerHTML += '<p style="color: green;">✓ Position obtenue!</p>';
+                        results.innerHTML = `
+                            <h3>Position GPS:</h3>
+                            <ul>
+                                <li>Latitude: ${position.coords.latitude}</li>
+                                <li>Longitude: ${position.coords.longitude}</li>
+                                <li>Précision: ${position.coords.accuracy}m</li>
+                                <li>Altitude: ${position.coords.altitude || 'N/A'}</li>
+                            </ul>
+                        `;
+
+                        // Envoyer au serveur
+                        status.innerHTML += '<p style="color: blue;">Envoi au serveur...</p>';
+
+                        fetch('/api/capture-gps/', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRFToken': getCookie('csrftoken')
+                            },
+                            body: JSON.stringify({
+                                latitude: position.coords.latitude,
+                                longitude: position.coords.longitude,
+                                altitude: position.coords.altitude,
+                                precision: position.coords.accuracy
+                            })
+                        })
+                        .then(response => {
+                            console.log('Response status:', response.status);
+                            return response.text().then(text => {
+                                console.log('Response text:', text);
+                                try {
+                                    return JSON.parse(text);
+                                } catch (e) {
+                                    throw new Error('Réponse non-JSON: ' + text.substring(0, 200));
+                                }
+                            });
+                        })
+                        .then(data => {
+                            if (data.success) {
+                                status.innerHTML += '<p style="color: green;">✓ Position enregistrée dans la base de données!</p>';
+                                if (data.village_proche) {
+                                    results.innerHTML += `<p>Village proche: ${data.village_proche} (${data.distance}km)</p>`;
+                                }
+                            } else {
+                                status.innerHTML += `<p style="color: red;">✗ Erreur serveur: ${data.message}</p>`;
+                            }
+                        })
+                        .catch(error => {
+                            status.innerHTML += `<p style="color: red;">✗ Erreur réseau: ${error}</p>`;
+                            console.error('Erreur complète:', error);
+                        });
+                    },
+                    function(error) {
+                        status.innerHTML += `<p style="color: red;">✗ Erreur GPS: ${error.message}</p>`;
+                        switch(error.code) {
+                            case error.PERMISSION_DENIED:
+                                status.innerHTML += '<p>Vous devez autoriser la géolocalisation!</p>';
+                                break;
+                            case error.POSITION_UNAVAILABLE:
+                                status.innerHTML += '<p>Position indisponible</p>';
+                                break;
+                            case error.TIMEOUT:
+                                status.innerHTML += '<p>Délai dépassé</p>';
+                                break;
+                        }
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 10000,
+                        maximumAge: 0
+                    }
+                );
+            } else {
+                status.innerHTML = '<p style="color: red;">✗ Geolocation non disponible dans ce navigateur</p>';
+            }
+        }
+
+        // Test automatique au chargement
+        window.addEventListener('DOMContentLoaded', function() {
+            setTimeout(testGPS, 1000);
+        });
+    </script>
+</body>
+</html>

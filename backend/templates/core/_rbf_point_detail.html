@@ -1,0 +1,160 @@
+{% load humanize %}
+{% if detail.introuvable %}
+<div class="alert alert-warning">
+  <i class="fas fa-triangle-exclamation"></i>
+  <span>Point d'eau introuvable dans ce périmètre (filtres : organisation, commune…).</span>
+</div>
+{% else %}
+<div role="tablist" class="tabs tabs-boxed w-fit mb-3" aria-label="Année">
+  {% for y in detail.year_links %}
+  <a role="tab" href="{{ y.url }}" class="tab tab-sm {% if y.active %}tab-active{% endif %}">{{ y.annee }}</a>
+  {% endfor %}
+</div>
+{% if detail.annee != detail.annee_courante %}
+<div class="alert alert-info text-sm mb-3"><i class="fas fa-clock-rotate-left"></i><span>Exercice {{ detail.annee }} (consultation d'une année passée, pour contrôler la cohérence des paiements antérieurs).</span></div>
+{% endif %}
+<div>
+  <p class="text-xs uppercase tracking-wide opacity-60">{{ detail.titre }}</p>
+  <h2 class="text-xl font-bold">
+    {% if detail.point.idxls %}<span class="badge badge-outline mr-1">IDXLS {{ detail.point.idxls }}</span>{% endif %}
+    {{ detail.point.nomabonne|default:"Point d'eau sans nom" }}
+  </h2>
+  <p class="text-sm opacity-70">
+    {{ detail.point.ouvrage.nom_ouvrage|default:"Sans ouvrage" }}
+    {% with commune=detail.point.parcelle.village.fokontany.commune %}
+      {% if commune %}· {{ commune.nom_commune }} ({{ commune.district.nom_district }}, {{ commune.district.region.nom_region }}){% endif %}
+    {% endwith %}
+  </p>
+</div>
+
+<div class="alert {% if detail.flagged %}alert-warning{% else %}alert-success{% endif %} mt-3">
+  <i class="fas {% if detail.flagged %}fa-flag{% else %}fa-circle-check{% endif %}"></i>
+  <div class="text-sm">
+    {% if not detail.flagged %}
+      <strong>Ce point ne remplit pas la condition de ce compteur</strong>
+      {% if detail.is_cap_view %}(RBF sous le plafond annuel){% else %}(RBF couvert par les paiements effectifs){% endif %}.
+    {% elif detail.is_cap_view %}
+      <strong>Pourquoi il apparaît :</strong> les indemnités RBF de {{ detail.annee }} ({{ detail.total|floatformat:0|intcomma }} Ar)
+      dépassent le plafond annuel de {{ detail.cap|floatformat:0|intcomma }} Ar par point d'eau,
+      soit <strong>{{ detail.excess_cap|floatformat:0|intcomma }} Ar</strong> d'excédent.
+    {% elif detail.effective_count == 0 %}
+      <strong>Pourquoi il apparaît :</strong> {{ detail.total|floatformat:0|intcomma }} Ar d'indemnités RBF ont été versés en {{ detail.annee }}
+      alors que ce point n'a <strong>aucun paiement forfaitaire effectif</strong> cette année.
+    {% else %}
+      <strong>Pourquoi il apparaît :</strong> {{ detail.total|floatformat:0|intcomma }} Ar d'indemnités RBF en {{ detail.annee }}, mais seulement
+      {{ detail.effective_count }} période{{ detail.effective_count|pluralize }} de 3 mois payée{{ detail.effective_count|pluralize }} de façon effective, qui justifie{{ detail.effective_count|pluralize:",nt" }}
+      {{ detail.justified|floatformat:0|intcomma }} Ar
+      ({{ detail.per_payment|floatformat:0|intcomma }} Ar × {{ detail.effective_count }}) : excédent de <strong>{{ detail.excess_unpaid|floatformat:0|intcomma }} Ar</strong>.
+    {% endif %}
+  </div>
+</div>
+
+<div class="stats stats-vertical sm:stats-horizontal shadow w-full bg-base-100 mt-3">
+  <div class="stat">
+    <div class="stat-title">RBF versé en {{ detail.annee }}</div>
+    <div class="stat-value text-2xl">{{ detail.total|floatformat:0|intcomma }} Ar</div>
+    <div class="stat-desc">{{ detail.rbf_lines|length }} ligne{{ detail.rbf_lines|length|pluralize }} DiameX</div>
+  </div>
+  {% if detail.is_cap_view %}
+  <div class="stat">
+    <div class="stat-title">Plafond annuel</div>
+    <div class="stat-value text-2xl">{{ detail.cap|floatformat:0|intcomma }} Ar</div>
+    <div class="stat-desc">par point d'eau</div>
+  </div>
+  {% else %}
+  <div class="stat">
+    <div class="stat-title">Périodes payées (effectives)</div>
+    <div class="stat-value text-2xl">{{ detail.effective_count }}</div>
+    <div class="stat-desc">justifient {{ detail.justified|floatformat:0|intcomma }} Ar ({{ detail.per_payment|floatformat:0|intcomma }} Ar par période de 3 mois = quantité)</div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card bg-base-100 shadow mt-3">
+  <div class="card-body p-4">
+    <h3 class="card-title text-base">Indemnités RBF prises en compte ({{ detail.annee }})</h3>
+    {% if detail.rbf_lines %}
+    <div class="overflow-x-auto">
+      <table class="table table-sm">
+        <thead><tr><th>Date</th><th>Libellé DiameX</th><th class="text-right">Montant</th><th class="text-center">Scan</th></tr></thead>
+        <tbody>
+          {% for line in detail.rbf_lines %}
+          <tr>
+            <td class="whitespace-nowrap">{{ line.entry.date_m|date:"d/m/Y"|default:"—" }}</td>
+            <td><span class="rbf-libelle" data-entry="{{ line.entry.id }}">{{ line.entry.description|default:"—" }}</span>
+              {% if can_edit_libelle and line.entry %}
+              <button type="button" class="btn btn-ghost btn-xs rbf-edit-libelle" title="Modifier le libellé (PostgreSQL + Access)"
+                data-entry="{{ line.entry.id }}" data-description="{{ line.entry.description|default:'' }}"
+                data-info="{{ line.entry.info|default:'' }}" data-detail="{{ line.entry.detail|default:'' }}"><i class="fas fa-pen"></i></button>
+              {% endif %}
+              <div class="text-xs opacity-60">{{ line.kind }}{% if line.entry %} · pièce {{ line.entry.id_access }}/{{ line.entry.prog|default:"—" }}{% endif %}</div></td>
+            <td class="text-right whitespace-nowrap">{{ line.amount|floatformat:0|intcomma }} Ar</td>
+            <td class="text-center">
+              {% if line.entry and line.entry.scan_importe or line.entry and line.entry.scan %}
+              <a class="btn btn-xs btn-info gap-1" href="{% url 'accounting:serve_scan' line.entry.id %}" target="_blank" rel="noopener" title="Ouvrir le scan"><i class="fas fa-file-image"></i></a>
+              {% else %}
+              <span class="badge badge-error badge-xs">Sans scan</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-sm opacity-70">Aucune ligne RBF identifiée pour ce point cette année.</p>
+    {% endif %}
+  </div>
+</div>
+
+{% if detail.annee == detail.annee_courante %}
+<div class="card bg-base-100 shadow mt-3" id="rbfAvance" data-montant="{{ detail.per_payment|floatformat:0 }}"
+     data-controle-url="{% url 'core:api_widget_rbf_avance_controle' detail.point.id %}"
+     data-demander-url="{% url 'core:api_widget_rbf_avance_demander' detail.point.id %}">
+  <div class="card-body p-4">
+    <h3 class="card-title text-base"><i class="fas fa-hand-holding-dollar text-primary"></i>Demande d'avance d'indemnité RBF</h3>
+    <p class="text-sm opacity-70">L'avance à l'agent de recouvrement n'est accordée que si elle correspond à un paiement forfaitaire pointé, reste sous le plafond annuel et ne double pas une indemnité déjà enregistrée pour la même période de 3 mois.</p>
+    <div class="grid sm:grid-cols-2 gap-2">
+      <label class="form-control"><span class="label-text text-xs">Montant de l'avance (Ar)</span>
+        <input type="number" min="0" step="1000" id="rbfAvMontant" class="input input-bordered input-sm" value="{{ detail.per_payment|floatformat:0 }}"></label>
+      <label class="form-control"><span class="label-text text-xs">Planning de l'agent (date · agent)</span>
+        <select id="rbfAvPlanning" class="select select-bordered select-sm"><option value="">Chargement…</option></select></label>
+    </div>
+    <ul id="rbfAvControles" class="text-sm space-y-1"></ul>
+    <div id="rbfAvMsg" class="text-sm hidden"></div>
+    <div class="card-actions justify-end">
+      <button type="button" id="rbfAvBtn" class="btn btn-primary btn-sm" disabled><i class="fas fa-paper-plane mr-2"></i>Demander l'avance</button>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if not detail.is_cap_view %}
+<div class="card bg-base-100 shadow mt-3">
+  <div class="card-body p-4">
+    <h3 class="card-title text-base">Paiements forfaitaires de {{ detail.annee }}</h3>
+    <p class="text-sm opacity-70">Un paiement est « effectif » quand son numéro DiameX est renseigné.
+      {% if detail.pending_count %}{{ detail.pending_count }} paiement{{ detail.pending_count|pluralize }} sans numéro DiameX ne compte{{ detail.pending_count|pluralize:",nt" }} pas.{% endif %}</p>
+    {% if detail.payments %}
+    <div class="overflow-x-auto">
+      <table class="table table-sm">
+        <thead><tr><th>Facture</th><th>Paiement</th><th class="text-right">Montant</th><th>N° DiameX</th></tr></thead>
+        <tbody>
+          {% for p in detail.payments %}
+          <tr>
+            <td>{{ p.date_facture|date:"d/m/Y"|default:"—" }}</td>
+            <td>{{ p.date_paiement|date:"d/m/Y"|default:"—" }}</td>
+            <td class="text-right">{{ p.montant|floatformat:0|intcomma }} Ar</td>
+            <td>{% if p.numeroDiameX %}<span class="badge badge-success badge-sm">{{ p.numeroDiameX }}</span>{% else %}<span class="badge badge-ghost badge-sm">non pointé</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-sm opacity-70">Aucun paiement forfaitaire enregistré cette année pour ce point d'eau.</p>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% endif %}

@@ -1,0 +1,264 @@
+{% load humanize %}<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ document.titre|default:"Grand livre imprimable" }}</title>
+    <style>
+        :root {
+            --trait: #333;
+            --trait-leger: #bbb;
+            --fond-entete: #e8e8e8;
+            --fond-sous-total: #f2f2f2;
+            --fond-section: #dfe6ec;
+            --negatif: #a11212;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 18px;
+            background: #eef0f2;
+            color: #111;
+            font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+            font-size: 12px;
+        }
+        .feuille {
+            max-width: 1100px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 22px 26px 30px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, .15);
+        }
+
+        /* ---- Barre de préparation (jamais imprimée) ---- */
+        .no-print { }
+        .barre {
+            max-width: 1100px;
+            margin: 0 auto 14px;
+            background: #fff;
+            padding: 14px 18px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, .1);
+        }
+        .barre h1 { margin: 0 0 10px; font-size: 17px; }
+        .barre form { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+        .champ { display: flex; flex-direction: column; gap: 3px; }
+        .champ label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #555; }
+        .champ select, .champ input { padding: 6px 8px; border: 1px solid #aaa; border-radius: 3px; font-size: 13px; }
+        .bouton {
+            padding: 7px 14px; border: 1px solid #1f5c8b; border-radius: 3px;
+            background: #21618c; color: #fff; font-size: 13px; cursor: pointer;
+        }
+        .bouton.secondaire { background: #fff; color: #21618c; }
+        .barre .liens { margin-top: 10px; display: flex; gap: 10px; align-items: center; }
+        .note { margin: 10px 0 0; padding: 8px 10px; background: #fff6e0; border-left: 4px solid #d9a300; font-size: 12px; }
+        .note.erreur { background: #fdecec; border-left-color: #c0392b; }
+        .aide { color: #555; font-size: 12px; }
+
+        /* ---- Document ---- */
+        .doc-titre { text-align: center; font-size: 19px; font-weight: 700; letter-spacing: .06em; margin: 0 0 2px; }
+        .doc-sous-titre { text-align: center; font-size: 13px; margin: 0 0 14px; }
+        .doc-entete { display: flex; justify-content: space-between; font-size: 11px; color: #444; margin-bottom: 10px; }
+
+        .soldes { display: flex; gap: 10px; margin: 0 0 16px; }
+        .solde { flex: 1; border: 1px solid var(--trait); padding: 7px 10px; }
+        .solde .libelle { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: #444; }
+        .solde .valeur { font-size: 15px; font-weight: 700; text-align: right; }
+        .solde.fin { background: var(--fond-section); }
+
+        h2.section {
+            font-size: 13px; margin: 18px 0 6px; padding: 5px 8px;
+            background: var(--fond-section); border: 1px solid var(--trait);
+            text-transform: uppercase; letter-spacing: .05em;
+            page-break-after: avoid;
+        }
+        table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+        thead { display: table-header-group; }
+        th, td { border: 1px solid var(--trait-leger); padding: 3px 5px; vertical-align: top; }
+        th { background: var(--fond-entete); font-size: 10px; text-transform: uppercase; letter-spacing: .03em; }
+        td { white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+        td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+        td.date, th.date { white-space: nowrap; }
+        tr { page-break-inside: avoid; }
+        tr.cat td { background: var(--fond-sous-total); font-weight: 600; }
+        tr.sous-total td { background: var(--fond-sous-total); font-weight: 700; }
+        tr.total-section td { background: var(--fond-entete); font-weight: 700; border-top: 2px solid var(--trait); }
+        .negatif { color: var(--negatif); }
+        .recap { margin-top: 22px; width: 62%; margin-left: auto; page-break-inside: avoid; }
+        .vide { padding: 10px; border: 1px dashed var(--trait-leger); color: #555; }
+
+        @page { size: A4 portrait; margin: 11mm 9mm; }
+        @media print {
+            body { background: #fff; padding: 0; font-size: 9.5px; }
+            .feuille { max-width: none; box-shadow: none; padding: 0; }
+            .no-print { display: none !important; }
+            th, td { padding: 2px 4px; }
+            .doc-titre { font-size: 15px; }
+            .solde .valeur { font-size: 12px; }
+            h2.section { font-size: 11px; margin: 12px 0 4px; }
+            a { color: inherit; text-decoration: none; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="barre no-print">
+    <h1><i>&#128214;</i> Grand livre imprimable</h1>
+    <form method="get" action="">
+        <div class="champ">
+            <label for="fin">Financement</label>
+            <select name="fin" id="fin">
+                <option value="{{ tous_les_financements }}" {% if fin == tous_les_financements or not fin %}selected{% endif %}>— Tous les financements —</option>
+                {% for valeur in fins %}
+                <option value="{{ valeur }}" {% if fin == valeur %}selected{% endif %}>{{ valeur }}</option>
+                {% endfor %}
+                <option value="{{ sans_financement }}" {% if fin == sans_financement %}selected{% endif %}>(Sans financement)</option>
+            </select>
+        </div>
+        <div class="champ">
+            <label for="date_debut">Date de début</label>
+            <input type="date" name="date_debut" id="date_debut" value="{{ date_debut_brute }}">
+        </div>
+        <div class="champ">
+            <label for="date_fin">Date de fin</label>
+            <input type="date" name="date_fin" id="date_fin" value="{{ date_fin_brute }}">
+        </div>
+        <button type="submit" class="bouton">Afficher le grand livre</button>
+    </form>
+
+    {% if erreurs %}
+    <div class="note erreur">
+        {% for erreur in erreurs %}<div>{{ erreur }}</div>{% endfor %}
+    </div>
+    {% endif %}
+
+    {% if document %}
+    <div class="liens">
+        <button type="button" class="bouton" onclick="window.print()">&#128424; Imprimer</button>
+        <a class="bouton secondaire" href="{% url 'accounting:entries_list' %}?view_mode=grand_livre">&#8592; Retour aux écritures</a>
+        {% if document.volumineux %}
+        <span class="aide">Document volumineux ({{ document.nb_lignes|intcomma }} lignes) : affinez la période pour accélérer l'impression.</span>
+        {% endif %}
+    </div>
+    {% if document.nb_sans_date %}
+    <div class="note">
+        Écritures de ce financement sans date reçue, donc non imprimées (aucune période ne peut les
+        situer) : <strong>{{ document.nb_sans_date|intcomma }}</strong>.
+    </div>
+    {% endif %}
+    {% else %}
+    <p class="aide">Choisissez un financement et une période, puis affichez le grand livre. Les transferts
+        00BOOK et les avances 00PERS sont exclus ; les 00FND sont conservés.</p>
+    {% endif %}
+</div>
+
+{% if document %}
+<div class="feuille">
+    <div class="doc-titre">GRAND LIVRE</div>
+    <div class="doc-sous-titre">
+        Financement : <strong>{{ libelle_financement }}</strong> —
+        du {{ document.date_debut|date:"d/m/Y" }} au {{ document.date_fin|date:"d/m/Y" }}
+    </div>
+    <div class="doc-entete">
+        <span>Comptabilité DiameX</span>
+        <span>Édité le {{ date_edition|date:"d/m/Y" }} — {{ document.nb_lignes|intcomma }} ligne{{ document.nb_lignes|pluralize }}, {{ document.nb_cats|intcomma }} compte{{ document.nb_cats|pluralize }}</span>
+    </div>
+
+    <div class="soldes">
+        <div class="solde">
+            <div class="libelle">Solde de début (au {{ document.date_debut|date:"d/m/Y" }})</div>
+            <div class="valeur {% if document.solde_debut < 0 %}negatif{% endif %}">{{ document.solde_debut|floatformat:0|intcomma }}</div>
+        </div>
+        <div class="solde">
+            <div class="libelle">Total de la période</div>
+            <div class="valeur {% if document.total_periode < 0 %}negatif{% endif %}">{{ document.total_periode|floatformat:0|intcomma }}</div>
+        </div>
+        <div class="solde fin">
+            <div class="libelle">Solde de fin de période (au {{ document.date_fin|date:"d/m/Y" }})</div>
+            <div class="valeur {% if document.solde_fin < 0 %}negatif{% endif %}">{{ document.solde_fin|floatformat:0|intcomma }}</div>
+        </div>
+    </div>
+
+    {% for section in document.sections %}
+    {% if section.nb %}
+    <h2 class="section">{{ section.titre }} — {{ section.nb|intcomma }} ligne{{ section.nb|pluralize }}, sous-total {{ section.total|floatformat:0|intcomma }}</h2>
+    <table>
+        <colgroup>
+            <col style="width: 66px">
+            <col style="width: 52px">
+            <col style="width: 22%">
+            <col style="width: 15%">
+            <col style="width: 17%">
+            <col style="width: 8%">
+            <col style="width: 92px">
+        </colgroup>
+        <thead>
+            <tr>
+                <th class="date">Date</th>
+                <th class="num">Rec</th>
+                <th>Description</th>
+                <th>Detail</th>
+                <th>Fournisseur</th>
+                <th>Activ</th>
+                <th class="num">CCY</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for groupe in section.groupes %}
+            <tr class="cat">
+                <td colspan="6">Cat : {{ groupe.label }} ({{ groupe.nb|intcomma }} ligne{{ groupe.nb|pluralize }})</td>
+                <td class="num {% if groupe.total < 0 %}negatif{% endif %}">{{ groupe.total|floatformat:0|intcomma }}</td>
+            </tr>
+            {% for ligne in groupe.lignes %}
+            <tr>
+                <td class="date">{{ ligne.date|date:"d/m/Y"|default:"-" }}</td>
+                <td class="num">{{ ligne.rec|default_if_none:"" }}</td>
+                <td>{{ ligne.description|default:"-" }}</td>
+                <td>{{ ligne.detail|default:"" }}</td>
+                <td>{{ ligne.fournisseur|default:"" }}</td>
+                <td>{{ ligne.activ|default:"" }}</td>
+                <td class="num {% if ligne.ccy < 0 %}negatif{% endif %}">{{ ligne.ccy|floatformat:0|intcomma }}</td>
+            </tr>
+            {% endfor %}
+            <tr class="sous-total">
+                <td colspan="6">Sous-total {{ groupe.label }}</td>
+                <td class="num {% if groupe.total < 0 %}negatif{% endif %}">{{ groupe.total|floatformat:0|intcomma }}</td>
+            </tr>
+            {% endfor %}
+            <tr class="total-section">
+                <td colspan="6">Total {{ section.titre }}</td>
+                <td class="num {% if section.total < 0 %}negatif{% endif %}">{{ section.total|floatformat:0|intcomma }}</td>
+            </tr>
+        </tbody>
+    </table>
+    {% endif %}
+    {% endfor %}
+
+    {% if not document.nb_lignes %}
+    <div class="vide">Aucune écriture pour ce financement sur la période demandée.</div>
+    {% endif %}
+
+    <table class="recap">
+        <tbody>
+            {% for section in document.sections %}{% if section.nb %}
+            <tr>
+                <td>{{ section.titre }}</td>
+                <td class="num">{{ section.nb|intcomma }}</td>
+                <td class="num {% if section.total < 0 %}negatif{% endif %}">{{ section.total|floatformat:0|intcomma }}</td>
+            </tr>
+            {% endif %}{% endfor %}
+            <tr class="sous-total">
+                <td>Total de la période (entrées {{ document.total_in|floatformat:0|intcomma }} − sorties {{ document.total_out|floatformat:0|intcomma }})</td>
+                <td class="num">{{ document.nb_lignes|intcomma }}</td>
+                <td class="num {% if document.total_periode < 0 %}negatif{% endif %}">{{ document.total_periode|floatformat:0|intcomma }}</td>
+            </tr>
+            <tr class="total-section">
+                <td colspan="2">Solde de fin de période</td>
+                <td class="num {% if document.solde_fin < 0 %}negatif{% endif %}">{{ document.solde_fin|floatformat:0|intcomma }}</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+</body>
+</html>

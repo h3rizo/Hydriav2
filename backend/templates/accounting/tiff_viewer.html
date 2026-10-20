@@ -1,0 +1,127 @@
+{% extends "accounting/base.html" %}
+
+{% block title %}Viewer TIFF{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <div class="max-w-6xl mx-auto">
+        <div class="mb-4">
+            <h1 class="text-2xl font-bold">Scan TIFF multipage</h1>
+            <p class="text-sm text-base-content/70">Entrée {{ entry_id }} - {{ filename }}</p>
+        </div>
+
+        <div class="card bg-base-100 shadow-md border border-base-300">
+            <div class="card-body gap-4">
+                <div class="flex flex-wrap items-center gap-2">
+                    <button id="prev-btn" type="button" class="btn btn-sm">Precedent</button>
+                    <button id="next-btn" type="button" class="btn btn-sm">Suivant</button>
+                    <span id="page-indicator" class="badge badge-outline">Chargement...</span>
+                    <label for="page-input" class="text-sm">Aller a</label>
+                    <input id="page-input" type="number" min="1" value="1" class="input input-bordered input-sm w-24">
+                    <button id="go-btn" type="button" class="btn btn-sm btn-primary">Afficher</button>
+                    <a href="{{ raw_url }}" class="btn btn-sm btn-ghost" target="_blank" rel="noopener">Ouvrir le TIFF brut</a>
+                </div>
+
+                <div id="viewer-error" class="alert alert-error hidden"></div>
+
+                <div class="bg-base-200 rounded-xl p-4 overflow-auto">
+                    <div id="page-label" class="font-semibold mb-3">Chargement du TIFF...</div>
+                    <canvas id="tiff-canvas" class="w-full h-auto bg-white rounded-lg shadow"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+<script src="https://unpkg.com/utif@3.1.0/UTIF.js"></script>
+{{ raw_url|json_script:"tiff-raw-url" }}
+<script>
+(() => {
+    const rawUrl = JSON.parse(document.getElementById('tiff-raw-url').textContent);
+    const prevBtn = document.getElementById('prev-btn');
+    const nextBtn = document.getElementById('next-btn');
+    const goBtn = document.getElementById('go-btn');
+    const pageInput = document.getElementById('page-input');
+    const pageIndicator = document.getElementById('page-indicator');
+    const pageLabel = document.getElementById('page-label');
+    const canvas = document.getElementById('tiff-canvas');
+    const errorBox = document.getElementById('viewer-error');
+    const ctx = canvas.getContext('2d');
+
+    let pages = [];
+    let currentPage = 0;
+
+    function showError(message) {
+        errorBox.textContent = message;
+        errorBox.classList.remove('hidden');
+    }
+
+    function updateUi() {
+        const total = pages.length;
+        const pageNumber = currentPage + 1;
+        pageIndicator.textContent = `Page ${pageNumber} / ${total}`;
+        pageLabel.textContent = `Page ${pageNumber}`;
+        pageInput.value = pageNumber;
+        pageInput.max = total;
+        prevBtn.disabled = currentPage <= 0;
+        nextBtn.disabled = currentPage >= total - 1;
+    }
+
+    function drawPage(index) {
+        if (!pages.length) return;
+        currentPage = Math.min(Math.max(index, 0), pages.length - 1);
+        const page = pages[currentPage];
+        canvas.width = page.width;
+        canvas.height = page.height;
+        const imageData = ctx.createImageData(page.width, page.height);
+        imageData.data.set(page.rgba);
+        ctx.putImageData(imageData, 0, 0);
+        updateUi();
+    }
+
+    async function loadTiff() {
+        try {
+            const response = await fetch(rawUrl);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const buffer = await response.arrayBuffer();
+            const ifds = UTIF.decode(buffer);
+            if (!ifds || !ifds.length) {
+                throw new Error('Aucune page TIFF detectee');
+            }
+
+            pages = ifds.map((ifd) => {
+                UTIF.decodeImage(buffer, ifd);
+                return {
+                    width: ifd.width,
+                    height: ifd.height,
+                    rgba: UTIF.toRGBA8(ifd),
+                };
+            });
+
+            drawPage(0);
+        } catch (error) {
+            showError(`Impossible d'afficher ce TIFF: ${error.message}`);
+        }
+    }
+
+    prevBtn.addEventListener('click', () => drawPage(currentPage - 1));
+    nextBtn.addEventListener('click', () => drawPage(currentPage + 1));
+    goBtn.addEventListener('click', () => drawPage(parseInt(pageInput.value || '1', 10) - 1));
+    pageInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            drawPage(parseInt(pageInput.value || '1', 10) - 1);
+        }
+    });
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowLeft') drawPage(currentPage - 1);
+        if (event.key === 'ArrowRight') drawPage(currentPage + 1);
+    });
+
+    loadTiff();
+})();
+</script>
+{% endblock %}

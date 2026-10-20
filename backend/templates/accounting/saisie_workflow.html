@@ -1,0 +1,786 @@
+{% extends "accounting/base.html" %}
+{% load static %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">
+                <i class="fas fa-keyboard mr-3 text-primary"></i>Workflow Saisie Comptabilite
+            </h1>
+            {% if workflow_app_mode %}
+            <div class="mt-2">
+                <span class="badge badge-primary badge-lg">Application dediee sous sous-domaine</span>
+            </div>
+            {% endif %}
+        </div>
+        <div class="flex gap-2">
+            <a href="{% if workflow_app_mode %}{{ main_entries_url }}{% else %}{% url 'accounting:entries_list' %}{% endif %}" class="btn btn-sm btn-ghost">
+                <i class="fas fa-list mr-2"></i>DiameX
+            </a>
+            <a href="{% if workflow_app_mode %}{{ main_verification_url }}{% else %}{% url 'accounting:verification_unifiee' %}{% endif %}" class="btn btn-sm btn-info">
+                <i class="fas fa-check-double mr-2"></i>Verification comptabilites
+            </a>
+        </div>
+    </div>
+
+    {% if workflow_app_mode %}
+    <div class="alert alert-info mb-6">
+        <i class="fas fa-circle-info"></i>
+        <span>Ce workflow est servi depuis une application dediee, mais utilise la meme base de donnees et les memes comptes utilisateurs que Hydria principal.</span>
+    </div>
+    {% endif %}
+
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <div class="xl:col-span-2">
+            <div class="card bg-base-100 shadow-md">
+                <div class="card-body">
+                    <div class="mb-4">
+                        <h2 class="card-title text-lg">Nouvelle ligne comptable</h2>
+                        <p class="text-sm text-base-content/70">
+                            Les regles de saisie sont controlees selon le compte cat et les patterns des pages de verification.
+                        </p>
+                    </div>
+
+                    <div id="ia-prefill" class="mb-5 rounded-xl border-2 border-dashed border-info/50 bg-info/5 px-4 py-4">
+                        <div class="flex flex-wrap items-center gap-3">
+                            <span class="text-sm font-semibold text-info">Pre-remplissage IA</span>
+                            <input id="ia-file" type="file" accept="image/*,application/pdf" class="hidden" />
+                            <button type="button" id="ia-file-btn" class="btn btn-xs btn-outline btn-info">Deposer un justificatif</button>
+                            <button type="button" id="ia-text-btn" class="btn btn-xs btn-outline">Suggerer d'apres le libelle</button>
+                            <span id="ia-status" class="text-xs text-base-content/60"></span>
+                        </div>
+                        <div id="ia-neighbours" class="mt-3 space-y-1 text-xs"></div>
+                    </div>
+
+                    <form id="workflow-form" class="space-y-4">
+                        {% csrf_token %}
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">Base</span></label>
+                                <select id="base_id" class="select select-bordered select-sm" required></select>
+                            </div>
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">Journal</span></label>
+                                <select id="journal_id" class="select select-bordered select-sm" required></select>
+                            </div>
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">Compte cat</span></label>
+                                <input id="compte_search" type="text" list="comptes-list" autocomplete="off"
+                                       class="input input-bordered input-sm" placeholder="Numero ou nom du compte..." required>
+                                <input id="compte_id" type="hidden">
+                                <datalist id="comptes-list"></datalist>
+                            </div>
+                        </div>
+
+                        <div id="compte-hints" class="flex flex-wrap gap-2"></div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">Date mouvement</span></label>
+                                <input id="date_m" type="date" class="input input-bordered input-sm" value="{{ today }}" required />
+                            </div>
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">Date recu</span></label>
+                                <input id="date_rec" type="date" class="input input-bordered input-sm" />
+                            </div>
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">Montant In</span></label>
+                                <input id="montant_in" type="number" step="0.01" min="0" class="input input-bordered input-sm" value="" placeholder="0.00" />
+                            </div>
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">Montant Out</span></label>
+                                <input id="montant_out" type="number" step="0.01" min="0" class="input input-bordered input-sm" value="" placeholder="0.00" />
+                            </div>
+                        </div>
+
+                        <div class="form-control">
+                            <label class="label"><span class="label-text">Description</span></label>
+                            <textarea id="description" class="textarea textarea-bordered h-24" placeholder="Description operation" required></textarea>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">Personne (PERS)</span></label>
+                                <input id="pers" type="text" class="input input-bordered input-sm" />
+                            </div>
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">Detail</span></label>
+                                <input id="detail" type="text" class="input input-bordered input-sm" />
+                            </div>
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">Fournisseur</span></label>
+                                <input id="fournisseur" type="text" class="input input-bordered input-sm" list="fournisseurs-list" placeholder="IDxls ou nom" />
+                                <datalist id="fournisseurs-list"></datalist>
+                            </div>
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">Info</span></label>
+                                <input id="info" type="text" class="input input-bordered input-sm" />
+                            </div>
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">Fin</span></label>
+                                <input id="fin" type="text" class="input input-bordered input-sm" />
+                            </div>
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">Activite</span></label>
+                                <input id="activ" type="text" class="input input-bordered input-sm" />
+                            </div>
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">Programme</span></label>
+                                <input id="prog" type="text" class="input input-bordered input-sm" />
+                            </div>
+                        </div>
+
+                        {% include "accounting/includes/saisie_articles.html" %}
+
+                        <div class="flex flex-wrap gap-2 pt-2">
+                            <button type="button" id="btn-validate" class="btn btn-sm btn-outline btn-primary">
+                                <i class="fas fa-check-circle mr-2"></i>Verifier
+                            </button>
+                            <button type="button" id="btn-save-draft" class="btn btn-sm btn-warning">
+                                <i class="fas fa-save mr-2"></i>Enregistrer brouillon
+                            </button>
+                            <button type="button" id="btn-save-valid" class="btn btn-sm btn-success">
+                                <i class="fas fa-check-double mr-2"></i>Valider et enregistrer
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            {% if peut_deroger %}
+            <div id="pending-section" class="card bg-base-100 shadow-md mt-6 border border-warning">
+                <div class="card-body">
+                    <div class="flex items-center justify-between">
+                        <h2 class="card-title text-lg">Saisies a valider <span id="pending-count" class="badge badge-warning">0</span></h2>
+                        <button type="button" id="btn-refresh-pending" class="btn btn-ghost btn-xs">Actualiser</button>
+                    </div>
+                    <div id="pending-list" class="divide-y divide-base-300 text-sm">
+                        <p class="py-4 text-center opacity-60">Chargement...</p>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="card bg-base-100 shadow-md mt-6">
+                <div class="card-body">
+                    <h2 class="card-title text-lg">Dernieres saisies</h2>
+                    <div class="overflow-x-auto">
+                        <table class="table table-xs">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Base / Journal</th>
+                                    <th>Compte</th>
+                                    <th>Description</th>
+                                    <th class="text-right">In</th>
+                                    <th class="text-right">Out</th>
+                                    <th>Statut</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recent-entries-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="space-y-6">
+            <div id="save-feedback"></div>
+
+            <div class="card bg-base-100 shadow-md">
+                <div class="card-body">
+                    <h2 class="card-title text-lg">Etat de validation</h2>
+                    <div id="validation-status" class="badge badge-neutral">Non verifie</div>
+                    <div class="mt-4">
+                        <p class="text-sm font-semibold mb-2 text-error">Erreurs</p>
+                        <ul id="validation-errors" class="list-disc pl-5 text-sm space-y-1"></ul>
+                    </div>
+                    <div id="derogation-block" class="mt-4 hidden">
+                        <p class="text-sm font-semibold mb-2 text-warning">Controles a lever par la direction</p>
+                        <ul id="validation-derogeables" class="list-disc pl-5 text-sm space-y-1"></ul>
+                        <p id="derogation-info" class="text-xs mt-2 opacity-70"></p>
+                        <textarea id="derogation_motif" rows="2" maxlength="500" class="textarea textarea-bordered w-full mt-2 hidden"
+                            placeholder="Motif de la derogation (10 caracteres minimum)"></textarea>
+                    </div>
+                    <div class="mt-4">
+                        <p class="text-sm font-semibold mb-2 text-warning">Avertissements</p>
+                        <ul id="validation-warnings" class="list-disc pl-5 text-sm space-y-1"></ul>
+                    </div>
+                    <div class="mt-4">
+                        <p class="text-sm font-semibold mb-2">Regles appliquees</p>
+                        <ul id="validation-rules" class="list-disc pl-5 text-sm space-y-1"></ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const BASES = {{ bases_json|safe }};
+const JOURNAUX = {{ journaux_json|safe }};
+const COMPTES = {{ comptes_json|safe }};
+const FOURNISSEURS = {{ fournisseurs_json|safe }};
+const INITIAL_RECENT_ENTRIES = {{ recent_entries_json|safe }};
+const DEFAULT_BASE_ID = "{{ default_base_id }}";
+
+const URL_VALIDATE = "{% url 'accounting:api_saisie_comptable_validate' %}";
+const URL_SAVE = "{% url 'accounting:api_saisie_comptable_save' %}";
+const URL_RECENTS = "{% url 'accounting:api_saisie_comptable_recent' %}";
+const PEUT_DEROGER = {{ peut_deroger|yesno:"true,false" }};
+{% if peut_deroger %}
+const URL_PENDING = "{% url 'accounting:api_saisie_comptable_pending' %}";
+const URL_APPROVE = "{% url 'accounting:api_saisie_comptable_approve' %}";
+{% endif %}
+
+let autoValidateTimer = null;
+let recentEntries = Array.isArray(INITIAL_RECENT_ENTRIES) ? INITIAL_RECENT_ENTRIES : [];
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+function fillBaseSelect() {
+    const select = document.getElementById('base_id');
+    select.innerHTML = '<option value="">Selectionner une base</option>';
+    BASES.forEach((base) => {
+        const option = document.createElement('option');
+        option.value = base.id;
+        option.textContent = base.nom;
+        select.appendChild(option);
+    });
+}
+
+function compteLabel(compte) {
+    return `${compte.compte || ''} - ${compte.nom || ''}`;
+}
+
+function fillCompteSelect() {
+    // Autocompletion : le champ visible propose "numero - nom", le champ cache compte_id garde l'identifiant.
+    const datalist = document.getElementById('comptes-list');
+    datalist.innerHTML = '';
+    COMPTES.forEach((compte) => {
+        const option = document.createElement('option');
+        option.value = compteLabel(compte);
+        datalist.appendChild(option);
+    });
+}
+
+function findCompteByText(text) {
+    const wanted = (text || '').trim().toLowerCase();
+    if (!wanted) return null;
+    return COMPTES.find((compte) => compteLabel(compte).toLowerCase() === wanted)
+        || COMPTES.find((compte) => (compte.compte || '').toLowerCase() === wanted)
+        || null;
+}
+
+function onCompteSearchChange() {
+    const search = document.getElementById('compte_search');
+    const hidden = document.getElementById('compte_id');
+    const compte = findCompteByText(search.value);
+    const newId = compte ? compte.id : '';
+    search.classList.toggle('input-error', Boolean(search.value.trim()) && !compte);
+    if (hidden.value !== newId) {
+        hidden.value = newId;
+        hidden.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+}
+
+function syncCompteSearch() {
+    // Le champ cache peut etre renseigne par un script (pre-remplissage IA) : on aligne le texte visible.
+    const compte = COMPTES.find((item) => item.id === document.getElementById('compte_id').value);
+    const search = document.getElementById('compte_search');
+    if (compte && findCompteByText(search.value) !== compte) search.value = compteLabel(compte);
+}
+
+function fillFournisseursDatalist() {
+    const datalist = document.getElementById('fournisseurs-list');
+    datalist.innerHTML = '';
+    FOURNISSEURS.forEach((f) => {
+        const option = document.createElement('option');
+        option.value = f.label || f.nom || '';
+        datalist.appendChild(option);
+    });
+}
+
+function updateJournalSelect(baseId) {
+    const select = document.getElementById('journal_id');
+    const previous = select.value;
+    select.innerHTML = `<option value="">${baseId ? 'Selectionner un journal' : "Selectionner d'abord une base"}</option>`;
+    // Cascade stricte : uniquement les journaux (ouverts, filtres cote serveur) de la base choisie.
+    JOURNAUX
+        .filter((journal) => baseId && journal.base_id === baseId)
+        .forEach((journal) => {
+            const option = document.createElement('option');
+            option.value = journal.id;
+            option.textContent = `${journal.code || '-'} - ${journal.nom || ''}`;
+            select.appendChild(option);
+        });
+    if ([...select.options].some((opt) => opt.value === previous)) {
+        select.value = previous;
+    }
+}
+
+function applyBaseDefaults(force) {
+    const baseId = document.getElementById('base_id').value;
+    const base = BASES.find((item) => item.id === baseId);
+    if (!base) {
+        return;
+    }
+    const progInput = document.getElementById('prog');
+    const activInput = document.getElementById('activ');
+
+    if (force || !progInput.value.trim()) {
+        progInput.value = base.prog_diamex || '';
+    }
+    if (force || !activInput.value.trim()) {
+        activInput.value = base.volet || '';
+    }
+}
+
+function renderCompteHints() {
+    const container = document.getElementById('compte-hints');
+    container.innerHTML = '';
+    const compteId = document.getElementById('compte_id').value;
+    const compte = COMPTES.find((item) => item.id === compteId);
+    if (!compte) {
+        return;
+    }
+
+    const tags = [];
+    if (compte.fournisseur_obligatoire) {
+        tags.push({ cls: 'badge-error', text: 'Fournisseur obligatoire' });
+    }
+    if (compte.employe_obligatoire) {
+        tags.push({ cls: 'badge-warning', text: 'Detail ou PERS obligatoire' });
+    }
+    if (compte.necessite_ouvrage) {
+        tags.push({ cls: 'badge-info', text: 'Description avec ouvrage' });
+    }
+    if (compte.financement) {
+        tags.push({ cls: 'badge-secondary', text: `Fin attendu: ${compte.financement}` });
+    }
+    if (compte.charte_label) {
+        tags.push({ cls: 'badge-neutral', text: `Charte: ${compte.charte_label}` });
+    } else if (compte.charte_verification) {
+        tags.push({ cls: 'badge-neutral', text: `Charte: ${compte.charte_verification}` });
+    }
+
+    tags.forEach((tag) => {
+        const el = document.createElement('span');
+        el.className = `badge ${tag.cls}`;
+        el.textContent = tag.text;
+        container.appendChild(el);
+    });
+}
+
+function collectPayload() {
+    return {
+        base_id: document.getElementById('base_id').value || '',
+        journal_id: document.getElementById('journal_id').value || '',
+        compte_id: document.getElementById('compte_id').value || '',
+        date_m: document.getElementById('date_m').value || '',
+        date_rec: document.getElementById('date_rec').value || '',
+        description: document.getElementById('description').value || '',
+        montant_in: document.getElementById('montant_in').value || '',
+        montant_out: document.getElementById('montant_out').value || '',
+        pers: document.getElementById('pers').value || '',
+        detail: document.getElementById('detail').value || '',
+        info: document.getElementById('info').value || '',
+        fin: document.getElementById('fin').value || '',
+        activ: document.getElementById('activ').value || '',
+        prog: document.getElementById('prog').value || '',
+        fournisseur: document.getElementById('fournisseur').value || '',
+        articles: (typeof window.getSaisieArticles === 'function') ? window.getSaisieArticles() : [],
+        derogation_motif: document.getElementById('derogation_motif').value || '',
+    };
+}
+
+function renderDerogation(validation) {
+    const items = (validation && validation.derogeables) || [];
+    const block = document.getElementById('derogation-block');
+    const motif = document.getElementById('derogation_motif');
+    block.classList.toggle('hidden', !items.length);
+    renderList('validation-derogeables', items, '');
+    if (!items.length) {
+        motif.value = '';
+        return;
+    }
+    const canOverride = Boolean(validation.peut_deroger);
+    motif.classList.toggle('hidden', !canOverride);
+    document.getElementById('derogation-info').textContent = canOverride
+        ? 'Vous pouvez valider malgre ces controles en indiquant un motif.'
+        : "Saisie non validable en l'etat : enregistrez-la en brouillon, le Directeur ou le Responsable operationnel devra la valider.";
+}
+
+function renderList(containerId, items, emptyLabel) {
+    const ul = document.getElementById(containerId);
+    ul.innerHTML = '';
+    if (!items || !items.length) {
+        const li = document.createElement('li');
+        li.className = 'opacity-60';
+        li.textContent = emptyLabel;
+        ul.appendChild(li);
+        return;
+    }
+    items.forEach((item) => {
+        const li = document.createElement('li');
+        li.textContent = item;
+        ul.appendChild(li);
+    });
+}
+
+function renderValidationState(validation) {
+    renderDerogation(validation);
+    const status = document.getElementById('validation-status');
+    if (!validation) {
+        status.className = 'badge badge-neutral';
+        status.textContent = 'Non verifie';
+        renderList('validation-errors', [], 'Aucune erreur');
+        renderList('validation-warnings', [], 'Aucun avertissement');
+        renderList('validation-rules', [], 'Aucune regle');
+        return;
+    }
+
+    if (validation.valid) {
+        status.className = 'badge badge-success';
+        status.textContent = 'Conforme';
+    } else {
+        status.className = 'badge badge-error';
+        status.textContent = 'A corriger';
+    }
+    renderList('validation-errors', validation.errors || [], 'Aucune erreur');
+    renderList('validation-warnings', validation.warnings || [], 'Aucun avertissement');
+    renderList('validation-rules', validation.rules || [], 'Aucune regle');
+}
+
+function showFeedback(type, message) {
+    const container = document.getElementById('save-feedback');
+    const icon = type === 'success' ? 'check-circle' : (type === 'error' ? 'times-circle' : 'info-circle');
+    const alertType = type === 'success' ? 'alert-success' : (type === 'error' ? 'alert-error' : 'alert-info');
+    container.innerHTML = `
+        <div class="alert ${alertType}">
+            <i class="fas fa-${icon}"></i>
+            <span>${message}</span>
+        </div>
+    `;
+}
+
+function formatMoney(value) {
+    const numeric = Number(value || 0);
+    if (!Number.isFinite(numeric)) {
+        return '-';
+    }
+    return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(numeric);
+}
+
+function statusBadge(statut, conforme) {
+    if (statut === 'valide') {
+        return '<span class="badge badge-success badge-sm">Valide</span>';
+    }
+    if (statut === 'a_corriger') {
+        return '<span class="badge badge-error badge-sm">A corriger</span>';
+    }
+    if (conforme) {
+        return '<span class="badge badge-warning badge-sm">Brouillon conforme</span>';
+    }
+    return '<span class="badge badge-ghost badge-sm">Brouillon</span>';
+}
+
+function renderRecentEntries() {
+    const body = document.getElementById('recent-entries-body');
+    body.innerHTML = '';
+    if (!recentEntries.length) {
+        body.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-base-content/60">Aucune saisie recente.</td></tr>';
+        return;
+    }
+
+    recentEntries.slice(0, 25).forEach((entry) => {
+        const tr = document.createElement('tr');
+        tr.className = 'hover';
+        tr.innerHTML = `
+            <td>${entry.date_m || '-'}</td>
+            <td><div class="font-semibold">${entry.base || '-'}</div><div class="text-xs opacity-70">${entry.journal_code || ''} ${entry.journal || ''}</div></td>
+            <td><span class="badge badge-ghost badge-sm">${entry.compte_code || '-'}</span></td>
+            <td class="max-w-xs truncate" title="${entry.description || ''}">${entry.description || '-'}</td>
+            <td class="text-right text-success">${entry.montant_in > 0 ? formatMoney(entry.montant_in) : '-'}</td>
+            <td class="text-right text-error">${entry.montant_out > 0 ? formatMoney(entry.montant_out) : '-'}</td>
+            <td>${statusBadge(entry.statut, entry.conforme)}</td>
+        `;
+        body.appendChild(tr);
+    });
+}
+
+async function validateCurrentPayload() {
+    const payload = collectPayload();
+    const response = await fetch(URL_VALIDATE, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken'),
+        },
+        body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Erreur validation');
+    }
+    renderValidationState(data);
+    if (window.saisieArticlesApplyDetail) window.saisieArticlesApplyDetail(data.detail_suggere);
+    return data;
+}
+
+function queueAutoValidate() {
+    if (autoValidateTimer) {
+        clearTimeout(autoValidateTimer);
+    }
+    autoValidateTimer = setTimeout(() => {
+        validateCurrentPayload().catch(() => {});
+    }, 500);
+}
+
+function resetForNextLine() {
+    [
+        'description',
+        'montant_in',
+        'montant_out',
+        'pers',
+        'detail',
+        'info',
+        'fin',
+        'fournisseur'
+    ].forEach((id) => {
+        document.getElementById(id).value = '';
+    });
+    document.getElementById('date_rec').value = '';
+    if (window.saisieArticlesReset) window.saisieArticlesReset();
+    renderValidationState(null);
+}
+
+async function savePayload(mode) {
+    const payload = collectPayload();
+    payload.mode = mode;
+
+    const response = await fetch(URL_SAVE, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken'),
+        },
+        body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+
+    if (!response.ok || !data.success) {
+        renderValidationState(data);
+        throw new Error(data.error || 'Erreur enregistrement');
+    }
+
+    renderValidationState(data);
+    showFeedback('success', mode === 'valider' ? 'Ligne validee et enregistree.' : 'Brouillon enregistre.');
+
+    if (data.entry) {
+        recentEntries.unshift(data.entry);
+        renderRecentEntries();
+    } else {
+        await refreshRecentEntries();
+    }
+
+    loadPending();
+    resetForNextLine();
+}
+
+function pendingCard(entry) {
+    const card = document.createElement('div');
+    card.className = 'space-y-2 py-4';
+
+    const title = document.createElement('div');
+    title.className = 'font-semibold';
+    title.textContent = `${entry.date_m || '-'} · ${entry.compte_code || '-'} · ${formatMoney(entry.montant_out || entry.montant_in)} Ar`;
+    const author = document.createElement('span');
+    author.className = 'ml-2 text-xs font-normal opacity-60';
+    author.textContent = `Saisi par ${entry.created_by || '-'}`;
+    title.appendChild(author);
+
+    const desc = document.createElement('div');
+    desc.textContent = entry.description || '-';
+
+    const controls = document.createElement('ul');
+    controls.className = 'list-disc pl-5 text-warning';
+    (entry.controles || []).forEach((text) => {
+        const li = document.createElement('li');
+        li.textContent = text;
+        controls.appendChild(li);
+    });
+
+    const motif = document.createElement('input');
+    motif.type = 'text';
+    motif.maxLength = 500;
+    motif.placeholder = 'Motif de la validation (10 caracteres minimum)';
+    motif.className = 'input input-bordered input-sm w-full';
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-success btn-sm';
+    button.textContent = 'Valider malgre les controles';
+    button.addEventListener('click', () => approvePending(entry.id, motif.value, button));
+
+    card.append(title, desc, controls, motif, button);
+    return card;
+}
+
+async function loadPending() {
+    if (!PEUT_DEROGER) return;
+    const list = document.getElementById('pending-list');
+    try {
+        const response = await fetch(URL_PENDING, { credentials: 'same-origin' });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Erreur');
+        list.innerHTML = '';
+        document.getElementById('pending-count').textContent = data.entries.length;
+        if (!data.entries.length) {
+            list.innerHTML = '<p class="py-4 text-center opacity-60">Aucune saisie en attente.</p>';
+            return;
+        }
+        data.entries.forEach((entry) => list.appendChild(pendingCard(entry)));
+    } catch (error) {
+        list.innerHTML = '<p class="py-4 text-center text-error">Chargement impossible.</p>';
+    }
+}
+
+async function approvePending(id, motif, button) {
+    button.disabled = true;
+    try {
+        const response = await fetch(URL_APPROVE, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify({ id, motif }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            showFeedback('error', data.error || 'Validation impossible.');
+            return;
+        }
+        showFeedback('success', data.message || 'Saisie validee.');
+        await Promise.all([loadPending(), refreshRecentEntries()]);
+    } catch (error) {
+        showFeedback('error', 'Erreur reseau lors de la validation.');
+    } finally {
+        button.disabled = false;
+    }
+}
+
+async function refreshRecentEntries() {
+    const response = await fetch(`${URL_RECENTS}?limit=25`, { method: 'GET' });
+    const data = await response.json();
+    if (response.ok && data.success && Array.isArray(data.entries)) {
+        recentEntries = data.entries;
+        renderRecentEntries();
+    }
+}
+
+function setupListeners() {
+    document.getElementById('base_id').addEventListener('change', () => {
+        updateJournalSelect(document.getElementById('base_id').value);
+        applyBaseDefaults(true);
+        queueAutoValidate();
+    });
+
+    const compteSearch = document.getElementById('compte_search');
+    compteSearch.addEventListener('input', onCompteSearchChange);
+    compteSearch.addEventListener('change', onCompteSearchChange);
+    document.getElementById('compte_id').addEventListener('change', () => {
+        syncCompteSearch();
+        renderCompteHints();
+        queueAutoValidate();
+    });
+
+    [
+        'journal_id',
+        'date_m',
+        'date_rec',
+        'description',
+        'montant_in',
+        'montant_out',
+        'pers',
+        'detail',
+        'info',
+        'fin',
+        'activ',
+        'prog',
+        'fournisseur'
+    ].forEach((id) => {
+        const input = document.getElementById(id);
+        if (input) {
+            input.addEventListener('input', queueAutoValidate);
+            input.addEventListener('change', queueAutoValidate);
+        }
+    });
+
+    document.getElementById('btn-validate').addEventListener('click', async () => {
+        try {
+            await validateCurrentPayload();
+            showFeedback('info', 'Verification terminee.');
+        } catch (error) {
+            showFeedback('error', error.message);
+        }
+    });
+
+    document.getElementById('btn-save-draft').addEventListener('click', async () => {
+        try {
+            await savePayload('brouillon');
+        } catch (error) {
+            showFeedback('error', error.message);
+        }
+    });
+
+    document.getElementById('btn-save-valid').addEventListener('click', async () => {
+        try {
+            await savePayload('valider');
+        } catch (error) {
+            showFeedback('error', error.message);
+        }
+    });
+}
+
+function init() {
+    fillBaseSelect();
+    fillCompteSelect();
+    fillFournisseursDatalist();
+    if (DEFAULT_BASE_ID && BASES.some((base) => base.id === DEFAULT_BASE_ID)) {
+        document.getElementById('base_id').value = DEFAULT_BASE_ID;
+    }
+    updateJournalSelect(document.getElementById('base_id').value);
+    applyBaseDefaults(false);
+    renderValidationState(null);
+    renderRecentEntries();
+    setupListeners();
+    if (PEUT_DEROGER) {
+        document.getElementById('btn-refresh-pending').addEventListener('click', loadPending);
+        loadPending();
+    }
+}
+
+init();
+</script>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="{% static 'js/prefill_saisie.js' %}"></script>
+<script src="{% static 'js/saisie_guidee.js' %}"></script>
+{% endblock %}

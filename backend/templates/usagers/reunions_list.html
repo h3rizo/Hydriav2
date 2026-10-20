@@ -1,0 +1,2307 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% load usagers_extras %}
+
+{% block title %}Reunions avec les usagers{% endblock %}
+
+{% block content %}
+<div class="container hydria-v1-page mx-auto px-4 py-6">
+
+    <header class="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+            <h1 class="hydria-v1-page-title">
+                <i class="fas fa-people-group text-primary mr-2"></i>Reunions avec les usagers
+            </h1>
+            <p class="text-sm text-base-content/70 mt-1">
+                Objet, compte-rendu, participants, decisions et depenses associees a chaque reunion.
+            </p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <a href="{% url 'usagers:decisions_suivi_dashboard' %}" class="btn btn-outline btn-sm">
+                <i class="fas fa-list-check mr-2"></i>Suivi des decisions
+            </a>
+            <a href="{% url 'usagers:pointage_diamex_list' %}" class="btn btn-outline btn-sm">
+                <i class="fas fa-link mr-2"></i>Pointage DiameX
+            </a>
+            <button type="button" class="btn btn-outline btn-sm" onclick="openExportReunionsModal()">
+                <i class="fas fa-file-excel mr-2"></i>Exporter Excel
+            </button>
+            <button type="button" class="btn btn-primary btn-sm" onclick="openCreateReunionModal()">
+                <i class="fas fa-plus mr-2"></i>Nouvelle reunion
+            </button>
+        </div>
+    </header>
+
+    <!-- Statistiques -->
+    <div class="hydria-v1-kpi-grid mb-4">
+        <div class="hydria-v1-stat hydria-v1-tone-primary stat p-3">
+            <div class="stat-figure text-primary"><i class="fas fa-people-group text-2xl"></i></div>
+            <div class="stat-title text-xs">Reunions ({{ filter_annee }})</div>
+            <div class="stat-value text-2xl text-primary">{{ stats.nb_reunions }}</div>
+            <div class="stat-desc text-[11px] leading-tight mt-1">
+                {% for value, label in type_reunion_choices %}
+                {% with nb_type=stats.nb_reunions_par_type|get_item:value|default:0 %}
+                {% if nb_type %}
+                {{ label }} : {{ nb_type }}<br>
+                {% endif %}
+                {% endwith %}
+                {% endfor %}
+                {% if stats.nb_reunions_sans_type %}
+                Sans type : {{ stats.nb_reunions_sans_type }}
+                {% endif %}
+            </div>
+        </div>
+        <div class="hydria-v1-stat hydria-v1-tone-info stat p-3">
+            <div class="stat-figure text-info"><i class="fas fa-users text-2xl"></i></div>
+            <div class="stat-title text-xs">Participants (total)</div>
+            <div class="stat-value text-2xl text-info">{{ stats.nb_participants_total }}</div>
+            <div class="stat-desc text-[11px]">Toutes reunions {{ filter_annee }} confondues</div>
+        </div>
+        <div class="hydria-v1-stat hydria-v1-tone-secondary stat p-3">
+            <div class="stat-figure text-secondary"><i class="fas fa-chart-simple text-2xl"></i></div>
+            <div class="stat-title text-xs">Moyenne participants</div>
+            <div class="stat-value text-2xl text-secondary">{{ stats.moyenne_participants }}</div>
+            <div class="stat-desc text-[11px]">Par reunion</div>
+        </div>
+        <button type="button" class="hydria-v1-stat hydria-v1-tone-success stat p-3 cursor-pointer text-left" onclick="openOuvragesGeresModal()">
+            <div class="stat-figure text-success"><i class="fas fa-faucet-drip text-2xl"></i></div>
+            <div class="stat-title text-xs">Ouvrages geres</div>
+            <div class="stat-value text-2xl text-success">{{ stats.total_ouvrages_geres }}</div>
+            <div class="stat-desc text-[11px]">
+                {% if stats.zone_ouvrages_geres_nom %}Dans {{ stats.zone_ouvrages_geres_nom }}{% else %}Par votre organisation{% endif %}
+                - cliquer pour le detail
+            </div>
+        </button>
+        <div class="hydria-v1-stat hydria-v1-tone-warning stat p-3">
+            <div class="stat-figure text-warning"><i class="fas fa-user-check text-2xl"></i></div>
+            <div class="stat-title text-xs">Participants attendus (par type)</div>
+            {% if stats.attendus_par_type %}
+            <div class="stat-value text-2xl text-warning">{{ stats.total_present_attendu_general }} / {{ stats.total_attendu_general }}</div>
+            <div class="stat-desc text-[11px] leading-tight mt-1">
+                {% for a in stats.attendus_par_type %}
+                {{ a.type_display }} : {{ a.present }} / {{ a.attendu }}<br>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="stat-value text-2xl text-base-content/30">-</div>
+            <div class="stat-desc text-[11px]">Aucun attendu defini pour ces reunions</div>
+            {% endif %}
+        </div>
+        <div class="hydria-v1-stat hydria-v1-tone-error stat p-3" title="Taux calcule sur les 7 criteres de chaque avis (4 criteres Oui/Non + 3 champs probleme), pas sur l'avis dans son ensemble.">
+            <div class="stat-figure {% if stats.pct_avis_negatifs >= 50 %}text-error{% elif stats.pct_avis_negatifs >= 20 %}text-warning{% else %}text-success{% endif %}">
+                <i class="fas fa-face-frown text-2xl"></i>
+            </div>
+            <div class="stat-title text-xs">Criteres negatifs</div>
+            <div class="stat-value text-2xl {% if stats.pct_avis_negatifs >= 50 %}text-error{% elif stats.pct_avis_negatifs >= 20 %}text-warning{% else %}text-success{% endif %}">
+                {{ stats.pct_avis_negatifs }}%
+            </div>
+            <div class="stat-desc text-[11px]">{{ stats.total_criteres_negatifs }} / {{ stats.total_criteres }} criteres ({{ stats.total_avis }} avis)</div>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="hydria-v1-filter-card card mb-4">
+        <div class="card-body p-4">
+            <form method="get" class="hydria-v1-compact-filters grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end">
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Region</span></label>
+                    <select name="region" class="select select-bordered select-sm w-full">
+                        <option value="">Toutes</option>
+                        {% for r in regions %}
+                        <option value="{{ r.id }}" {% if filter_region == r.id|stringformat:"s" %}selected{% endif %}>{{ r.nom_region }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">District</span></label>
+                    <select name="district" class="select select-bordered select-sm w-full">
+                        <option value="">Tous</option>
+                        {% for d in districts %}
+                        <option value="{{ d.id }}" {% if filter_district == d.id|stringformat:"s" %}selected{% endif %}>{{ d.nom_district }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Commune</span></label>
+                    <select name="commune" class="select select-bordered select-sm w-full">
+                        <option value="">Toutes</option>
+                        {% for c in communes %}
+                        <option value="{{ c.id }}" {% if filter_commune == c.id|stringformat:"s" %}selected{% endif %}>{{ c.nom_commune }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Type de reunion</span></label>
+                    <select name="type_reunion" class="select select-bordered select-sm w-full">
+                        <option value="">Tous</option>
+                        {% for value, label in type_reunion_choices %}
+                        <option value="{{ value }}" {% if filter_type_reunion == value %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Annee</span></label>
+                    <select name="annee" title="Annee" class="select select-bordered select-sm w-full">
+                        {% for a in annees_disponibles %}
+                        <option value="{{ a }}" {% if filter_annee == a %}selected{% endif %}>{{ a }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Recherche</span></label>
+                    <input type="text" name="search" value="{{ filter_search }}" class="input input-bordered input-sm w-full" placeholder="Objet, compte-rendu...">
+                </div>
+                <div class="flex gap-2 lg:col-span-6">
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="fas fa-filter mr-2"></i>Filtrer
+                    </button>
+                    <a href="{% url 'usagers:reunions_list' %}" class="btn btn-ghost btn-sm">
+                        <i class="fas fa-redo mr-2"></i>Reinitialiser
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Liste des reunions -->
+    <div class="hydria-v1-table-card card">
+        <div class="card-body p-0">
+            <div class="overflow-x-auto">
+                <table class="table table-sm table-zebra">
+                    <thead class="bg-base-200">
+                        <tr>
+                            <th class="hidden sm:table-cell"></th>
+                            <th>Date</th>
+                            <th>Type</th>
+                            <th>Objet</th>
+                            <th>Lieu</th>
+                            <th class="text-center">Participants</th>
+                            <th class="text-center" title="Pourcentage de criteres negatifs (sur les 7 criteres de chaque avis) parmi les avis recueillis lors de cette reunion">% criteres negatifs</th>
+                            <th class="text-center" title="Ouvrages geres par votre organisation dans le lieu de la reunion">Ouvrages</th>
+                            <th class="text-center">Decisions en cours</th>
+                            <th class="text-right">Depenses (DiameX)</th>
+                            <th class="text-center">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for reunion in reunions %}
+                        <tr class="hover cursor-pointer" onclick="openDetailReunionModal('{{ reunion.id }}')">
+                            <td class="hidden sm:table-cell">
+                                {% with photo=reunion.photos_couverture.0 %}
+                                {% if photo %}
+                                <img src="{{ photo.fichier.url }}" alt="" class="w-10 h-10 rounded object-cover">
+                                {% else %}
+                                <div class="w-10 h-10 rounded bg-base-300 flex items-center justify-center text-base-content/30">
+                                    <i class="fas fa-image text-xs"></i>
+                                </div>
+                                {% endif %}
+                                {% endwith %}
+                            </td>
+                            <td class="font-mono text-xs">{{ reunion.date_reunion|date:"d/m/Y" }}</td>
+                            <td>
+                                {% if reunion.type_reunion == 'restitution_communale' %}
+                                <span class="badge badge-info badge-sm">Restitution communale</span>
+                                {% elif reunion.type_reunion == 'restitution_regionale' %}
+                                <span class="badge badge-secondary badge-sm">Restitution regionale</span>
+                                {% elif reunion.type_reunion == 'reunion_equipe' %}
+                                <span class="badge badge-accent badge-sm">Reunion d'equipe</span>
+                                {% else %}
+                                <span class="text-base-content/30 text-xs italic">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="font-medium">{{ reunion.objet }}</td>
+                            <td>{{ reunion.lieu_affiche }}</td>
+                            <td class="text-center">
+                                {% if reunion.total_attendu %}
+                                <span class="badge badge-sm {% if reunion.pct_participation >= 100 %}badge-success{% elif reunion.pct_participation >= 50 %}badge-warning{% else %}badge-error{% endif %}" title="{{ reunion.nb_participants_presents }} present(s) sur {{ reunion.total_attendu }} attendu(s)">
+                                    {{ reunion.nb_participants_presents }} / {{ reunion.total_attendu }}
+                                </span>
+                                {% else %}
+                                <span class="badge badge-outline badge-sm">{{ reunion.nb_participants }}</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                {% if reunion.pct_avis_negatifs is not None %}
+                                <span class="badge badge-sm {% if reunion.pct_avis_negatifs >= 50 %}badge-error{% elif reunion.pct_avis_negatifs >= 20 %}badge-warning{% else %}badge-success{% endif %}" title="{{ reunion.nb_criteres_negatifs }} / {{ reunion.nb_criteres_total }} criteres negatifs, sur {{ reunion.nb_avis }} avis recueilli{{ reunion.nb_avis|pluralize }}">
+                                    {{ reunion.pct_avis_negatifs }}%
+                                </span>
+                                {% else %}
+                                <span class="text-base-content/40">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                <span class="badge badge-ghost badge-sm">{{ reunion.nb_ouvrages_geres }}</span>
+                            </td>
+                            <td class="text-center">
+                                {% if reunion.nb_decisions_en_cours %}
+                                <span class="badge badge-warning badge-sm">{{ reunion.nb_decisions_en_cours }}</span>
+                                {% else %}
+                                <span class="text-base-content/40">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-right font-mono">
+                                {% if reunion.montant_depense_total %}
+                                {{ reunion.montant_depense_total|floatformat:0|intcomma }} Ar
+                                {% else %}
+                                <span class="text-base-content/40">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center" onclick="event.stopPropagation();">
+                                <button type="button" class="btn btn-ghost btn-xs" onclick="openDetailReunionModal('{{ reunion.id }}')" title="Voir le detail">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                                {% if is_directeur_poste %}
+                                <button type="button" class="btn btn-ghost btn-xs text-info" onclick="openFusionModal('{{ reunion.id }}', '{{ reunion.objet|escapejs }}')" title="Fusionner avec une autre reunion (meme date, meme commune)">
+                                    <i class="fas fa-object-group"></i>
+                                </button>
+                                {% endif %}
+                                <button type="button" class="btn btn-ghost btn-xs text-error" onclick="deleteReunion('{{ reunion.id }}', '{{ reunion.objet|escapejs }}')" title="Supprimer">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="11" class="text-center py-8 opacity-50 italic">Aucune reunion pour ces filtres</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal export Excel des reunions -->
+<!-- Modal detail ouvrages geres (diagnostic du comptage) -->
+<dialog id="modal-ouvrages-geres" class="modal">
+    <div class="modal-box max-w-4xl">
+        <h3 class="font-bold text-lg mb-2"><i class="fas fa-faucet-drip mr-2 text-success"></i>Detail des ouvrages geres</h3>
+        <p class="text-xs text-base-content/60 mb-3">
+            Liste des ouvrages comptes dans la statistique "Ouvrages geres" pour l'annee {{ filter_annee }}.
+            Un ouvrage est compte s'il est rattache a une modalite de gestion active ou resiliee couvrant
+            l'annee, et n'est pas de type "suspendu" ou "potentiel". Verifiez ci-dessous si des ouvrages
+            n'appartenant pas a votre organisation, ou dont la modalite ne devrait plus etre active,
+            apparaissent dans la liste.
+        </p>
+        <div id="ouvrages-geres-loading" class="text-center py-6">
+            <span class="loading loading-spinner loading-md"></span>
+        </div>
+        <div id="ouvrages-geres-content" class="hidden">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs opacity-60"><span id="ouvrages-geres-total">0</span> ouvrage(s)</span>
+                <input type="text" id="ouvrages-geres-filter" class="input input-bordered input-xs w-48" placeholder="Filtrer par nom ou gestionnaire..." oninput="filterOuvragesGeresRows()">
+            </div>
+            <div class="max-h-96 overflow-y-auto border border-base-300 rounded-lg">
+                <table class="table table-xs table-zebra">
+                    <thead class="sticky top-0 bg-base-200 z-10">
+                        <tr>
+                            <th>Ouvrage</th>
+                            <th>Type</th>
+                            <th>Modalite(s) de gestion</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ouvrages-geres-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+        <div id="ouvrages-geres-error" class="alert alert-error hidden text-xs py-1 mt-3"></div>
+        <div class="modal-action">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('modal-ouvrages-geres').close()">Fermer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<dialog id="modal-export-reunions" class="modal">
+    <div class="modal-box max-w-2xl">
+        <h3 class="font-bold text-lg mb-2"><i class="fas fa-file-excel mr-2 text-success"></i>Exporter des reunions</h3>
+        <p class="text-xs text-base-content/60 mb-3">
+            Choisissez les reunions a inclure dans le fichier Excel (date, objet, compte-rendu, recommandations,
+            et les avis de chaque representant sur une feuille separee). Seules les reunions de la liste
+            actuellement filtree ({{ filter_annee }}) sont proposees.
+        </p>
+        <div class="flex items-center justify-between mb-2">
+            <label class="label cursor-pointer gap-2">
+                <input type="checkbox" id="export-select-all" class="checkbox checkbox-sm" checked onchange="toggleAllExportReunions(this.checked)">
+                <span class="label-text text-xs">Tout selectionner</span>
+            </label>
+            <span class="text-xs opacity-60"><span id="export-count">0</span> reunion(s) selectionnee(s)</span>
+        </div>
+        <div class="max-h-72 overflow-y-auto border border-base-300 rounded-lg divide-y divide-base-200">
+            {% for reunion in reunions %}
+            <label class="flex items-center gap-2 px-3 py-2 hover:bg-base-200 cursor-pointer">
+                <input type="checkbox" class="checkbox checkbox-sm export-reunion-checkbox" value="{{ reunion.id }}" checked onchange="updateExportCount()">
+                <span class="text-xs font-mono w-20 shrink-0">{{ reunion.date_reunion|date:"d/m/Y" }}</span>
+                <span class="text-sm truncate">{{ reunion.objet }}</span>
+                <span class="text-xs opacity-50 ml-auto shrink-0">{{ reunion.lieu_affiche }}</span>
+            </label>
+            {% empty %}
+            <p class="text-xs italic opacity-50 text-center py-4">Aucune reunion a exporter pour ces filtres.</p>
+            {% endfor %}
+        </div>
+        <div id="export-error" class="alert alert-error hidden text-xs py-1 mt-3"></div>
+        <div class="modal-action">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('modal-export-reunions').close()">Annuler</button>
+            <button type="button" class="btn btn-success btn-sm" onclick="confirmExportReunions()">
+                <i class="fas fa-download mr-2"></i>Telecharger
+            </button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+{% if is_directeur_poste %}
+<dialog id="modal-fusion-reunion" class="modal">
+    <div class="modal-box max-w-2xl">
+        <h3 class="font-bold text-lg mb-2"><i class="fas fa-object-group mr-2 text-info"></i>Fusionner une reunion</h3>
+        <p class="text-xs text-base-content/60 mb-3">
+            Reunion principale : <span class="font-semibold" id="fusion-reunion-principale-objet"></span>.
+            Choisissez une reunion a fusionner dedans (meme date, meme commune). Ses participants, avis,
+            decisions, pieces jointes et pointages DiameX seront deplaces dans la reunion principale, et la
+            reunion secondaire sera supprimee. Les doublons de participants (meme fiche) ne seront pas dupliques.
+        </p>
+        <div id="fusion-candidats-loading" class="text-center py-6">
+            <span class="loading loading-spinner loading-md"></span>
+        </div>
+        <div id="fusion-candidats-empty" class="hidden text-center py-6 text-sm opacity-50 italic">
+            Aucune autre reunion avec la meme date et la meme commune.
+        </div>
+        <div id="fusion-candidats-list" class="hidden max-h-80 overflow-y-auto border border-base-300 rounded-lg divide-y divide-base-200"></div>
+        <div id="fusion-error" class="alert alert-error hidden text-xs py-1 mt-3"></div>
+        <div class="modal-action">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('modal-fusion-reunion').close()">Fermer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+{% endif %}
+
+<!-- Modal creation reunion -->
+<dialog id="modal-create-reunion" class="modal">
+    <div class="modal-box max-w-2xl">
+        <h3 class="font-bold text-lg mb-4"><i class="fas fa-plus mr-2"></i>Nouvelle reunion</h3>
+        <form id="form-create-reunion" class="space-y-3">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Commune</span></label>
+                    <select id="create-commune" class="select select-bordered select-sm w-full">
+                        <option value="">-</option>
+                        {% for c in communes %}
+                        <option value="{{ c.id }}">{{ c.nom_commune }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">District (si pas de commune)</span></label>
+                    <select id="create-district" class="select select-bordered select-sm w-full">
+                        <option value="">-</option>
+                        {% for d in districts %}
+                        <option value="{{ d.id }}">{{ d.nom_district }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Region (si atelier regional)</span></label>
+                    <select id="create-region" class="select select-bordered select-sm w-full">
+                        <option value="">-</option>
+                        {% for r in regions %}
+                        <option value="{{ r.id }}">{{ r.nom_region }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <p class="text-xs text-base-content/60">Renseigner au moins l'un des trois niveaux (Commune, District ou Region).</p>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Type de reunion</span></label>
+                    <select id="create-type-reunion" class="select select-bordered select-sm w-full">
+                        <option value="">-</option>
+                        {% for value, label in type_reunion_choices %}
+                        <option value="{{ value }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Date de la reunion *</span></label>
+                    <input type="date" id="create-date" class="input input-bordered input-sm w-full" required>
+                </div>
+            </div>
+            <div class="form-control">
+                <label class="label py-1"><span class="label-text text-xs">Lieu (precision)</span></label>
+                <input type="text" id="create-lieu" class="input input-bordered input-sm w-full" placeholder="Ex: Bureau du fokontany">
+            </div>
+
+            <div class="form-control">
+                <label class="label py-1"><span class="label-text text-xs">Objet *</span></label>
+                <input type="text" id="create-objet" class="input input-bordered input-sm w-full" required>
+            </div>
+            <div class="form-control">
+                <label class="label py-1"><span class="label-text text-xs">Compte-rendu</span></label>
+                <textarea id="create-compte-rendu" class="textarea textarea-bordered textarea-sm w-full" rows="3"></textarea>
+            </div>
+            <div class="form-control">
+                <label class="label py-1"><span class="label-text text-xs">Recommandations</span></label>
+                <textarea id="create-recommandations" class="textarea textarea-bordered textarea-sm w-full" rows="2"></textarea>
+            </div>
+
+            <div id="create-reunion-error" class="alert alert-error hidden text-sm"></div>
+
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('modal-create-reunion').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary btn-sm">
+                    <i class="fas fa-check mr-2"></i>Creer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal detail reunion -->
+<dialog id="modal-detail-reunion" class="modal">
+    <div class="modal-box max-w-5xl">
+        <div class="flex items-center justify-between mb-4 gap-2">
+            <h3 class="font-bold text-lg flex-1" id="detail-reunion-titre">Reunion</h3>
+            <button type="button" id="btn-edit-reunion" class="btn btn-ghost btn-xs" onclick="toggleEditReunion(true)" title="Modifier">
+                <i class="fas fa-pen mr-1"></i>Modifier
+            </button>
+            <button type="button" class="btn btn-ghost btn-xs btn-circle" onclick="document.getElementById('modal-detail-reunion').close()">
+                <i class="fas fa-xmark"></i>
+            </button>
+        </div>
+
+        <div id="detail-reunion-loading" class="flex justify-center py-8">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+        </div>
+
+        <div id="detail-reunion-content" class="hidden space-y-6">
+            <!-- Infos generales -->
+            <div class="grid grid-cols-1 sm:grid-cols-4 gap-3 text-sm">
+                <div><span class="opacity-60">Date :</span> <span id="detail-date" class="font-semibold"></span></div>
+                <div><span class="opacity-60">Type :</span> <span id="detail-type-reunion" class="font-semibold"></span></div>
+                <div><span class="opacity-60">Lieu :</span> <span id="detail-lieu" class="font-semibold"></span></div>
+                <div><span class="opacity-60">Organise par :</span> <span id="detail-organise-par" class="font-semibold"></span></div>
+            </div>
+
+            <!-- Vue lecture -->
+            <div id="detail-view-mode" class="space-y-6">
+                <div>
+                    <h4 class="font-bold text-sm mb-1"><i class="fas fa-file-lines mr-1 text-primary"></i>Compte-rendu</h4>
+                    <p id="detail-compte-rendu" class="text-sm bg-base-200 rounded p-3 whitespace-pre-line"></p>
+                </div>
+                <div>
+                    <h4 class="font-bold text-sm mb-1"><i class="fas fa-lightbulb mr-1 text-warning"></i>Recommandations</h4>
+                    <p id="detail-recommandations" class="text-sm bg-base-200 rounded p-3 whitespace-pre-line"></p>
+                </div>
+            </div>
+
+            <!-- Vue edition -->
+            <div id="detail-edit-mode" class="hidden space-y-3 border border-primary/30 bg-primary/5 rounded-lg p-3">
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Objet</span></label>
+                    <input type="text" id="edit-objet" class="input input-bordered input-sm w-full">
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div class="form-control">
+                        <label class="label py-1"><span class="label-text text-xs">Type de reunion</span></label>
+                        <select id="edit-type-reunion" class="select select-bordered select-sm w-full">
+                            <option value="">-</option>
+                            {% for value, label in type_reunion_choices %}
+                            <option value="{{ value }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label py-1"><span class="label-text text-xs">Date de la reunion</span></label>
+                        <input type="date" id="edit-date" class="input input-bordered input-sm w-full">
+                    </div>
+                    <div class="form-control">
+                        <label class="label py-1"><span class="label-text text-xs">Lieu (precision)</span></label>
+                        <input type="text" id="edit-lieu" class="input input-bordered input-sm w-full">
+                    </div>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Compte-rendu</span></label>
+                    <textarea id="edit-compte-rendu" class="textarea textarea-bordered textarea-sm w-full" rows="4"></textarea>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Recommandations</span></label>
+                    <textarea id="edit-recommandations" class="textarea textarea-bordered textarea-sm w-full" rows="3"></textarea>
+                </div>
+                <div id="edit-reunion-error" class="alert alert-error hidden text-sm"></div>
+                <div class="flex justify-end gap-2">
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="toggleEditReunion(false)">Annuler</button>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="saveEditReunion()">
+                        <i class="fas fa-check mr-1"></i>Enregistrer
+                    </button>
+                </div>
+            </div>
+
+            <!-- Participants -->
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <h4 class="font-bold text-sm">
+                        <i class="fas fa-users mr-1 text-info"></i>Participants (<span id="detail-nb-participants">0</span>)
+                        <span class="badge badge-outline badge-sm ml-1" title="Nombre de representants des usagers parmi les participants">
+                            <i class="fas fa-user-tie mr-1"></i><span id="detail-nb-representants">0</span> representant(s)
+                        </span>
+                    </h4>
+                    <button type="button" class="btn btn-xs btn-outline" onclick="toggleAddParticipantForm()">
+                        <i class="fas fa-plus mr-1"></i>Ajouter
+                    </button>
+                </div>
+
+                <!-- Presents / Attendus par type : les attendus sont pre-remplis automatiquement
+                     a la creation selon le type de reunion (cf. _calculer_attendus_par_defaut),
+                     mais restent editables (icone crayon) pour corriger ou completer la saisie. -->
+                <div class="overflow-x-auto mb-3">
+                    <table class="table table-xs">
+                        <thead>
+                            <tr class="text-[11px]">
+                                <th>Type</th>
+                                <th class="text-center">Presents</th>
+                                <th class="text-center">Attendus</th>
+                                <th class="text-center">Taux</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="detail-attendus-body"></tbody>
+                    </table>
+                </div>
+
+                <div id="add-participant-form" class="hidden mb-3 p-3 bg-base-200 rounded-lg space-y-2">
+                    <p class="text-[11px] text-base-content/60">
+                        Pour securiser la saisie, choisissez une fiche existante (representant, employe, autorite, abonne, tiers).
+                        Si la personne n'existe pas encore dans le referentiel, utilisez le bouton "Creer"
+                        (disponible pour representant, employe, autorite et tiers).
+                    </p>
+                    <div class="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                        <select id="participant-type" class="select select-bordered select-xs w-full" onchange="updateParticipantFormFields()">
+                            <option value="representant">Representant</option>
+                            <option value="abonne">Abonne</option>
+                            <option value="employe">Employe</option>
+                            <option value="autorite">Autorite</option>
+                            <option value="tiers">Tiers</option>
+                        </select>
+                        <div class="relative sm:col-span-2">
+                            <input type="text" id="participant-search" class="input input-bordered input-xs w-full"
+                                   placeholder="Rechercher par nom..." autocomplete="off" oninput="searchParticipantFiche()">
+                            <input type="hidden" id="participant-fiche-id">
+                            <div id="participant-search-results" class="hidden absolute z-20 mt-1 w-full bg-base-100 border border-base-300 rounded shadow max-h-48 overflow-y-auto"></div>
+                        </div>
+                        <button type="button" id="participant-create-fiche-btn" class="btn btn-xs btn-outline hidden" onclick="openCreateFicheModal()">
+                            <i class="fas fa-user-plus mr-1"></i>Creer
+                        </button>
+                        <input type="text" id="participant-contact" class="input input-bordered input-xs w-full" placeholder="Contact (optionnel)">
+                    </div>
+                    <div id="participant-selected-fiche" class="hidden text-xs text-success"><i class="fas fa-check-circle mr-1"></i><span></span></div>
+                    <div class="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                        <input type="text" id="participant-fonction" class="input input-bordered input-xs w-full sm:col-span-3" placeholder="Qualite pour cette reunion (optionnel, ex: en tant que...)">
+                        <button type="button" class="btn btn-xs btn-primary" onclick="addParticipant()">Enregistrer</button>
+                    </div>
+                    <div id="add-participant-error" class="alert alert-error hidden text-xs py-1"></div>
+                </div>
+                <div id="detail-participants-list" class="flex flex-wrap gap-2"></div>
+            </div>
+
+            <!-- Decisions -->
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <h4 class="font-bold text-sm"><i class="fas fa-list-check mr-1 text-success"></i>Decisions</h4>
+                    <button type="button" class="btn btn-xs btn-outline" onclick="toggleAddDecisionForm()">
+                        <i class="fas fa-plus mr-1"></i>Ajouter
+                    </button>
+                </div>
+                <div id="add-decision-form" class="hidden mb-3 p-3 bg-base-200 rounded-lg space-y-2">
+                    <textarea id="decision-description" class="textarea textarea-bordered textarea-xs w-full" rows="2" placeholder="Description de la decision"></textarea>
+                    <div class="grid grid-cols-2 gap-2">
+                        <input type="date" id="decision-echeance" class="input input-bordered input-xs w-full">
+                        <button type="button" class="btn btn-xs btn-primary" onclick="addDecision()">Enregistrer</button>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="table table-xs w-full">
+                        <thead>
+                            <tr>
+                                <th>Decision</th>
+                                <th>Echeance</th>
+                                <th>Statut</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="detail-decisions-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Avis lies -->
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <h4 class="font-bold text-sm"><i class="fas fa-comment-dots mr-1 text-secondary"></i>Avis recueillis lors de cette reunion (<span id="detail-nb-avis">0</span>)</h4>
+                    <div class="flex gap-1">
+                        <button type="button" class="btn btn-xs btn-outline" onclick="toggleLinkAvisForm()">
+                            <i class="fas fa-link mr-1"></i>Lier existant
+                        </button>
+                        <button type="button" class="btn btn-xs btn-outline" onclick="toggleAddAvisForm()">
+                            <i class="fas fa-plus mr-1"></i>Ajouter
+                        </button>
+                    </div>
+                </div>
+
+                <div id="link-avis-form" class="hidden mb-3 p-3 bg-base-200 rounded-lg space-y-3">
+
+                    <!-- Suggestions automatiques : avis non rattaches, meme date + meme commune que la reunion -->
+                    <div>
+                        <p class="text-[11px] text-base-content/60 mb-1">
+                            Avis non rattaches, recueillis a la meme date et dans la meme commune que cette reunion :
+                        </p>
+                        <div id="avis-candidats-loading" class="text-xs italic opacity-60">Recherche des avis correspondants...</div>
+                        <div id="avis-candidats-empty" class="hidden text-xs italic opacity-60">Aucun avis correspondant trouve.</div>
+                        <div id="avis-candidats-cards" class="hidden grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2"></div>
+                        <div id="avis-candidats-actions" class="hidden flex items-center justify-between gap-2">
+                            <label class="label cursor-pointer gap-1 py-0">
+                                <input type="checkbox" id="avis-candidats-select-all" class="checkbox checkbox-xs" onchange="toggleSelectAllCandidats(this.checked)">
+                                <span class="label-text text-xs">Tout selectionner</span>
+                            </label>
+                            <button type="button" class="btn btn-xs btn-primary" onclick="linkAvisCandidatsBatch()">
+                                <i class="fas fa-check-double mr-1"></i>Rattacher la selection
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="divider my-0 text-[10px] opacity-50">ou recherche manuelle</div>
+
+                    <p class="text-[11px] text-base-content/60">
+                        Recherchez un avis deja saisi (non rattache a une reunion, par ex. via import Excel)
+                        pour le lier a cette reunion sans en recreer un nouveau.
+                    </p>
+                    <div class="relative">
+                        <input type="text" id="link-avis-search" class="input input-bordered input-xs w-full"
+                               placeholder="Rechercher par nom de representant ou village..." autocomplete="off" oninput="searchUnlinkedAvis()">
+                        <input type="hidden" id="link-avis-id">
+                        <div id="link-avis-search-results" class="hidden absolute z-20 mt-1 w-full bg-base-100 border border-base-300 rounded shadow max-h-48 overflow-y-auto"></div>
+                    </div>
+                    <div id="link-avis-selected" class="hidden text-xs text-success"><i class="fas fa-check-circle mr-1"></i><span></span></div>
+                    <div class="flex justify-end">
+                        <button type="button" class="btn btn-xs btn-primary" onclick="linkAvisToReunion()">Lier a cette reunion</button>
+                    </div>
+                    <div id="link-avis-error" class="alert alert-error hidden text-xs py-1"></div>
+                </div>
+
+                <div id="add-avis-form" class="hidden mb-3 p-3 bg-base-200 rounded-lg space-y-2">
+                    <p class="text-[11px] text-base-content/60">
+                        Choisissez le representant concerne (recherche limitee, si possible, a la commune de la reunion),
+                        puis renseignez l'evaluation. S'il existe deja un avis pour ce representant a la date choisie,
+                        il sera complete/mis a jour plutot que duplique.
+                    </p>
+                    <div class="relative">
+                        <input type="text" id="avis-representant-search" class="input input-bordered input-xs w-full"
+                               placeholder="Rechercher un representant par nom..." autocomplete="off" oninput="searchAvisRepresentant()">
+                        <input type="hidden" id="avis-representant-id">
+                        <div id="avis-representant-search-results" class="hidden absolute z-20 mt-1 w-full bg-base-100 border border-base-300 rounded shadow max-h-48 overflow-y-auto"></div>
+                    </div>
+                    <div id="avis-representant-selected" class="hidden text-xs text-success"><i class="fas fa-check-circle mr-1"></i><span></span></div>
+
+                    <div class="grid grid-cols-2 gap-2">
+                        <div class="form-control">
+                            <label class="label py-1"><span class="label-text text-xs">Date *</span></label>
+                            <input type="date" id="avis-date" class="input input-bordered input-xs w-full">
+                        </div>
+                        <div class="form-control">
+                            <label class="label py-1"><span class="label-text text-xs">Employe</span></label>
+                            <select id="avis-employe" class="select select-bordered select-xs w-full">
+                                <option value="">Non renseigne</option>
+                                {% for emp in employes %}
+                                <option value="{{ emp.id }}" {% if current_employe_id == emp.id|stringformat:"s" %}selected{% endif %}>{{ emp.surnom }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-1">
+                        <label class="label cursor-pointer py-1">
+                            <span class="label-text text-xs">Quantite d'eau suffisante</span>
+                            <input type="checkbox" id="avis-quantite" class="checkbox checkbox-success checkbox-xs">
+                        </label>
+                        <label class="label cursor-pointer py-1">
+                            <span class="label-text text-xs">Qualite satisfaisante</span>
+                            <input type="checkbox" id="avis-qualite" class="checkbox checkbox-success checkbox-xs">
+                        </label>
+                        <label class="label cursor-pointer py-1">
+                            <span class="label-text text-xs">Delai de reparation correct</span>
+                            <input type="checkbox" id="avis-delai" class="checkbox checkbox-success checkbox-xs">
+                        </label>
+                        <label class="label cursor-pointer py-1">
+                            <span class="label-text text-xs">Bonne relation avec gestionnaire</span>
+                            <input type="checkbox" id="avis-relation" class="checkbox checkbox-success checkbox-xs">
+                        </label>
+                    </div>
+
+                    <textarea id="avis-probleme-technique" class="textarea textarea-bordered textarea-xs w-full" rows="2" placeholder="Probleme technique (optionnel, point negatif)"></textarea>
+                    <textarea id="avis-probleme-recouvrement" class="textarea textarea-bordered textarea-xs w-full" rows="2" placeholder="Probleme de recouvrement (optionnel, point negatif)"></textarea>
+                    <textarea id="avis-probleme-regles" class="textarea textarea-bordered textarea-xs w-full" rows="2" placeholder="Probleme sur les regles d'utilisation (optionnel, point negatif)"></textarea>
+                    <textarea id="avis-remarque" class="textarea textarea-bordered textarea-xs w-full" rows="2" placeholder="Remarques (optionnel)"></textarea>
+
+                    <div class="flex justify-end">
+                        <button type="button" class="btn btn-xs btn-primary" onclick="addAvisReunion()">Enregistrer</button>
+                    </div>
+                    <div id="add-avis-error" class="alert alert-error hidden text-xs py-1"></div>
+                </div>
+
+                <!-- Vue tableau (desktop uniquement, il y a de la place en colonnes) -->
+                <div class="overflow-x-auto hidden sm:block">
+                    <table class="table table-xs w-full">
+                        <thead>
+                            <tr>
+                                <th>Representant</th>
+                                <th>Village</th>
+                                <th>Ouvrage</th>
+                                <th class="text-center">Score</th>
+                                <th>Criteres negatifs</th>
+                                <th>Date</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="detail-avis-table-body"></tbody>
+                    </table>
+                </div>
+
+                <!-- Vue cartes (mobile) -->
+                <div id="detail-avis-cards" class="sm:hidden text-sm space-y-1"></div>
+            </div>
+
+            <!-- Pieces jointes -->
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <h4 class="font-bold text-sm"><i class="fas fa-paperclip mr-1"></i>Pieces jointes</h4>
+                    <label class="btn btn-xs btn-outline">
+                        <i class="fas fa-upload mr-1"></i>Ajouter des fichiers
+                        <input type="file" id="piece-jointe-input" class="hidden" multiple onchange="uploadPiecesJointes()">
+                    </label>
+                </div>
+                <div id="detail-pieces-jointes-list" class="flex flex-wrap gap-3"></div>
+            </div>
+
+            <!-- Depenses DiameX pointees -->
+            <div>
+                <h4 class="font-bold text-sm mb-2"><i class="fas fa-coins mr-1 text-accent"></i>Depenses DiameX pointees (Total : <span id="detail-montant-total">0</span> Ar)</h4>
+                <div class="overflow-x-auto">
+                    <table class="table table-xs w-full">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Description</th>
+                                <th>Compte</th>
+                                <th class="text-right">Montant</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="detail-pointages-body"></tbody>
+                    </table>
+                </div>
+                <a href="{% url 'usagers:pointage_diamex_list' %}" class="link link-primary text-xs">Pointer d'autres lignes DiameX &rarr;</a>
+            </div>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal creation rapide d'une fiche Autorite ou Tiers, depuis le formulaire d'ajout de participant -->
+<dialog id="modal-create-fiche" class="modal">
+    <div class="modal-box max-w-md">
+        <h3 class="font-bold text-lg mb-3" id="create-fiche-titre">Nouvelle fiche</h3>
+        <form id="form-create-fiche" class="space-y-3">
+            <div class="form-control">
+                <label class="label py-1"><span class="label-text text-xs" id="fiche-nom-label">Nom complet *</span></label>
+                <input type="text" id="fiche-nom" class="input input-bordered input-sm w-full" required>
+            </div>
+
+            <!-- Prenom/Surnom : uniquement pour un employe (les autres types n'ont qu'un champ
+                 "nom complet" en base). -->
+            <div id="fiche-employe-identite" class="hidden grid grid-cols-2 gap-2">
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Prenom</span></label>
+                    <input type="text" id="fiche-prenom" class="input input-bordered input-sm w-full">
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Surnom</span></label>
+                    <input type="text" id="fiche-surnom" class="input input-bordered input-sm w-full">
+                </div>
+            </div>
+
+            <!-- Type structure : uniquement pour une autorite (le tiers n'a pas de type d'autorite).
+                 Remplace la saisie libre precedente (source d'incoherences : fautes de frappe,
+                 valeurs non filtrables), sur le meme referentiel que la page de gestion complete
+                 (usagers:autorites_tiers_list). -->
+            <div id="fiche-autorite-type" class="hidden form-control">
+                <label class="label py-1">
+                    <span class="label-text text-xs">Type d'autorite *</span>
+                    <a href="{% url 'usagers:autorites_tiers_list' %}" target="_blank" class="label-text-alt text-[10px] link link-primary">
+                        Le type qu'il vous faut n'existe pas ? Gerer les types
+                    </a>
+                </label>
+                <select id="fiche-type-autorite" class="select select-bordered select-sm w-full">
+                    <option value="">-</option>
+                    {% for value, label in autorite_type_choices %}
+                    <option value="{{ value }}">{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Base/Poste : uniquement pour un employe (Employe.base est obligatoire en base).
+                 Cree une fiche RH minimale, a completer plus tard via le module RH complet
+                 (contrat, salaire...) si besoin. -->
+            <div id="fiche-employe-rh" class="hidden space-y-2">
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="form-control">
+                        <label class="label py-1">
+                            <span class="label-text text-xs">Base *</span>
+                            <a href="{% url 'employees:employe_create' %}" target="_blank" class="label-text-alt text-[10px] link link-primary">
+                                Fiche RH complete
+                            </a>
+                        </label>
+                        <select id="fiche-employe-base" class="select select-bordered select-sm w-full">
+                            <option value="">-</option>
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label py-1"><span class="label-text text-xs">Poste</span></label>
+                        <select id="fiche-employe-poste" class="select select-bordered select-sm w-full">
+                            <option value="">-</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div id="fiche-fonction-wrapper" class="form-control">
+                <label class="label py-1">
+                    <span class="label-text text-xs" id="fiche-fonction-label">Fonction</span>
+                    <span class="label-text-alt text-[10px] opacity-60" id="fiche-fonction-hint">precision libre (optionnel)</span>
+                </label>
+                <input type="text" id="fiche-fonction" class="input input-bordered input-sm w-full">
+            </div>
+
+            <!-- Zone geographique : region/district/commune communs a autorite et representant ;
+                 fokontany uniquement pour autorite ; village uniquement pour representant (c'est
+                 le champ obligatoire en base sur RepresentantUsager). Pre-remplie avec le lieu de
+                 la reunion en cours (cf. openCreateFicheModal), mais toujours editable. -->
+            <div id="fiche-geo" class="hidden space-y-3">
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="form-control">
+                        <label class="label py-1"><span class="label-text text-xs">Region</span></label>
+                        <select id="fiche-region" class="select select-bordered select-sm w-full" onchange="onFicheRegionChange()">
+                            <option value="">-</option>
+                            {% for r in regions %}
+                            <option value="{{ r.id }}">{{ r.nom_region }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label py-1"><span class="label-text text-xs">District</span></label>
+                        <select id="fiche-district" class="select select-bordered select-sm w-full" onchange="onFicheDistrictChange()">
+                            <option value="">-</option>
+                            {% for d in districts %}
+                            <option value="{{ d.id }}" data-region="{{ d.region_id }}">{{ d.nom_district }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="form-control">
+                        <label class="label py-1"><span class="label-text text-xs">Commune</span></label>
+                        <select id="fiche-commune" class="select select-bordered select-sm w-full" onchange="onFicheCommuneChange()">
+                            <option value="">-</option>
+                            {% for c in communes %}
+                            <option value="{{ c.id }}" data-district="{{ c.district_id }}">{{ c.nom_commune }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-control" id="fiche-fokontany-wrapper">
+                        <label class="label py-1">
+                            <span class="label-text text-xs">Fokontany</span>
+                            <span class="label-text-alt text-[10px] opacity-60" id="fiche-fokontany-hint">si precis (ex: chef fokontany)</span>
+                        </label>
+                        <select id="fiche-fokontany" class="select select-bordered select-sm w-full" onchange="onFicheFokontanyChange()">
+                            <option value="">-</option>
+                        </select>
+                    </div>
+                </div>
+                <!-- Village : uniquement pour representant (obligatoire), affiche sous le fokontany
+                     quand celui-ci est connu. -->
+                <div id="fiche-village-wrapper" class="hidden form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Village *</span></label>
+                    <select id="fiche-village" class="select select-bordered select-sm w-full">
+                        <option value="">-</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-control">
+                <label class="label py-1"><span class="label-text text-xs" id="fiche-contact-label">Contact</span></label>
+                <input type="text" id="fiche-contact" class="input input-bordered input-sm w-full">
+            </div>
+            <div id="create-fiche-error" class="alert alert-error hidden text-xs py-1"></div>
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('modal-create-fiche').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary btn-sm">
+                    <i class="fas fa-check mr-1"></i>Creer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal detail avis -->
+<dialog id="modal-avis-detail" class="modal">
+    <div class="modal-box max-w-lg">
+        <div class="flex items-center justify-between mb-3">
+            <h3 class="font-bold text-lg" id="avis-detail-titre">Avis</h3>
+            <button type="button" class="btn btn-ghost btn-xs btn-circle" onclick="document.getElementById('modal-avis-detail').close()">
+                <i class="fas fa-xmark"></i>
+            </button>
+        </div>
+        <div id="avis-detail-content"></div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+const csrfToken = "{{ csrf_token }}";
+let currentReunionId = null;
+
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return csrfToken;
+}
+
+function openCreateReunionModal() {
+    document.getElementById('modal-create-reunion').showModal();
+}
+
+let ouvragesGeresData = [];
+
+function openOuvragesGeresModal() {
+    const modal = document.getElementById('modal-ouvrages-geres');
+    const loading = document.getElementById('ouvrages-geres-loading');
+    const content = document.getElementById('ouvrages-geres-content');
+    const errorBox = document.getElementById('ouvrages-geres-error');
+
+    loading.classList.remove('hidden');
+    content.classList.add('hidden');
+    errorBox.classList.add('hidden');
+    document.getElementById('ouvrages-geres-filter').value = '';
+    modal.showModal();
+
+    const params = new URLSearchParams({
+        annee: "{{ filter_annee }}",
+        region: "{{ filter_region|default:'' }}",
+        district: "{{ filter_district|default:'' }}",
+        commune: "{{ filter_commune|default:'' }}",
+    });
+    fetch(`{% url 'usagers:ouvrages_geres_detail_json' %}?${params.toString()}`)
+        .then(r => r.json())
+        .then(data => {
+            loading.classList.add('hidden');
+            if (!data.success) {
+                errorBox.textContent = data.error || "Erreur lors du chargement.";
+                errorBox.classList.remove('hidden');
+                return;
+            }
+            ouvragesGeresData = data.ouvrages;
+            document.getElementById('ouvrages-geres-total').textContent = data.total;
+            renderOuvragesGeresRows(ouvragesGeresData);
+            content.classList.remove('hidden');
+        })
+        .catch(err => {
+            loading.classList.add('hidden');
+            errorBox.textContent = "Erreur reseau : " + err;
+            errorBox.classList.remove('hidden');
+        });
+}
+
+function renderOuvragesGeresRows(list) {
+    const tbody = document.getElementById('ouvrages-geres-tbody');
+    if (!list.length) {
+        tbody.innerHTML = '<tr><td colspan="3" class="text-center italic opacity-50 py-4">Aucun ouvrage.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = list.map(o => {
+        const modalites = o.modalites.length
+            ? o.modalites.map(m => {
+                const statutBadge = m.statut === 'actif' ? 'badge-success' : (m.statut === 'resilie' ? 'badge-warning' : 'badge-ghost');
+                const periode = `${m.date_debut || '?'} -> ${m.date_fin || 'en cours'}`;
+                return `<div class="mb-1"><span class="badge badge-xs ${statutBadge}">${m.statut || '-'}</span> <span class="font-semibold">${m.gestionnaire || 'Sans gestionnaire'}</span> <span class="opacity-60">(${periode})</span></div>`;
+            }).join('')
+            : '<span class="italic opacity-50">Aucune modalite</span>';
+        return `<tr data-search="${(o.nom + ' ' + o.modalites.map(m => m.gestionnaire || '').join(' ')).toLowerCase()}">
+            <td class="font-medium">${o.nom}</td>
+            <td>${o.type || '-'}</td>
+            <td>${modalites}</td>
+        </tr>`;
+    }).join('');
+}
+
+function filterOuvragesGeresRows() {
+    const term = document.getElementById('ouvrages-geres-filter').value.trim().toLowerCase();
+    if (!term) {
+        renderOuvragesGeresRows(ouvragesGeresData);
+        return;
+    }
+    const filtered = ouvragesGeresData.filter(o =>
+        (o.nom + ' ' + o.modalites.map(m => m.gestionnaire || '').join(' ')).toLowerCase().includes(term)
+    );
+    renderOuvragesGeresRows(filtered);
+}
+
+function openExportReunionsModal() {
+    document.getElementById('export-error').classList.add('hidden');
+    updateExportCount();
+    document.getElementById('modal-export-reunions').showModal();
+}
+
+function toggleAllExportReunions(checked) {
+    document.querySelectorAll('.export-reunion-checkbox').forEach(cb => cb.checked = checked);
+    updateExportCount();
+}
+
+function updateExportCount() {
+    const checkboxes = document.querySelectorAll('.export-reunion-checkbox');
+    const count = document.querySelectorAll('.export-reunion-checkbox:checked').length;
+    document.getElementById('export-count').textContent = count;
+    document.getElementById('export-select-all').checked = checkboxes.length > 0 && count === checkboxes.length;
+}
+
+function confirmExportReunions() {
+    const errorBox = document.getElementById('export-error');
+    errorBox.classList.add('hidden');
+
+    const ids = Array.from(document.querySelectorAll('.export-reunion-checkbox:checked')).map(cb => cb.value);
+    if (!ids.length) {
+        errorBox.textContent = 'Selectionnez au moins une reunion a exporter.';
+        errorBox.classList.remove('hidden');
+        return;
+    }
+
+    const url = `{% url 'usagers:export_reunions_excel' %}?ids=${ids.join(',')}`;
+    window.location.href = url;
+    document.getElementById('modal-export-reunions').close();
+}
+
+document.getElementById('form-create-reunion').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errorBox = document.getElementById('create-reunion-error');
+    errorBox.classList.add('hidden');
+
+    const payload = {
+        type_reunion: document.getElementById('create-type-reunion').value,
+        commune_id: document.getElementById('create-commune').value,
+        district_id: document.getElementById('create-district').value,
+        region_id: document.getElementById('create-region').value,
+        date_reunion: document.getElementById('create-date').value,
+        lieu: document.getElementById('create-lieu').value,
+        objet: document.getElementById('create-objet').value,
+        compte_rendu: document.getElementById('create-compte-rendu').value,
+        recommandations: document.getElementById('create-recommandations').value,
+    };
+
+    try {
+        const response = await fetch("{% url 'usagers:reunion_create' %}", {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!data.success) {
+            errorBox.textContent = data.error || 'Erreur lors de la creation.';
+            errorBox.classList.remove('hidden');
+            return;
+        }
+        window.location.reload();
+    } catch (err) {
+        errorBox.textContent = 'Erreur reseau : ' + err.message;
+        errorBox.classList.remove('hidden');
+    }
+});
+
+async function deleteReunion(reunionId, objet) {
+    if (!confirm(`Supprimer la reunion "${objet}" ? Cette action est irreversible.`)) return;
+    try {
+        const response = await fetch(`/usagers/reunions/${reunionId}/delete/`, {
+            method: 'POST',
+            headers: { 'X-CSRFToken': getCookie('csrftoken') }
+        });
+        const data = await response.json();
+        if (data.success) {
+            window.location.reload();
+        } else {
+            alert('Erreur : ' + data.error);
+        }
+    } catch (err) {
+        alert('Erreur reseau : ' + err.message);
+    }
+}
+
+let fusionReunionPrincipaleId = null;
+
+async function openFusionModal(reunionId, objet) {
+    fusionReunionPrincipaleId = reunionId;
+    document.getElementById('fusion-reunion-principale-objet').textContent = objet;
+
+    const modal = document.getElementById('modal-fusion-reunion');
+    const loading = document.getElementById('fusion-candidats-loading');
+    const empty = document.getElementById('fusion-candidats-empty');
+    const list = document.getElementById('fusion-candidats-list');
+    const errorBox = document.getElementById('fusion-error');
+
+    loading.classList.remove('hidden');
+    empty.classList.add('hidden');
+    list.classList.add('hidden');
+    errorBox.classList.add('hidden');
+    list.innerHTML = '';
+    modal.showModal();
+
+    try {
+        const response = await fetch(`/usagers/reunions/${reunionId}/fusionnables/`);
+        const data = await response.json();
+        loading.classList.add('hidden');
+
+        if (!data.success) {
+            errorBox.textContent = data.message || 'Erreur lors du chargement.';
+            errorBox.classList.remove('hidden');
+            return;
+        }
+
+        if (!data.results || data.results.length === 0) {
+            empty.classList.remove('hidden');
+            return;
+        }
+
+        list.innerHTML = data.results.map(r => `
+            <div class="flex items-center gap-2 px-3 py-2 hover:bg-base-200">
+                <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium truncate">${r.objet}</div>
+                    <div class="text-xs opacity-60">
+                        ${r.type_reunion_display || 'Sans type'}
+                        &middot; ${r.nb_participants} participant(s)
+                        &middot; ${r.nb_avis} avis
+                        &middot; ${r.nb_decisions} decision(s)
+                        &middot; ${r.nb_pointages} pointage(s) DiameX
+                    </div>
+                </div>
+                <button type="button" class="btn btn-info btn-xs shrink-0" onclick="confirmFusionReunion('${r.id}', '${(r.objet || '').replace(/'/g, "\\'")}')">
+                    <i class="fas fa-object-group mr-1"></i>Fusionner ici
+                </button>
+            </div>
+        `).join('');
+        list.classList.remove('hidden');
+    } catch (err) {
+        loading.classList.add('hidden');
+        errorBox.textContent = 'Erreur reseau : ' + err.message;
+        errorBox.classList.remove('hidden');
+    }
+}
+
+async function confirmFusionReunion(reunionSecondaireId, objetSecondaire) {
+    if (!confirm(`Fusionner "${objetSecondaire}" dans la reunion principale ?\n\nLa reunion "${objetSecondaire}" sera supprimee apres la fusion. Cette action est irreversible.`)) {
+        return;
+    }
+
+    const errorBox = document.getElementById('fusion-error');
+    errorBox.classList.add('hidden');
+
+    try {
+        const response = await fetch(`/usagers/reunions/${fusionReunionPrincipaleId}/fusionner/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ reunion_secondaire_id: reunionSecondaireId })
+        });
+        const data = await response.json();
+
+        if (!data.success) {
+            errorBox.textContent = data.error || 'Erreur lors de la fusion.';
+            errorBox.classList.remove('hidden');
+            return;
+        }
+
+        alert(
+            `Fusion effectuee.\n` +
+            `Participants fusionnes : ${data.nb_participants_fusionnes} (doublons ignores : ${data.nb_participants_doublons})\n` +
+            `Avis fusionnes : ${data.nb_avis_fusionnes} (conflits detaches : ${data.nb_avis_conflits})\n` +
+            `Decisions deplacees : ${data.nb_decisions}\n` +
+            `Pointages DiameX deplaces : ${data.nb_pointages}`
+        );
+        window.location.reload();
+    } catch (err) {
+        errorBox.textContent = 'Erreur reseau : ' + err.message;
+        errorBox.classList.remove('hidden');
+    }
+}
+
+async function openDetailReunionModal(reunionId) {
+    currentReunionId = reunionId;
+    const modal = document.getElementById('modal-detail-reunion');
+    const loading = document.getElementById('detail-reunion-loading');
+    const content = document.getElementById('detail-reunion-content');
+
+    loading.classList.remove('hidden');
+    content.classList.add('hidden');
+    modal.showModal();
+
+    await reloadReunionDetail();
+}
+
+let currentReunionData = null;
+
+async function reloadReunionDetail() {
+    const loading = document.getElementById('detail-reunion-loading');
+    const content = document.getElementById('detail-reunion-content');
+
+    try {
+        const response = await fetch(`/usagers/reunions/${currentReunionId}/detail/`);
+        const data = await response.json();
+        if (!data.success) throw new Error(data.error || 'Erreur');
+        currentReunionData = data;
+
+        const r = data.reunion;
+        document.getElementById('detail-reunion-titre').textContent = r.objet;
+        document.getElementById('detail-date').textContent = r.date_reunion;
+        document.getElementById('detail-type-reunion').textContent = r.type_reunion_display || '-';
+        document.getElementById('detail-lieu').textContent = r.lieu_affiche + (r.lieu ? ` - ${r.lieu}` : '');
+        document.getElementById('detail-organise-par').textContent = r.organise_par || '-';
+        document.getElementById('detail-compte-rendu').textContent = r.compte_rendu || 'Aucun compte-rendu renseigne.';
+        document.getElementById('detail-recommandations').textContent = r.recommandations || 'Aucune recommandation renseignee.';
+        document.getElementById('detail-montant-total').textContent = new Intl.NumberFormat('fr-FR').format(r.montant_depense_total);
+        toggleEditReunion(false);
+
+        document.getElementById('detail-nb-participants').textContent = data.participants.length;
+        document.getElementById('detail-nb-representants').textContent = data.participants.filter(p => p.type_participant === 'representant').length;
+        const typeIcons = { representant: 'user-tie', abonne: 'faucet', employe: 'id-badge', autorite: 'landmark', tiers: 'user' };
+        // Memes couleurs que l'annuaire des personnes (core:personnes_annuaire) pour rester
+        // coherent visuellement entre les deux pages sur ces memes types.
+        const typeColors = { representant: 'badge-success', abonne: 'badge-info', employe: 'badge-success', autorite: 'badge-primary', tiers: 'badge-accent' };
+        document.getElementById('detail-participants-list').innerHTML = data.participants.map(p => `
+            <span class="badge ${typeColors[p.type_participant] || 'badge-outline'} gap-1">
+                <i class="fas fa-${typeIcons[p.type_participant] || 'user'}"></i>
+                ${p.nom_affiche}${p.fonction_libre ? ' (' + p.fonction_libre + ')' : ''}
+                <button type="button" class="ml-1" onclick="removeParticipant('${p.id}')" title="Retirer">&times;</button>
+            </span>
+        `).join('') || '<span class="text-xs opacity-50 italic">Aucun participant enregistre</span>';
+
+        document.getElementById('detail-attendus-body').innerHTML = (data.attendus || []).map(a => {
+            const taux = a.attendu > 0 ? Math.round((a.present / a.attendu) * 100) : null;
+            const tauxBadge = taux === null ? '<span class="opacity-40">-</span>'
+                : `<span class="badge badge-xs ${taux >= 100 ? 'badge-success' : taux >= 50 ? 'badge-warning' : 'badge-error'}">${taux}%</span>`;
+            return `
+            <tr>
+                <td class="text-xs"><i class="fas fa-${typeIcons[a.type_participant] || 'user'} mr-1 opacity-60"></i>${a.type_display}</td>
+                <td class="text-center text-xs">${a.present}</td>
+                <td class="text-center text-xs">
+                    <span id="attendu-value-${a.type_participant}">${a.attendu}</span>
+                    <input type="number" min="0" id="attendu-input-${a.type_participant}" value="${a.attendu}"
+                           class="input input-bordered input-xs w-16 hidden text-center">
+                </td>
+                <td class="text-center">${tauxBadge}</td>
+                <td class="text-center">
+                    <button type="button" class="btn btn-ghost btn-xs" id="attendu-edit-btn-${a.type_participant}"
+                            onclick="editAttenduInline('${a.type_participant}')" title="Modifier l'attendu">
+                        <i class="fas fa-pen text-[10px]"></i>
+                    </button>
+                    <button type="button" class="btn btn-ghost btn-xs hidden" id="attendu-save-btn-${a.type_participant}"
+                            onclick="saveAttenduInline('${a.type_participant}')" title="Enregistrer">
+                        <i class="fas fa-check text-[10px] text-success"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+        }).join('');
+
+        document.getElementById('detail-decisions-body').innerHTML = data.decisions.map(d => `
+            <tr class="${d.est_en_retard ? 'bg-error/10' : ''}">
+                <td class="max-w-xs">${d.description}</td>
+                <td class="text-xs">${d.date_echeance || '-'}</td>
+                <td>
+                    <select class="select select-bordered select-xs" onchange="updateDecisionStatut('${d.id}', this.value)">
+                        <option value="a_faire" ${d.statut === 'a_faire' ? 'selected' : ''}>A faire</option>
+                        <option value="en_cours" ${d.statut === 'en_cours' ? 'selected' : ''}>En cours</option>
+                        <option value="realisee" ${d.statut === 'realisee' ? 'selected' : ''}>Realisee</option>
+                        <option value="abandonnee" ${d.statut === 'abandonnee' ? 'selected' : ''}>Abandonnee</option>
+                    </select>
+                </td>
+                <td><button type="button" class="btn btn-ghost btn-xs text-error" onclick="removeDecision('${d.id}')"><i class="fas fa-trash"></i></button></td>
+            </tr>
+        `).join('') || '<tr><td colspan="4" class="text-center italic opacity-50 py-3">Aucune decision enregistree</td></tr>';
+
+        document.getElementById('detail-nb-avis').textContent = data.avis.length;
+        document.getElementById('detail-avis-table-body').innerHTML = data.avis.map(a => `
+            <tr class="hover cursor-pointer" onclick="openAvisDetailModal('${a.id}')">
+                <td class="font-medium">${a.representant || '-'}</td>
+                <td>${a.village || '-'}</td>
+                <td>${a.ouvrages_display}</td>
+                <td class="text-center"><span class="badge badge-sm ${scoreBadgeClass(a.score_satisfaction)}">${a.score_satisfaction}/4</span></td>
+                <td class="text-xs">${criteresNegatifsBadges(a)}</td>
+                <td class="text-xs">${a.date_avis || '-'}</td>
+                <td class="text-center"><i class="fas fa-eye opacity-50"></i></td>
+            </tr>
+        `).join('') || '<tr><td colspan="7" class="text-center italic opacity-50 py-3">Aucun avis rattache a cette reunion</td></tr>';
+        document.getElementById('detail-avis-cards').innerHTML = data.avis.map(a => `
+            <div class="flex flex-col gap-1 cursor-pointer hover:bg-base-200 rounded p-1" onclick="openAvisDetailModal('${a.id}')">
+                <div class="flex items-center gap-2">
+                    <span class="badge badge-sm ${scoreBadgeClass(a.score_satisfaction)}">${a.score_satisfaction}/4</span>
+                    <span class="font-medium">${a.representant || '-'}</span>
+                    <span class="text-xs opacity-60">${a.date_avis || ''}</span>
+                    <i class="fas fa-chevron-right ml-auto opacity-40 text-xs"></i>
+                </div>
+                ${criteresNegatifsListe(a).length ? `<div class="text-xs pl-1">${criteresNegatifsBadges(a)}</div>` : ''}
+            </div>
+        `).join('') || '<span class="text-xs opacity-50 italic">Aucun avis rattache a cette reunion</span>';
+
+        const pieceIcons = { photo: 'image', video: 'video', rapport: 'file-pdf', autre: 'file' };
+        const imageExt = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+        document.getElementById('detail-pieces-jointes-list').innerHTML = data.pieces_jointes.map(pj => {
+            const isImage = pj.type_piece === 'photo' || imageExt.some(ext => pj.url.toLowerCase().endsWith(ext));
+            const thumb = isImage
+                ? `<img src="${pj.url}" alt="" class="w-16 h-16 rounded object-cover border border-base-300">`
+                : `<div class="w-16 h-16 rounded border border-base-300 flex items-center justify-center bg-base-200"><i class="fas fa-${pieceIcons[pj.type_piece] || 'file'} text-xl opacity-60"></i></div>`;
+            return `
+            <div class="relative flex flex-col items-center gap-1 group">
+                <button type="button" class="absolute -top-1 -right-1 btn btn-circle btn-xs btn-error opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                        onclick="removePieceJointe('${pj.id}')" title="Supprimer">
+                    <i class="fas fa-xmark text-xs"></i>
+                </button>
+                <a href="${pj.url}" target="_blank" class="flex flex-col items-center gap-1 hover:opacity-80" title="${pj.legende || pj.type_display}">
+                    ${thumb}
+                    <span class="text-[10px] max-w-16 truncate">${pj.legende || pj.type_display}</span>
+                </a>
+            </div>
+        `;
+        }).join('') || '<span class="text-xs opacity-50 italic">Aucune piece jointe</span>';
+
+        document.getElementById('detail-pointages-body').innerHTML = data.pointages_diamex.map(pt => `
+            <tr>
+                <td class="text-xs">${pt.date_transaction || '-'}</td>
+                <td class="text-xs max-w-xs truncate" title="${pt.description}">${pt.description}</td>
+                <td class="text-xs">${pt.compte_code}</td>
+                <td class="text-right font-mono">${new Intl.NumberFormat('fr-FR').format(pt.montant)}</td>
+                <td class="text-center">
+                    ${pt.entry_id ? `<button type="button" class="btn btn-ghost btn-xs" onclick="window.open('/comptabilite/scan/${pt.entry_id}/', '_blank')" title="Voir le scan"><i class="fas fa-file-image"></i></button>` : ''}
+                </td>
+            </tr>
+        `).join('') || '<tr><td colspan="5" class="text-center italic opacity-50 py-3">Aucune depense pointee</td></tr>';
+
+        loading.classList.add('hidden');
+        content.classList.remove('hidden');
+    } catch (err) {
+        loading.innerHTML = `<div class="alert alert-error">${err.message}</div>`;
+    }
+}
+
+function toggleEditReunion(edit) {
+    document.getElementById('detail-view-mode').classList.toggle('hidden', edit);
+    document.getElementById('detail-edit-mode').classList.toggle('hidden', !edit);
+    document.getElementById('btn-edit-reunion').classList.toggle('hidden', edit);
+    document.getElementById('edit-reunion-error').classList.add('hidden');
+    if (edit && currentReunionData) {
+        const r = currentReunionData.reunion;
+        document.getElementById('edit-objet').value = r.objet || '';
+        document.getElementById('edit-type-reunion').value = r.type_reunion || '';
+        document.getElementById('edit-date').value = r.date_reunion || '';
+        document.getElementById('edit-lieu').value = r.lieu || '';
+        document.getElementById('edit-compte-rendu').value = r.compte_rendu || '';
+        document.getElementById('edit-recommandations').value = r.recommandations || '';
+    }
+}
+
+async function saveEditReunion() {
+    const errorBox = document.getElementById('edit-reunion-error');
+    errorBox.classList.add('hidden');
+
+    const payload = {
+        objet: document.getElementById('edit-objet').value,
+        type_reunion: document.getElementById('edit-type-reunion').value,
+        date_reunion: document.getElementById('edit-date').value,
+        lieu: document.getElementById('edit-lieu').value,
+        compte_rendu: document.getElementById('edit-compte-rendu').value,
+        recommandations: document.getElementById('edit-recommandations').value,
+    };
+
+    try {
+        const response = await fetch(`/usagers/reunions/${currentReunionId}/update/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!data.success) {
+            errorBox.textContent = data.error || 'Erreur lors de la modification.';
+            errorBox.classList.remove('hidden');
+            return;
+        }
+        await reloadReunionDetail();
+        // Recharge aussi la liste en arriere-plan pour refleter le nouvel objet/date dans le tableau
+        window.location.reload();
+    } catch (err) {
+        errorBox.textContent = 'Erreur reseau : ' + err.message;
+        errorBox.classList.remove('hidden');
+    }
+}
+
+function openAvisDetailModal(avisId) {
+    if (!currentReunionData) return;
+    const a = currentReunionData.avis.find(item => item.id === avisId);
+    if (!a) return;
+
+    const critere = (ok, label) => `
+        <div class="flex items-center gap-2">
+            <i class="fas fa-${ok ? 'check-circle text-success' : 'circle-xmark text-error'}"></i>
+            <span>${label}</span>
+        </div>
+    `;
+    const probleme = (texte, label) => texte ? `
+        <div class="mt-2">
+            <span class="font-semibold text-error text-xs">${label}</span>
+            <p class="text-sm bg-base-200 rounded p-2 mt-1">${texte}</p>
+        </div>
+    ` : '';
+
+    document.getElementById('avis-detail-titre').textContent = a.representant || 'Avis';
+    document.getElementById('avis-detail-content').innerHTML = `
+        <div class="grid grid-cols-2 gap-3 text-sm mb-3">
+            <div><span class="opacity-60">Village :</span> <span class="font-semibold">${a.village || '-'}</span></div>
+            <div><span class="opacity-60">Ouvrage(s) :</span> <span class="font-semibold">${a.ouvrages_display}</span></div>
+            <div><span class="opacity-60">Date :</span> <span class="font-semibold">${a.date_avis || '-'}</span></div>
+            <div><span class="opacity-60">Score :</span> <span class="badge badge-sm ${scoreBadgeClass(a.score_satisfaction)}">${a.score_satisfaction}/4 (${Math.round(a.pourcentage_satisfaction)}%)</span></div>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-sm border-t border-base-300 pt-3">
+            ${critere(a.quantite_ok, 'Quantite suffisante')}
+            ${critere(a.qualite_ok, 'Qualite satisfaisante')}
+            ${critere(a.delai_reparation_ok, 'Delai reparation correct')}
+            ${critere(a.relation_gestionnaire_ok, 'Bonne relation gestionnaire')}
+        </div>
+        ${probleme(a.probleme_technique, 'Probleme technique')}
+        ${probleme(a.probleme_recouvrement, 'Probleme de recouvrement')}
+        ${probleme(a.probleme_regles_utilisation, "Probleme sur les regles d'utilisation")}
+        ${a.remarque ? `<div class="mt-2"><span class="font-semibold text-xs">Remarque</span><p class="text-sm bg-base-200 rounded p-2 mt-1 italic">"${a.remarque}"</p></div>` : ''}
+    `;
+    document.getElementById('modal-avis-detail').showModal();
+}
+
+function toggleAddParticipantForm() {
+    const form = document.getElementById('add-participant-form');
+    form.classList.toggle('hidden');
+    if (!form.classList.contains('hidden')) {
+        updateParticipantFormFields();
+    }
+}
+
+function toggleAddDecisionForm() {
+    document.getElementById('add-decision-form').classList.toggle('hidden');
+}
+
+const CRITERES_AVIS = [
+    { key: 'quantite_ok', label: "Quantite d'eau" },
+    { key: 'qualite_ok', label: 'Qualite' },
+    { key: 'delai_reparation_ok', label: 'Delai reparation' },
+    { key: 'relation_gestionnaire_ok', label: 'Relation gestionnaire' },
+];
+
+function scoreBadgeClass(score) {
+    if (score >= 4) return 'badge-success';
+    if (score >= 2) return 'badge-warning';
+    return 'badge-error';
+}
+
+function criteresNegatifsListe(a) {
+    return CRITERES_AVIS.filter(c => !a[c.key]).map(c => c.label);
+}
+
+function criteresNegatifsBadges(a) {
+    const negatifs = criteresNegatifsListe(a);
+    if (!negatifs.length) return '<span class="opacity-40">-</span>';
+    return negatifs.map(label => `<span class="badge badge-error badge-xs mr-1 mb-1">${label}</span>`).join('');
+}
+
+function toggleAddAvisForm() {
+    const form = document.getElementById('add-avis-form');
+    form.classList.toggle('hidden');
+    if (!form.classList.contains('hidden')) {
+        document.getElementById('avis-date').value = new Date().toISOString().slice(0, 10);
+        document.getElementById('link-avis-form').classList.add('hidden');
+    }
+}
+
+function toggleLinkAvisForm() {
+    const form = document.getElementById('link-avis-form');
+    form.classList.toggle('hidden');
+    if (!form.classList.contains('hidden')) {
+        document.getElementById('add-avis-form').classList.add('hidden');
+        loadAvisCandidats();
+    }
+}
+
+async function loadAvisCandidats() {
+    const loading = document.getElementById('avis-candidats-loading');
+    const empty = document.getElementById('avis-candidats-empty');
+    const cards = document.getElementById('avis-candidats-cards');
+    const actions = document.getElementById('avis-candidats-actions');
+
+    loading.classList.remove('hidden');
+    empty.classList.add('hidden');
+    cards.classList.add('hidden');
+    actions.classList.add('hidden');
+    cards.innerHTML = '';
+
+    try {
+        const response = await fetch(`/usagers/reunions/${currentReunionId}/avis-candidats/`);
+        const data = await response.json();
+        loading.classList.add('hidden');
+
+        if (!data.success || !data.results.length) {
+            empty.classList.remove('hidden');
+            if (data.message) empty.textContent = data.message;
+            return;
+        }
+
+        cards.innerHTML = data.results.map(a => `
+            <label class="flex items-start gap-2 p-2 bg-base-100 border border-base-300 rounded cursor-pointer hover:border-primary">
+                <input type="checkbox" class="checkbox checkbox-xs mt-0.5 avis-candidat-checkbox" value="${a.id}">
+                <span class="text-xs">
+                    <span class="font-semibold">${a.representant}</span>
+                    ${a.village ? ` - ${a.village}` : ''}
+                    <br>
+                    <span class="opacity-60">${a.date_avis}</span>
+                    ${a.pourcentage_satisfaction !== null ? `<span class="badge badge-xs ${a.est_negatif ? 'badge-error' : 'badge-success'} ml-1">${a.pourcentage_satisfaction}%</span>` : ''}
+                </span>
+            </label>
+        `).join('');
+        cards.classList.remove('hidden');
+        actions.classList.remove('hidden');
+        document.getElementById('avis-candidats-select-all').checked = false;
+    } catch (e) {
+        loading.classList.add('hidden');
+        empty.textContent = 'Erreur lors du chargement des avis correspondants.';
+        empty.classList.remove('hidden');
+    }
+}
+
+function toggleSelectAllCandidats(checked) {
+    document.querySelectorAll('.avis-candidat-checkbox').forEach(cb => { cb.checked = checked; });
+}
+
+async function linkAvisCandidatsBatch() {
+    const selected = Array.from(document.querySelectorAll('.avis-candidat-checkbox:checked')).map(cb => cb.value);
+    if (!selected.length) {
+        alert('Selectionnez au moins un avis a rattacher.');
+        return;
+    }
+
+    const formData = new FormData();
+    selected.forEach(id => formData.append('avis_id', id));
+
+    const response = await fetch(`/usagers/reunions/${currentReunionId}/avis-lier-batch/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': getCookie('csrftoken') },
+        body: formData
+    });
+    const data = await response.json();
+
+    if (data.success) {
+        document.getElementById('link-avis-form').classList.add('hidden');
+        await reloadReunionDetail();
+    } else {
+        alert(data.message || 'Erreur lors du rattachement');
+    }
+}
+
+let linkAvisSearchTimeout = null;
+
+function searchUnlinkedAvis() {
+    const term = document.getElementById('link-avis-search').value.trim();
+    const resultsBox = document.getElementById('link-avis-search-results');
+
+    document.getElementById('link-avis-id').value = '';
+    document.getElementById('link-avis-selected').classList.add('hidden');
+
+    clearTimeout(linkAvisSearchTimeout);
+    if (term.length < 2) {
+        resultsBox.classList.add('hidden');
+        resultsBox.innerHTML = '';
+        return;
+    }
+
+    linkAvisSearchTimeout = setTimeout(async () => {
+        const params = new URLSearchParams({ search: term });
+        const response = await fetch(`{% url 'usagers:avis_unlinked_search' %}?${params.toString()}`);
+        const data = await response.json();
+        if (!data.success || !data.results.length) {
+            resultsBox.innerHTML = '<div class="p-2 text-xs italic opacity-60">Aucun avis non rattache trouve</div>';
+            resultsBox.classList.remove('hidden');
+            return;
+        }
+        resultsBox.innerHTML = data.results.map(r => `
+            <div class="p-2 text-xs hover:bg-base-200 cursor-pointer" onclick="selectUnlinkedAvis('${r.id}', ${JSON.stringify(r.label).replace(/"/g, '&quot;')})">${r.label}</div>
+        `).join('');
+        resultsBox.classList.remove('hidden');
+    }, 250);
+}
+
+function selectUnlinkedAvis(id, label) {
+    document.getElementById('link-avis-id').value = id;
+    document.getElementById('link-avis-search').value = label;
+    document.getElementById('link-avis-search-results').classList.add('hidden');
+    const selected = document.getElementById('link-avis-selected');
+    selected.classList.remove('hidden');
+    selected.querySelector('span').textContent = 'Avis selectionne : ' + label;
+}
+
+async function linkAvisToReunion() {
+    const errorBox = document.getElementById('link-avis-error');
+    errorBox.classList.add('hidden');
+
+    const avisId = document.getElementById('link-avis-id').value;
+    if (!avisId) {
+        errorBox.textContent = 'Choisissez un avis existant dans les resultats de recherche.';
+        errorBox.classList.remove('hidden');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('reunion_id', currentReunionId);
+
+    const response = await fetch(`/usagers/avis/${avisId}/lier-reunion/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': getCookie('csrftoken') },
+        body: formData
+    });
+    const data = await response.json();
+
+    if (data.success) {
+        document.getElementById('link-avis-form').classList.add('hidden');
+        document.getElementById('link-avis-search').value = '';
+        document.getElementById('link-avis-id').value = '';
+        document.getElementById('link-avis-selected').classList.add('hidden');
+        await reloadReunionDetail();
+    } else {
+        errorBox.textContent = data.message || 'Erreur lors du rattachement';
+        errorBox.classList.remove('hidden');
+    }
+}
+
+const PARTICIPANT_TYPE_LABELS = {
+    representant: 'Nom du representant...',
+    abonne: "Nom ou IDXLS de l'abonne...",
+    employe: "Nom de l'employe...",
+    autorite: "Nom de l'autorite...",
+    tiers: 'Nom du tiers...',
+};
+// Types pour lesquels on peut creer une fiche a la volee si la recherche ne trouve rien.
+// "employe" cree une fiche RH minimale (nom + base), a completer plus tard si besoin via
+// le module RH complet (lien "Fiche RH complete" dans le formulaire, cf. openCreateFicheModal).
+const PARTICIPANT_TYPES_CREABLES = ['representant', 'employe', 'autorite', 'tiers'];
+
+function updateParticipantFormFields() {
+    const type = document.getElementById('participant-type').value;
+    const searchInput = document.getElementById('participant-search');
+    const searchResults = document.getElementById('participant-search-results');
+    const selectedFiche = document.getElementById('participant-selected-fiche');
+
+    document.getElementById('participant-fiche-id').value = '';
+    searchInput.value = '';
+    searchResults.classList.add('hidden');
+    searchResults.innerHTML = '';
+    selectedFiche.classList.add('hidden');
+    document.getElementById('add-participant-error').classList.add('hidden');
+
+    searchInput.placeholder = PARTICIPANT_TYPE_LABELS[type] || 'Rechercher...';
+    document.getElementById('participant-create-fiche-btn').classList.toggle('hidden', !PARTICIPANT_TYPES_CREABLES.includes(type));
+}
+
+let participantSearchTimeout = null;
+
+function searchParticipantFiche() {
+    const type = document.getElementById('participant-type').value;
+    const term = document.getElementById('participant-search').value.trim();
+    const resultsBox = document.getElementById('participant-search-results');
+
+    document.getElementById('participant-fiche-id').value = '';
+    document.getElementById('participant-selected-fiche').classList.add('hidden');
+
+    clearTimeout(participantSearchTimeout);
+    if (term.length < 2) {
+        resultsBox.classList.add('hidden');
+        resultsBox.innerHTML = '';
+        return;
+    }
+
+    participantSearchTimeout = setTimeout(async () => {
+        const communeId = currentReunionData ? (currentReunionData.reunion.commune_id || '') : '';
+        const params = new URLSearchParams({ type, search: term, commune_id: communeId });
+        const response = await fetch(`{% url 'usagers:reunion_participant_search' %}?${params.toString()}`);
+        const data = await response.json();
+        if (!data.success || !data.results.length) {
+            resultsBox.innerHTML = '<div class="p-2 text-xs italic opacity-60">Aucun resultat</div>';
+            resultsBox.classList.remove('hidden');
+            return;
+        }
+        resultsBox.innerHTML = data.results.map(r => `
+            <div class="p-2 hover:bg-base-200 cursor-pointer" onclick="selectParticipantFiche('${r.id}', ${JSON.stringify(r.label).replace(/"/g, '&quot;')})">
+                <div class="text-xs font-medium">${escapeHtml(r.label)}</div>
+                ${r.detail ? `<div class="text-[11px] text-base-content/60 mt-0.5">${escapeHtml(r.detail)}</div>` : ''}
+            </div>
+        `).join('');
+        resultsBox.classList.remove('hidden');
+    }, 250);
+}
+
+function selectParticipantFiche(id, label) {
+    document.getElementById('participant-fiche-id').value = id;
+    document.getElementById('participant-search').value = label;
+    document.getElementById('participant-search-results').classList.add('hidden');
+    const selectedFiche = document.getElementById('participant-selected-fiche');
+    selectedFiche.classList.remove('hidden');
+    selectedFiche.querySelector('span').textContent = 'Fiche selectionnee : ' + label;
+}
+
+// Filtre les <option> d'un select geographique selon la valeur du select parent (attribut
+// data-region / data-district), sans requete reseau (toutes les regions/districts/communes
+// sont deja rendues dans le DOM). Conserve la selection courante si elle reste valide.
+function filterGeoOptions(selectEl, parentAttr, parentValue) {
+    const previousValue = selectEl.value;
+    let stillValid = false;
+    Array.from(selectEl.options).forEach(opt => {
+        if (!opt.value) return; // option "-"
+        const visible = !parentValue || opt.dataset[parentAttr] === parentValue;
+        opt.hidden = !visible;
+        if (visible && opt.value === previousValue) stillValid = true;
+    });
+    if (!stillValid) selectEl.value = '';
+}
+
+async function loadFicheFokontanys(communeId, selectedFokontanyId) {
+    const select = document.getElementById('fiche-fokontany');
+    select.innerHTML = '<option value="">-</option>';
+    if (!communeId) return;
+    try {
+        const response = await fetch(`{% url 'geography:api_fokontanys' '00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', communeId));
+        const fokontanys = await response.json();
+        select.innerHTML = '<option value="">-</option>' + fokontanys.map(f =>
+            `<option value="${f.id}">${f.nom_fokontany}</option>`
+        ).join('');
+        if (selectedFokontanyId) select.value = selectedFokontanyId;
+    } catch (err) {
+        // Liste de fokontany non bloquante : la fiche reste creable sans ce niveau de precision.
+    }
+}
+
+// Villages : uniquement necessaire pour le type "representant" (champ obligatoire en base),
+// charges depuis le fokontany selectionne (pas de niveau intermediaire commune -> village).
+async function loadFicheVillages(fokontanyId, selectedVillageId) {
+    const select = document.getElementById('fiche-village');
+    select.innerHTML = '<option value="">-</option>';
+    if (!fokontanyId) return;
+    try {
+        const response = await fetch(`{% url 'geography:api_villages' '00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', fokontanyId));
+        const villages = await response.json();
+        select.innerHTML = '<option value="">-</option>' + villages.map(v =>
+            `<option value="${v.id}">${v.nom_village}</option>`
+        ).join('');
+        if (selectedVillageId) select.value = selectedVillageId;
+    } catch (err) {
+        // Liste de villages non bloquante : reste vide, l'utilisateur devra choisir un fokontany valide.
+    }
+}
+
+function onFicheRegionChange() {
+    const regionId = document.getElementById('fiche-region').value;
+    filterGeoOptions(document.getElementById('fiche-district'), 'region', regionId);
+    onFicheDistrictChange();
+}
+
+function onFicheDistrictChange() {
+    const districtId = document.getElementById('fiche-district').value;
+    filterGeoOptions(document.getElementById('fiche-commune'), 'district', districtId);
+    onFicheCommuneChange();
+}
+
+function onFicheCommuneChange() {
+    const communeId = document.getElementById('fiche-commune').value;
+    loadFicheFokontanys(communeId, '');
+    document.getElementById('fiche-village').innerHTML = '<option value="">-</option>';
+}
+
+function onFicheFokontanyChange() {
+    // Ne charge les villages que si le bloc village est visible (type representant) :
+    // pour une autorite, choisir un fokontany ne doit pas declencher d'appel reseau inutile.
+    if (document.getElementById('fiche-village-wrapper').classList.contains('hidden')) return;
+    loadFicheVillages(document.getElementById('fiche-fokontany').value, '');
+}
+
+const FICHE_TITRES = {
+    representant: 'Nouveau representant',
+    employe: 'Nouvel employe',
+    autorite: 'Nouvelle autorite',
+    tiers: 'Nouveau tiers',
+};
+
+// Charge Bases/Postes de l'organisation courante pour le formulaire employe (cf.
+// employe_create_quick), une seule fois par ouverture de modal en type "employe".
+let ficheEmployeRefsLoaded = false;
+async function loadFicheEmployeRefs() {
+    if (ficheEmployeRefsLoaded) return;
+    try {
+        const response = await fetch("{% url 'usagers:employe_bases_postes_json' %}");
+        const data = await response.json();
+        if (!data.success) return;
+        document.getElementById('fiche-employe-base').innerHTML = '<option value="">-</option>' +
+            data.bases.map(b => `<option value="${b.id}">${b.nom}</option>`).join('');
+        document.getElementById('fiche-employe-poste').innerHTML = '<option value="">-</option>' +
+            data.postes.map(p => `<option value="${p.id}">${p.nom}</option>`).join('');
+        ficheEmployeRefsLoaded = true;
+    } catch (err) {
+        // Non bloquant : les selects restent vides, l'utilisateur peut reessayer en rouvrant le modal.
+    }
+}
+
+function openCreateFicheModal() {
+    const type = document.getElementById('participant-type').value;
+    const searchValue = document.getElementById('participant-search').value.trim();
+
+    document.getElementById('fiche-nom').value = searchValue;
+    document.getElementById('fiche-prenom').value = '';
+    document.getElementById('fiche-surnom').value = '';
+    document.getElementById('fiche-type-autorite').value = '';
+    document.getElementById('fiche-employe-base').value = '';
+    document.getElementById('fiche-employe-poste').value = '';
+    document.getElementById('fiche-fonction').value = '';
+    document.getElementById('fiche-contact').value = '';
+    document.getElementById('fiche-village').innerHTML = '<option value="">-</option>';
+    document.getElementById('create-fiche-error').classList.add('hidden');
+    document.getElementById('create-fiche-titre').textContent = FICHE_TITRES[type] || 'Nouvelle fiche';
+
+    // Nom complet vs Nom de famille : seul l'employe a des champs prenom/surnom separes.
+    document.getElementById('fiche-nom-label').textContent = type === 'employe' ? 'Nom de famille *' : 'Nom complet *';
+    document.getElementById('fiche-employe-identite').classList.toggle('hidden', type !== 'employe');
+
+    document.getElementById('fiche-autorite-type').classList.toggle('hidden', type !== 'autorite');
+    document.getElementById('fiche-employe-rh').classList.toggle('hidden', type !== 'employe');
+    if (type === 'employe') loadFicheEmployeRefs();
+
+    // Fonction : pertinente pour autorite (precision du type) et tiers (seul moyen de
+    // qualification, cf. TiersParticipant). Sans objet pour representant/employe.
+    const showFonction = type === 'autorite' || type === 'tiers';
+    document.getElementById('fiche-fonction-wrapper').classList.toggle('hidden', !showFonction);
+    document.getElementById('fiche-fonction-label').textContent = type === 'autorite' ? 'Fonction (precision)' : 'Fonction';
+    document.getElementById('fiche-fonction-hint').textContent = type === 'autorite'
+        ? 'complement du type, optionnel'
+        : 'precision libre (optionnel)';
+
+    document.getElementById('fiche-contact-label').textContent = type === 'employe' ? 'Telephone' : 'Contact';
+
+    // Zone geographique : autorite et representant seulement (employe se rattache a une base,
+    // pas a une zone geographique ; tiers n'a pas de zone du tout).
+    const showGeo = type === 'autorite' || type === 'representant';
+    document.getElementById('fiche-geo').classList.toggle('hidden', !showGeo);
+    // Fokontany : pertinent pour les deux (autorite peut y etre rattachee precisement ; c'est
+    // une etape intermediaire obligatoire pour retrouver les villages du representant).
+    document.getElementById('fiche-fokontany-hint').textContent = type === 'representant'
+        ? 'pour retrouver le village'
+        : 'si precis (ex: chef fokontany)';
+    // Village : uniquement representant (champ obligatoire en base sur RepresentantUsager).
+    document.getElementById('fiche-village-wrapper').classList.toggle('hidden', type !== 'representant');
+
+    if (showGeo) {
+        // Pre-remplit Region/District/Commune avec le lieu de la reunion en cours (au niveau
+        // le plus precis connu de la reunion) ; l'utilisateur peut ensuite descendre jusqu'au
+        // fokontany (et au village pour un representant), ou remonter/changer la zone si besoin.
+        const r = currentReunionData ? currentReunionData.reunion : {};
+        const regionId = r.region_effective_id || '';
+        const districtId = r.district_effectif_id || r.district_id || '';
+        const communeId = r.commune_id || '';
+
+        document.getElementById('fiche-region').value = regionId;
+        filterGeoOptions(document.getElementById('fiche-district'), 'region', regionId);
+        document.getElementById('fiche-district').value = districtId;
+        filterGeoOptions(document.getElementById('fiche-commune'), 'district', districtId);
+        document.getElementById('fiche-commune').value = communeId;
+        loadFicheFokontanys(communeId, '');
+    }
+
+    document.getElementById('modal-create-fiche').showModal();
+}
+
+document.getElementById('form-create-fiche').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errorBox = document.getElementById('create-fiche-error');
+    errorBox.classList.add('hidden');
+
+    const type = document.getElementById('participant-type').value;
+    const nom = document.getElementById('fiche-nom').value.trim();
+    if (!nom) {
+        errorBox.textContent = (type === 'employe' ? 'Le nom de famille' : 'Le nom') + ' est obligatoire.';
+        errorBox.classList.remove('hidden');
+        return;
+    }
+    if (type === 'autorite' && !document.getElementById('fiche-type-autorite').value) {
+        errorBox.textContent = "Le type d'autorite est obligatoire.";
+        errorBox.classList.remove('hidden');
+        return;
+    }
+    if (type === 'employe' && !document.getElementById('fiche-employe-base').value) {
+        errorBox.textContent = 'La base est obligatoire.';
+        errorBox.classList.remove('hidden');
+        return;
+    }
+    if (type === 'representant' && !document.getElementById('fiche-village').value) {
+        errorBox.textContent = 'Le village est obligatoire.';
+        errorBox.classList.remove('hidden');
+        return;
+    }
+
+    const payload = { nom, contact: document.getElementById('fiche-contact').value };
+    let url;
+
+    if (type === 'autorite') {
+        url = "{% url 'usagers:autorite_create' %}";
+        payload.fonction = document.getElementById('fiche-fonction').value;
+        payload.type_autorite = document.getElementById('fiche-type-autorite').value;
+        payload.region_id = document.getElementById('fiche-region').value;
+        payload.district_id = document.getElementById('fiche-district').value;
+        payload.commune_id = document.getElementById('fiche-commune').value;
+        payload.fokontany_id = document.getElementById('fiche-fokontany').value;
+    } else if (type === 'tiers') {
+        url = "{% url 'usagers:tiers_create' %}";
+        payload.fonction = document.getElementById('fiche-fonction').value;
+    } else if (type === 'representant') {
+        url = "{% url 'usagers:representant_create_quick' %}";
+        payload.village_id = document.getElementById('fiche-village').value;
+    } else if (type === 'employe') {
+        url = "{% url 'usagers:employe_create_quick' %}";
+        payload.prenom = document.getElementById('fiche-prenom').value;
+        payload.surnom = document.getElementById('fiche-surnom').value;
+        payload.base_id = document.getElementById('fiche-employe-base').value;
+        payload.poste_id = document.getElementById('fiche-employe-poste').value;
+        payload.telephone = payload.contact;
+    }
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!data.success) {
+            errorBox.textContent = data.error || 'Erreur lors de la creation.';
+            errorBox.classList.remove('hidden');
+            return;
+        }
+        const newId = data.autorite_id || data.tiers_id || data.representant_id || data.employe_id;
+        const label = type === 'employe'
+            ? [document.getElementById('fiche-prenom').value.trim(), nom].filter(Boolean).join(' ')
+            : nom;
+        selectParticipantFiche(newId, label);
+        document.getElementById('modal-create-fiche').close();
+    } catch (err) {
+        errorBox.textContent = 'Erreur reseau : ' + err.message;
+        errorBox.classList.remove('hidden');
+    }
+});
+
+async function addParticipant() {
+    const errorBox = document.getElementById('add-participant-error');
+    errorBox.classList.add('hidden');
+
+    const type = document.getElementById('participant-type').value;
+    const ficheId = document.getElementById('participant-fiche-id').value;
+
+    if (!ficheId) {
+        errorBox.textContent = 'Choisissez une fiche existante dans les resultats de recherche (ou creez-la).';
+        errorBox.classList.remove('hidden');
+        return;
+    }
+
+    const payload = {
+        type_participant: type,
+        fonction_libre: document.getElementById('participant-fonction').value,
+        contact_libre: document.getElementById('participant-contact').value,
+    };
+    if (type === 'representant') {
+        payload.representant_id = ficheId;
+    } else if (type === 'abonne') {
+        payload.point_eau_id = ficheId;
+    } else if (type === 'employe') {
+        payload.employe_id = ficheId;
+    } else if (type === 'autorite') {
+        payload.autorite_id = ficheId;
+    } else if (type === 'tiers') {
+        payload.tiers_id = ficheId;
+    }
+
+    const response = await fetch(`/usagers/reunions/${currentReunionId}/participants/create/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    if (data.success) {
+        document.getElementById('add-participant-form').classList.add('hidden');
+        document.getElementById('participant-fonction').value = '';
+        document.getElementById('participant-contact').value = '';
+        await reloadReunionDetail();
+    } else {
+        errorBox.textContent = data.error || 'Erreur lors de l\'ajout.';
+        errorBox.classList.remove('hidden');
+    }
+}
+
+async function removeParticipant(participantId) {
+    if (!confirm('Retirer ce participant ?')) return;
+    const response = await fetch(`/usagers/reunions/participants/${participantId}/delete/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': getCookie('csrftoken') }
+    });
+    const data = await response.json();
+    if (data.success) await reloadReunionDetail();
+}
+
+function editAttenduInline(typeParticipant) {
+    document.getElementById(`attendu-value-${typeParticipant}`).classList.add('hidden');
+    document.getElementById(`attendu-input-${typeParticipant}`).classList.remove('hidden');
+    document.getElementById(`attendu-edit-btn-${typeParticipant}`).classList.add('hidden');
+    document.getElementById(`attendu-save-btn-${typeParticipant}`).classList.remove('hidden');
+    document.getElementById(`attendu-input-${typeParticipant}`).focus();
+}
+
+async function saveAttenduInline(typeParticipant) {
+    const input = document.getElementById(`attendu-input-${typeParticipant}`);
+    const nombreAttendu = parseInt(input.value, 10);
+    if (isNaN(nombreAttendu) || nombreAttendu < 0) {
+        alert('Nombre attendu invalide.');
+        return;
+    }
+    const response = await fetch(`/usagers/reunions/${currentReunionId}/attendus/update/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify({ type_participant: typeParticipant, nombre_attendu: nombreAttendu })
+    });
+    const data = await response.json();
+    if (data.success) {
+        await reloadReunionDetail();
+    } else {
+        alert(data.error || 'Erreur lors de la mise a jour.');
+    }
+}
+
+async function addDecision() {
+    const description = document.getElementById('decision-description').value.trim();
+    if (!description) { alert('Description requise.'); return; }
+    const payload = {
+        description,
+        date_echeance: document.getElementById('decision-echeance').value,
+    };
+    const response = await fetch(`/usagers/reunions/${currentReunionId}/decisions/create/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    if (data.success) {
+        document.getElementById('add-decision-form').classList.add('hidden');
+        document.getElementById('decision-description').value = '';
+        await reloadReunionDetail();
+    } else {
+        alert('Erreur : ' + data.error);
+    }
+}
+
+// =========================================================
+// Ajout d'avis lie a la reunion en cours de consultation
+// =========================================================
+let avisRepresentantSearchTimeout = null;
+
+function searchAvisRepresentant() {
+    const term = document.getElementById('avis-representant-search').value.trim();
+    const resultsBox = document.getElementById('avis-representant-search-results');
+
+    document.getElementById('avis-representant-id').value = '';
+    document.getElementById('avis-representant-selected').classList.add('hidden');
+
+    clearTimeout(avisRepresentantSearchTimeout);
+    if (term.length < 2) {
+        resultsBox.classList.add('hidden');
+        resultsBox.innerHTML = '';
+        return;
+    }
+
+    avisRepresentantSearchTimeout = setTimeout(async () => {
+        const communeId = currentReunionData ? (currentReunionData.reunion.commune_id || '') : '';
+        const params = new URLSearchParams({ type: 'representant', search: term, commune_id: communeId });
+        const response = await fetch(`{% url 'usagers:reunion_participant_search' %}?${params.toString()}`);
+        const data = await response.json();
+        if (!data.success || !data.results.length) {
+            resultsBox.innerHTML = '<div class="p-2 text-xs italic opacity-60">Aucun resultat</div>';
+            resultsBox.classList.remove('hidden');
+            return;
+        }
+        resultsBox.innerHTML = data.results.map(r => `
+            <div class="p-2 hover:bg-base-200 cursor-pointer" onclick="selectAvisRepresentant('${r.id}', ${JSON.stringify(r.label).replace(/"/g, '&quot;')})">
+                <div class="text-xs font-medium">${escapeHtml(r.label)}</div>
+                ${r.detail ? `<div class="text-[11px] text-base-content/60 mt-0.5">${escapeHtml(r.detail)}</div>` : ''}
+            </div>
+        `).join('');
+        resultsBox.classList.remove('hidden');
+    }, 250);
+}
+
+function selectAvisRepresentant(id, label) {
+    document.getElementById('avis-representant-id').value = id;
+    document.getElementById('avis-representant-search').value = label;
+    document.getElementById('avis-representant-search-results').classList.add('hidden');
+    const selected = document.getElementById('avis-representant-selected');
+    selected.classList.remove('hidden');
+    selected.querySelector('span').textContent = 'Representant selectionne : ' + label;
+}
+
+async function addAvisReunion() {
+    const errorBox = document.getElementById('add-avis-error');
+    errorBox.classList.add('hidden');
+
+    const representantId = document.getElementById('avis-representant-id').value;
+    const dateAvis = document.getElementById('avis-date').value;
+
+    if (!representantId) {
+        errorBox.textContent = 'Choisissez un representant existant dans les resultats de recherche.';
+        errorBox.classList.remove('hidden');
+        return;
+    }
+    if (!dateAvis) {
+        errorBox.textContent = 'La date est obligatoire.';
+        errorBox.classList.remove('hidden');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('date_avis', dateAvis);
+    formData.append('employe_id', document.getElementById('avis-employe').value);
+    formData.append('reunion_id', currentReunionId);
+    formData.append('quantite_ok', document.getElementById('avis-quantite').checked);
+    formData.append('qualite_ok', document.getElementById('avis-qualite').checked);
+    formData.append('delai_reparation_ok', document.getElementById('avis-delai').checked);
+    formData.append('relation_gestionnaire_ok', document.getElementById('avis-relation').checked);
+    formData.append('probleme_technique', document.getElementById('avis-probleme-technique').value);
+    formData.append('probleme_recouvrement', document.getElementById('avis-probleme-recouvrement').value);
+    formData.append('probleme_regles_utilisation', document.getElementById('avis-probleme-regles').value);
+    formData.append('remarque', document.getElementById('avis-remarque').value);
+
+    const response = await fetch(`/usagers/representants/${representantId}/avis/create/`, {
+        method: 'POST',
+        body: formData,
+        headers: { 'X-CSRFToken': getCookie('csrftoken') },
+    });
+    const data = await response.json();
+    if (data.success) {
+        document.getElementById('add-avis-form').classList.add('hidden');
+        document.getElementById('avis-representant-search').value = '';
+        document.getElementById('avis-representant-id').value = '';
+        document.getElementById('avis-representant-selected').classList.add('hidden');
+        document.getElementById('avis-quantite').checked = false;
+        document.getElementById('avis-qualite').checked = false;
+        document.getElementById('avis-delai').checked = false;
+        document.getElementById('avis-relation').checked = false;
+        document.getElementById('avis-probleme-technique').value = '';
+        document.getElementById('avis-probleme-recouvrement').value = '';
+        document.getElementById('avis-probleme-regles').value = '';
+        document.getElementById('avis-remarque').value = '';
+        await reloadReunionDetail();
+    } else {
+        errorBox.textContent = data.message || 'Erreur lors de l\'enregistrement.';
+        errorBox.classList.remove('hidden');
+    }
+}
+
+async function updateDecisionStatut(decisionId, statut) {
+    await fetch(`/usagers/reunions/decisions/${decisionId}/statut/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify({ statut })
+    });
+    await reloadReunionDetail();
+}
+
+async function removeDecision(decisionId) {
+    if (!confirm('Supprimer cette decision ?')) return;
+    const response = await fetch(`/usagers/reunions/decisions/${decisionId}/delete/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': getCookie('csrftoken') }
+    });
+    const data = await response.json();
+    if (data.success) await reloadReunionDetail();
+}
+
+async function uploadPiecesJointes() {
+    const input = document.getElementById('piece-jointe-input');
+    const files = Array.from(input.files || []);
+    if (!files.length) return;
+
+    const erreurs = [];
+    for (const file of files) {
+        const formData = new FormData();
+        formData.append('fichier', file);
+        const ext = file.name.split('.').pop().toLowerCase();
+        let typePiece = 'autre';
+        if (['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext)) typePiece = 'photo';
+        else if (['mp4', 'mov', 'avi', 'webm'].includes(ext)) typePiece = 'video';
+        else if (['pdf', 'doc', 'docx'].includes(ext)) typePiece = 'rapport';
+        formData.append('type_piece', typePiece);
+
+        try {
+            const response = await fetch(`/usagers/reunions/${currentReunionId}/pieces-jointes/create/`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': getCookie('csrftoken') },
+                body: formData
+            });
+            const data = await response.json();
+            if (!data.success) erreurs.push(`${file.name} : ${data.error}`);
+        } catch (err) {
+            erreurs.push(`${file.name} : ${err.message}`);
+        }
+    }
+
+    input.value = '';
+    await reloadReunionDetail();
+    if (erreurs.length) {
+        alert('Certains fichiers n\'ont pas pu etre ajoutes :\n' + erreurs.join('\n'));
+    }
+}
+
+async function removePieceJointe(pieceId) {
+    if (!confirm('Supprimer ce fichier ?')) return;
+    const response = await fetch(`/usagers/reunions/pieces-jointes/${pieceId}/delete/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': getCookie('csrftoken') }
+    });
+    const data = await response.json();
+    if (data.success) {
+        await reloadReunionDetail();
+    } else {
+        alert('Erreur : ' + data.error);
+    }
+}
+
+// Ouvre automatiquement le detail d'une reunion si l'URL contient ?reunion=<uuid>, pour
+// permettre d'y arriver directement depuis un lien externe (ex: page de pointage DiameX,
+// cf. reunionPointeeCell dans pointage_reunions_diamex.html).
+(function openReunionFromUrlParam() {
+    const reunionId = new URLSearchParams(window.location.search).get('reunion');
+    if (reunionId) openDetailReunionModal(reunionId);
+})();
+</script>
+
+{% endblock %}

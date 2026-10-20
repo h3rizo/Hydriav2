@@ -1,0 +1,1585 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block content %}
+<div class="hydria-v1-page container mx-auto px-4 py-8 space-y-6">
+    <header class="hydria-v1-page-header hydria-v1-dropdown-surface flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div>
+            <div class="breadcrumbs text-sm">
+                <ul>
+                    <li><a href="{% url 'organization:ouvrage_list' %}">Ouvrages</a></li>
+                    <li><a href="{% url 'organization:compteurs_list' %}">Compteurs de tete</a></li>
+                    <li>{{ title }}</li>
+                </ul>
+            </div>
+            <h1 class="hydria-v1-page-title text-3xl font-bold mt-2">{{ title }}</h1>
+            <div class="mt-3 space-y-3 rounded-xl bg-base-200/60 p-4">
+                <p class="text-sm text-base-content/70">
+                    Comparaison entre le volume enregistré par le
+                    <strong class="text-base-content">compteur de tête</strong>
+                    et la somme des relevés des
+                    <strong class="text-base-content">points d’eau en aval</strong>.
+                </p>
+
+                <div class="flex flex-wrap gap-2 text-sm">
+                    <span class="badge badge-info gap-2">
+                        <span class="font-semibold">&lt; 5 %</span>
+                        Réseau en bon état
+                    </span>
+
+                    <span class="badge badge-success gap-2">
+                        <span class="font-semibold">5 à &lt; 10 %</span>
+                        Écart acceptable
+                    </span>
+
+                    <span class="badge badge-warning gap-2">
+                        <span class="font-semibold">10 à 20 %</span>
+                        À investiguer
+                    </span>
+
+                    <span class="badge badge-error gap-2">
+                        <span class="font-semibold">&gt; 20 %</span>
+                        Écart anormal
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+            <div class="dropdown dropdown-end">
+                <div tabindex="0" role="button" class="btn btn-outline btn-success">
+                    <i class="fas fa-file-excel mr-2"></i>Excel
+                </div>
+                <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52">
+                    <li>
+                        <a href="{% if selected_ouvrage %}{% url 'organization:compteurs_releves_export_excel_ouvrage' selected_ouvrage.id %}{% else %}{% url 'organization:compteurs_releves_export_excel' %}{% endif %}">
+                            <i class="fas fa-download mr-2"></i>Exporter
+                        </a>
+                    </li>
+                    <li>
+                        <a onclick="document.getElementById('import-excel-modal').showModal()">
+                            <i class="fas fa-upload mr-2"></i>Importer
+                        </a>
+                    </li>
+                    <li>
+                        <a href="{% if selected_ouvrage %}{% url 'organization:compteurs_releves_template_excel_ouvrage' selected_ouvrage.id %}{% else %}{% url 'organization:compteurs_releves_template_excel' %}{% endif %}">
+                            <i class="fas fa-file-alt mr-2"></i>Template
+                        </a>
+                    </li>
+                </ul>
+            </div>
+            <a href="{% url 'organization:compteurs_list' %}{% if selected_ouvrage %}{{ selected_ouvrage.id }}/{% endif %}" class="btn btn-outline">
+                <i class="fas fa-tachometer-alt mr-2"></i>Gestion compteurs
+            </a>
+            <button type="button" class="btn btn-primary" onclick="openCreateModal()">
+                <i class="fas fa-plus mr-2"></i>Nouveau releve
+            </button>
+            <button type="button" class="btn btn-warning" onclick="openChangementCompteurModal()">
+                <i class="fas fa-right-left mr-2"></i>Changer le compteur
+            </button>
+        </div>
+    </header>
+
+    <div class="hydria-v1-filter-card card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <div class="hydria-v1-compact-filters grid grid-cols-1 lg:grid-cols-5 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Ouvrage</span></label>
+                    <select id="ouvrage-filter" class="select select-bordered" onchange="changeOuvrage(this.value)">
+                        <option value="">Tous les ouvrages</option>
+                        {% for ouvrage in ouvrages %}
+                        <option value="{{ ouvrage.id }}" {% if selected_ouvrage and ouvrage.id == selected_ouvrage.id %}selected{% endif %}>
+                            {{ ouvrage.nom_ouvrage }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Compteur</span></label>
+                    <select id="compteur-filter" class="select select-bordered" onchange="applyCompteurFilter(this.value)">
+                        <option value="">Tous les compteurs</option>
+                        {% for compteur in compteurs_options %}
+                        <option value="{{ compteur.id }}" {% if compteur.id == selected_compteur_id %}selected{% endif %}>
+                            {{ compteur.numero }} - {{ compteur.index_courant|floatformat:2 }} m3
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Vue</span></label>
+                    <select id="vue-releves-filter" class="select select-bordered" onchange="applyVueReleves(this.value)">
+                        <option value="groupee" {% if selected_vue_releves == 'groupee' %}selected{% endif %}>Regroupee par compteur</option>
+                        <option value="derniers" {% if selected_vue_releves == 'derniers' %}selected{% endif %}>Derniers releves</option>
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Ecart</span></label>
+                    <select id="ecart-releve-filter" class="select select-bordered" onchange="applyEcartReleveFilter(this.value)">
+                        <option value="" {% if not selected_ecart_releve %}selected{% endif %}>Tous les ecarts</option>
+                        <option value="anormal" {% if selected_ecart_releve == 'anormal' %}selected{% endif %}>Ecarts anormaux</option>
+                        <option value="a_investiguer" {% if selected_ecart_releve == 'a_investiguer' %}selected{% endif %}>A investiguer</option>
+                        <option value="a_expliquer" {% if selected_ecart_releve == 'a_expliquer' %}selected{% endif %}>A expliquer</option>
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Actions rapides</span></label>
+                    <div class="join">
+                        <button type="button" class="btn join-item btn-outline" onclick="window.location.reload()">
+                            <i class="fas fa-rotate-right mr-2"></i>Actualiser
+                        </button>
+                        <button type="button" class="btn join-item btn-secondary" onclick="openCreateModal(document.getElementById('compteur-filter').value)">
+                            <i class="fas fa-gauge-high mr-2"></i>Saisir
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="hydria-v1-kpi-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8 gap-4">
+        <div class="stat bg-base-100 rounded-box shadow">
+            <div class="stat-title">Compteurs</div>
+            <div class="stat-value text-secondary">{{ stats.total_compteurs_display|default:"0" }}</div>
+            <div class="stat-desc">{{ stats.compteurs_classes_display|default:"0" }} compteur(s) avec comparaison</div>
+        </div>
+        <div class="stat bg-base-100 rounded-box shadow">
+            <div class="stat-title">Releves</div>
+            <div class="stat-value text-primary">{{ stats.total_releves_display }}</div>
+        </div>
+        <div class="stat bg-base-100 rounded-box shadow">
+            <div class="stat-title">Volume tete</div>
+            <div class="stat-value text-info">{{ stats.total_volume_tete_display }}</div>
+            <div class="stat-desc">m3 cumules</div>
+        </div>
+        <div class="stat bg-base-100 rounded-box shadow">
+            <div class="stat-title">Volume aval</div>
+            <div class="stat-value text-success">{{ stats.total_volume_aval_display }}</div>
+            <div class="stat-desc">m3 cumules</div>
+        </div>
+        <div class="stat bg-base-100 rounded-box shadow">
+            <div class="stat-title">Reseau bon</div>
+            <div class="stat-value text-info">{{ stats.good_compteurs_display|default:"0" }}</div>
+            <div class="stat-desc">{{ stats.good_compteurs_percent|floatformat:1 }}% de la repartition | ecart &lt; 5%</div>
+        </div>
+        <div class="stat bg-base-100 rounded-box shadow">
+            <div class="stat-title">Ecart tolerable</div>
+            <div class="stat-value text-success">{{ stats.acceptable_compteurs_display|default:"0" }}</div>
+            <div class="stat-desc">{{ stats.acceptable_compteurs_percent|floatformat:1 }}% de la repartition | 5% a 10%</div>
+        </div>
+        <div class="stat bg-base-100 rounded-box shadow">
+            <div class="stat-title">A investiguer</div>
+            <div class="stat-value text-warning">{{ stats.investigate_compteurs_display|default:"0" }}</div>
+            <div class="stat-desc">{{ stats.investigate_compteurs_percent|floatformat:1 }}% de la repartition | 10% a 20%</div>
+        </div>
+        <div class="stat bg-base-100 rounded-box shadow">
+            <div class="stat-title">Anormaux</div>
+            <div class="stat-value text-error">{{ stats.critical_compteurs_display|default:"0" }}</div>
+            <div class="stat-desc">{{ stats.critical_compteurs_percent|floatformat:1 }}% de la repartition | ecart &gt; 20%</div>
+        </div>
+    </div>
+
+    {% if changements_compteurs %}
+    <div class="hydria-v1-panel card border border-warning/40 bg-warning/5 shadow-lg">
+        <div class="card-body">
+            <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div>
+                    <h2 class="card-title text-warning">
+                        <i class="fas fa-right-left mr-2"></i>Changements de compteur
+                    </h2>
+                    <p class="text-sm text-base-content/70">
+                        La baisse d'index correspond à une rupture documentée entre deux compteurs physiques.
+                    </p>
+                </div>
+                <span class="badge badge-warning badge-outline">{{ changements_compteurs|length }} changement(s)</span>
+            </div>
+
+            <div class="mt-3 space-y-3">
+                {% for changement in changements_compteurs %}
+                <article class="rounded-xl border border-warning/30 bg-base-100 p-4">
+                    <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div class="space-y-2">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="badge badge-warning">Compteur remplacé</span>
+                                <span class="font-semibold">{{ changement.date_changement_display }}</span>
+                                <span class="text-sm text-base-content/60">{{ changement.ouvrage_nom }}</span>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-3 text-base">
+                                <span class="font-mono font-semibold">{{ changement.ancien_compteur_numero }}</span>
+                                <span class="badge badge-outline">Index final {{ changement.index_retrait|floatformat:2|intcomma }}</span>
+                                <i class="fas fa-arrow-right text-warning" aria-hidden="true"></i>
+                                <span class="font-mono font-semibold">{{ changement.nouveau_compteur_numero }}</span>
+                                <span class="badge badge-outline">Index initial {{ changement.index_initial_nouveau|floatformat:2|intcomma }}</span>
+                            </div>
+                            <div class="text-sm">
+                                <span class="font-semibold">Motif :</span> {{ changement.motif_display }}
+                            </div>
+                            <p class="whitespace-pre-wrap text-sm text-base-content/80">{{ changement.explication }}</p>
+                        </div>
+                        <div class="text-xs text-base-content/60 lg:text-right">
+                            <div>{{ changement.nb_points_transferes }} point(s) d'eau transféré(s)</div>
+                            {% if changement.effectue_par %}<div>Par {{ changement.effectue_par }}</div>{% endif %}
+                            {% if changement.created_at %}<div>Enregistré le {{ changement.created_at }}</div>{% endif %}
+                        </div>
+                    </div>
+                </article>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="hydria-v1-table-card card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <div class="flex flex-col gap-2 mb-2 md:flex-row md:items-center md:justify-between">
+                <h2 class="card-title">Historique des releves</h2>
+                <span class="badge badge-outline h-auto min-h-6 max-w-full whitespace-normal py-1 text-left leading-tight">
+                    {% if selected_ouvrage %}
+                        {{ selected_ouvrage.nom_ouvrage }}
+                    {% else %}
+                        Tous les ouvrages
+                    {% endif %}
+                    {% if selected_compteur_id %}- filtre compteur{% endif %}
+                    - {% if selected_vue_releves == 'groupee' %}regroupe par ouvrage et compteur{% else %}derniers releves{% endif %}
+                    {% if selected_ecart_releve %}- filtre ecart{% endif %}
+                </span>
+            </div>
+
+            {% if releves_rows %}
+            {% if selected_vue_releves == 'groupee' %}
+            <div class="space-y-4">
+                {% for ouvrage_groupe in grouped_ouvrages %}
+                <div class="collapse collapse-arrow bg-primary/5 border-2 border-primary/20">
+                    <input type="checkbox" {% if forloop.first %}checked{% endif %}>
+                    <div class="collapse-title pr-12">
+                        <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                            <div class="font-bold text-xl">
+                                <i class="fas fa-water text-primary mr-2"></i>{{ ouvrage_groupe.ouvrage_nom }}
+                            </div>
+                            <div class="flex flex-wrap gap-2">
+                                <span class="badge badge-primary badge-outline">
+                                    {{ ouvrage_groupe.nb_compteurs }} compteur(s)
+                                </span>
+                                <span class="badge badge-outline">
+                                    {{ ouvrage_groupe.nb_releves }} releve(s) compare(s)
+                                </span>
+                            </div>
+                        </div>
+                        <div class="flex flex-wrap gap-2 mt-3">
+                            <span class="badge badge-info">
+                                Reseau bon : {{ ouvrage_groupe.good_count }}
+                            </span>
+                            <span class="badge badge-success">
+                                Ecart tolerable : {{ ouvrage_groupe.acceptable_count }}
+                            </span>
+                            <span class="badge badge-warning">
+                                A investiguer : {{ ouvrage_groupe.investigate_count }}
+                            </span>
+                            <span class="badge badge-error">
+                                Anormaux : {{ ouvrage_groupe.critical_count }}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="collapse-content space-y-3">
+                    {% for groupe in ouvrage_groupe.compteurs %}
+                    <div class="collapse collapse-arrow bg-base-200 border border-base-300">
+                    <input type="checkbox" {% if forloop.first %}checked{% endif %}>
+                    <div class="collapse-title pr-12">
+                        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                            <div>
+                                <div class="font-bold text-lg
+                                    {% if groupe.latest.severity == 'good' %}text-info
+                                    {% elif groupe.latest.severity == 'acceptable' %}text-success
+                                    {% elif groupe.latest.severity == 'investigate' %}text-warning
+                                    {% else %}text-error{% endif %}">
+                                    <i class="fas fa-gauge-high mr-2"></i>{{ groupe.compteur_numero }}
+                                </div>
+                                <div class="text-xs opacity-60">
+                                    {{ groupe.nb_points_eau_aval }} point(s) aval · {{ groupe.nb_releves }} releve(s) compare(s)
+                                </div>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-2 md:justify-end">
+                                <span class="badge badge-outline">
+                                    Dernier : {{ groupe.latest.date_fin_calcul_display }}
+                                </span>
+                                {% if groupe.latest.severity == 'good' %}
+                                <span class="badge badge-info">Reseau bon</span>
+                                {% elif groupe.latest.severity == 'acceptable' %}
+                                <span class="badge badge-success">Ecart tolerable</span>
+                                {% elif groupe.latest.severity == 'investigate' %}
+                                <span class="badge badge-warning">A investiguer</span>
+                                {% else %}
+                                <span class="badge badge-error">Anormal</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="collapse-content">
+                        <div class="space-y-3 lg:hidden">
+                            {% for releve in groupe.rows %}
+                            <article class="rounded-lg border border-base-300 bg-base-100 p-4 shadow-sm">
+                                <div class="flex items-start justify-between gap-3">
+                                    <div class="min-w-0">
+                                        <div class="text-xs text-base-content/60">Periode comparee</div>
+                                        <div class="mt-1 font-medium leading-snug">
+                                            {{ releve.date_debut_calcul_display }}
+                                            <i class="fas fa-arrow-right mx-1 text-xs opacity-50" aria-hidden="true"></i>
+                                            {{ releve.date_fin_calcul_display }}
+                                        </div>
+                                        <div class="mt-1 text-xs text-base-content/60">{{ releve.duree_calcul_jours }} jour(s)</div>
+                                    </div>
+                                    <div class="shrink-0">
+                                        {% if releve.severity == 'good' %}
+                                        <span class="badge badge-info badge-sm">Reseau bon</span>
+                                        {% elif releve.severity == 'acceptable' %}
+                                        <span class="badge badge-success badge-sm">Ecart tolerable</span>
+                                        {% elif releve.severity == 'investigate' %}
+                                        <span class="badge badge-warning badge-sm">A investiguer</span>
+                                        {% else %}
+                                        <span class="badge badge-error badge-sm">Anormal</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+
+                                <dl class="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                                    <div>
+                                        <dt class="text-xs text-base-content/60">Ancien index</dt>
+                                        <dd class="mt-1 font-mono font-medium">{{ releve.ancien_index|floatformat:2|intcomma }}</dd>
+                                    </div>
+                                    <div>
+                                        <dt class="text-xs text-base-content/60">Nouvel index</dt>
+                                        <dd class="mt-1 font-mono font-medium">{{ releve.nouvel_index|floatformat:2|intcomma }}</dd>
+                                    </div>
+                                    <div>
+                                        <dt class="text-xs text-base-content/60">Volume tete</dt>
+                                        <dd class="mt-1 font-mono font-medium">{{ releve.volume_tete|floatformat:2|intcomma }} m3</dd>
+                                    </div>
+                                    <div>
+                                        <dt class="text-xs text-base-content/60">Volume aval</dt>
+                                        <dd class="mt-1 font-mono font-medium">{{ releve.volume_aval|floatformat:2|intcomma }} m3</dd>
+                                    </div>
+                                </dl>
+
+                                <div class="mt-4 flex items-center justify-between gap-3 border-t border-base-300 pt-3">
+                                    <div class="text-sm text-base-content/60">Ecart</div>
+                                    <div class="text-right font-mono font-semibold
+                                        {% if releve.severity == 'good' %}text-info
+                                        {% elif releve.severity == 'acceptable' %}text-success
+                                        {% elif releve.severity == 'investigate' %}text-warning
+                                        {% else %}text-error{% endif %}">
+                                        <div>{{ releve.ecart_volume|floatformat:2|intcomma }} m3</div>
+                                        <div class="text-xs">{{ releve.ecart_percent_rounded }}%</div>
+                                    </div>
+                                </div>
+
+                                {% if releve.explication_ecart or releve.explication_required %}
+                                <div class="mt-3 border-t border-base-300 pt-3">
+                                    <div class="text-xs text-base-content/60">Explication</div>
+                                    {% if releve.explication_ecart %}
+                                    <p class="mt-1 whitespace-pre-wrap break-words text-sm">{{ releve.explication_ecart }}</p>
+                                    {% endif %}
+                                    {% if releve.explication_required %}
+                                    <span class="badge badge-warning badge-outline badge-sm mt-2">A expliquer</span>
+                                    {% endif %}
+                                </div>
+                                {% endif %}
+
+                                <div class="mt-3 flex justify-end gap-1 border-t border-base-300 pt-2">
+                                    <button type="button" class="btn btn-ghost btn-sm" onclick="openEditModal('{{ releve.id }}')" title="Modifier">
+                                        <i class="fas fa-edit" aria-hidden="true"></i>
+                                        <span>Modifier</span>
+                                    </button>
+                                    <button type="button" class="btn btn-ghost btn-sm text-error" onclick="openDeleteModal('{{ releve.id }}', '{{ releve.compteur_numero|escapejs }}', '{{ releve.date_releve_display }}')" title="Supprimer">
+                                        <i class="fas fa-trash" aria-hidden="true"></i>
+                                        <span>Supprimer</span>
+                                    </button>
+                                </div>
+                            </article>
+                            {% endfor %}
+                        </div>
+
+                        <div class="hidden overflow-x-auto bg-base-100 rounded-box lg:block">
+                            <table class="table table-sm table-zebra">
+                                <thead>
+                                    <tr>
+                                        <th>Periode comparee</th>
+                                        <th class="text-right">Ancien index</th>
+                                        <th class="text-right">Nouvel index</th>
+                                        <th class="text-right">Volume tete</th>
+                                        <th class="text-right">Volume aval</th>
+                                        <th class="text-right">Ecart</th>
+                                        <th>Conclusion</th>
+                                        <th class="text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for releve in groupe.rows %}
+                                    <tr>
+                                        <td class="whitespace-nowrap">
+                                            <div class="font-medium">{{ releve.date_debut_calcul_display }} &rarr; {{ releve.date_fin_calcul_display }}</div>
+                                            <div class="text-xs opacity-60">{{ releve.duree_calcul_jours }} jour(s)</div>
+                                        </td>
+                                        <td class="text-right font-mono">{{ releve.ancien_index|floatformat:2|intcomma }}</td>
+                                        <td class="text-right font-mono">{{ releve.nouvel_index|floatformat:2|intcomma }}</td>
+                                        <td class="text-right font-mono">{{ releve.volume_tete|floatformat:2|intcomma }}</td>
+                                        <td class="text-right font-mono">{{ releve.volume_aval|floatformat:2|intcomma }}</td>
+                                        <td class="text-right font-mono
+                                            {% if releve.severity == 'good' %}text-info
+                                            {% elif releve.severity == 'acceptable' %}text-success
+                                            {% elif releve.severity == 'investigate' %}text-warning
+                                            {% else %}text-error{% endif %}">
+                                            <div>{{ releve.ecart_volume|floatformat:2|intcomma }} m3</div>
+                                            <div class="text-xs">{{ releve.ecart_percent_rounded }}%</div>
+                                        </td>
+                                        <td>
+                                            {% if releve.severity == 'good' %}
+                                            <span class="badge badge-info badge-sm">Reseau bon</span>
+                                            {% elif releve.severity == 'acceptable' %}
+                                            <span class="badge badge-success badge-sm">Ecart tolerable</span>
+                                            {% elif releve.severity == 'investigate' %}
+                                            <span class="badge badge-warning badge-sm">A investiguer</span>
+                                            {% else %}
+                                            <span class="badge badge-error badge-sm">Anormal</span>
+                                            {% endif %}
+                                            {% if releve.explication_required %}
+                                            <span class="badge badge-warning badge-outline badge-sm mt-1">A expliquer</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-right whitespace-nowrap">
+                                            <button type="button" class="btn btn-ghost btn-xs" onclick="openEditModal('{{ releve.id }}')" title="Modifier">
+                                                <i class="fas fa-edit"></i>
+                                            </button>
+                                            <button type="button" class="btn btn-ghost btn-xs text-error" onclick="openDeleteModal('{{ releve.id }}', '{{ releve.compteur_numero|escapejs }}', '{{ releve.date_releve_display }}')" title="Supprimer">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    </div>
+                    {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="space-y-4 lg:hidden">
+                {% for releve in releves_rows %}
+                <div class="card bg-base-200 border border-base-300">
+                    <div class="card-body p-4 space-y-4">
+                        <div class="flex items-start justify-between gap-3">
+                            <div>
+                                <div class="font-semibold">{{ releve.compteur_numero }}</div>
+                                <div class="text-sm opacity-70">{{ releve.ouvrage_nom }}</div>
+                                <div class="text-xs opacity-60">{{ releve.nb_points_eau_aval }} point(s) aval</div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-xs opacity-60">Periode comparee</div>
+                                 <div class="text-sm font-medium">
+                                     {{ releve.date_debut_calcul_display }} &rarr; {{ releve.date_fin_calcul_display }}
+                                 </div>
+                                 <div class="text-xs opacity-60">{{ releve.duree_calcul_jours }} jour(s)</div>
+                                {% if releve.severity == 'good' %}
+                                <div class="badge badge-info badge-sm mt-2">Reseau bon</div>
+                                {% elif releve.severity == 'acceptable' %}
+                                <div class="badge badge-success badge-sm mt-2">Ecart acceptable</div>
+                                {% elif releve.severity == 'investigate' %}
+                                <div class="badge badge-warning badge-sm mt-2">A investiguer</div>
+                                {% else %}
+                                <div class="badge badge-error badge-sm mt-2">Anormal</div>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3 text-sm">
+                            <div>
+                                <div class="opacity-60">Ancien index</div>
+                                <div class="font-mono">{{ releve.ancien_index|floatformat:2|intcomma }}</div>
+                            </div>
+                            <div>
+                                <div class="opacity-60">Nouvel index</div>
+                                <div class="font-mono">{{ releve.nouvel_index|floatformat:2|intcomma }}</div>
+                            </div>
+                            <div>
+                                <div class="opacity-60">Volume tete</div>
+                                <div class="font-mono">{{ releve.volume_tete|floatformat:2|intcomma }}</div>
+                            </div>
+                            <div>
+                                <div class="opacity-60">Volume aval</div>
+                                <div class="font-mono">{{ releve.volume_aval|floatformat:2|intcomma }}</div>
+                            </div>
+                        </div>
+
+                        <div class="rounded-box bg-base-100 p-3">
+                            <div class="flex items-center justify-between gap-3">
+                                <div class="text-sm opacity-70">Ecart</div>
+                                <div class="text-right font-mono
+                                    {% if releve.severity == 'good' %}text-info
+                                    {% elif releve.severity == 'acceptable' %}text-success
+                                    {% elif releve.severity == 'investigate' %}text-warning
+                                    {% else %}text-error{% endif %}">
+                                    {{ releve.ecart_volume|floatformat:2|intcomma }}
+                                </div>
+                            </div>
+                            <div class="mt-3 flex items-center justify-between gap-3">
+                                <div class="text-sm opacity-70">% ecart</div>
+                                <div class="font-mono
+                                    {% if releve.severity == 'good' %}text-info
+                                    {% elif releve.severity == 'acceptable' %}text-success
+                                    {% elif releve.severity == 'investigate' %}text-warning
+                                    {% else %}text-error{% endif %}">
+                                    {{ releve.ecart_percent_rounded }}%
+                                </div>
+                            </div>
+                            <progress class="progress mt-2 h-2
+                                {% if releve.severity == 'good' %}progress-info
+                                {% elif releve.severity == 'acceptable' %}progress-success
+                                {% elif releve.severity == 'investigate' %}progress-warning
+                                {% else %}progress-error{% endif %}"
+                                value="{{ releve.ecart_progress_percent }}" max="100"></progress>
+                        </div>
+
+                        <div>
+                            <div class="text-sm opacity-60 mb-1">Explication</div>
+                            {% if releve.explication_ecart %}
+                            <div class="text-sm whitespace-pre-wrap">{{ releve.explication_ecart }}</div>
+                            {% else %}
+                            <div class="text-sm text-base-content/50">Aucune explication</div>
+                            {% endif %}
+                            {% if releve.explication_required %}
+                            <div class="mt-2 badge badge-warning badge-sm">A expliquer</div>
+                            {% endif %}
+                        </div>
+
+                        <div class="flex justify-end gap-2 pt-1">
+                            <button type="button" class="btn btn-sm btn-ghost" onclick="openEditModal('{{ releve.id }}')">
+                                <i class="fas fa-edit mr-2"></i>Modifier
+                            </button>
+                            <button type="button" class="btn btn-sm btn-ghost text-error" onclick="openDeleteModal('{{ releve.id }}', '{{ releve.compteur_numero|escapejs }}', '{{ releve.date_releve_display }}')">
+                                <i class="fas fa-trash mr-2"></i>Supprimer
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <div class="hidden lg:block overflow-x-auto">
+                <table class="table table-zebra">
+                    <thead>
+                        <tr>
+                            <th>Compteur</th>
+                            <th>Ouvrage</th>
+                            <th>Periode comparee</th>
+                            <th class="text-right">Ancien</th>
+                            <th class="text-right">Nouvel</th>
+                            <th class="text-right">Volume tete</th>
+                            <th class="text-right">Volume aval</th>
+                            <th class="text-right">Ecart</th>
+                            <th class="text-right">% ecart</th>
+                            <th>Explication</th>
+                            <th class="text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for releve in releves_rows %}
+                        <tr>
+                            <td>
+                                <div class="font-semibold">{{ releve.compteur_numero }}</div>
+                                <div class="text-xs opacity-60">{{ releve.nb_points_eau_aval }} point(s) aval</div>
+                            </td>
+                            <td>{{ releve.ouvrage_nom }}</td>
+                            <td class="whitespace-nowrap">
+                                <div class="text-xs opacity-60">Debut</div>
+                                <div class="font-medium">{{ releve.date_debut_calcul_display }}</div>
+                                <div class="text-xs opacity-60 mt-1">Fin</div>
+                                 <div class="font-medium">{{ releve.date_fin_calcul_display }}</div>
+                                 <div class="badge badge-outline badge-sm mt-2">{{ releve.duree_calcul_jours }} jour(s)</div>
+                            </td>
+                            <td class="text-right font-mono">{{ releve.ancien_index|floatformat:2|intcomma }}</td>
+                            <td class="text-right font-mono">{{ releve.nouvel_index|floatformat:2|intcomma }}</td>
+                            <td class="text-right font-mono">{{ releve.volume_tete|floatformat:2|intcomma }}</td>
+                            <td class="text-right font-mono">{{ releve.volume_aval|floatformat:2|intcomma }}</td>
+                            <td class="text-right font-mono
+                                {% if releve.severity == 'good' %}text-info
+                                {% elif releve.severity == 'acceptable' %}text-success
+                                {% elif releve.severity == 'investigate' %}text-warning
+                                {% else %}text-error{% endif %}">
+                                {{ releve.ecart_volume|floatformat:2|intcomma }}
+                            </td>
+                            <td class="text-right font-mono
+                                {% if releve.severity == 'good' %}text-info
+                                {% elif releve.severity == 'acceptable' %}text-success
+                                {% elif releve.severity == 'investigate' %}text-warning
+                                {% else %}text-error{% endif %}">
+                                <div>{{ releve.ecart_percent_rounded }}%</div>
+                                <progress class="progress mt-2 h-2
+                                    {% if releve.severity == 'good' %}progress-info
+                                    {% elif releve.severity == 'acceptable' %}progress-success
+                                    {% elif releve.severity == 'investigate' %}progress-warning
+                                    {% else %}progress-error{% endif %}"
+                                    value="{{ releve.ecart_progress_percent }}" max="100"></progress>
+                            </td>
+                            <td>
+                                {% if releve.explication_ecart %}
+                                <div class="max-w-xs whitespace-pre-wrap text-sm">{{ releve.explication_ecart }}</div>
+                                {% else %}
+                                <span class="text-base-content/50 text-sm">Aucune explication</span>
+                                {% endif %}
+                                <div class="mt-2">
+                                    {% if releve.severity == 'good' %}
+                                    <div class="badge badge-info badge-sm">Reseau bon</div>
+                                    {% elif releve.severity == 'acceptable' %}
+                                    <div class="badge badge-success badge-sm">Ecart acceptable</div>
+                                    {% elif releve.severity == 'investigate' %}
+                                    <div class="badge badge-warning badge-sm">A investiguer</div>
+                                    {% else %}
+                                    <div class="badge badge-error badge-sm">Anormal</div>
+                                    {% endif %}
+                                </div>
+                                {% if releve.explication_required %}
+                                <div class="mt-1 badge badge-warning badge-sm">A expliquer</div>
+                                {% endif %}
+                            </td>
+                            <td class="text-right">
+                                <div class="flex justify-end gap-1">
+                                    <button type="button" class="btn btn-ghost btn-xs" onclick="openEditModal('{{ releve.id }}')">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-ghost btn-xs text-error" onclick="openDeleteModal('{{ releve.id }}', '{{ releve.compteur_numero|escapejs }}', '{{ releve.date_releve_display }}')">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+            {% if page_obj.has_other_pages %}
+            <div class="flex justify-end mt-4">
+                <div class="join">
+                    {% if page_obj.has_previous %}
+                    <a class="join-item btn btn-sm" href="?page={{ page_obj.previous_page_number }}{{ filter_querystring }}">Precedent</a>
+                    {% endif %}
+                    <button class="join-item btn btn-sm btn-active">Page {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</button>
+                    {% if page_obj.has_next %}
+                    <a class="join-item btn btn-sm" href="?page={{ page_obj.next_page_number }}{{ filter_querystring }}">Suivant</a>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+            {% else %}
+            <div class="text-center py-12">
+                <i class="fas fa-inbox text-5xl opacity-30"></i>
+                <p class="mt-4 text-base-content/70">Aucun releve de compteur de tete pour ce filtre.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<dialog id="changement-compteur-modal" class="modal">
+    <div class="modal-box w-11/12 max-w-3xl">
+        <div class="flex items-start justify-between gap-4 mb-4">
+            <div>
+                <h3 class="font-bold text-lg"><i class="fas fa-right-left text-warning mr-2"></i>Changer le compteur</h3>
+                <p class="text-sm text-base-content/70">
+                    Clôture l'ancien compteur, crée le nouveau et transfère automatiquement les points d'eau.
+                </p>
+            </div>
+            <form method="dialog"><button class="btn btn-sm btn-circle btn-ghost" aria-label="Fermer">×</button></form>
+        </div>
+
+        <div class="alert alert-warning mb-4">
+            <i class="fas fa-circle-info"></i>
+            <span>Les deux index resteront indépendants : aucune consommation négative ne sera créée.</span>
+        </div>
+        <div id="changement-compteur-errors" class="alert alert-error hidden mb-4"></div>
+
+        <form id="changement-compteur-form" class="space-y-4">
+            {% csrf_token %}
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control md:col-span-2">
+                    <label class="label"><span class="label-text">Ancien compteur *</span></label>
+                    <select id="changement-ancien-compteur" name="ancien_compteur_id" class="select select-bordered w-full" required>
+                        <option value="">-- Choisir le compteur à remplacer --</option>
+                        {% for compteur in compteurs_options %}
+                        <option value="{{ compteur.id }}"
+                                data-index-courant="{{ compteur.index_courant }}"
+                                {% if not compteur.peut_remplacer %}disabled{% endif %}>
+                            {{ compteur.numero }} - {{ compteur.ouvrage_nom }}
+                            {% if compteur.deja_remplace %}(déjà remplacé){% elif compteur.statut == 'hors_service' %}(hors service){% endif %}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Date du changement *</span></label>
+                    <input id="changement-date" name="date_changement" type="date" class="input input-bordered" required>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Index final de l'ancien compteur *</span></label>
+                    <input id="changement-index-retrait" name="index_retrait" type="number" min="0" step="0.01" class="input input-bordered" required>
+                </div>
+            </div>
+
+            <div class="divider">Nouveau compteur</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Numéro du nouveau compteur *</span></label>
+                    <input name="nouveau_numero" type="text" maxlength="255" class="input input-bordered" required>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Index initial *</span></label>
+                    <input name="index_initial_nouveau" type="number" min="0" step="0.01" value="0" class="input input-bordered" required>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Marque</span></label>
+                    <input name="nouvelle_marque" type="text" maxlength="100" class="input input-bordered">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Modèle</span></label>
+                    <input name="nouveau_modele" type="text" maxlength="100" class="input input-bordered">
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Motif *</span></label>
+                    <select name="motif" class="select select-bordered" required>
+                        <option value="">-- Sélectionner --</option>
+                        {% for value, label in motifs_changement_compteur %}
+                        <option value="{{ value }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control md:row-span-2">
+                    <label class="label"><span class="label-text">Explication détaillée *</span></label>
+                    <textarea name="explication" minlength="5" class="textarea textarea-bordered h-28" placeholder="Décrire la panne, les circonstances et la décision de remplacement..." required></textarea>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost" onclick="document.getElementById('changement-compteur-modal').close()">Annuler</button>
+                <button id="changement-compteur-submit" type="submit" class="btn btn-warning">
+                    <i class="fas fa-check mr-2"></i>Confirmer le changement
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<dialog id="releve-modal" class="modal">
+    <div class="modal-box w-11/12 max-w-5xl">
+        <div class="flex items-start justify-between gap-4 mb-4">
+            <div>
+                <h3 class="font-bold text-lg" id="releve-modal-title">Nouveau releve</h3>
+                <p class="text-sm text-base-content/70">Le volume aval est recalcule automatiquement sur le mois du releve.</p>
+            </div>
+            <form method="dialog">
+                <button class="btn btn-sm btn-circle btn-ghost">x</button>
+            </form>
+        </div>
+
+        <div id="releve-form-errors" class="alert alert-error hidden mb-4"></div>
+
+        <form id="releve-form" class="space-y-4">
+            {% csrf_token %}
+            <input type="hidden" id="releve-id" name="releve_id">
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Compteur *</span></label>
+                    <select id="form-compteur-id" name="compteur_id" class="select select-bordered" required>
+                        <option value="">-- Choisir --</option>
+                        {% for compteur in compteurs_options %}
+                        <option value="{{ compteur.id }}">
+                            {{ compteur.numero }} - {{ compteur.ouvrage_nom }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Date du releve *</span></label>
+                    <input id="form-date-releve" name="date_releve" type="date" class="input input-bordered" required>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Nouvel index *</span></label>
+                    <input id="form-nouvel-index" name="nouvel_index" type="number" step="0.01" class="input input-bordered" required>
+                </div>
+            </div>
+
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text">Explication de l'ecart</span>
+                    <span class="label-text-alt">Obligatoire si ecart</span>
+                </label>
+                <textarea id="form-explication-ecart" name="explication_ecart" class="textarea textarea-bordered h-24" placeholder="Expliquer les pertes, purges, fuites, retard de releves aval, etc."></textarea>
+            </div>
+
+            <div class="card bg-base-200">
+                <div class="card-body">
+                    <div class="flex items-center justify-between">
+                        <h4 class="font-semibold">Apercu de comparaison</h4>
+                        <button type="button" class="btn btn-xs btn-outline" onclick="loadPreview()">Recalculer</button>
+                    </div>
+                    <div id="preview-placeholder" class="text-sm text-base-content/70">
+                        Selectionnez un compteur, une date et un index pour afficher la comparaison.
+                    </div>
+                    <div id="preview-content" class="hidden space-y-4">
+                        <div class="alert alert-info">
+                            <i class="fas fa-calendar-alt"></i>
+                            <div>
+                                <div class="font-semibold">Periode utilisee pour la comparaison</div>
+                                <div>
+                                     Du <strong id="preview-date-debut">-</strong>
+                                     au <strong id="preview-date-fin">-</strong>
+                                     (<strong id="preview-duree">-</strong>)
+                                    <span id="preview-estimation-badge" class="badge badge-warning badge-sm ml-2 hidden">Volume aval estime</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                            <div class="stat bg-base-100 rounded-box">
+                                <div class="stat-title">Ancien index</div>
+                                <div class="stat-value text-lg" id="preview-ancien-index">0</div>
+                            </div>
+                            <div class="stat bg-base-100 rounded-box">
+                                <div class="stat-title">Volume tete</div>
+                                <div class="stat-value text-lg text-info" id="preview-volume-tete">0</div>
+                            </div>
+                            <div class="stat bg-base-100 rounded-box">
+                                <div class="stat-title">Volume aval</div>
+                                <div class="stat-value text-lg text-success" id="preview-volume-aval">0</div>
+                            </div>
+                            <div class="stat bg-base-100 rounded-box">
+                                <div class="stat-title">Ecart</div>
+                                <div class="stat-value text-lg" id="preview-ecart-volume">0</div>
+                            </div>
+                        </div>
+
+                        <div class="alert alert-warning hidden" id="preview-gap-warning"></div>
+
+                        <div class="overflow-x-auto">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Point d'eau</th>
+                                        <th>Village</th>
+                                        <th class="text-right">Nb releves</th>
+                                        <th class="text-right">Volume aval utilise</th>
+                                        <th>Dates aval utilisees</th>
+                                        <th>Methode</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="preview-points-body">
+                                    <tr><td colspan="6" class="text-center opacity-60">Aucune donnee</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card bg-base-200">
+                <div class="card-body space-y-4">
+                    <div class="flex items-center justify-between gap-3">
+                        <div>
+                            <h4 class="font-semibold">Points d'eau affectes au compteur</h4>
+                            <p class="text-sm text-base-content/70">Depuis ce modal, vous pouvez affecter, retirer ou basculer un point d'eau vers un autre compteur du meme ouvrage.</p>
+                        </div>
+                        <button type="button" class="btn btn-xs btn-outline" onclick="loadPointAssignments()">Actualiser</button>
+                    </div>
+
+                    <div id="point-assignment-feedback" class="alert hidden"></div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                        <div class="form-control lg:col-span-2">
+                            <label class="label"><span class="label-text">Ajouter un point d'eau</span></label>
+                            <select id="assignment-add-point" class="select select-bordered">
+                                <option value="">-- Choisir un point d'eau --</option>
+                            </select>
+                        </div>
+                        <div class="form-control">
+                            <label class="label opacity-0"><span class="label-text">Action</span></label>
+                            <button type="button" class="btn btn-primary" onclick="attachSelectedPoint()">
+                                <i class="fas fa-plus mr-2"></i>Affecter
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Point d'eau</th>
+                                    <th>Village</th>
+                                    <th>Compteur cible</th>
+                                    <th class="text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="assignment-points-body">
+                                <tr><td colspan="4" class="text-center opacity-60">Choisissez un compteur pour gerer ses points d'eau.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="closeReleveModal()">Annuler</button>
+                <button type="submit" class="btn btn-primary">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+</dialog>
+
+<dialog id="delete-modal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">Supprimer ce releve ?</h3>
+        <p id="delete-modal-text" class="text-base-content/80"></p>
+        <div class="modal-action">
+            <button type="button" class="btn" onclick="document.getElementById('delete-modal').close()">Annuler</button>
+            <button type="button" class="btn btn-error" onclick="confirmDelete()">Supprimer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<dialog id="import-excel-modal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">Importer depuis Excel</h3>
+        <p class="py-4">Veuillez selectionner le fichier Excel contenant les releves de compteurs.</p>
+        
+        <form method="post" enctype="multipart/form-data" action="{% if selected_ouvrage %}{% url 'organization:compteurs_releves_import_excel_ouvrage' selected_ouvrage.id %}{% else %}{% url 'organization:compteurs_releves_import_excel' %}{% endif %}">
+            {% csrf_token %}
+            <div class="form-control w-full max-w-xs mb-4">
+                <label class="label">
+                    <span class="label-text">Fichier Excel (.xlsx, .xls)</span>
+                </label>
+                <input type="file" name="excel_file" class="file-input file-input-bordered file-input-success w-full max-w-xs" accept=".xlsx, .xls" required />
+            </div>
+            
+            <div class="bg-base-200 p-4 rounded-lg mb-4 text-sm">
+                <p class="font-semibold mb-2"><i class="fas fa-info-circle text-info mr-2"></i>Instructions</p>
+                <ul class="list-disc ml-5 space-y-1 cursor-default">
+                    <li>Telechargez d'abord le <strong>Template</strong> pour avoir le bon format</li>
+                    <li>L'identifiant du compteur (ID ou Numero) est obligatoire</li>
+                    <li>Verifiez que la date correspond au format JJ/MM/AAAA</li>
+                    <li>Le calcul de l'ecart sera effectue automatiquement a l'import</li>
+                </ul>
+            </div>
+            
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('import-excel-modal').close()">Annuler</button>
+                <button type="submit" class="btn btn-success">
+                    <i class="fas fa-upload mr-2"></i>Importer les donnees
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+const selectedOuvrageId = "{{ selected_ouvrage.id|default:'' }}";
+const selectedCompteurId = "{{ selected_compteur_id|default:'' }}";
+const previewUrl = "{% url 'organization:api_compteurs_releves_preview' %}";
+const createUrl = "{% url 'organization:api_compteurs_releves_create' %}";
+const changementCompteurUrl = "{% url 'organization:api_compteurs_releves_changement_compteur' %}";
+const pointManagementUrl = "{% url 'organization:api_compteurs_points_management' %}";
+const csrfToken = "{{ csrf_token }}";
+
+let currentEditId = null;
+let currentDeleteId = null;
+let previewRequestToken = 0;
+let currentPointAssignment = null;
+
+function getBaseListUrl() {
+    return "{% url 'organization:compteurs_releves_list' %}";
+}
+
+function getOuvrageListUrl(ouvrageId) {
+    return `/organisations/compteurs/releves/${ouvrageId}/`;
+}
+
+function changeOuvrage(ouvrageId) {
+    const baseUrl = ouvrageId ? getOuvrageListUrl(ouvrageId) : getBaseListUrl();
+    const params = new URLSearchParams(window.location.search);
+    params.delete('page');
+    params.delete('compteur');
+    const query = params.toString();
+    window.location.href = query ? `${baseUrl}?${query}` : baseUrl;
+}
+
+function applyCompteurFilter(compteurId) {
+    const baseUrl = selectedOuvrageId ? getOuvrageListUrl(selectedOuvrageId) : getBaseListUrl();
+    const params = new URLSearchParams(window.location.search);
+    params.delete('page');
+
+    if (compteurId) {
+        params.set('compteur', compteurId);
+    } else {
+        params.delete('compteur');
+    }
+
+    const query = params.toString();
+    window.location.href = query ? `${baseUrl}?${query}` : baseUrl;
+}
+
+function applyVueReleves(viewMode) {
+    const baseUrl = selectedOuvrageId ? getOuvrageListUrl(selectedOuvrageId) : getBaseListUrl();
+    const params = new URLSearchParams(window.location.search);
+    params.delete('page');
+    params.delete('portee_releves');
+    params.set('vue_releves', viewMode === 'derniers' ? 'derniers' : 'groupee');
+
+    const query = params.toString();
+    window.location.href = query ? `${baseUrl}?${query}` : baseUrl;
+}
+
+function applyEcartReleveFilter(ecartReleve) {
+    const baseUrl = selectedOuvrageId ? getOuvrageListUrl(selectedOuvrageId) : getBaseListUrl();
+    const params = new URLSearchParams(window.location.search);
+    params.delete('page');
+
+    if (ecartReleve) {
+        params.set('ecart_releve', ecartReleve);
+    } else {
+        params.delete('ecart_releve');
+    }
+
+    const query = params.toString();
+    window.location.href = query ? `${baseUrl}?${query}` : baseUrl;
+}
+
+function closeReleveModal() {
+    document.getElementById('releve-modal').close();
+}
+
+function localTodayIso() {
+    const now = new Date();
+    return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+function setChangementCompteurErrors(errors) {
+    const container = document.getElementById('changement-compteur-errors');
+    if (!errors) {
+        container.classList.add('hidden');
+        container.innerHTML = '';
+        return;
+    }
+    const messages = [];
+    Object.entries(errors).forEach(([field, value]) => {
+        const values = Array.isArray(value) ? value : [value];
+        values.forEach(message => messages.push(String(message)));
+    });
+    container.innerHTML = '';
+    messages.forEach(message => {
+        const line = document.createElement('div');
+        line.textContent = message;
+        container.appendChild(line);
+    });
+    container.classList.remove('hidden');
+}
+
+function syncChangementIndexRetrait() {
+    const select = document.getElementById('changement-ancien-compteur');
+    const selectedOption = select.options[select.selectedIndex];
+    document.getElementById('changement-index-retrait').value = selectedOption?.dataset.indexCourant || '';
+}
+
+function openChangementCompteurModal() {
+    const form = document.getElementById('changement-compteur-form');
+    const select = document.getElementById('changement-ancien-compteur');
+    form.reset();
+    document.getElementById('changement-date').value = localTodayIso();
+    if (selectedCompteurId) {
+        const option = Array.from(select.options).find(item => item.value === selectedCompteurId && !item.disabled);
+        select.value = option ? selectedCompteurId : '';
+    }
+    syncChangementIndexRetrait();
+    setChangementCompteurErrors(null);
+    document.getElementById('changement-compteur-modal').showModal();
+}
+
+async function submitChangementCompteur(event) {
+    event.preventDefault();
+    const form = document.getElementById('changement-compteur-form');
+    const submitButton = document.getElementById('changement-compteur-submit');
+    submitButton.disabled = true;
+    submitButton.classList.add('loading');
+    setChangementCompteurErrors(null);
+    try {
+        const response = await fetch(changementCompteurUrl, {
+            method: 'POST',
+            headers: {'X-CSRFToken': csrfToken},
+            body: new FormData(form),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            setChangementCompteurErrors(result.errors || {'__all__': ['Le changement n’a pas pu être enregistré.']});
+            return;
+        }
+        window.location.reload();
+    } catch (error) {
+        setChangementCompteurErrors({'__all__': ['Erreur réseau pendant le changement de compteur.']});
+    } finally {
+        submitButton.disabled = false;
+        submitButton.classList.remove('loading');
+    }
+}
+
+function setFormErrors(errors) {
+    const box = document.getElementById('releve-form-errors');
+    if (!errors || Object.keys(errors).length === 0) {
+        box.classList.add('hidden');
+        box.innerHTML = '';
+        return;
+    }
+
+    const messages = [];
+    Object.values(errors).forEach(value => {
+        if (Array.isArray(value)) {
+            value.forEach(item => messages.push(item));
+        } else if (value) {
+            messages.push(value);
+        }
+    });
+
+    box.innerHTML = `<ul class="list-disc ml-4">${messages.map(msg => `<li>${msg}</li>`).join('')}</ul>`;
+    box.classList.remove('hidden');
+}
+
+function setAssignmentFeedback(message, tone = 'info') {
+    const box = document.getElementById('point-assignment-feedback');
+    if (!message) {
+        box.className = 'alert hidden';
+        box.textContent = '';
+        return;
+    }
+    box.className = `alert alert-${tone}`;
+    box.textContent = message;
+}
+
+function getCurrentCompteurId() {
+    return document.getElementById('form-compteur-id').value;
+}
+
+function renderPointAssignments(data) {
+    currentPointAssignment = data || null;
+
+    const addSelect = document.getElementById('assignment-add-point');
+    const body = document.getElementById('assignment-points-body');
+
+    addSelect.innerHTML = '<option value="">-- Choisir un point d eau --</option>';
+
+    if (!data || !data.compteur) {
+        body.innerHTML = '<tr><td colspan="4" class="text-center opacity-60">Choisissez un compteur pour gerer ses points d eau.</td></tr>';
+        return;
+    }
+
+    (data.available_points || []).forEach(point => {
+        const option = document.createElement('option');
+        option.value = point.id;
+        option.textContent = `${point.nom || '-'}${point.code ? ` - ${point.code}` : ''}${point.compteur_numero ? ` (actuel: ${point.compteur_numero})` : ''}`;
+        addSelect.appendChild(option);
+    });
+
+    if (!data.linked_points || data.linked_points.length === 0) {
+        body.innerHTML = '<tr><td colspan="4" class="text-center opacity-60">Aucun point d eau rattache a ce compteur.</td></tr>';
+        return;
+    }
+
+    const targetOptions = (data.target_compteurs || []).map(item => (
+        `<option value="${item.id}">${item.numero}</option>`
+    )).join('');
+
+    body.innerHTML = data.linked_points.map(point => `
+        <tr>
+            <td>
+                <div class="font-medium">${point.nom || '-'}</div>
+                <div class="text-xs opacity-60">${point.code || ''}</div>
+            </td>
+            <td>${point.village || '-'}</td>
+            <td>
+                <select class="select select-bordered select-xs w-full min-w-[180px]" id="move-target-${point.id}" ${targetOptions ? '' : 'disabled'}>
+                    <option value="">-- Autre compteur --</option>
+                    ${targetOptions}
+                </select>
+            </td>
+            <td class="text-right">
+                <div class="flex justify-end gap-2">
+                    <button type="button" class="btn btn-xs btn-outline" onclick="detachPoint('${point.id}')">
+                        <i class="fas fa-unlink mr-1"></i>Retirer
+                    </button>
+                    <button type="button" class="btn btn-xs btn-secondary" onclick="movePoint('${point.id}')">
+                        <i class="fas fa-right-left mr-1"></i>Changer
+                    </button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+async function loadPointAssignments() {
+    const compteurId = getCurrentCompteurId();
+    if (!compteurId) {
+        currentPointAssignment = null;
+        setAssignmentFeedback(null);
+        renderPointAssignments(null);
+        return;
+    }
+
+    const params = new URLSearchParams({compteur_id: compteurId});
+    const response = await fetch(`${pointManagementUrl}?${params.toString()}`);
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+        setAssignmentFeedback('Impossible de charger les points d eau du compteur.', 'error');
+        renderPointAssignments(null);
+        return;
+    }
+
+    setAssignmentFeedback(null);
+    renderPointAssignments(result.data);
+}
+
+async function attachSelectedPoint() {
+    const compteurId = getCurrentCompteurId();
+    const pointId = document.getElementById('assignment-add-point').value;
+    if (!compteurId || !pointId) {
+        setAssignmentFeedback("Choisissez d'abord un compteur et un point d'eau.", 'warning');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('compteur_id', compteurId);
+    formData.append('point_id', pointId);
+
+    const response = await fetch("{% url 'organization:api_compteurs_points_attach' %}", {
+        method: 'POST',
+        headers: {'X-CSRFToken': csrfToken},
+        body: formData,
+    });
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+        setAssignmentFeedback(extractApiError(result) || "Ajout du point d'eau impossible.", 'error');
+        return;
+    }
+
+    setAssignmentFeedback(result.message || "Point d'eau affecte.", 'success');
+    renderPointAssignments(result.data);
+    await loadPreview();
+}
+
+async function detachPoint(pointId) {
+    const compteurId = getCurrentCompteurId();
+    if (!compteurId || !pointId) {
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('compteur_id', compteurId);
+
+    const response = await fetch(`/organisations/compteurs/releves/api/compteur-points/${pointId}/detach/`, {
+        method: 'POST',
+        headers: {'X-CSRFToken': csrfToken},
+        body: formData,
+    });
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+        setAssignmentFeedback(extractApiError(result) || 'Retrait du point d eau impossible.', 'error');
+        return;
+    }
+
+    setAssignmentFeedback(result.message || 'Point d eau retire.', 'success');
+    renderPointAssignments(result.data);
+    await loadPreview();
+}
+
+async function movePoint(pointId) {
+    const targetSelect = document.getElementById(`move-target-${pointId}`);
+    const targetCompteurId = targetSelect ? targetSelect.value : '';
+    if (!targetCompteurId) {
+        setAssignmentFeedback('Choisissez le compteur cible avant de changer le rattachement.', 'warning');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('target_compteur_id', targetCompteurId);
+
+    const response = await fetch(`/organisations/compteurs/releves/api/compteur-points/${pointId}/move/`, {
+        method: 'POST',
+        headers: {'X-CSRFToken': csrfToken},
+        body: formData,
+    });
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+        setAssignmentFeedback(extractApiError(result) || 'Changement de compteur impossible.', 'error');
+        return;
+    }
+
+    setAssignmentFeedback(result.message || 'Point d eau deplace.', 'success');
+    renderPointAssignments(result.data);
+    await loadPreview();
+}
+
+function extractApiError(result) {
+    if (!result) {
+        return '';
+    }
+    if (result.error) {
+        return result.error;
+    }
+    if (!result.errors) {
+        return '';
+    }
+
+    const messages = [];
+    Object.values(result.errors).forEach(value => {
+        if (Array.isArray(value)) {
+            value.forEach(item => messages.push(item));
+        } else if (value) {
+            messages.push(value);
+        }
+    });
+    return messages.join(' ');
+}
+
+function resetPreview() {
+    document.getElementById('preview-content').classList.add('hidden');
+    document.getElementById('preview-gap-warning').classList.add('hidden');
+    document.getElementById('preview-gap-warning').textContent = '';
+    document.getElementById('preview-placeholder').classList.remove('hidden');
+    document.getElementById('preview-date-debut').textContent = '-';
+    document.getElementById('preview-date-fin').textContent = '-';
+    document.getElementById('preview-duree').textContent = '-';
+    document.getElementById('preview-estimation-badge').classList.add('hidden');
+    document.getElementById('preview-points-body').innerHTML = '<tr><td colspan="6" class="text-center opacity-60">Aucune donnee</td></tr>';
+}
+
+function renderPreview(data) {
+    document.getElementById('preview-placeholder').classList.add('hidden');
+    document.getElementById('preview-content').classList.remove('hidden');
+    document.getElementById('preview-ancien-index').textContent = Number(data.ancien_index || 0).toFixed(2);
+    document.getElementById('preview-volume-tete').textContent = Number(data.volume_tete || 0).toFixed(2);
+    document.getElementById('preview-volume-aval').textContent = Number(data.volume_aval || 0).toFixed(2);
+    document.getElementById('preview-date-debut').textContent = data.date_debut_calcul_display || '-';
+    document.getElementById('preview-date-fin').textContent = data.date_fin_calcul_display || '-';
+    document.getElementById('preview-duree').textContent = `${Number(data.duree_calcul_jours || 0)} jour(s)`;
+    document.getElementById('preview-estimation-badge').classList.toggle('hidden', !data.aval_estime);
+
+    const ecart = Number(data.ecart_volume || 0);
+    const ecartEl = document.getElementById('preview-ecart-volume');
+    ecartEl.textContent = ecart.toFixed(2);
+    ecartEl.classList.remove('text-success', 'text-warning', 'text-error');
+    if (Math.abs(ecart) <= 0.01) {
+        ecartEl.classList.add('text-success');
+    } else if (ecart > 0) {
+        ecartEl.classList.add('text-warning');
+    } else {
+        ecartEl.classList.add('text-error');
+    }
+
+    const warning = document.getElementById('preview-gap-warning');
+    if (data.explication_required) {
+        warning.textContent = 'Un ecart a ete detecte. Renseignez une explication avant d enregistrer.';
+        warning.classList.remove('hidden');
+    } else {
+        warning.classList.add('hidden');
+        warning.textContent = '';
+    }
+
+    const body = document.getElementById('preview-points-body');
+    if (!data.points_details || data.points_details.length === 0) {
+        body.innerHTML = '<tr><td colspan="6" class="text-center opacity-60">Aucun point d eau relie.</td></tr>';
+        return;
+    }
+
+    body.innerHTML = data.points_details.map(point => `
+        <tr>
+            <td>
+                <div class="font-medium">${point.nom || '-'}</div>
+                <div class="text-xs opacity-60">${point.code || ''}</div>
+            </td>
+            <td>${point.village || '-'}</td>
+            <td class="text-right font-mono">${point.nb_releves || 0}</td>
+            <td class="text-right">
+                <div class="font-mono font-semibold">${Number(point.volume_aval || 0).toFixed(2)} m3</div>
+                ${point.prorata_utilise ? `
+                    <div class="text-xs text-base-content/60 whitespace-nowrap">
+                        Volume reel index : ${Number(point.volume_reel_index || 0).toFixed(2)} m3
+                    </div>
+                ` : ''}
+            </td>
+            <td class="whitespace-nowrap">
+                ${point.date_debut_source || '-'} &rarr; ${point.date_fin_source || '-'}
+            </td>
+            <td>
+                <span class="badge ${point.estimation_utilisee ? 'badge-warning' : 'badge-success'} badge-sm">
+                    ${point.methode_estimation || '-'}
+                </span>
+            </td>
+        </tr>
+    `).join('');
+}
+
+async function loadPreview() {
+    const compteurId = document.getElementById('form-compteur-id').value;
+    const dateReleve = document.getElementById('form-date-releve').value;
+    const nouvelIndex = document.getElementById('form-nouvel-index').value;
+
+    if (!compteurId || !dateReleve || !nouvelIndex) {
+        resetPreview();
+        return;
+    }
+
+    const requestToken = ++previewRequestToken;
+    const params = new URLSearchParams({
+        compteur_id: compteurId,
+        date_releve: dateReleve,
+        nouvel_index: nouvelIndex,
+    });
+    if (currentEditId) {
+        params.set('releve_id', currentEditId);
+    }
+
+    const response = await fetch(`${previewUrl}?${params.toString()}`);
+    const result = await response.json();
+
+    if (requestToken !== previewRequestToken) {
+        return;
+    }
+
+    if (!response.ok || !result.success) {
+        resetPreview();
+        if (result.errors) {
+            setFormErrors(result.errors);
+        }
+        return;
+    }
+
+    setFormErrors(null);
+    renderPreview(result.data);
+}
+
+function openCreateModal(prefillCompteurId = '') {
+    currentEditId = null;
+    document.getElementById('releve-modal-title').textContent = 'Nouveau releve';
+    document.getElementById('releve-form').reset();
+    document.getElementById('releve-id').value = '';
+    document.getElementById('form-compteur-id').value = prefillCompteurId || selectedCompteurId || '';
+    document.getElementById('form-date-releve').value = new Date().toISOString().slice(0, 10);
+    setFormErrors(null);
+    resetPreview();
+    setAssignmentFeedback(null);
+    renderPointAssignments(null);
+    document.getElementById('releve-modal').showModal();
+    loadPreview();
+    loadPointAssignments();
+}
+
+async function openEditModal(releveId) {
+    const response = await fetch(`/organisations/compteurs/releves/api/${releveId}/`);
+    const result = await response.json();
+    if (!response.ok || !result.success) {
+        alert('Impossible de charger ce releve.');
+        return;
+    }
+
+    currentEditId = releveId;
+    const releve = result.releve;
+    document.getElementById('releve-modal-title').textContent = 'Modifier le releve';
+    document.getElementById('releve-id').value = releve.id;
+    document.getElementById('form-compteur-id').value = releve.compteur_id;
+    document.getElementById('form-date-releve').value = releve.date_releve;
+    document.getElementById('form-nouvel-index').value = releve.nouvel_index;
+    document.getElementById('form-explication-ecart').value = releve.explication_ecart || '';
+    setFormErrors(null);
+    setAssignmentFeedback(null);
+    document.getElementById('releve-modal').showModal();
+    renderPreview({
+        ancien_index: releve.ancien_index,
+        volume_tete: releve.volume_tete,
+        volume_aval: releve.volume_aval,
+        ecart_volume: releve.ecart_volume,
+        date_debut_calcul_display: releve.date_debut_calcul_display,
+        date_fin_calcul_display: releve.date_fin_calcul_display,
+        duree_calcul_jours: releve.duree_calcul_jours,
+        aval_estime: releve.aval_estime,
+        explication_required: releve.explication_required,
+        points_details: result.points_details || [],
+    });
+    renderPointAssignments(result.point_assignment || null);
+}
+
+async function submitReleveForm(event) {
+    event.preventDefault();
+    const form = document.getElementById('releve-form');
+    const formData = new FormData(form);
+    const url = currentEditId
+        ? `/organisations/compteurs/releves/api/${currentEditId}/update/`
+        : createUrl;
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {'X-CSRFToken': csrfToken},
+        body: formData,
+    });
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+        setFormErrors(result.errors || {'__all__': ['Une erreur est survenue.']});
+        return;
+    }
+
+    window.location.reload();
+}
+
+function openDeleteModal(releveId, compteurNumero, dateReleve) {
+    currentDeleteId = releveId;
+    document.getElementById('delete-modal-text').textContent = `Compteur ${compteurNumero} - releve du ${dateReleve}`;
+    document.getElementById('delete-modal').showModal();
+}
+
+async function confirmDelete() {
+    if (!currentDeleteId) {
+        return;
+    }
+    const response = await fetch(`/organisations/compteurs/releves/api/${currentDeleteId}/delete/`, {
+        method: 'POST',
+        headers: {'X-CSRFToken': csrfToken},
+    });
+    const result = await response.json();
+    if (!response.ok || !result.success) {
+        alert('Suppression impossible.');
+        return;
+    }
+    window.location.reload();
+}
+
+document.getElementById('releve-form').addEventListener('submit', submitReleveForm);
+document.getElementById('changement-compteur-form').addEventListener('submit', submitChangementCompteur);
+document.getElementById('changement-ancien-compteur').addEventListener('change', syncChangementIndexRetrait);
+document.getElementById('form-compteur-id').addEventListener('change', () => {
+    setAssignmentFeedback(null);
+    loadPreview();
+    loadPointAssignments();
+});
+document.getElementById('form-date-releve').addEventListener('change', loadPreview);
+document.getElementById('form-nouvel-index').addEventListener('input', loadPreview);
+</script>
+{% endblock %}

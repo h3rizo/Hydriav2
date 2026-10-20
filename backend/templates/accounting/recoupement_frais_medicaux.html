@@ -1,0 +1,310 @@
+{% extends "accounting/base.html" %}
+{% load humanize %}
+{% load employee_grouping %}
+
+{% block title %}Recoupement Frais Médicaux{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex flex-wrap justify-between items-center gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">
+                <i class="fas fa-hospital mr-2 text-error"></i>
+                Recoupement Frais Médicaux
+            </h1>
+            <p class="text-base-content/70 mt-1">Synchronisation avec la comptabilité DiameX</p>
+        </div>
+    </div>
+
+    <!-- Navigation entre toutes les pages de recoupement -->
+    {% include 'accounting/includes/recoupement_nav.html' with current_page='frais_medicaux' %}
+
+    <!-- Statistiques -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="stat bg-base-100 rounded-lg shadow">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-list text-3xl"></i>
+            </div>
+            <div class="stat-title">Total imprimés</div>
+            <div class="stat-value text-primary">{{ stats.total }}</div>
+        </div>
+        <div class="stat bg-base-100 rounded-lg shadow">
+            <div class="stat-figure text-success">
+                <i class="fas fa-check-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Avec DiameX</div>
+            <div class="stat-value text-success">{{ stats.avec_diamex }}</div>
+        </div>
+        <div class="stat bg-base-100 rounded-lg shadow">
+            <div class="stat-figure text-warning">
+                <i class="fas fa-exclamation-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Sans DiameX</div>
+            <div class="stat-value text-warning">{{ stats.sans_diamex }}</div>
+        </div>
+        <div class="stat bg-base-100 rounded-lg shadow">
+            <div class="stat-figure">
+                <div class="radial-progress text-success" style="--value:{{ stats.taux }}; --size:4rem;" role="progressbar">
+                    {{ stats.taux }}%
+                </div>
+            </div>
+            <div class="stat-title">Taux</div>
+            <div class="stat-value">{{ stats.taux }}%</div>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Employé</span></label>
+                    <select id="filterEmploye" class="select select-bordered w-full" onchange="loadFrais()">
+                        {% grouped_employee_options employes "" "Tous les employés" %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mois</span></label>
+                    <input type="month" id="filterMois" class="input input-bordered w-full" onchange="loadFrais()">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Statut DiameX</span></label>
+                    <select id="filterStatut" class="select select-bordered w-full" onchange="loadFrais()">
+                        <option value="">Tous</option>
+                        <option value="sans" selected>Sans ID DiameX</option>
+                        <option value="avec">Avec ID DiameX</option>
+                    </select>
+                </div>
+                <div class="form-control justify-end">
+                    <label class="label"><span class="label-text">&nbsp;</span></label>
+                    <button class="btn btn-ghost" onclick="loadFrais()">
+                        <i class="fas fa-search mr-2"></i>Rechercher
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tableau -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Employé</th>
+                            <th>Membre</th>
+                            <th>Affection</th>
+                            <th class="text-right">Montant</th>
+                            <th>DiameX</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody">
+                        <tr><td colspan="7" class="text-center py-8 text-base-content/50">Chargement...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal recherche DiameX -->
+<dialog id="modalRecherche" class="modal">
+    <div class="modal-box max-w-3xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-search mr-2 text-primary"></i>
+            Recherche correspondance DiameX
+        </h3>
+        <div id="fraisInfo" class="alert alert-info mb-4"></div>
+        <div id="resultatsRecherche">
+            <p class="text-center py-4">Recherche en cours...</p>
+        </div>
+        <div class="modal-action">
+            <button type="button" class="btn btn-ghost" onclick="document.getElementById('modalRecherche').close()">Fermer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+let currentFraisId = null;
+
+async function loadFrais() {
+    const employe_id = document.getElementById('filterEmploye').value;
+    const mois = document.getElementById('filterMois').value;
+    const statut_diamex = document.getElementById('filterStatut').value;
+
+    const params = new URLSearchParams();
+    if (employe_id) params.append('employe_id', employe_id);
+    if (mois) params.append('mois', mois);
+    if (statut_diamex) params.append('statut_diamex', statut_diamex);
+
+    try {
+        const response = await fetch(`{% url 'accounting:api_frais_medicaux_a_recouper' %}?${params.toString()}`);
+        const data = await response.json();
+
+        if (data.success) {
+            displayFrais(data.frais);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+    }
+}
+
+function displayFrais(frais) {
+    const tbody = document.getElementById('tableBody');
+
+    if (frais.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-base-content/50">Aucun frais à recouper</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = frais.map(f => `
+        <tr>
+            <td class="font-mono">${formatDate(f.date)}</td>
+            <td>${f.employe_nom}</td>
+            <td>${f.membre}</td>
+            <td>${f.affection}</td>
+            <td class="text-right font-mono font-bold">${f.montant_rembourse.toLocaleString('fr-FR')} Ar</td>
+            <td>
+                ${f.numero_diamex ?
+                    `<span class="badge badge-success">${f.numero_diamex}</span>` :
+                    `<span class="badge badge-warning">Non lié</span>`
+                }
+            </td>
+            <td>
+                ${!f.numero_diamex ?
+                    `<button class="btn btn-sm btn-primary" onclick="rechercherDiamex('${f.id}')">
+                        <i class="fas fa-search mr-1"></i>Rechercher
+                    </button>` :
+                    `<span class="text-success"><i class="fas fa-check"></i></span>`
+                }
+            </td>
+        </tr>
+    `).join('');
+}
+
+async function rechercherDiamex(fraisId) {
+    currentFraisId = fraisId;
+    document.getElementById('modalRecherche').showModal();
+    document.getElementById('resultatsRecherche').innerHTML = '<p class="text-center py-4"><span class="loading loading-spinner"></span> Recherche...</p>';
+
+    try {
+        const response = await fetch('{% url "accounting:api_rechercher_diamex_frais_medical" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ frais_id: fraisId })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            document.getElementById('fraisInfo').innerHTML = `
+                <strong>${data.frais_info.employe}</strong> - ${data.frais_info.membre}<br>
+                Montant: <strong>${data.frais_info.montant.toLocaleString('fr-FR')} Ar</strong>
+            `;
+
+            if (data.matches.length === 0) {
+                document.getElementById('resultatsRecherche').innerHTML = '<p class="text-center py-4 text-warning">Aucune correspondance trouvée</p>';
+            } else {
+                document.getElementById('resultatsRecherche').innerHTML = `
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Prog</th>
+                                <th>Description</th>
+                                <th>Montant</th>
+                                <th>Base</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.matches.map(m => `
+                                <tr>
+                                    <td class="font-mono">${m.prog}</td>
+                                    <td class="max-w-xs truncate">${m.description}</td>
+                                    <td class="font-mono">${m.montant_out.toLocaleString('fr-FR')}</td>
+                                    <td>${m.base_name}</td>
+                                    <td>
+                                        <button class="btn btn-xs btn-success" onclick="appliquerDiamex('${m.id}', '${m.prog}', '${m.base_name}')">
+                                            Appliquer
+                                        </button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            }
+        } else {
+            document.getElementById('resultatsRecherche').innerHTML = `<p class="text-center py-4 text-error">${data.error}</p>`;
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        document.getElementById('resultatsRecherche').innerHTML = '<p class="text-center py-4 text-error">Erreur réseau</p>';
+    }
+}
+
+async function appliquerDiamex(diamexId, prog, baseName) {
+    if (!confirm(`Appliquer l'ID DiameX ${prog} ?`)) return;
+
+    try {
+        const response = await fetch('{% url "accounting:api_appliquer_diamex_frais_medical" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                frais_id: currentFraisId,
+                diamex_id: diamexId,
+                diamex_prog: prog,
+                base_name: baseName
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(data.message);
+            document.getElementById('modalRecherche').close();
+            loadFrais();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau');
+    }
+}
+
+function formatDate(dateStr) {
+    if (!dateStr) return '';
+    const parts = dateStr.split('-');
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+document.addEventListener('DOMContentLoaded', loadFrais);
+</script>
+{% endblock %}

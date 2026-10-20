@@ -1,0 +1,632 @@
+{% extends planning_shell_base_template %}
+{% load static %}
+{% load employee_grouping %}
+
+{% block title %}Gestion des Livraisons{% endblock %}
+
+{% block breadcrumb %}
+<div class="breadcrumbs text-sm container mx-auto px-4 pt-4">
+    <ul>
+        <li><a href="{% url 'core:home' %}">🏠 Accueil</a></li>
+        <li><a href="{% url 'planning:dashboard' %}">📋 Planning</a></li>
+        <li>🚚 Gestion des Livraisons</li>
+    </ul>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.livraison-card {
+    transition: all 0.2s;
+    cursor: pointer;
+}
+
+.livraison-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+}
+
+.livraison-card.selected {
+    border: 2px solid hsl(var(--p));
+    background-color: hsl(var(--p) / 0.1);
+}
+
+.qty-badge {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header avec statistiques -->
+    <div class="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+        <h1 class="text-3xl font-bold text-base-content">🚚 Gestion des Livraisons</h1>
+        <div class="flex flex-wrap gap-4 items-center">
+            <div class="stats shadow">
+                <div class="stat">
+                    <div class="stat-figure text-primary">
+                        <i class="fas fa-hiking text-2xl"></i>
+                    </div>
+                    <div class="stat-title">Articles en attente</div>
+                    <div class="stat-value text-primary" id="totalArticles">{{ details_livraisons.count }}</div>
+                    <div class="stat-desc">À livrer</div>
+                </div>
+            </div>
+
+            <a id="maintenanceLink" data-base-url="{% url 'planning:maintenance_livraisons' %}" href="{% url 'planning:maintenance_livraisons' %}?mois={{ current_month }}" class="btn btn-warning btn-lg">
+                <i class="fas fa-tools mr-2"></i>
+                Maintenance
+            </a>
+            <button id="btnLivrer" class="btn btn-success btn-lg" disabled onclick="traiterLivraisons()">
+                <i class="fas fa-shipping-fast mr-2"></i>
+                Générer Bon de Livraison
+            </button>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-filter mr-2"></i>Filtres
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Employé</span>
+                    </label>
+                    <select class="select select-bordered" id="employeFilter" onchange="filtrerArticles()">
+                        {% grouped_employee_options employes "" "Tous les employés" %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Mois</span>
+                    </label>
+                    <input type="month" class="input input-bordered" id="moisFilter" value="{{ current_month }}" onchange="filtrerArticles()">
+                </div>
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Type de désignation</span>
+                    </label>
+                    <select class="select select-bordered" id="typeDesignation" onchange="filtrerArticles()">
+                        <option value="">Tous les types</option>
+                        {% for detail in details_livraisons %}
+                            {% if detail.designation.type_designation %}
+                                <option value="{{ detail.designation.type_designation.id }}">{{ detail.designation.type_designation.nom }}</option>
+                            {% endif %}
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Actions</span>
+                    </label>
+                    <div class="flex gap-2">
+                        <button class="btn btn-outline btn-sm" onclick="selectionnerTout()">
+                            <i class="fas fa-check-double mr-1"></i>Tout sélectionner
+                        </button>
+                        <button class="btn btn-outline btn-sm" onclick="deselectionnerTout()">
+                            <i class="fas fa-times mr-1"></i>Tout désélectionner
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tableau des articles à livrer -->
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-boxes mr-2"></i>Articles en Attente de Livraison
+                <span class="badge badge-primary" id="compteurSelection">0 sélectionné(s)</span>
+            </h2>
+
+            {% if details_livraisons %}
+            <div class="overflow-x-auto">
+                <table class="table table-zebra w-full" id="articlesTable">
+                    <thead>
+                        <tr>
+                            <th>
+                                <label>
+                                    <input type="checkbox" class="checkbox" id="selectAll" onchange="toggleSelectAll(this)">
+                                </label>
+                            </th>
+                            <th>Employé / Ouvrage</th>
+                            <th>Date</th>
+                            <th>Désignation</th>
+                            <th>Type</th>
+                            <th>Quantité</th>
+                            <th>Stock Disponible</th>
+                            <th>Magasin</th>
+                            <th>Employé</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for detail in details_livraisons %}
+                        <tr class="livraison-row hover:bg-base-200"
+                            data-detail-id="{{ detail.id }}"
+                            {% if detail.livraison_employe_id %}
+                            data-employe-id="{{ detail.livraison_employe_id|lower }}"
+                            {% else %}
+                            data-employe-id=""
+                            {% endif %}
+                            data-planning-date="{{ detail.planning.date|date:'Y-m-d' }}"
+                            data-type-designation="{{ detail.designation.type_designation.id|default:'' }}"
+                            data-designation="{{ detail.designation.nom }}"
+                            data-magasin="{{ detail.magasin|default:'' }}"
+                            data-quantity="{{ detail.quantite }}">
+                            <td>
+                                <label>
+                                    <input type="checkbox" class="checkbox checkbox-primary article-checkbox"
+                                           value="{{ detail.id }}" onchange="updateSelectionCounter()">
+                                </label>
+                            </td>
+                            <td>
+                                <div class="flex items-center space-x-3">
+                                    {% if detail.livraison_employe %}
+                                    <div class="avatar placeholder">
+                                        <div class="bg-primary text-primary-content rounded-full w-10 h-10">
+                                            <span class="text-xs">{{ detail.livraison_employe_initials }}</span>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div class="font-bold">{{ detail.livraison_employe_label }}</div>
+                                        <div class="text-sm opacity-50">{{ detail.planning.ouvrage.nom_ouvrage|truncatechars:30 }}</div>
+                                    </div>
+                                    {% else %}
+                                    <div class="text-base-content/50">Non assigné</div>
+                                    {% endif %}
+                                </div>
+                            </td>
+                            <td>
+                                <div class="font-medium">{{ detail.planning.date|date:'d/m/Y' }}</div>
+                                <div class="text-sm opacity-50">{{ detail.planning.date|date:'H:i' }}</div>
+                            </td>
+                            <td>
+                                <div class="font-medium">{{ detail.designation.nom }}</div>
+                                <div class="text-sm opacity-50">{{ detail.designation.description|truncatechars:50|default:'-' }}</div>
+                            </td>
+                            <td>
+                                {% if detail.designation.type_designation %}
+                                    <span class="badge badge-outline">{{ detail.designation.type_designation.nom }}</span>
+                                {% else %}
+                                    <span class="text-base-content/50">N/A</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge badge-info font-medium">{{ detail.quantite|floatformat:1 }}</span>
+                                {% if detail.designation.unite %}
+                                    <div class="text-xs opacity-50">{{ detail.designation.unite }}</div>
+                                {% endif %}
+                            </td>
+                            <td class="stock-cell" data-detail-id="{{ detail.id }}">
+                                <div class="flex items-center gap-2">
+                                    <span class="loading loading-spinner loading-xs"></span>
+                                    <span class="text-sm opacity-50">Chargement...</span>
+                                </div>
+                            </td>
+                            <td>
+                                <select class="select select-bordered select-sm w-full magasin-select"
+                                        data-detail-id="{{ detail.id }}">
+                                    <option value="">Choisir un magasin</option>
+                                    {% for magasin in magasins %}
+                                        <option value="{{ magasin.nom_magasin }}"
+                                                {% if detail.magasin and detail.magasin|lower == magasin.nom_magasin|lower %}selected{% endif %}>
+                                            {{ magasin.nom_magasin }}{% if magasin.base %} ({{ magasin.base.nom_base }}){% endif %}
+                                        </option>
+                                    {% endfor %}
+                                </select>
+                            </td>
+                            <td>
+                                {% if detail.livraison_employe %}
+                                <div class="font-medium">{{ detail.livraison_employe_label }}</div>
+                                {% else %}
+                                <div class="text-base-content/50">-</div>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-8">
+                <div class="text-base-content/50">
+                    <i class="fas fa-inbox text-4xl mb-4"></i>
+                    <p>Aucun article en attente de livraison</p>
+                    <p class="text-sm">Les plannings validés avec des désignations de livraison apparaîtront ici</p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Script JavaScript -->
+<script>
+let articlesSelectionnes = new Set();
+const defaultEmployeFilter = "{{ employe_connecte_id|default:''|escapejs|lower }}";
+const defaultMonthFilter = "{{ current_month|default:''|escapejs }}";
+
+function getMagasinOverridesForSelection() {
+    const overrides = {};
+    articlesSelectionnes.forEach(detailId => {
+        const select = document.querySelector(`.magasin-select[data-detail-id="${detailId}"]`);
+        if (select) {
+            overrides[String(detailId)] = (select.value || '').trim();
+        }
+    });
+    return overrides;
+}
+
+function getMagasinOverridesForAllRows() {
+    const overrides = {};
+    document.querySelectorAll('.magasin-select').forEach(select => {
+        const detailId = select.getAttribute('data-detail-id');
+        if (detailId) {
+            overrides[String(detailId)] = (select.value || '').trim();
+        }
+    });
+    return overrides;
+}
+
+function synchroniserLienMaintenance() {
+    const maintenanceLink = document.getElementById('maintenanceLink');
+    if (!maintenanceLink) return;
+
+    const baseUrl = maintenanceLink.dataset.baseUrl;
+    const moisFilter = document.getElementById('moisFilter')?.value;
+    maintenanceLink.href = moisFilter ? `${baseUrl}?mois=${encodeURIComponent(moisFilter)}` : baseUrl;
+}
+
+function appliquerFiltresParDefaut() {
+    if (defaultEmployeFilter) {
+        document.getElementById('employeFilter').value = defaultEmployeFilter;
+    }
+    if (defaultMonthFilter) {
+        document.getElementById('moisFilter').value = defaultMonthFilter;
+    }
+    synchroniserLienMaintenance();
+}
+
+function toggleSelectAll(selectAllCheckbox) {
+    const rows = document.querySelectorAll('.livraison-row:not([style*="display: none"])');
+    rows.forEach(row => {
+        const checkbox = row.querySelector('.article-checkbox');
+        const detailId = row.getAttribute('data-detail-id');
+
+        checkbox.checked = selectAllCheckbox.checked;
+
+        if (selectAllCheckbox.checked) {
+            articlesSelectionnes.add(detailId);
+        } else {
+            articlesSelectionnes.delete(detailId);
+        }
+    });
+    updateSelectionCounter();
+}
+
+function updateSelectionCounter() {
+    const checkboxes = document.querySelectorAll('.article-checkbox');
+    let selectedCount = 0;
+
+    articlesSelectionnes.clear();
+
+    checkboxes.forEach(checkbox => {
+        if (checkbox.checked) {
+            const row = checkbox.closest('tr');
+            const detailId = row.getAttribute('data-detail-id');
+            articlesSelectionnes.add(detailId);
+            selectedCount++;
+        }
+    });
+
+    document.getElementById('compteurSelection').textContent = `${selectedCount} sélectionné(s)`;
+    document.getElementById('btnLivrer').disabled = selectedCount === 0;
+
+    // Mettre à jour le checkbox "Tout sélectionner"
+    const selectAllCheckbox = document.getElementById('selectAll');
+    const totalCheckboxes = document.querySelectorAll('.article-checkbox:not([style*="display: none"])').length;
+    selectAllCheckbox.checked = selectedCount > 0 && selectedCount === totalCheckboxes;
+    selectAllCheckbox.indeterminate = selectedCount > 0 && selectedCount < totalCheckboxes;
+}
+
+
+function selectionnerTout() {
+    const rows = document.querySelectorAll('.livraison-row:not([style*="display: none"])');
+    rows.forEach(row => {
+        const checkbox = row.querySelector('.article-checkbox');
+        const detailId = row.getAttribute('data-detail-id');
+
+        checkbox.checked = true;
+        articlesSelectionnes.add(detailId);
+    });
+
+    // Mettre à jour le checkbox principal
+    document.getElementById('selectAll').checked = true;
+    updateSelectionCounter();
+}
+
+function deselectionnerTout() {
+    const rows = document.querySelectorAll('.livraison-row');
+    rows.forEach(row => {
+        const checkbox = row.querySelector('.article-checkbox');
+        const detailId = row.getAttribute('data-detail-id');
+
+        checkbox.checked = false;
+        articlesSelectionnes.delete(detailId);
+    });
+
+    // Mettre à jour le checkbox principal
+    document.getElementById('selectAll').checked = false;
+    updateSelectionCounter();
+}
+
+function filtrerArticles() {
+    const normalizeValue = (value) => (value || '').toString().trim().toLowerCase();
+    const employeFilter = normalizeValue(document.getElementById('employeFilter').value);
+    const moisFilter = document.getElementById('moisFilter').value;
+    const typeDesignation = normalizeValue(document.getElementById('typeDesignation').value);
+    synchroniserLienMaintenance();
+
+    const rows = document.querySelectorAll('.livraison-row');
+    let visibleCount = 0;
+
+    rows.forEach(row => {
+        let visible = true;
+
+        const employeId = normalizeValue(row.getAttribute('data-employe-id'));
+        const planningDate = row.getAttribute('data-planning-date');
+        const planningMonth = planningDate ? planningDate.slice(0, 7) : '';
+        const rowTypeDesignation = normalizeValue(row.getAttribute('data-type-designation'));
+
+        // Filtre par employé
+        if (employeFilter && employeId !== employeFilter) visible = false;
+
+        // Filtre par mois
+        if (moisFilter && planningMonth !== moisFilter) visible = false;
+
+        // Filtre par type de désignation
+        if (typeDesignation && rowTypeDesignation !== typeDesignation) visible = false;
+
+        if (visible) {
+            row.style.display = '';
+            visibleCount++;
+        } else {
+            row.style.display = 'none';
+            // Désélectionner si caché
+            const checkbox = row.querySelector('.article-checkbox');
+            if (checkbox.checked) {
+                const detailId = row.getAttribute('data-detail-id');
+                checkbox.checked = false;
+                articlesSelectionnes.delete(detailId);
+            }
+        }
+    });
+
+    document.getElementById('totalArticles').textContent = visibleCount;
+    updateSelectionCounter();
+}
+
+async function traiterLivraisons() {
+    if (articlesSelectionnes.size === 0) {
+        alert('Veuillez sélectionner au moins un article à livrer');
+        return;
+    }
+
+    const magasinOverrides = getMagasinOverridesForSelection();
+    const missingMagasinIds = Array.from(articlesSelectionnes).filter(detailId => !magasinOverrides[String(detailId)]);
+    if (missingMagasinIds.length > 0) {
+        alert('Veuillez choisir un magasin pour chaque article sélectionné avant de livrer.');
+        return;
+    }
+
+    // ÉTAPE 1 : Vérifier le stock avant de confirmer
+    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value ||
+                      document.querySelector('input[name="csrfmiddlewaretoken"]')?.value ||
+                      '{{ csrf_token }}';
+
+    try {
+        const verificationResponse = await fetch('{% url "planning:api_verifier_stock_livraisons" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({
+                detail_ids: Array.from(articlesSelectionnes),
+                magasin_overrides: magasinOverrides
+            })
+        });
+
+        const verificationData = await verificationResponse.json();
+
+        if (!verificationData.success) {
+            alert('Erreur lors de la vérification du stock : ' + verificationData.error);
+            return;
+        }
+
+        // Vérifier s'il y a des stocks insuffisants
+        if (!verificationData.peut_livrer) {
+            let message = `⚠️ STOCK INSUFFISANT\n\n`;
+            message += `${verificationData.stocks_insuffisants.length} article(s) n'ont pas assez de stock :\n\n`;
+
+            verificationData.stocks_insuffisants.forEach(item => {
+                message += `• ${item.designation} (${item.magasin})\n`;
+                message += `  Demandé: ${item.quantite_demandee.toFixed(1)} | Disponible: ${item.stock_actuel.toFixed(1)}\n`;
+                message += `  Manque: ${(item.quantite_demandee - item.stock_actuel).toFixed(1)}\n\n`;
+            });
+
+            message += `Veuillez d'abord mettre à jour les achats ou les transferts pour ajuster votre stock.`;
+            alert(message);
+            return;
+        }
+
+        // Afficher les stocks avant livraison
+        let confirmMessage = `Confirmer la livraison de ${articlesSelectionnes.size} article(s) ?\n\n`;
+        confirmMessage += `Stock avant livraison:\n`;
+        verificationData.resultats.forEach(item => {
+            confirmMessage += `• ${item.designation}: ${item.stock_actuel.toFixed(1)} → ${item.stock_apres_livraison.toFixed(1)}\n`;
+        });
+
+        if (!confirm(confirmMessage)) {
+            return;
+        }
+
+    } catch (error) {
+        console.error('Erreur vérification stock:', error);
+        alert('Erreur lors de la vérification du stock');
+        return;
+    }
+
+    // ÉTAPE 2 : Procéder à la livraison
+    try {
+        const response = await fetch('{% url "planning:traiter_livraisons" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({
+                detail_ids: Array.from(articlesSelectionnes),
+                magasin_overrides: magasinOverrides
+            })
+        });
+
+        if (response.ok) {
+            // Télécharger le PDF
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = `bon_livraison_${new Date().toISOString().slice(0,10)}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+
+            // Recharger la page pour voir les changements
+            setTimeout(() => {
+                location.reload();
+            }, 1000);
+
+        } else {
+            const error = await response.json();
+            alert(`Erreur: ${error.error}`);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors du traitement des livraisons');
+    }
+}
+
+// Fonction pour charger les stocks disponibles au chargement de la page
+async function chargerStocksDisponibles() {
+    const rows = document.querySelectorAll('.livraison-row');
+    const detailIds = Array.from(rows).map(row => row.getAttribute('data-detail-id'));
+
+    if (detailIds.length === 0) return;
+
+    try {
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value ||
+                          document.querySelector('input[name="csrfmiddlewaretoken"]')?.value ||
+                          '{{ csrf_token }}';
+
+        const response = await fetch('{% url "planning:api_verifier_stock_livraisons" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({
+                detail_ids: detailIds,
+                magasin_overrides: getMagasinOverridesForAllRows()
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            // Mettre à jour chaque cellule de stock
+            data.resultats.forEach(item => {
+                const cell = document.querySelector(`.stock-cell[data-detail-id="${item.detail_id}"]`);
+                if (cell) {
+                    const suffisant = item.suffisant;
+                    const badgeClass = suffisant ? 'badge-success' : 'badge-error';
+                    const icon = suffisant ? 'fa-check-circle' : 'fa-exclamation-triangle';
+
+                    cell.innerHTML = `
+                        <div class="flex flex-col gap-1">
+                            <span class="badge ${badgeClass} font-medium">
+                                <i class="fas ${icon} mr-1"></i>
+                                ${item.stock_actuel.toFixed(1)}
+                            </span>
+                            ${!suffisant ? `<span class="text-xs text-error">Manque: ${(item.quantite_demandee - item.stock_actuel).toFixed(1)}</span>` : ''}
+                        </div>
+                    `;
+
+                    // Désactiver le checkbox si stock insuffisant
+                    const row = cell.closest('tr');
+                    const checkbox = row.querySelector('.article-checkbox');
+                    if (!suffisant) {
+                        checkbox.disabled = true;
+                        checkbox.checked = false;
+                        checkbox.title = 'Stock insuffisant';
+                        row.classList.add('opacity-50');
+                    } else {
+                        checkbox.disabled = false;
+                        checkbox.title = '';
+                        row.classList.remove('opacity-50');
+                    }
+                }
+            });
+            updateSelectionCounter();
+        }
+    } catch (error) {
+        console.error('Erreur chargement stocks:', error);
+        // Afficher un message d'erreur dans les cellules
+        document.querySelectorAll('.stock-cell').forEach(cell => {
+            cell.innerHTML = '<span class="text-xs text-error">Erreur</span>';
+        });
+    }
+}
+
+// Fonction pour dédupliquer les options de type de désignation
+document.addEventListener('DOMContentLoaded', function() {
+    // Charger les stocks disponibles
+    chargerStocksDisponibles();
+
+    document.querySelectorAll('.magasin-select').forEach(select => {
+        select.addEventListener('change', () => {
+            chargerStocksDisponibles();
+        });
+    });
+
+    const selectTypeDesignation = document.getElementById('typeDesignation');
+    const options = Array.from(selectTypeDesignation.options);
+    const uniqueOptions = [];
+    const seenValues = new Set();
+
+    options.forEach(option => {
+        if (!seenValues.has(option.value) || option.value === '') {
+            uniqueOptions.push(option);
+            seenValues.add(option.value);
+        }
+    });
+
+    selectTypeDesignation.innerHTML = '';
+    uniqueOptions.forEach(option => {
+        selectTypeDesignation.appendChild(option);
+    });
+
+    appliquerFiltresParDefaut();
+    filtrerArticles();
+});
+</script>
+
+{% csrf_token %}
+{% endblock %}

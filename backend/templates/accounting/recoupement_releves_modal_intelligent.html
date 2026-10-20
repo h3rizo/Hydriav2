@@ -1,0 +1,324 @@
+<!-- Modal Recoupement Intelligent -->
+<dialog id="modal-recoupement-intelligent" class="modal">
+    <div class="modal-box w-11/12 max-w-6xl">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+        </form>
+
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-magic mr-2 text-primary"></i>
+            Recoupement Intelligent DiameX → Relevés
+        </h3>
+
+        <!-- Info extraction -->
+        <div id="info-extraction" class="alert alert-info mb-4" style="display: none;">
+            <i class="fas fa-info-circle"></i>
+            <div class="text-sm">
+                <p><strong>Ouvrage extrait :</strong> <span id="ouvrage-extrait"></span></p>
+                <p><strong>Mois du relevé :</strong> <span id="mois-extrait"></span></p>
+                <p><strong>Ouvrages candidats :</strong> <span id="nb-ouvrages-extrait"></span></p>
+            </div>
+        </div>
+
+        <!-- Statistiques DiameX vs Relevés -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div class="stat bg-primary/10 rounded-lg p-3">
+                <div class="stat-title text-sm">DiameX IN</div>
+                <div class="stat-value text-primary text-2xl" id="stat-diamex-in">0</div>
+                <div class="stat-desc">Ariary</div>
+            </div>
+
+            <div class="stat bg-success/10 rounded-lg p-3">
+                <div class="stat-title text-sm">Total Sélectionné</div>
+                <div class="stat-value text-success text-2xl" id="stat-selectionne">0</div>
+                <div class="stat-desc"><span id="count-selectionne">0</span> relevé(s)</div>
+            </div>
+
+            <div class="stat bg-warning/10 rounded-lg p-3">
+                <div class="stat-title text-sm">Écart</div>
+                <div class="stat-value text-warning text-2xl" id="stat-ecart">0</div>
+                <div class="stat-desc">Ariary</div>
+            </div>
+        </div>
+
+        <!-- Loading spinner -->
+        <div id="loading-releves" class="flex justify-center items-center py-8" style="display: none;">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+            <span class="ml-3">Recherche des relevés candidats...</span>
+        </div>
+
+        <!-- Message si aucun relevé -->
+        <div id="no-releves" class="alert alert-warning" style="display: none;">
+            <i class="fas fa-exclamation-triangle"></i>
+            <span>Aucun relevé candidat trouvé pour cet ouvrage et ce mois.</span>
+        </div>
+
+        <!-- Tableau des relevés candidats -->
+        <div id="table-releves" class="overflow-x-auto max-h-96" style="display: none;">
+            <table class="table table-zebra table-sm">
+                <thead class="bg-base-200 sticky top-0">
+                    <tr>
+                        <th>
+                            <input type="checkbox" id="check-all" class="checkbox checkbox-sm" />
+                        </th>
+                        <th>Point d'eau</th>
+                        <th>Ouvrage</th>
+                        <th>Date relevé</th>
+                        <th class="text-right">Index</th>
+                        <th class="text-right">Volume (m³)</th>
+                        <th class="text-right">Montant (Ar)</th>
+                    </tr>
+                </thead>
+                <tbody id="tbody-releves">
+                    <!-- Rempli par JavaScript -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Boutons d'action -->
+        <div class="modal-action">
+            <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal-recoupement-intelligent').close()">
+                Annuler
+            </button>
+            <button type="button" class="btn btn-primary" id="btn-valider-association" onclick="validerAssociation()" disabled>
+                <i class="fas fa-check mr-2"></i>
+                Valider l'association
+            </button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<script>
+// Variables globales pour le recoupement intelligent
+let currentDiameXEntry = null;
+let relevesCharges = [];
+
+/**
+ * Ouvrir le modal de recoupement intelligent
+ */
+function ouvrirRecoupementIntelligent(idDiamex, idAccess, prog, description) {
+    currentDiameXEntry = { idDiamex, idAccess, prog, description };
+    relevesCharges = [];
+
+    // Reset UI
+    document.getElementById('tbody-releves').innerHTML = '';
+    document.getElementById('loading-releves').style.display = 'flex';
+    document.getElementById('table-releves').style.display = 'none';
+    document.getElementById('no-releves').style.display = 'none';
+    document.getElementById('info-extraction').style.display = 'none';
+    document.getElementById('check-all').checked = false;
+    updateStatsRecoupement();
+
+    // Ouvrir le modal
+    document.getElementById('modal-recoupement-intelligent').showModal();
+
+    // Rechercher les relevés candidats
+    rechercherRelevesCandidats();
+}
+
+/**
+ * Rechercher les relevés candidats via l'API
+ */
+async function rechercherRelevesCandidats() {
+    try {
+        const params = new URLSearchParams({
+            id_diamex: currentDiameXEntry.idDiamex,
+            id_access: currentDiameXEntry.idAccess,
+            prog: currentDiameXEntry.prog,
+            description: currentDiameXEntry.description
+        });
+
+        const response = await fetch(`{% url 'accounting:api_rechercher_releves_candidats' %}?${params}`);
+        const data = await response.json();
+
+        document.getElementById('loading-releves').style.display = 'none';
+
+        if (data.success) {
+            relevesCharges = data.releves_candidats;
+
+            // Afficher les infos d'extraction
+            if (data.info_extraction) {
+                document.getElementById('ouvrage-extrait').textContent = data.info_extraction.ouvrage_nom_extrait || 'Non extrait';
+                document.getElementById('mois-extrait').textContent = `${data.info_extraction.mois_releve}/${data.info_extraction.annee_releve}`;
+                document.getElementById('nb-ouvrages-extrait').textContent = data.info_extraction.nb_ouvrages_candidats;
+                document.getElementById('info-extraction').style.display = 'flex';
+            }
+
+            // Mettre à jour les stats DiameX
+            document.getElementById('stat-diamex-in').textContent = data.montant_diamex_in.toLocaleString('fr-FR');
+
+            if (relevesCharges.length > 0) {
+                afficherRelevesCandidats();
+                document.getElementById('table-releves').style.display = 'block';
+            } else {
+                document.getElementById('no-releves').style.display = 'block';
+            }
+        } else {
+            alert('Erreur : ' + data.error);
+            if (data.traceback) {
+                console.error(data.traceback);
+            }
+        }
+    } catch (error) {
+        document.getElementById('loading-releves').style.display = 'none';
+        console.error('Erreur réseau:', error);
+        alert('Erreur réseau : ' + error.message);
+    }
+}
+
+/**
+ * Afficher les relevés candidats dans le tableau
+ */
+function afficherRelevesCandidats() {
+    const tbody = document.getElementById('tbody-releves');
+    tbody.innerHTML = '';
+
+    relevesCharges.forEach((releve, index) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>
+                <input type="checkbox"
+                       class="checkbox checkbox-sm releve-checkbox"
+                       data-releve-id="${releve.id}"
+                       data-montant="${releve.montant}"
+                       onchange="onCheckboxChange()">
+            </td>
+            <td class="text-sm">${releve.point_eau_code}</td>
+            <td class="text-sm">${releve.ouvrage_nom}</td>
+            <td>${releve.date_releve}</td>
+            <td class="text-right">${releve.nouvel_index.toFixed(2)}</td>
+            <td class="text-right">${releve.volume.toFixed(2)}</td>
+            <td class="text-right font-mono">${releve.montant.toLocaleString('fr-FR')}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+/**
+ * Gestion du checkbox "Tout sélectionner"
+ */
+document.getElementById('check-all').addEventListener('change', function() {
+    const checkboxes = document.querySelectorAll('.releve-checkbox');
+    checkboxes.forEach(cb => {
+        cb.checked = this.checked;
+    });
+    updateStatsRecoupement();
+});
+
+/**
+ * Callback quand un checkbox change
+ */
+function onCheckboxChange() {
+    updateStatsRecoupement();
+}
+
+/**
+ * Mettre à jour les statistiques de sélection
+ */
+function updateStatsRecoupement() {
+    const checkboxes = document.querySelectorAll('.releve-checkbox:checked');
+    const montantTotal = Array.from(checkboxes).reduce((sum, cb) => {
+        return sum + parseFloat(cb.dataset.montant);
+    }, 0);
+
+    const montantDiamex = parseFloat(document.getElementById('stat-diamex-in').textContent.replace(/\s/g, '')) || 0;
+    const ecart = montantDiamex - montantTotal;
+
+    document.getElementById('stat-selectionne').textContent = montantTotal.toLocaleString('fr-FR');
+    document.getElementById('count-selectionne').textContent = checkboxes.length;
+    document.getElementById('stat-ecart').textContent = ecart.toLocaleString('fr-FR');
+
+    // Activer/désactiver le bouton valider
+    document.getElementById('btn-valider-association').disabled = checkboxes.length === 0;
+}
+
+/**
+ * Valider l'association des relevés sélectionnés
+ */
+async function validerAssociation() {
+    const checkboxes = document.querySelectorAll('.releve-checkbox:checked');
+    if (checkboxes.length === 0) {
+        alert('Veuillez sélectionner au moins un relevé');
+        return;
+    }
+
+    const relevesIds = Array.from(checkboxes).map(cb => cb.dataset.releveId);
+    const montantTotal = Array.from(checkboxes).reduce((sum, cb) => sum + parseFloat(cb.dataset.montant), 0);
+    const montantDiamex = parseFloat(document.getElementById('stat-diamex-in').textContent.replace(/\s/g, '')) || 0;
+    const ecart = Math.abs(montantDiamex - montantTotal);
+
+    // Confirmation
+    let confirmMsg = `Associer ${relevesIds.length} relevé(s) à DiameX ?\n\n`;
+    confirmMsg += `Montant DiameX : ${montantDiamex.toLocaleString('fr-FR')} Ar\n`;
+    confirmMsg += `Montant Relevés : ${montantTotal.toLocaleString('fr-FR')} Ar\n`;
+    confirmMsg += `Écart : ${ecart.toLocaleString('fr-FR')} Ar`;
+
+    if (ecart > 0.01) {
+        confirmMsg += `\n\n⚠️ ATTENTION : Il y a un écart de ${ecart.toLocaleString('fr-FR')} Ar !`;
+    }
+
+    if (!confirm(confirmMsg)) {
+        return;
+    }
+
+    // Désactiver le bouton pendant l'envoi
+    const btnValider = document.getElementById('btn-valider-association');
+    btnValider.disabled = true;
+    btnValider.innerHTML = '<span class="loading loading-spinner loading-sm"></span> Association en cours...';
+
+    try {
+        const response = await fetch('{% url "accounting:api_associer_releves_diamex" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                releves_ids: relevesIds,
+                id_access: currentDiameXEntry.idAccess,
+                prog: currentDiameXEntry.prog
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(`✓ ${data.message}\n\nLa page va être rechargée.`);
+            document.getElementById('modal-recoupement-intelligent').close();
+            // Recharger la page pour mettre à jour les statistiques
+            location.reload();
+        } else {
+            alert('Erreur : ' + data.error);
+            if (data.traceback) {
+                console.error(data.traceback);
+            }
+            btnValider.disabled = false;
+            btnValider.innerHTML = '<i class="fas fa-check mr-2"></i>Valider l\'association';
+        }
+    } catch (error) {
+        console.error('Erreur réseau:', error);
+        alert('Erreur réseau : ' + error.message);
+        btnValider.disabled = false;
+        btnValider.innerHTML = '<i class="fas fa-check mr-2"></i>Valider l\'association';
+    }
+}
+
+// Helper pour récupérer le CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+</script>

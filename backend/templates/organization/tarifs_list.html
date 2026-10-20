@@ -1,0 +1,696 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load number_filters %}
+
+{% block content %}
+<div class="hydria-v1-page container mx-auto px-4 py-8">
+    <!-- Barre de navigation -->
+    <header class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between mb-6">
+        <div class="hydria-v1-compact-filters flex flex-col gap-3 lg:flex-row lg:items-center">
+            <button onclick="window.location.href='{% url 'organization:ouvrage_list' %}'" class="btn btn-ghost btn-sm">
+                <i class="fas fa-arrow-left mr-2"></i>Retour aux ouvrages
+            </button>
+            <div class="divider divider-horizontal hidden lg:block"></div>
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-center w-full max-w-xl">
+                <span class="text-sm font-medium whitespace-nowrap">Ouvrage :</span>
+                <select class="select select-bordered select-sm w-full sm:w-80" onchange="window.location.href='/organisations/tarifs/' + this.value + '/'">
+                    <option value="">-- Choisir --</option>
+                    {% for ouvrage in ouvrages %}
+                    <option value="{{ ouvrage.id }}" {% if selected_ouvrage and ouvrage.id == selected_ouvrage.id %}selected{% endif %}>
+                        {{ ouvrage.nom_ouvrage }} ({{ ouvrage.organisation.nom_organisation }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        <div class="flex flex-col gap-3 items-start lg:items-end">
+            <div class="flex flex-wrap gap-2 justify-end">
+                {% if selected_ouvrage %}
+                <button class="btn btn-primary btn-sm w-full sm:w-auto" onclick="showCreateModal()">
+                    <i class="fas fa-plus mr-2"></i>Nouveau tarif
+                </button>
+                {% endif %}
+                {% if selected_ouvrage and est_directeur %}
+                <a href="{% url 'ouvrages:export_tarifs_excel' %}" class="btn btn-success btn-sm w-full sm:w-auto" title="Exporter tous les tarifs avec leurs tranches">
+                    <i class="fas fa-file-excel mr-2"></i>Exporter Excel (avec tranches)
+                </a>
+                <button class="btn btn-info btn-sm w-full sm:w-auto" onclick="document.getElementById('importTrancheModal').showModal()" title="Importer tarifs avec tranches">
+                    <i class="fas fa-file-upload mr-2"></i>Importer Excel (avec tranches)
+                </button>
+                {% endif %}
+            </div>
+            <div>
+                <h1 class="hydria-v1-page-title text-3xl font-bold">💰 {{ title }}</h1>
+                {% if selected_ouvrage %}
+                <p class="text-base-content/70 mt-2">
+                    <strong>{{ selected_ouvrage.nom_ouvrage }}</strong> - {{ selected_ouvrage.organisation.nom_organisation }}
+                    {% if selected_ouvrage.type_ouvrage %}({{ selected_ouvrage.type_ouvrage.nom_type_ouvrage }}){% endif %}
+                </p>
+                {% endif %}
+            </div>
+        </div>
+    </header>
+
+    <!-- Liste des tarifs -->
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title">📋 Liste des tarifs</h2>
+
+            {% if tarifs %}
+            <div class="space-y-4">
+                {% for tarif in tarifs %}
+                <div class="card bg-base-200 shadow">
+                    <div class="card-body">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <h3 class="font-semibold text-lg">
+                                    Tarif du {{ tarif.datedebuttarif|date:"d/m/Y" }}
+                                    {% if tarif.datefintarif %}
+                                    au {{ tarif.datefintarif|date:"d/m/Y" }}
+                                    {% else %}
+                                    <span class="badge badge-success ml-2">Actif</span>
+                                    {% endif %}
+                                </h3>
+                                <p class="text-sm text-base-content/70 mt-1">
+                                    {% if tarif.type_point_eau %}
+                                        {% with type_nom=tarif.type_point_eau.nom_type|upper %}
+                                            {% if 'KIOSQUE' in type_nom %}
+                                                <i class="fas fa-store text-info text-lg mr-1" title="{{ tarif.type_point_eau.nom_type }}"></i>
+                                            {% elif 'BI' in type_nom or 'BORNE' in type_nom %}
+                                                <i class="fas fa-faucet text-primary text-lg mr-1" title="{{ tarif.type_point_eau.nom_type }}"></i>
+                                            {% elif 'BP' in type_nom or 'BRANCHEMENT' in type_nom or 'PRIVÉ' in type_nom or 'PRIVE' in type_nom %}
+                                                <i class="fas fa-home text-success text-lg mr-1" title="{{ tarif.type_point_eau.nom_type }}"></i>
+                                            {% else %}
+                                                <i class="fas fa-tint text-base-content/50 text-lg mr-1" title="{{ tarif.type_point_eau.nom_type }}"></i>
+                                            {% endif %}
+                                        {% endwith %}
+                                        <span class="font-medium">{{ tarif.type_point_eau.nom_type }}</span>
+                                        {% if tarif.institutionnel %}<span class="badge badge-info badge-sm ml-1" title="Appliqué aux branchements institutionnels">Institutionnel</span>{% endif %}
+                                    {% else %}
+                                        <i class="fas fa-tint text-base-content/50 text-lg mr-1"></i>
+                                        <span class="font-medium text-base-content/50">Tous types</span>
+                                    {% endif %}
+                                </p>
+                            </div>
+                            <div class="flex gap-1">
+                                <button class="btn btn-ghost btn-xs" title="Modifier" onclick="showEditModal('{{ tarif.id }}')">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="btn btn-ghost btn-xs text-error" title="Supprimer" onclick="showDeleteModal('{{ tarif.id }}', '{{ tarif.datedebuttarif|date:"d/m/Y" }}')">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Prix abonnement et Tranches volumétriques -->
+                        <div class="mt-4">
+                            <!-- Prix abonnement en card -->
+                            <div class="card bg-base-300 shadow mb-4">
+                                <div class="card-body p-3">
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center gap-2">
+                                            <div class="avatar placeholder">
+                                                <div class="bg-primary text-primary-content rounded-full w-8">
+                                                    <i class="fas fa-file-invoice-dollar text-sm"></i>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div class="text-xs text-base-content/70">Prix abonnement</div>
+                                                <div class="font-semibold">{{ tarif.prixabonnement|default:0|floatformat:0|intcomma }} Ar</div>
+                                            </div>
+                                        </div>
+                                        {% if tarif.prixabonnement > 0 %}
+                                        <div class="badge badge-success badge-sm gap-1">
+                                            <i class="fas fa-check-circle"></i>
+                                            Actif
+                                        </div>
+                                        {% else %}
+                                        <div class="badge badge-ghost badge-sm gap-1">
+                                            <i class="fas fa-ban"></i>
+                                            Gratuit
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Tranches volumétriques -->
+                            <div class="flex justify-between items-center mb-2">
+                                <h4 class="font-medium">Tranches volumétriques:</h4>
+                                <button class="btn btn-xs btn-primary" onclick="showTranchesModal('{{ tarif.id }}')">
+                                    <i class="fas fa-layer-group mr-1"></i>Gérer les tranches
+                                </button>
+                            </div>
+                            {% if tarif.tranches_volumetriques.all %}
+                            <div class="overflow-x-auto">
+                                <table class="table table-sm table-zebra">
+                                    <thead>
+                                        <tr>
+                                            <th>Tranche</th>
+                                            <th>Jusqu'à (m³)</th>
+                                            <th>Tarif (Ar/m³)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for tranche in tarif.tranches_volumetriques.all %}
+                                        <tr>
+                                            <td><span class="badge badge-primary">{{ forloop.counter }}</span></td>
+                                            <td>{{ tranche.tranchesuperieur|intcomma }}</td>
+                                            <td class="font-semibold">{{ tranche.tarif|intcomma }} Ar</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% else %}
+                            <div class="alert alert-warning">
+                                <i class="fas fa-exclamation-triangle mr-2"></i>
+                                <span>Aucune tranche volumétrique définie pour ce tarif</span>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="text-center py-8">
+                <i class="fas fa-inbox text-6xl text-base-content/20 mb-4"></i>
+                <p class="text-base-content/70">
+                    {% if selected_ouvrage %}
+                    Aucun tarif trouvé pour cet ouvrage.
+                    {% else %}
+                    Veuillez sélectionner un ouvrage pour voir les tarifs.
+                    {% endif %}
+                </p>
+                {% if selected_ouvrage %}
+                <button class="btn btn-primary mt-4" onclick="showCreateModal()">
+                    <i class="fas fa-plus mr-2"></i>Créer le premier tarif
+                </button>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Modal Créer/Modifier Tarif -->
+<dialog id="tarifModal" class="modal">
+    <div class="modal-box w-full max-w-full sm:w-11/12 sm:max-w-2xl">
+        <h3 class="font-bold text-lg mb-4" id="modalTitle">Nouveau tarif volumétrique</h3>
+        <form id="tarifForm">
+            {% csrf_token %}
+            <input type="hidden" id="tarifId">
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control md:col-span-2">
+                    <label class="label">
+                        <span class="label-text">Type de point d'eau</span>
+                        <span class="label-text-alt text-info">Laisser vide = tous types</span>
+                    </label>
+                    <select name="type_point_eau" id="type_point_eau" class="select select-bordered">
+                        <option value="">Tous types</option>
+                        {% for type_pe in types_point_eau %}
+                        <option value="{{ type_pe.id }}">{{ type_pe.nom_type }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Date de début *</span></label>
+                    <input type="date" name="datedebuttarif" id="datedebuttarif" class="input input-bordered" required>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Date de fin</span>
+                        <span class="label-text-alt text-info">Laisser vide = tarif actif</span>
+                    </label>
+                    <input type="date" name="datefintarif" id="datefintarif" class="input input-bordered">
+                </div>
+
+                <div class="form-control md:col-span-2">
+                    <label class="label"><span class="label-text">Prix abonnement (Ar)</span></label>
+                    <input type="number" name="prixabonnement" id="prixabonnement" class="input input-bordered" value="0">
+                </div>
+
+                <div class="form-control md:col-span-2">
+                    <label class="label">
+                        <span class="label-text">Volume minimum facturé (m³)</span>
+                        <span class="label-text-alt text-info">Optionnel</span>
+                    </label>
+                    <input type="number" step="0.01" name="volume_minimum_facture" id="volume_minimum_facture" class="input input-bordered" placeholder="Ex: 5">
+                </div>
+
+                <div class="form-control md:col-span-2">
+                    <label class="label cursor-pointer justify-start gap-3">
+                        <input type="checkbox" name="institutionnel" id="institutionnel" class="checkbox checkbox-info">
+                        <span class="label-text">Tarif des branchements institutionnels
+                            <span class="text-xs text-base-content/60 block">Appliqué aux points d'eau cochés « branchement institutionnel » de ce type ; sans tarif dédié, ils prennent le tarif ordinaire.</span>
+                        </span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="alert alert-info mt-4">
+                <i class="fas fa-info-circle mr-2"></i>
+                <span>Le statut du tarif sera <strong>automatiquement défini</strong> : Actif si aucune date de fin, Inactif sinon.</span>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="closeModal()">Annuler</button>
+                <button type="submit" class="btn btn-primary">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal Supprimer -->
+<dialog id="deleteModal" class="modal">
+    <div class="modal-box w-full sm:max-w-md">
+        <h3 class="font-bold text-lg mb-4">Confirmer la suppression</h3>
+        <p>Êtes-vous sûr de vouloir supprimer le tarif du <strong id="deleteItemName"></strong> ?</p>
+        <input type="hidden" id="deleteItemId">
+        <div class="modal-action">
+            <button type="button" class="btn" onclick="document.getElementById('deleteModal').close()">Annuler</button>
+            <button type="button" class="btn btn-error" onclick="deleteTarif()">Supprimer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal Gérer Tranches -->
+<dialog id="tranchesModal" class="modal">
+    <div class="modal-box w-full max-w-full sm:w-11/12 sm:max-w-4xl">
+        <h3 class="font-bold text-lg mb-4">Gérer les tranches volumétriques</h3>
+        <input type="hidden" id="currentTarifId">
+
+        <div class="alert alert-info mb-4">
+            <i class="fas fa-info-circle mr-2"></i>
+            <span>Définissez les tranches de consommation avec leurs tarifs respectifs. Exemple: 0-10m³ à 500 Ar, 10-50m³ à 800 Ar, etc.</span>
+        </div>
+
+        <!-- Liste des tranches -->
+        <div id="tranchesList" class="space-y-2 mb-4">
+            <!-- Les tranches seront chargées ici -->
+        </div>
+
+        <!-- Formulaire ajout tranche -->
+        <div class="card bg-base-200">
+            <div class="card-body p-4">
+                <h4 class="font-semibold mb-2">Ajouter une tranche</h4>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <div class="form-control">
+                        <label class="label label-text-alt">Jusqu'à (m³)</label>
+                        <input type="number" id="newTrancheSuperieur" class="input input-sm input-bordered" placeholder="10">
+                    </div>
+                    <div class="form-control">
+                        <label class="label label-text-alt">Tarif (Ar/m³)</label>
+                        <input type="number" id="newTarif" class="input input-sm input-bordered" placeholder="500">
+                    </div>
+                    <div class="form-control">
+                        <label class="label label-text-alt">&nbsp;</label>
+                        <button class="btn btn-sm btn-success" onclick="addTranche()">
+                            <i class="fas fa-plus mr-1"></i>Ajouter
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-action">
+            <button type="button" class="btn" onclick="closeTranchesModal()">Fermer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+function showCreateModal() {
+    document.getElementById('modalTitle').textContent = 'Nouveau tarif volumétrique';
+    document.getElementById('tarifForm').reset();
+    document.getElementById('tarifId').value = '';
+    document.getElementById('type_point_eau').value = '';
+    document.getElementById('tarifModal').showModal();
+}
+
+function showEditModal(tarifId) {
+    document.getElementById('modalTitle').textContent = 'Modifier le tarif';
+
+    fetch(`/organisations/tarifs/edit/${tarifId}/`)
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                const data = result.data;
+                document.getElementById('tarifId').value = data.id;
+                document.getElementById('type_point_eau').value = data.type_point_eau || '';
+                document.getElementById('datedebuttarif').value = data.datedebuttarif;
+                document.getElementById('datefintarif').value = data.datefintarif;
+                document.getElementById('prixabonnement').value = data.prixabonnement;
+                document.getElementById('volume_minimum_facture').value = data.volume_minimum_facture || '';
+                document.getElementById('institutionnel').checked = !!data.institutionnel;
+                document.getElementById('tarifModal').showModal();
+            }
+        });
+}
+
+function showDeleteModal(tarifId, tarifDate) {
+    document.getElementById('deleteItemId').value = tarifId;
+    document.getElementById('deleteItemName').textContent = tarifDate;
+    document.getElementById('deleteModal').showModal();
+}
+
+function closeModal() {
+    document.getElementById('tarifModal').close();
+}
+
+document.getElementById('tarifForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    const formData = new FormData(this);
+    const tarifId = document.getElementById('tarifId').value;
+    const url = tarifId
+        ? `/organisations/tarifs/edit/${tarifId}/`
+        : `/organisations/tarifs/create/{{ selected_ouvrage.id }}/`;
+
+    fetch(url, {
+        method: 'POST',
+        body: formData,
+        headers: {'X-CSRFToken': '{{ csrf_token }}'}
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            window.location.href = result.redirect;
+        } else {
+            alert('Erreur: ' + result.message);
+        }
+    });
+});
+
+function deleteTarif() {
+    const tarifId = document.getElementById('deleteItemId').value;
+
+    fetch(`/organisations/tarifs/delete/${tarifId}/`, {
+        method: 'POST',
+        headers: {'X-CSRFToken': '{{ csrf_token }}'}
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            window.location.href = result.redirect;
+        } else {
+            alert('Erreur: ' + result.message);
+        }
+    });
+}
+
+// Gestion des tranches volumétriques
+function showTranchesModal(tarifId) {
+    document.getElementById('currentTarifId').value = tarifId;
+    loadTranches(tarifId);
+    document.getElementById('tranchesModal').showModal();
+}
+
+function closeTranchesModal() {
+    document.getElementById('tranchesModal').close();
+    // Recharger la page pour voir les changements
+    window.location.reload();
+}
+
+function loadTranches(tarifId) {
+    fetch(`/organisations/tarifs/tranches/${tarifId}/`)
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                displayTranches(result.tranches);
+            }
+        })
+        .catch(error => console.error('Erreur:', error));
+}
+
+function displayTranches(tranches) {
+    const container = document.getElementById('tranchesList');
+    if (!tranches || tranches.length === 0) {
+        container.innerHTML = '<div class="alert alert-warning"><i class="fas fa-info-circle mr-2"></i>Aucune tranche définie</div>';
+        return;
+    }
+
+    container.innerHTML = tranches.map((tranche, index) => `
+        <div class="flex items-center gap-2 p-3 bg-base-200 rounded">
+            <span class="badge badge-primary">${index + 1}</span>
+            <div class="flex-1">
+                <span class="font-semibold">Jusqu'à ${tranche.tranchesuperieur.toLocaleString()} m³</span>
+                <span class="text-base-content/70 ml-2">→ ${tranche.tarif.toLocaleString()} Ar/m³</span>
+            </div>
+            <button class="btn btn-xs btn-warning" onclick="showEditTrancheModal('${tranche.id}')">
+                <i class="fas fa-edit"></i>
+            </button>
+            <button class="btn btn-xs btn-error" onclick="deleteTranche('${tranche.id}')">
+                <i class="fas fa-trash"></i>
+            </button>
+        </div>
+    `).join('');
+}
+
+function addTranche() {
+    const tarifId = document.getElementById('currentTarifId').value;
+    const tranchesuperieur = document.getElementById('newTrancheSuperieur').value;
+    const tarif = document.getElementById('newTarif').value;
+
+    if (!tranchesuperieur || !tarif) {
+        alert('Veuillez remplir tous les champs');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('tranchesuperieur', tranchesuperieur);
+    formData.append('tarif', tarif);
+
+    fetch(`/organisations/tarifs/tranches/create/${tarifId}/`, {
+        method: 'POST',
+        body: formData,
+        headers: {'X-CSRFToken': '{{ csrf_token }}'}
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            document.getElementById('newTrancheSuperieur').value = '';
+            document.getElementById('newTarif').value = '';
+            loadTranches(tarifId);
+        } else {
+            alert('Erreur: ' + result.message);
+        }
+    });
+}
+
+function deleteTranche(trancheId) {
+    if (!confirm('Supprimer cette tranche ?')) return;
+
+    fetch(`/organisations/tarifs/tranches/delete/${trancheId}/`, {
+        method: 'POST',
+        headers: {'X-CSRFToken': '{{ csrf_token }}'}
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            const tarifId = document.getElementById('currentTarifId').value;
+            loadTranches(tarifId);
+        } else {
+            alert('Erreur: ' + result.message);
+        }
+    });
+}
+</script>
+
+<dialog id="editTrancheModal" class="modal">
+    <div class="modal-box w-full sm:max-w-lg">
+        <h3 class="font-bold text-lg mb-4">Modifier la tranche</h3>
+        <input type="hidden" id="editTrancheId">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="form-control">
+                <label class="label"><span class="label-text">Jusqu'à (m³)</span></label>
+                <input type="number" id="editTrancheSuperieur" class="input input-bordered">
+            </div>
+            <div class="form-control">
+                <label class="label"><span class="label-text">Tarif (Ar/m³)</span></label>
+                <input type="number" id="editTrancheTarif" class="input input-bordered">
+            </div>
+        </div>
+        <div class="modal-action">
+            <button type="button" class="btn" onclick="document.getElementById('editTrancheModal').close()">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="saveEditedTranche()">Enregistrer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+function showEditTrancheModal(trancheId) {
+    fetch(`/organisations/tarifs/tranches/edit/${trancheId}/`)
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                document.getElementById('editTrancheId').value = result.tranche.id;
+                document.getElementById('editTrancheSuperieur').value = result.tranche.tranchesuperieur;
+                document.getElementById('editTrancheTarif').value = result.tranche.tarif;
+                document.getElementById('editTrancheModal').showModal();
+            } else {
+                alert('Erreur: ' + result.message);
+            }
+        });
+}
+
+function saveEditedTranche() {
+    const trancheId = document.getElementById('editTrancheId').value;
+    const formData = new FormData();
+    formData.append('tranchesuperieur', document.getElementById('editTrancheSuperieur').value);
+    formData.append('tarif', document.getElementById('editTrancheTarif').value);
+
+    fetch(`/organisations/tarifs/tranches/edit/${trancheId}/`, {
+        method: 'POST',
+        body: formData,
+        headers: {'X-CSRFToken': '{{ csrf_token }}'}
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            document.getElementById('editTrancheModal').close();
+            loadTranches(document.getElementById('currentTarifId').value);
+        } else {
+            alert('Erreur: ' + result.message);
+        }
+    });
+}
+</script>
+
+<!-- Modal Import Excel avec Tranches -->
+<dialog id="importTrancheModal" class="modal">
+    <div class="modal-box max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">📤 Importer des tarifs avec tranches depuis Excel</h3>
+
+        <div class="alert alert-info mb-4">
+            <i class="fas fa-info-circle"></i>
+            <div class="text-sm">
+                <p class="font-semibold mb-1">Format attendu :</p>
+                <ul class="list-disc list-inside ml-2 space-y-1">
+                    <li><strong>ID Tarif</strong> : UUID (vide pour créer)</li>
+                    <li><strong>Ouvrage</strong> : Nom exact de l'ouvrage</li>
+                    <li><strong>Date Début</strong> : AAAA-MM-JJ</li>
+                    <li><strong>Date Fin</strong> : AAAA-MM-JJ (optionnel)</li>
+                    <li><strong>Prix Abonnement</strong> : Montant en Ariary</li>
+                    <li><strong>Actif</strong> : Oui/Non</li>
+                    <li><strong>Tranche Supérieure (m³)</strong> : Volume max</li>
+                    <li><strong>Tarif (Ar/m³)</strong> : Prix unitaire</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="form-control mb-4">
+            <label class="label">
+                <span class="label-text font-semibold">Sélectionner un fichier Excel</span>
+            </label>
+            <input type="file" id="importTrancheFile" accept=".xlsx,.xls" class="file-input file-input-bordered w-full">
+        </div>
+
+        <!-- Zone de résultats -->
+        <div id="importTrancheResults" class="hidden mb-4">
+            <div class="alert" id="importTrancheAlert">
+                <span id="importTrancheMessage"></span>
+            </div>
+        </div>
+
+        <div class="modal-action">
+            <button type="button" class="btn" onclick="closeImportTrancheModal()">Fermer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+// Gestion de l'import Excel avec tranches
+document.getElementById('importTrancheFile')?.addEventListener('change', async function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // Vérifier l'extension
+    if (!file.name.match(/\.(xlsx|xls)$/i)) {
+        showImportTrancheResult('error', 'Veuillez sélectionner un fichier Excel (.xlsx ou .xls)');
+        return;
+    }
+
+    // Créer FormData
+    const formData = new FormData();
+    formData.append('file', file);
+
+    // Afficher loader
+    showImportTrancheResult('info', '⏳ Import en cours...');
+
+    try {
+        const response = await fetch('{% url "ouvrages:import_tarifs_excel" %}', {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            let message = `✅ Import réussi !<br>• ${data.imported} tarif(s) importé(s)<br>• ${data.updated} tarif(s) mis à jour`;
+
+            if (data.errors && data.errors.length > 0) {
+                message += `<br><br><strong>⚠️ Avertissements (${data.errors.length}) :</strong><br>`;
+                message += data.errors.slice(0, 5).map(err => `• ${err}`).join('<br>');
+                if (data.errors.length > 5) {
+                    message += `<br>• ... et ${data.errors.length - 5} autres`;
+                }
+                showImportTrancheResult('warning', message);
+            } else {
+                showImportTrancheResult('success', message);
+                // Recharger la page après 2 secondes
+                setTimeout(() => location.reload(), 2000);
+            }
+        } else {
+            showImportTrancheResult('error', `❌ Erreur : ${data.error || 'Erreur inconnue'}`);
+        }
+    } catch (error) {
+        showImportTrancheResult('error', `❌ Erreur : ${error.message}`);
+    }
+
+    // Réinitialiser l'input
+    e.target.value = '';
+});
+
+function showImportTrancheResult(type, message) {
+    const resultsDiv = document.getElementById('importTrancheResults');
+    const alertDiv = document.getElementById('importTrancheAlert');
+    const messageSpan = document.getElementById('importTrancheMessage');
+
+    resultsDiv.classList.remove('hidden');
+    alertDiv.className = 'alert';
+
+    switch(type) {
+        case 'success':
+            alertDiv.classList.add('alert-success');
+            break;
+        case 'error':
+            alertDiv.classList.add('alert-error');
+            break;
+        case 'warning':
+            alertDiv.classList.add('alert-warning');
+            break;
+        case 'info':
+            alertDiv.classList.add('alert-info');
+            break;
+    }
+
+    messageSpan.innerHTML = message;
+}
+
+function closeImportTrancheModal() {
+    document.getElementById('importTrancheModal').close();
+    document.getElementById('importTrancheResults').classList.add('hidden');
+}
+</script>
+
+{% endblock %}

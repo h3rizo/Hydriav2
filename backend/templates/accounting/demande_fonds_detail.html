@@ -1,0 +1,312 @@
+{% extends "accounting/base.html" %}
+{% load static %}
+
+{% block title %}Demande de fonds {{ demande.mois_nom }} {{ demande.annee }}{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <div class="breadcrumbs text-sm">
+                <ul>
+                    <li><a href="{% url 'accounting:demandes_fonds_list' %}">Demandes de fonds</a></li>
+                    <li>{{ demande.mois_nom }} {{ demande.annee }}</li>
+                </ul>
+            </div>
+            <h1 class="text-3xl font-bold">
+                <i class="fas fa-hand-holding-usd mr-2 text-primary"></i>
+                Demande {{ demande.mois_nom }} {{ demande.annee }}
+            </h1>
+            <p class="text-base-content/70 mt-2">
+                Budget: {{ demande.budget.nom }} -
+                <span class="badge
+                    {% if demande.statut == 'brouillon' %}badge-ghost{% endif %}
+                    {% if demande.statut == 'en_cours' %}badge-warning{% endif %}
+                    {% if demande.statut == 'validee' %}badge-success{% endif %}
+                    {% if demande.statut == 'envoyee' %}badge-info{% endif %}
+                    {% if demande.statut == 'recue' %}badge-primary{% endif %}
+                ">{{ demande.get_statut_display }}</span>
+            </p>
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'accounting:demandes_fonds_list' %}" class="btn btn-outline">
+                <i class="fas fa-arrow-left mr-2"></i>
+                Retour
+            </a>
+            {% if demande.statut == 'brouillon' %}
+            <button onclick="validerDemande()" class="btn btn-success">
+                <i class="fas fa-check mr-2"></i>
+                Valider
+            </button>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-title">Soldes journaux</div>
+            <div class="stat-value text-info text-xl">{{ demande.solde_initial|floatformat:0 }} Ar</div>
+            <div class="stat-desc">Saisis à la date de demande</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-title">Reste mois en cours</div>
+            <div class="stat-value text-warning text-xl">{{ demande.depenses_reelles|floatformat:0 }} Ar</div>
+            <div class="stat-desc">À financer avant fin de mois</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-title">Mois suivant</div>
+            <div class="stat-value text-secondary text-xl">{{ demande.previsions_futures|floatformat:0 }} Ar</div>
+            <div class="stat-desc">Prévision du mois suivant</div>
+        </div>
+
+        <div class="stat bg-success text-success-content rounded-lg shadow">
+            <div class="stat-title text-success-content">Montant demandé</div>
+            <div class="stat-value text-2xl">{{ demande.montant_demande|floatformat:0 }} Ar</div>
+            <div class="stat-desc text-success-content">Total à recevoir</div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-table mr-2"></i>
+                Détail par Compte
+            </h2>
+
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-xs">
+                    <thead>
+                        <tr>
+                            <th>Compte</th>
+                            <th>Libellé</th>
+                            <th>Budget annuel</th>
+                            <th>Dépenses à date</th>
+                            <th>Reste courant</th>
+                            <th>Mois suivant</th>
+                            <th>Mois ultérieurs</th>
+                            <th>Solde imputé</th>
+                            <th>Budget restant</th>
+                            <th>Dépassement</th>
+                            <th>Montant demandé</th>
+                            {% if demande.statut == 'brouillon' or demande.statut == 'en_cours' %}
+                            <th>Explications</th>
+                            {% endif %}
+                        </tr>
+                    </thead>
+                    <tbody id="tbody-lignes">
+                        <tr>
+                            <td colspan="12" class="text-center text-base-content/50">
+                                <i class="fas fa-spinner fa-spin mr-2"></i>
+                                Chargement...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<dialog id="modal-explication" class="modal">
+    <div class="modal-box max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-comment-dots text-warning mr-2"></i>
+            Explications
+        </h3>
+
+        <input type="hidden" id="ligne-id">
+
+        <div class="alert alert-info mb-4">
+            <i class="fas fa-info-circle"></i>
+            <div>
+                <p class="text-sm">
+                    <strong>Compte:</strong> <span id="expl-compte"></span> - <span id="expl-libelle"></span>
+                </p>
+            </div>
+        </div>
+
+        <form id="form-explication">
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text font-bold">Commentaire</span>
+                </label>
+                <textarea id="expl-ecart" class="textarea textarea-bordered" rows="3" placeholder="Ajouter une note si nécessaire..."></textarea>
+            </div>
+
+            <div class="form-control mt-4" id="div-depassement" style="display: none;">
+                <label class="label">
+                    <span class="label-text font-bold text-error">Explication du dépassement <span class="text-error">*</span></span>
+                </label>
+                <textarea id="expl-depassement" class="textarea textarea-bordered textarea-error" rows="3" placeholder="Obligatoire si dépassement."></textarea>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('modal-explication').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>
+                    Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>Fermer</button>
+    </form>
+</dialog>
+
+<script>
+const demandeId = '{{ demande.id }}';
+const demandeStatut = '{{ demande.statut }}';
+let lignes = [];
+
+async function loadLignes() {
+    try {
+        const response = await fetch(`/comptabilite/demandes-fonds/${demandeId}/api/lignes/`);
+        const data = await response.json();
+
+        if (data.success) {
+            lignes = data.lignes;
+            displayLignes();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+    }
+}
+
+function displayLignes() {
+    const tbody = document.getElementById('tbody-lignes');
+    const editable = demandeStatut === 'brouillon' || demandeStatut === 'en_cours';
+
+    if (!lignes.length) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="12" class="text-center text-base-content/50">
+                    <i class="fas fa-inbox mr-2"></i>
+                    Aucune ligne
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = lignes.map(ligne => {
+        const hasDepassement = ligne.a_depassement;
+        const rowClass = hasDepassement ? 'bg-error/10' : '';
+        return `
+            <tr class="${rowClass}">
+                <td class="font-bold">${ligne.compte}</td>
+                <td>${ligne.libelle_compte}</td>
+                <td class="text-right font-mono text-xs">${ligne.budget_annuel.toLocaleString('fr-FR')}</td>
+                <td class="text-right font-mono text-xs">${ligne.previsions_passees.toLocaleString('fr-FR')}</td>
+                <td class="text-right font-mono text-xs">${ligne.prevision_mois.toLocaleString('fr-FR')}</td>
+                <td class="text-right font-mono text-xs">${ligne.previsions_futures.toLocaleString('fr-FR')}</td>
+                <td class="text-right font-mono text-xs">${ligne.depenses_reelles.toLocaleString('fr-FR')}</td>
+                <td class="text-right font-mono text-xs">${ligne.solde_reel.toLocaleString('fr-FR')}</td>
+                <td class="text-right font-mono text-xs ${ligne.budget_restant < 0 ? 'text-error' : 'text-success'}">${ligne.budget_restant.toLocaleString('fr-FR')}</td>
+                <td class="text-right font-mono text-xs ${hasDepassement ? 'text-error font-bold' : ''}">${ligne.depassement.toLocaleString('fr-FR')}</td>
+                <td class="text-right font-mono font-bold">${ligne.montant_demande.toLocaleString('fr-FR')}</td>
+                ${editable ? `
+                <td>
+                    <button onclick="openExplicationModal('${ligne.id}', '${ligne.compte}', '${ligne.libelle_compte}', ${hasDepassement}, '${ligne.explication_ecart}', '${ligne.explication_depassement}')" class="btn btn-xs ${hasDepassement ? 'btn-error' : 'btn-ghost'}">
+                        <i class="fas fa-comment-dots"></i>
+                    </button>
+                </td>
+                ` : ''}
+            </tr>
+        `;
+    }).join('');
+}
+
+function openExplicationModal(ligneId, compte, libelle, hasDepassement, ecart, depassement) {
+    document.getElementById('ligne-id').value = ligneId;
+    document.getElementById('expl-compte').textContent = compte;
+    document.getElementById('expl-libelle').textContent = libelle;
+    document.getElementById('expl-ecart').value = ecart || '';
+    document.getElementById('expl-depassement').value = depassement || '';
+    document.getElementById('div-depassement').style.display = hasDepassement ? 'block' : 'none';
+    document.getElementById('modal-explication').showModal();
+}
+
+document.getElementById('form-explication').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const ligneId = document.getElementById('ligne-id').value;
+    const data = {
+        explication_ecart: document.getElementById('expl-ecart').value,
+        explication_depassement: document.getElementById('expl-depassement').value
+    };
+
+    try {
+        const response = await fetch(`/comptabilite/demandes-fonds/ligne/${ligneId}/api/explication/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(data)
+        });
+        const result = await response.json();
+
+        if (result.success) {
+            document.getElementById('modal-explication').close();
+            loadLignes();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        alert('Erreur réseau: ' + error.message);
+    }
+});
+
+async function validerDemande() {
+    const lignesSansExplication = lignes.filter(l => l.a_depassement && !l.explication_depassement);
+    if (lignesSansExplication.length > 0) {
+        alert(`Impossible de valider: ${lignesSansExplication.length} ligne(s) avec dépassement sans explication.`);
+        return;
+    }
+
+    if (!confirm('Valider cette demande de fonds ?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/comptabilite/demandes-fonds/${demandeId}/api/valider/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        });
+        const result = await response.json();
+        if (result.success) {
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        alert('Erreur réseau: ' + error.message);
+    }
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+loadLignes();
+</script>
+{% endblock %}

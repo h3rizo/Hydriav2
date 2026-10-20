@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block title %}Activités permises par type de cible{% endblock %}
+
+{% block content %}
+<div class="container mx-auto max-w-6xl px-3 py-6 sm:px-4">
+    <div class="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div>
+            <h1 class="text-3xl font-bold"><i class="fas fa-sliders mr-3 text-warning"></i>Activités par type de cible</h1>
+            <p class="mt-2 text-base-content/70">Choisissez les activités proposées dans le modal pour chaque type d'équipement ou de point d'eau.</p>
+        </div>
+        <a href="{% url 'core:recherche_ouvrages_rapide' %}" class="btn btn-ghost btn-sm"><i class="fas fa-arrow-left"></i> Retour aux ouvrages</a>
+    </div>
+
+    <div role="tablist" class="tabs tabs-boxed mb-5 bg-base-200 p-1">
+        <a role="tab" href="?target=equipement" class="tab {% if target_kind == 'equipement' %}tab-active{% endif %}"><i class="fas fa-gears mr-2"></i>Équipements</a>
+        <a role="tab" href="?target=point_eau" class="tab {% if target_kind == 'point_eau' %}tab-active{% endif %}"><i class="fas fa-faucet-drip mr-2"></i>Points d'eau</a>
+    </div>
+
+    {% if not target_types %}
+        <div class="alert alert-warning"><i class="fas fa-triangle-exclamation"></i><span>Aucun type de {{ target_label }} actif n'est configuré.</span></div>
+    {% else %}
+        <form method="get" class="card mb-5 bg-base-100 shadow-lg">
+            <div class="card-body p-4">
+                <input type="hidden" name="target" value="{{ target_kind }}">
+                <label for="targetTypeSelect" class="label"><span class="label-text font-semibold">Type de {{ target_label }}</span></label>
+                <select id="targetTypeSelect" name="type" class="select select-bordered w-full" onchange="this.form.submit()">
+                    {% for target_type in target_types %}
+                        <option value="{{ target_type.id }}" {% if selected_type.id == target_type.id %}selected{% endif %}>{{ target_type.nom_type }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </form>
+
+        <form method="post" id="activityPermissionsForm">
+            {% csrf_token %}
+            <input type="hidden" name="target_kind" value="{{ target_kind }}">
+            <input type="hidden" name="target_type_id" value="{{ selected_type.id }}">
+
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body p-4 sm:p-6">
+                    <div class="flex flex-col gap-3 border-b border-base-300 pb-4 md:flex-row md:items-center md:justify-between">
+                        <div>
+                            <h2 class="text-xl font-bold">{{ selected_type.nom_type }}</h2>
+                            {% if is_customized %}
+                                <span class="badge badge-success mt-1">Configuration personnalisée</span>
+                                {% if policy.updated_at %}<span class="ml-2 text-xs text-base-content/60">Mise à jour le {{ policy.updated_at|date:"d/m/Y H:i" }}</span>{% endif %}
+                            {% else %}
+                                <span class="badge badge-info mt-1">Règles initiales</span>
+                            {% endif %}
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <button type="button" class="btn btn-sm btn-outline" onclick="setVisibleActivityChecks(true)"><i class="fas fa-check-double"></i> Tout cocher</button>
+                            <button type="button" class="btn btn-sm btn-ghost" onclick="setVisibleActivityChecks(false)"><i class="fas fa-xmark"></i> Tout décocher</button>
+                        </div>
+                    </div>
+
+                    <label class="input input-bordered mt-4 flex items-center gap-2">
+                        <i class="fas fa-search text-base-content/50"></i>
+                        <input id="activityPermissionSearch" type="search" class="grow" placeholder="Rechercher une activité ou un type..." oninput="filterActivityPermissions()">
+                    </label>
+
+                    <div id="activityPermissionGroups" class="mt-5 space-y-4">
+                        {% for group in activity_groups %}
+                            <section class="activity-permission-group rounded-box border border-base-300" data-group-label="{{ group.label|lower }}">
+                                <div class="flex items-center justify-between rounded-t-box bg-base-200 px-4 py-3">
+                                    <h3 class="font-bold">{{ group.label }}</h3>
+                                    <button type="button" class="btn btn-ghost btn-xs" onclick="toggleActivityGroup(this)">Inverser le groupe</button>
+                                </div>
+                                <div class="grid grid-cols-1 gap-1 p-3 md:grid-cols-2">
+                                    {% for activity in group.activities %}
+                                        <label class="activity-permission-row flex cursor-pointer items-start gap-3 rounded-lg p-2 hover:bg-base-200" data-search-label="{{ group.label|lower }} {{ activity.tache|lower }}">
+                                            <input type="checkbox" name="activities" value="{{ activity.id }}" class="checkbox checkbox-warning mt-0.5" {% if activity.id in selected_activity_ids %}checked{% endif %}>
+                                            <span class="text-sm">{{ activity.tache }}</span>
+                                        </label>
+                                    {% endfor %}
+                                </div>
+                            </section>
+                        {% empty %}
+                            <div class="alert alert-info"><i class="fas fa-circle-info"></i><span>Aucune activité compatible n'est disponible.</span></div>
+                        {% endfor %}
+                    </div>
+
+                    <div class="mt-6 flex flex-col-reverse gap-2 border-t border-base-300 pt-4 sm:flex-row sm:justify-between">
+                        <div>
+                            {% if is_customized %}
+                                <button type="submit" name="action" value="reset" class="btn btn-error btn-outline" onclick="return confirm('Restaurer les règles initiales pour ce type de cible ?')"><i class="fas fa-rotate-left"></i> Restaurer les règles initiales</button>
+                            {% endif %}
+                        </div>
+                        <button type="submit" name="action" value="save" class="btn btn-warning"><i class="fas fa-save"></i> Enregistrer les activités permises</button>
+                    </div>
+                </div>
+            </div>
+        </form>
+    {% endif %}
+</div>
+
+<script>
+function filterActivityPermissions() {
+    const query = (document.getElementById('activityPermissionSearch')?.value || '').trim().toLowerCase();
+    document.querySelectorAll('.activity-permission-group').forEach(group => {
+        let visibleRows = 0;
+        group.querySelectorAll('.activity-permission-row').forEach(row => {
+            const isVisible = !query || (row.dataset.searchLabel || '').includes(query);
+            row.classList.toggle('hidden', !isVisible);
+            if (isVisible) visibleRows += 1;
+        });
+        group.classList.toggle('hidden', visibleRows === 0);
+    });
+}
+
+function setVisibleActivityChecks(checked) {
+    document.querySelectorAll('.activity-permission-row:not(.hidden) input[type="checkbox"]').forEach(input => {
+        input.checked = checked;
+    });
+}
+
+function toggleActivityGroup(button) {
+    button.closest('.activity-permission-group').querySelectorAll('.activity-permission-row:not(.hidden) input[type="checkbox"]').forEach(input => {
+        input.checked = !input.checked;
+    });
+}
+</script>
+{% endblock %}

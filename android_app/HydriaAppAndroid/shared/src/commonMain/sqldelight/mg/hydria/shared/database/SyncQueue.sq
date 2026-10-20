@@ -1,0 +1,62 @@
+-- Miroir fidele de la table sync_queue actuelle (TerrainDatabase.kt, app/).
+-- Bascule reelle effectuee : OfflineStore.kt (app/) migre une fois au
+-- demarrage puis route toutes les operations ici (cf.
+-- OfflineStore.migrateSyncQueueIfNeeded / useNewSyncQueue). En cas d'echec
+-- de la migration, on reste sur TerrainDatabase pour toute la session.
+
+CREATE TABLE syncQueue (
+    localUuid TEXT NOT NULL PRIMARY KEY,
+    operationType TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    retryCount INTEGER NOT NULL DEFAULT 0,
+    lastError TEXT,
+    createdAt INTEGER NOT NULL,
+    updatedAt INTEGER NOT NULL
+);
+
+CREATE INDEX idx_sync_queue_status_created ON syncQueue(status, createdAt);
+
+insertPending:
+INSERT INTO syncQueue(localUuid, operationType, payload, status, retryCount, createdAt, updatedAt)
+VALUES (?, ?, ?, 'pending', 0, ?, ?);
+
+selectPendingOrError:
+-- Meme ordre que TerrainDatabase.pending() (app/) : les photos sont
+-- depriorisees (traitees en dernier) pour ne pas bloquer les operations
+-- plus legeres derriere une upload lente.
+SELECT *
+FROM syncQueue
+WHERE status IN ('pending', 'error')
+ORDER BY CASE WHEN operationType LIKE '%photo%' THEN 1 ELSE 0 END, createdAt ASC;
+
+countPendingOrError:
+SELECT COUNT(*)
+FROM syncQueue
+WHERE status IN ('pending', 'error');
+
+markSyncing:
+UPDATE syncQueue SET status = 'syncing' WHERE localUuid = ?;
+
+markStatus:
+UPDATE syncQueue SET status = ?, lastError = ? WHERE localUuid = ?;
+
+incrementRetry:
+UPDATE syncQueue SET retryCount = retryCount + 1 WHERE localUuid = ?;
+
+updatePayload:
+UPDATE syncQueue SET payload = ?, updatedAt = ? WHERE localUuid = ?;
+
+insertPendingIfAbsent:
+-- Idempotent (INSERT OR IGNORE) : reservee a la migration depuis
+-- l'ancienne base (TerrainDatabase.sync_queue), qui peut etre retentee
+-- sans risque de doublon si une tentative precedente s'est arretee
+-- en cours de route (cf. HydriaSyncQueueGateway.enqueueIfAbsent).
+INSERT OR IGNORE INTO syncQueue(localUuid, operationType, payload, status, retryCount, createdAt, updatedAt)
+VALUES (?, ?, ?, 'pending', 0, ?, ?);
+
+deleteByUuid:
+DELETE FROM syncQueue WHERE localUuid = ?;
+
+resetStuckSyncing:
+UPDATE syncQueue SET status = 'error', lastError = 'Synchronisation interrompue' WHERE status = 'syncing';

@@ -1,0 +1,463 @@
+{% extends logistics_shell_base_template|default:"base.html" %}
+{% load humanize %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between print:hidden">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">{{ title }}</h1>
+            <p class="text-sm text-base-content/70">
+                Détail mensuel des mouvements de stock du {{ period_start|date:"d/m/Y" }} au {{ period_end|date:"d/m/Y" }}
+            </p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <button type="button" class="btn btn-outline btn-sm" onclick="window.print()">
+                <i class="fas fa-print mr-2"></i>Imprimer
+            </button>
+            <a href="{% url 'planning:suivi_reparations' %}" class="btn btn-warning btn-sm">
+                <i class="fas fa-wrench mr-2"></i>Reparations
+            </a>
+            <button type="button" class="btn btn-success btn-sm" disabled>
+                <i class="fas fa-file-excel mr-2"></i>Export Excel ?? venir
+            </button>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow print:hidden">
+        <div class="card-body p-4">
+            <form method="get" class="grid grid-cols-1 gap-3 md:grid-cols-6">
+                <input type="number" name="annee" value="{{ annee }}" min="2020" max="2100" class="input input-bordered input-sm" placeholder="Année">
+
+                <select name="mois" class="select select-bordered select-sm">
+                    <option value="1" {% if mois == 1 %}selected{% endif %}>Janvier</option>
+                    <option value="2" {% if mois == 2 %}selected{% endif %}>Février</option>
+                    <option value="3" {% if mois == 3 %}selected{% endif %}>Mars</option>
+                    <option value="4" {% if mois == 4 %}selected{% endif %}>Avril</option>
+                    <option value="5" {% if mois == 5 %}selected{% endif %}>Mai</option>
+                    <option value="6" {% if mois == 6 %}selected{% endif %}>Juin</option>
+                    <option value="7" {% if mois == 7 %}selected{% endif %}>Juillet</option>
+                    <option value="8" {% if mois == 8 %}selected{% endif %}>Août</option>
+                    <option value="9" {% if mois == 9 %}selected{% endif %}>Septembre</option>
+                    <option value="10" {% if mois == 10 %}selected{% endif %}>Octobre</option>
+                    <option value="11" {% if mois == 11 %}selected{% endif %}>Novembre</option>
+                    <option value="12" {% if mois == 12 %}selected{% endif %}>Décembre</option>
+                </select>
+
+                <select name="base" id="filter-base" class="select select-bordered select-sm">
+                    <option value="">Toutes les bases</option>
+                    {% for base in bases %}
+                    <option value="{{ base.id }}" {% if selected_base == base.id|stringformat:'s' %}selected{% endif %}>{{ base.nom_base }}</option>
+                    {% endfor %}
+                </select>
+
+                <select name="magasin" id="filter-magasin" class="select select-bordered select-sm">
+                    <option value="">Tous les magasins</option>
+                    {% for magasin in magasins %}
+                    <option value="{{ magasin.id }}" data-base-id="{{ magasin.base.id }}" {% if selected_magasin == magasin.id|stringformat:'s' %}selected{% endif %}>
+                        {{ magasin.nom_magasin }} ({{ magasin.base.nom_base }})
+                    </option>
+                    {% endfor %}
+                </select>
+
+                <select name="type_designation" id="filter-type" class="select select-bordered select-sm">
+                    <option value="">Tous les types</option>
+                    {% for type in types_designation %}
+                    <option value="{{ type.id }}" {% if selected_type_designation == type.id|stringformat:'s' %}selected{% endif %}>{{ type.nom }}</option>
+                    {% endfor %}
+                </select>
+
+                <select name="designation" id="filter-designation" class="select select-bordered select-sm">
+                    <option value="">Toutes les désignations</option>
+                    {% for designation in designations %}
+                    <option value="{{ designation.id }}"
+                            data-type-id="{% if designation.type_designation_id %}{{ designation.type_designation_id }}{% endif %}"
+                            {% if selected_designation == designation.id|stringformat:'s' %}selected{% endif %}>
+                        {{ designation.nom }}
+                    </option>
+                    {% endfor %}
+                </select>
+
+                <div class="md:col-span-6 flex gap-2">
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="fas fa-search mr-2"></i>Afficher
+                    </button>
+                    <a href="{% url 'inventory:grand_livre_articles' %}" class="btn btn-ghost btn-sm">
+                        <i class="fas fa-rotate-left mr-2"></i>Réinitialiser
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="stats stats-vertical bg-base-100 shadow md:stats-horizontal w-full print:hidden">
+        <div class="stat">
+            <div class="stat-title">Période</div>
+            <div class="stat-value text-lg">{{ period_start|date:"m/Y" }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-title">Articles affichés</div>
+            <div class="stat-value text-lg">{{ article_count }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-title">Stocks negatifs</div>
+            <div class="stat-value text-lg {% if negative_stock_count %}text-error{% else %}text-success{% endif %}">{{ negative_stock_count }}</div>
+            <div class="stat-desc">{% if negative_stock_count %}Ajustements ?? corriger{% else %}Aucune correction en attente{% endif %}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-title">Lecture</div>
+            <div class="stat-desc">Stock départ + mouvements du mois = stock final</div>
+        </div>
+    </div>
+
+    {% for base_group in grouped_rows %}
+    <div class="card bg-base-100 shadow">
+        <div class="card-body p-0">
+            <div class="bg-primary text-primary-content px-5 py-4">
+                <h2 class="text-xl font-bold flex items-center gap-2">
+                    <i class="fas fa-building"></i>{{ base_group.base }}
+                </h2>
+            </div>
+
+            <div class="space-y-6 p-4">
+                {% for magasin_group in base_group.magasins %}
+                <section class="space-y-4">
+                    <div class="rounded-xl bg-base-200 px-4 py-3">
+                        <h3 class="text-lg font-semibold flex items-center gap-2">
+                            <i class="fas fa-warehouse text-info"></i>{{ magasin_group.nom }}
+                        </h3>
+                    </div>
+
+                    {% for type_group in magasin_group.types %}
+                    <div class="space-y-4">
+                        <div class="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-base-content/70">
+                            <i class="fas fa-tags"></i>{{ type_group.nom }}
+                        </div>
+
+                        {% for article in type_group.articles %}
+                        <article class="rounded-2xl border border-base-300 bg-base-100 shadow-sm">
+                            <div class="border-b border-base-300 px-4 py-4">
+                                <div class="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                                    <div>
+                                        <div class="text-sm text-base-content/60">
+                                            Base : {{ article.base.nom_base }} | Magasin : {{ article.magasin_nom }} | Type : {% if article.type_designation %}{{ article.type_designation.nom }}{% else %}Sans type{% endif %}
+                                        </div>
+                                        <h4 class="text-xl font-bold">{{ article.designation.nom }}</h4>
+                                    </div>
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <button type="button" class="btn btn-accent btn-xs" onclick="openGrandLivreAdjustModal('{{ article.stock_record_id|escapejs }}', '{{ article.designation.id|escapejs }}', '{{ article.designation.nom|escapejs }}', '{{ article.base.id|escapejs }}', '{{ article.base.nom_base|escapejs }}', '{% if article.magasin %}{{ article.magasin.id|escapejs }}{% endif %}', '{{ article.magasin_nom|escapejs }}', '{{ article.stock_current_quantity|default_if_none:0 }}', '{% if article.stock_inventory_date %}{{ article.stock_inventory_date|date:"Y-m-d" }}{% endif %}', {% if article.stock_rapproche %}true{% else %}false{% endif %})">
+                                            <i class="fas fa-sliders mr-1"></i>Ajuster
+                                        </button>
+                                        <button type="button" class="btn btn-warning btn-xs" onclick="openRepairShortcut('{{ article.designation.id|escapejs }}', '{{ article.designation.nom|escapejs }}', '{{ article.magasin_nom|escapejs }}')">
+                                            <i class="fas fa-wrench mr-1"></i>Sortie reparation
+                                        </button>
+                                        {% if article.stock_final < 0 %}
+                                        <span class="badge badge-error badge-outline">Stock final negatif</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-3 px-4 py-4 md:grid-cols-4">
+                                <div class="rounded-xl bg-base-200 p-3">
+                                    <div class="text-xs uppercase text-base-content/60">Stock depart</div>
+                                    <div class="text-xl font-bold {% if article.stock_depart < 0 %}text-error{% endif %}">
+                                        {{ article.stock_depart|floatformat:2|intcomma }}
+                                    </div>
+                                </div>
+                                <div class="rounded-xl bg-success/10 p-3">
+                                    <div class="text-xs uppercase text-base-content/60">Entrees du mois</div>
+                                    <div class="text-xl font-bold text-success">
+                                        {{ article.total_entrees|floatformat:2|intcomma }}
+                                    </div>
+                                </div>
+                                <div class="rounded-xl bg-error/10 p-3">
+                                    <div class="text-xs uppercase text-base-content/60">Sorties du mois</div>
+                                    <div class="text-xl font-bold text-error">
+                                        {{ article.total_sorties|floatformat:2|intcomma }}
+                                    </div>
+                                </div>
+                                <div class="rounded-xl bg-info/10 p-3">
+                                    <div class="text-xs uppercase text-base-content/60">Stock final</div>
+                                    <div class="text-xl font-bold {% if article.stock_final < 0 %}text-error{% else %}text-info{% endif %}">
+                                        {{ article.stock_final|floatformat:2|intcomma }}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="overflow-x-auto px-4 pb-4">
+                                <table class="table table-zebra table-sm w-full">
+                                    <thead>
+                                        <tr>
+                                            <th>Date</th>
+                                            <th>Reference / source</th>
+                                            <th>Libelle</th>
+                                            <th>Ouvrage</th>
+                                            <th>Initie par</th>
+                                            <th>Recu par</th>
+                                            <th class="text-right">Entree</th>
+                                            <th class="text-right">Sortie</th>
+                                            <th class="text-right">Stock cumule</th>
+                                            <th>Observation</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr class="font-medium">
+                                            <td>{{ period_start|date:"d/m/Y" }}</td>
+                                            <td>-</td>
+                                            <td>Stock depart</td>
+                                            <td>-</td>
+                                            <td>-</td>
+                                            <td>-</td>
+                                            <td class="text-right">-</td>
+                                            <td class="text-right">-</td>
+                                            <td class="text-right {% if article.stock_depart < 0 %}text-error font-bold{% endif %}">
+                                                {{ article.stock_depart|floatformat:2|intcomma }}
+                                            </td>
+                                            <td>-</td>
+                                        </tr>
+
+                                        {% for mouvement in article.mouvements %}
+                                        <tr>
+                                            <td>{{ mouvement.date|date:"d/m/Y H:i" }}</td>
+                                            <td>{{ mouvement.reference }}</td>
+                                            <td>{{ mouvement.libelle }}</td>
+                                            <td>{{ mouvement.ouvrage }}</td>
+                                            <td>{{ mouvement.initie_par }}</td>
+                                            <td>{{ mouvement.recu_par }}</td>
+                                            <td class="text-right">
+                                                {% if mouvement.entree %}{{ mouvement.entree|floatformat:2|intcomma }}{% else %}-{% endif %}
+                                            </td>
+                                            <td class="text-right">
+                                                {% if mouvement.sortie %}{{ mouvement.sortie|floatformat:2|intcomma }}{% else %}-{% endif %}
+                                            </td>
+                                            <td class="text-right {% if mouvement.stock_cumule < 0 %}text-error font-bold{% endif %}">
+                                                {{ mouvement.stock_cumule|floatformat:2|intcomma }}
+                                            </td>
+                                            <td class="max-w-xs whitespace-pre-wrap text-xs text-base-content/70">{{ mouvement.observation|default:"-" }}</td>
+                                        </tr>
+                                        {% empty %}
+                                        <tr>
+                                            <td colspan="10" class="text-center text-base-content/60">
+                                                Aucun mouvement sur la periode. Le stock final est identique au stock de depart.
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+
+                                        <tr class="font-semibold">
+                                            <td>{{ period_end|date:"d/m/Y" }}</td>
+                                            <td>-</td>
+                                            <td>Stock final</td>
+                                            <td>-</td>
+                                            <td>-</td>
+                                            <td>-</td>
+                                            <td class="text-right">-</td>
+                                            <td class="text-right">-</td>
+                                            <td class="text-right {% if article.stock_final < 0 %}text-error{% else %}text-info{% endif %}">
+                                                {{ article.stock_final|floatformat:2|intcomma }}
+                                            </td>
+                                            <td>-</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </article>
+                        {% endfor %}
+                    </div>
+                    {% endfor %}
+                </section>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% empty %}
+    <div class="alert alert-info">
+        <i class="fas fa-info-circle"></i>
+        <span>Aucun article avec stock de départ ou mouvement trouvé pour la période sélectionnée.</span>
+    </div>
+    {% endfor %}
+</div>
+
+<dialog id="grandLivreAdjustModal" class="modal print:hidden">
+    <div class="modal-box w-11/12 max-w-2xl">
+        <h3 class="font-bold text-lg mb-4"><i class="fas fa-sliders mr-2 text-accent"></i>Ajuster le stock</h3>
+        <form id="grandLivreAdjustForm" class="space-y-4">
+            <input type="hidden" id="gl-stock-id">
+            <input type="hidden" id="gl-designation-id">
+            <input type="hidden" id="gl-base-id">
+            <input type="hidden" id="gl-magasin-id">
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">D?signation</span></label>
+                    <input type="text" id="gl-designation-name" class="input input-bordered" readonly>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Base</span></label>
+                    <input type="text" id="gl-base-name" class="input input-bordered" readonly>
+                </div>
+                <div class="form-control md:col-span-2">
+                    <label class="label"><span class="label-text">Magasin</span></label>
+                    <input type="text" id="gl-magasin-name" class="input input-bordered" readonly>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Stock actuel</span></label>
+                    <input type="number" step="0.01" id="gl-current-quantity" class="input input-bordered" readonly>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Nouvelle quantit?</span></label>
+                    <input type="number" step="0.01" min="0" id="gl-new-quantity" class="input input-bordered" required>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Date inventaire</span></label>
+                    <input type="date" id="gl-inventory-date" class="input input-bordered" required>
+                </div>
+                <div class="form-control">
+                    <label class="label cursor-pointer justify-start gap-3">
+                        <input type="checkbox" id="gl-rapproche" class="checkbox">
+                        <span class="label-text">Rapproch?</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Motif / observation</span></label>
+                <textarea id="gl-notes" class="textarea textarea-bordered" rows="3" placeholder="Ajustement depuis le grand livre"></textarea>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost" onclick="document.getElementById('grandLivreAdjustModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-accent">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+function cascadeGrandLivreFilters() {
+    const baseSelect = document.getElementById('filter-base');
+    const magasinSelect = document.getElementById('filter-magasin');
+    const typeSelect = document.getElementById('filter-type');
+    const designationSelect = document.getElementById('filter-designation');
+
+    if (baseSelect && magasinSelect) {
+        const selectedBase = baseSelect.value;
+        Array.from(magasinSelect.options).forEach((option, index) => {
+            if (index === 0) return;
+            option.hidden = !!selectedBase && option.dataset.baseId !== selectedBase;
+        });
+        const currentMagasin = magasinSelect.options[magasinSelect.selectedIndex];
+        if (currentMagasin && currentMagasin.hidden) {
+            magasinSelect.value = '';
+        }
+    }
+
+    if (typeSelect && designationSelect) {
+        const selectedType = typeSelect.value;
+        Array.from(designationSelect.options).forEach((option, index) => {
+            if (index === 0) return;
+            option.hidden = !!selectedType && option.dataset.typeId !== selectedType;
+        });
+        const currentDesignation = designationSelect.options[designationSelect.selectedIndex];
+        if (currentDesignation && currentDesignation.hidden) {
+            designationSelect.value = '';
+        }
+    }
+}
+
+document.getElementById('filter-base')?.addEventListener('change', cascadeGrandLivreFilters);
+document.getElementById('filter-type')?.addEventListener('change', cascadeGrandLivreFilters);
+cascadeGrandLivreFilters();
+function openGrandLivreAdjustModal(stockId, designationId, designationName, baseId, baseName, magasinId, magasinName, currentQuantity, inventoryDate, rapproche) {
+    document.getElementById('gl-stock-id').value = stockId || '';
+    document.getElementById('gl-designation-id').value = designationId || '';
+    document.getElementById('gl-designation-name').value = designationName || '';
+    document.getElementById('gl-base-id').value = baseId || '';
+    document.getElementById('gl-base-name').value = baseName || '';
+    document.getElementById('gl-magasin-id').value = magasinId || '';
+    document.getElementById('gl-magasin-name').value = magasinName || 'Non ventil? (base)';
+    document.getElementById('gl-current-quantity').value = currentQuantity || 0;
+    document.getElementById('gl-new-quantity').value = currentQuantity || 0;
+    document.getElementById('gl-inventory-date').value = inventoryDate || new Date().toISOString().split('T')[0];
+    document.getElementById('gl-rapproche').checked = Boolean(rapproche);
+    document.getElementById('gl-notes').value = 'Ajustement depuis le grand livre articles';
+    document.getElementById('grandLivreAdjustModal').showModal();
+}
+
+function openRepairShortcut(designationId, designationName, magasinName) {
+    try {
+        localStorage.setItem('hydria_pending_repair_stock_context', JSON.stringify({
+            designation_id: designationId || '',
+            designation_nom: designationName || '',
+            magasin: magasinName || '',
+            source: 'grand_livre_articles',
+            created_at: new Date().toISOString()
+        }));
+    } catch (error) {
+        console.warn('Impossible de stocker le contexte r?paration', error);
+    }
+    window.open('{% url "planning:suivi_reparations" %}', '_blank');
+}
+
+const grandLivreAdjustForm = document.getElementById('grandLivreAdjustForm');
+if (grandLivreAdjustForm) {
+    grandLivreAdjustForm.addEventListener('submit', async function (e) {
+        e.preventDefault();
+
+        const stockId = document.getElementById('gl-stock-id').value || '';
+        const designationId = document.getElementById('gl-designation-id').value || '';
+        const baseId = document.getElementById('gl-base-id').value || '';
+        const magasinId = document.getElementById('gl-magasin-id').value || '';
+        const quantity = document.getElementById('gl-new-quantity').value || '';
+        const inventoryDate = document.getElementById('gl-inventory-date').value || '';
+        const notes = document.getElementById('gl-notes').value || '';
+        const rapproche = document.getElementById('gl-rapproche').checked;
+
+        const formData = new FormData();
+        formData.append('quantity', quantity);
+        formData.append('inventory_date', inventoryDate);
+        formData.append('notes', notes);
+        if (rapproche) {
+            formData.append('rapproche', 'on');
+        }
+        if (magasinId) {
+            formData.append('magasin_id', magasinId);
+        }
+
+        try {
+            let response;
+            if (stockId) {
+                formData.append('adjust_type', 'set');
+                response = await fetch(`/stocks/api/adjust-stock/${stockId}/`, {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': getCookie('csrftoken') },
+                    body: formData
+                });
+            } else {
+                formData.append('designation_id', designationId);
+                formData.append('base_id', baseId);
+                response = await fetch('{% url "inventory:api_fiche_stock_inventaire" %}', {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': getCookie('csrftoken') },
+                    body: formData
+                });
+            }
+
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || "Erreur lors de l'enregistrement");
+            }
+
+            alert(data.message || 'Ajustement enregistre');
+            document.getElementById('grandLivreAdjustModal').close();
+            window.location.reload();
+        } catch (error) {
+            alert('Erreur: ' + error.message);
+        }
+    });
+}
+
+</script>
+{% endblock %}

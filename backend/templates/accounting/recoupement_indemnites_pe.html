@@ -1,0 +1,744 @@
+{% extends "accounting/base.html" %}
+{% load humanize %}
+
+{% block title %}Recoupement Indemnités Points d'Eau (621102){% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- Header -->
+    <div class="mb-6">
+        <h1 class="text-3xl font-bold flex items-center gap-3">
+            <i class="fas fa-money-bill-wave text-success"></i>
+            Recoupement Indemnités Points d'Eau
+            <span class="badge badge-info badge-lg">Compte 621102</span>
+            {% if organisation_user %}
+            <span class="badge badge-primary badge-lg">{{ organisation_user.nom_organisation }}</span>
+            {% endif %}
+        </h1>
+        <p class="text-sm text-base-content/70 mt-2">
+            <i class="fas fa-info-circle mr-2"></i>
+            Paiements forfaitaires aux points d'eau avec plafond de 40 000 Ar par point d'eau et par an.
+            Extraction automatique du point d'eau depuis les descriptions DiameX.
+        </p>
+    </div>
+
+    <!-- Navigation entre pages de recoupement -->
+    {% include 'accounting/includes/recoupement_nav.html' with current_page='indemnites_pe' %}
+
+    <!-- Statistiques Globales -->
+    <div class="grid grid-cols-1 md:grid-cols-6 gap-4 mb-6">
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-info">
+                <i class="fas fa-tint text-3xl"></i>
+            </div>
+            <div class="stat-title">Points d'Eau</div>
+            <div class="stat-value text-info text-2xl">{{ stats_globales.total_points_eau|intcomma }}</div>
+            <div class="stat-desc">Avec paiements</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-list text-3xl"></i>
+            </div>
+            <div class="stat-title">Paiements</div>
+            <div class="stat-value text-primary text-2xl">{{ stats_globales.total_paiements|intcomma }}</div>
+            <div class="stat-desc">Total lignes DiameX</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-success">
+                <i class="fas fa-coins text-3xl"></i>
+            </div>
+            <div class="stat-title">Montant Total</div>
+            <div class="stat-value text-success text-2xl">{{ stats_globales.total_montant|floatformat:0|intcomma }}</div>
+            <div class="stat-desc">Ariary</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-error">
+                <i class="fas fa-exclamation-triangle text-3xl"></i>
+            </div>
+            <div class="stat-title">Dépassements</div>
+            <div class="stat-value text-error text-2xl">{{ stats_globales.total_depassements|intcomma }}</div>
+            <div class="stat-desc">> 40 000 Ar / an</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-warning">
+                <i class="fas fa-question-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Non Extraits</div>
+            <div class="stat-value text-warning text-2xl">{{ stats_globales.total_non_extrait|intcomma }}</div>
+            <div class="stat-desc">PE non identifié</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-error">
+                <i class="fas fa-ban text-3xl"></i>
+            </div>
+            <div class="stat-title">Type PE Invalide</div>
+            <div class="stat-value text-error text-2xl">{{ stats_anomalies.type_pe_invalide|intcomma }}</div>
+            <div class="stat-desc">Kiosque, BP, etc.</div>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <h3 class="card-title text-lg mb-4">
+                <i class="fas fa-filter mr-2"></i>
+                Filtres
+            </h3>
+            <form method="get" class="grid grid-cols-1 md:grid-cols-{% if organisation_user %}3{% else %}4{% endif %} gap-4">
+                <!-- Organisation (masquée si utilisateur a une organisation) -->
+                {% if not organisation_user %}
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Organisation</span>
+                    </label>
+                    <select name="organisation" class="select select-bordered select-sm">
+                        <option value="all">Toutes</option>
+                        {% for org in organisations %}
+                        <option value="{{ org.id }}" {% if filter_organisation == org.id|stringformat:"s" %}selected{% endif %}>
+                            {{ org.nom_organisation }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+
+                <!-- Mois -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Mois</span>
+                    </label>
+                    <input type="month" name="mois" value="{{ filter_mois }}"
+                           class="input input-bordered input-sm">
+                </div>
+
+                <!-- Point d'eau -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Point d'Eau</span>
+                    </label>
+                    <input type="text" name="point_eau" value="{{ filter_point_eau }}"
+                           placeholder="Nom ou code" class="input input-bordered input-sm">
+                </div>
+
+                <!-- Anomalie -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Anomalie</span>
+                    </label>
+                    <select name="anomalie" class="select select-bordered select-sm">
+                        <option value="">Toutes</option>
+                        <option value="depassement" {% if filter_anomalie == 'depassement' %}selected{% endif %}>
+                            Dépassement 5000 Ar
+                        </option>
+                        <option value="type_invalide" {% if filter_anomalie == 'type_invalide' %}selected{% endif %}>
+                            Type PE invalide (Kiosque, BP...)
+                        </option>
+                        <option value="non_extrait" {% if filter_anomalie == 'non_extrait' %}selected{% endif %}>
+                            Non extraits
+                        </option>
+                    </select>
+                </div>
+
+                <!-- Boutons -->
+                <div class="form-control md:col-span-{% if organisation_user %}3{% else %}4{% endif %}">
+                    <div class="flex gap-2">
+                        <button type="submit" class="btn btn-primary btn-sm">
+                            <i class="fas fa-search mr-1"></i>
+                            Filtrer
+                        </button>
+                        <a href="{% url 'accounting:recoupement_indemnites_pe' %}" class="btn btn-ghost btn-sm">
+                            <i class="fas fa-times mr-1"></i>
+                            Réinitialiser
+                        </a>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Section Points d'Eau avec regroupements hiérarchiques -->
+    {% if filter_anomalie != 'non_extrait' %}
+    <div class="mb-8">
+        <h2 class="text-2xl font-bold mb-4 flex items-center gap-2">
+            <i class="fas fa-tint text-info"></i>
+            Points d'Eau avec Paiements
+            <span class="badge badge-lg">{{ stats_globales.total_points_eau }}</span>
+        </h2>
+
+        {% if resultats_par_district %}
+            {% for district_nom, communes in resultats_par_district.items %}
+            <!-- Card District -->
+            <div class="card bg-base-100 shadow-xl mb-8 district-card">
+                <div class="card-body">
+                    <div class="flex items-center justify-between mb-6">
+                        <h1 class="text-2xl font-bold flex items-center gap-3">
+                            <i class="fas fa-map-marked-alt text-primary"></i>
+                            District: {{ district_nom }}
+                            <span class="badge badge-primary badge-lg">
+                                {% with commune_count=communes|length %}{{ commune_count }} commune{% if commune_count > 1 %}s{% endif %}{% endwith %}
+                            </span>
+                        </h1>
+                        <button class="btn btn-sm btn-ghost toggle-district-btn">
+                            <i class="fas fa-chevron-down"></i>
+                        </button>
+                    </div>
+
+                    <div class="district-content" style="display: none;">
+                        {% for commune_nom, ouvrages in communes.items %}
+                        <!-- Card Commune -->
+                        <div class="card bg-base-200/50 shadow mb-6 commune-card ml-4">
+                            <div class="card-body">
+                                <div class="flex items-center justify-between mb-4">
+                                    <h2 class="text-xl font-bold flex items-center gap-3">
+                                        <i class="fas fa-map-marker-alt text-info"></i>
+                                        Commune: {{ commune_nom }}
+                                        <span class="badge badge-info badge-md">
+                                            {% with ouvrage_count=ouvrages|length %}{{ ouvrage_count }} ouvrage{% if ouvrage_count > 1 %}s{% endif %}{% endwith %}
+                                        </span>
+                                    </h2>
+                                    <button class="btn btn-sm btn-ghost toggle-commune-btn">
+                                        <i class="fas fa-chevron-down"></i>
+                                    </button>
+                                </div>
+
+                                <div class="commune-content" style="display: none;">
+                                    {% for ouvrage_nom, points_eau in ouvrages.items %}
+                                    <!-- Card Ouvrage -->
+                                    <div class="card bg-base-100 shadow-sm mb-4 ouvrage-card ml-8">
+                                        <div class="card-body">
+                                            <div class="flex items-center justify-between mb-4">
+                                                <h3 class="text-lg font-semibold flex items-center gap-3">
+                                                    <i class="fas fa-water text-success"></i>
+                                                    Ouvrage: {{ ouvrage_nom }}
+                                                    <span class="badge badge-success badge-sm">
+                                                        {{ points_eau|length }} point{% if points_eau|length > 1 %}s{% endif %} d'eau
+                                                    </span>
+                                                </h3>
+                                                <button class="btn btn-sm btn-ghost toggle-ouvrage-btn">
+                                                    <i class="fas fa-chevron-down"></i>
+                                                </button>
+                                            </div>
+
+                                            <div class="ouvrage-content" style="display: none;">
+                                            <div class="overflow-x-auto mt-2">
+                                                <table class="table table-zebra table-sm">
+                                                    <thead class="bg-base-300">
+                                                        <tr>
+                                                            <th>Point d'Eau</th>
+                                                            <th>Organisation</th>
+                                                            <th>Village</th>
+                                                            <th class="text-center">Nb Paiements</th>
+                                                            <th class="text-right">Total Payé (Ar)</th>
+                                                            <th class="text-center">Dépassements</th>
+                                                            <th>Actions</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {% for result in points_eau %}
+                                                        <tr>
+                                                            <td class="font-semibold">
+                                                                {{ result.point_eau.nomabonne|default:result.point_eau.code_point_eau }}
+                                                            </td>
+                                                            <td>{{ result.gestionnaire_nom|default:"-" }}</td>
+                                                            <td>{{ result.point_eau.parcelle.village.nom_village|default:"-" }}</td>
+                                                            <td class="text-center">
+                                                                <span class="badge badge-primary">{{ result.nb_paiements }}</span>
+                                                            </td>
+                                                            <td class="text-right font-mono font-bold">
+                                                                {{ result.total_paye|floatformat:0|intcomma }}
+                                                            </td>
+                                                            <td class="text-center">
+                                                                {% if result.nb_depassements > 0 %}
+                                                                <span class="badge badge-error">{{ result.nb_depassements }}</span>
+                                                                {% else %}
+                                                                <span class="badge badge-success">0</span>
+                                                                {% endif %}
+                                                            </td>
+                                                            <td>
+                                                                <button type="button" onclick="toggleDetails('pe-d{{ forloop.parentloop.parentloop.parentloop.counter }}-c{{ forloop.parentloop.parentloop.counter }}-o{{ forloop.parentloop.counter }}-{{ forloop.counter }}')" class="btn btn-xs btn-info">
+                                                                    <i class="fas fa-eye mr-1"></i>
+                                                                    Détails
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                        <!-- Ligne de détails -->
+                                                        <tr id="pe-d{{ forloop.parentloop.parentloop.parentloop.counter }}-c{{ forloop.parentloop.parentloop.counter }}-o{{ forloop.parentloop.counter }}-{{ forloop.counter }}" style="display: none;">
+                                                            <td colspan="7" class="bg-base-200 p-4">
+                                                                <div class="card bg-base-100">
+                                                                    <div class="card-body p-3">
+                                                                        <h4 class="font-bold mb-2">
+                                                                            <i class="fas fa-list mr-2 text-info"></i>
+                                                                            Paiements ({{ result.paiements|length }})
+                                                                        </h4>
+                                                                        <div class="overflow-x-auto">
+                                                                            <table class="table table-sm">
+                                                                                <thead>
+                                                                                    <tr>
+                                                                                        <th>Date</th>
+                                                                                        <th>Type</th>
+                                                                                        <th>ID DiameX</th>
+                                                                                        <th>Prog</th>
+                                                                                        <th>Description</th>
+                                                                                        <th class="text-right">Montant (Ar)</th>
+                                                                                        <th>Statut</th>
+                                                                                    </tr>
+                                                                                </thead>
+                                                                                <tbody>
+                                                                                    {% for paiement in result.paiements %}
+                                                                                    <tr>
+                                                                                        <td>{{ paiement.date_m|date:"d/m/Y"|default:"-" }}</td>
+                                                                                        <td>
+                                                                                            {% if paiement.type_indemnite %}
+                                                                                            <span class="badge badge-sm {% if paiement.type_indemnite == 'RBF' %}badge-info{% else %}badge-warning{% endif %}">
+                                                                                                {{ paiement.type_indemnite }}{% if paiement.point_eau_idxls %}{{ paiement.point_eau_idxls }}{% endif %}
+                                                                                            </span>
+                                                                                            {% else %}
+                                                                                            <span class="text-xs text-base-content/50">-</span>
+                                                                                            {% endif %}
+                                                                                        </td>
+                                                                                        <td class="font-mono text-xs">{{ paiement.id_access }}</td>
+                                                                                        <td class="text-xs">{{ paiement.prog|truncatechars:20 }}</td>
+                                                                                        <td class="text-xs">{{ paiement.description|truncatechars:50 }}</td>
+                                                                                        <td class="text-right font-mono font-bold">
+                                                                                            {{ paiement.montant_out|floatformat:0|intcomma }}
+                                                                                        </td>
+                                                                                        <td>
+                                                                                            {% if paiement.depasse_plafond %}
+                                                                                            <span class="badge badge-error badge-sm">
+                                                                                                <i class="fas fa-exclamation-triangle mr-1"></i>
+                                                                                                > 5000 Ar
+                                                                                            </span>
+                                                                                            {% else %}
+                                                                                            <span class="badge badge-success badge-sm">
+                                                                                                <i class="fas fa-check mr-1"></i>
+                                                                                                OK
+                                                                                            </span>
+                                                                                            {% endif %}
+                                                                                        </td>
+                                                                                    </tr>
+                                                                                    {% endfor %}
+                                                                                </tbody>
+                                                                                <tfoot>
+                                                                                    <tr class="font-bold bg-primary/10">
+                                                                                        <td colspan="5" class="text-right">Total</td>
+                                                                                        <td class="text-right text-primary">{{ result.total_paye|floatformat:0|intcomma }} Ar</td>
+                                                                                        <td></td>
+                                                                                    </tr>
+                                                                                </tfoot>
+                                                                            </table>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                        {% endfor %}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+        <div class="alert alert-info">
+            <i class="fas fa-info-circle mr-2"></i>
+            Aucun point d'eau avec paiements trouvé pour les filtres sélectionnés.
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Section Anomalies Type Point d'Eau Invalide -->
+    {% if lignes_type_pe_invalide %}
+    <div class="mb-8">
+        <h2 class="text-2xl font-bold mb-4 flex items-center gap-2">
+            <i class="fas fa-ban text-error"></i>
+            Anomalies : Type de Point d'Eau Non Éligible
+            <span class="badge badge-error badge-lg">{{ lignes_type_pe_invalide|length }}</span>
+        </h2>
+
+        <div class="alert alert-error mb-4">
+            <i class="fas fa-exclamation-circle mr-2"></i>
+            <div>
+                <p class="font-semibold">Type de Point d'Eau Invalide pour Indemnités PE</p>
+                <p class="text-sm">Ces lignes concernent des points d'eau identifiés mais dont le type n'est PAS éligible aux indemnités RBF/PPMH (Kiosque, BP, etc.). <strong>Seuls les types BF, PMH et PMHI sont éligibles.</strong> Ces opérations nécessitent une explication de la part des employés.</p>
+            </div>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="table table-zebra table-sm">
+                <thead class="bg-error/10">
+                    <tr>
+                        <th>Date</th>
+                        <th>Ouvrage</th>
+                        <th>Point d'Eau (Type NON Éligible)</th>
+                        <th>IDxls</th>
+                        <th>ID DiameX</th>
+                        <th>Prog</th>
+                        <th>Description</th>
+                        <th class="text-right">Montant (Ar)</th>
+                        <th>Statut</th>
+                        <th>Fichier Source</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ligne in lignes_type_pe_invalide %}
+                    <tr class="bg-error/5">
+                        <td>{{ ligne.date_m|date:"d/m/Y"|default:"-" }}</td>
+                        <td class="text-xs">
+                            {% if ligne.ouvrage_nom %}
+                            <span class="badge badge-ghost badge-sm">{{ ligne.ouvrage_nom }}</span>
+                            {% else %}
+                            <span class="text-base-content/50">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-sm font-semibold text-error">
+                            {{ ligne.point_eau_nom }}
+                        </td>
+                        <td class="text-center">
+                            {% if ligne.point_eau_idxls %}
+                            <span class="badge badge-sm badge-outline">{{ ligne.point_eau_idxls }}</span>
+                            {% else %}
+                            <span class="text-base-content/50">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="font-mono text-xs">{{ ligne.id_access }}</td>
+                        <td class="text-xs">{{ ligne.prog|truncatechars:20 }}</td>
+                        <td class="text-sm">{{ ligne.description }}</td>
+                        <td class="text-right font-mono font-bold">
+                            {{ ligne.montant_out|floatformat:0|intcomma }}
+                        </td>
+                        <td>
+                            <span class="badge badge-error badge-sm">
+                                <i class="fas fa-ban mr-1"></i>
+                                Type invalide
+                            </span>
+                        </td>
+                        <td class="text-xs">{{ ligne.fichier_source|truncatechars:30 }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr class="font-bold bg-error/10">
+                        <td colspan="7" class="text-right">Total Anomalies Type PE Invalide</td>
+                        <td class="text-right text-error">
+                            {{ lignes_type_pe_invalide|length }} ligne(s)
+                        </td>
+                        <td colspan="2"></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Section Lignes Non Extraites -->
+    <div class="mb-8">
+        <h2 class="text-2xl font-bold mb-4 flex items-center gap-2">
+            <i class="fas fa-exclamation-triangle text-warning"></i>
+            Lignes DiameX Non Extraites
+            <span class="badge badge-warning badge-lg">{{ lignes_non_extraites|length }}</span>
+        </h2>
+
+        <div class="alert alert-warning mb-4">
+            <i class="fas fa-info-circle mr-2"></i>
+            <div>
+                <p class="font-semibold">Point d'Eau Non Identifié</p>
+                <p class="text-sm">L'algorithme d'extraction n'a pas pu identifier le point d'eau depuis la description. Vérification manuelle requise.</p>
+            </div>
+        </div>
+
+        {% if lignes_non_extraites %}
+        <div class="overflow-x-auto">
+            <table class="table table-zebra table-sm">
+                <thead class="bg-base-200">
+                    <tr>
+                        <th>Date</th>
+                        <th>Ouvrage extrait</th>
+                        <th>ID DiameX</th>
+                        <th>Prog</th>
+                        <th>Description</th>
+                        <th class="text-right">Montant (Ar)</th>
+                        <th>Statut</th>
+                        <th>Fichier Source</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ligne in lignes_non_extraites %}
+                    <tr>
+                        <td>{{ ligne.date_m|date:"d/m/Y"|default:"-" }}</td>
+                        <td class="text-xs">
+                            {% if ligne.ouvrage_nom %}
+                            <span class="badge badge-ghost badge-sm">{{ ligne.ouvrage_nom }}</span>
+                            {% else %}
+                            <span class="text-base-content/50">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="font-mono text-xs">{{ ligne.id_access }}</td>
+                        <td class="text-xs">{{ ligne.prog|truncatechars:20 }}</td>
+                        <td class="text-sm">{{ ligne.description }}</td>
+                        <td class="text-right font-mono font-bold">
+                            {{ ligne.montant_out|floatformat:0|intcomma }}
+                        </td>
+                        <td>
+                            {% if ligne.depasse_plafond %}
+                            <span class="badge badge-error badge-sm">
+                                <i class="fas fa-exclamation-triangle mr-1"></i>
+                                > 5000 Ar
+                            </span>
+                            {% else %}
+                            <span class="badge badge-warning badge-sm">
+                                <i class="fas fa-question mr-1"></i>
+                                Non extrait
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td class="text-xs">{{ ligne.fichier_source|truncatechars:30 }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr class="font-bold bg-warning/10">
+                        <td colspan="5" class="text-right">Total Non Extrait</td>
+                        <td class="text-right text-warning">
+                            {{ lignes_non_extraites|length }} ligne(s)
+                        </td>
+                        <td colspan="2"></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+        {% else %}
+        <div class="alert alert-success">
+            <i class="fas fa-check-circle mr-2"></i>
+            Toutes les lignes DiameX ont été extraites avec succès ! Aucune ligne orpheline.
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Légende -->
+    <div class="mt-6 p-4 bg-base-200 rounded-lg">
+        <h3 class="font-semibold mb-3">
+            <i class="fas fa-info-circle mr-2"></i>
+            Informations
+        </h3>
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+            <div>
+                <span class="badge badge-success mr-2">OK</span>
+                <span>Paiement conforme (≤ 5000 Ar)</span>
+            </div>
+            <div>
+                <span class="badge badge-error mr-2">Dépassement</span>
+                <span>Paiement supérieur à 5000 Ar</span>
+            </div>
+            <div>
+                <span class="badge badge-warning mr-2">Non extrait</span>
+                <span>Point d'eau non identifié automatiquement</span>
+            </div>
+            <div>
+                <span class="badge badge-error mr-2">Type invalide</span>
+                <span>PE identifié mais type non éligible (Kiosque, BP, etc.)</span>
+            </div>
+        </div>
+        <div class="mt-3 text-xs text-base-content/60">
+            <p>
+                <i class="fas fa-lightbulb mr-1"></i>
+                <strong>Plafond:</strong> Les paiements d'indemnités aux points d'eau ne doivent pas dépasser 5000 Ar par tranche.
+            </p>
+            <p class="mt-2">
+                <i class="fas fa-ban mr-1"></i>
+                <strong>Éligibilité:</strong> Seuls les points d'eau de type <strong>BF, PMH et PMHI</strong> sont éligibles aux indemnités RBF/PPMH. Les autres types (Kiosque, BP, etc.) ne doivent PAS recevoir d'indemnités PE.
+            </p>
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleDetails(detailsId) {
+    const detailsRow = document.getElementById(detailsId);
+    if (detailsRow) {
+        if (detailsRow.style.display === 'none') {
+            detailsRow.style.display = 'table-row';
+        } else {
+            detailsRow.style.display = 'none';
+        }
+    }
+}
+
+// Event listeners pour les regroupements hiérarchiques
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOMContentLoaded - Initialisation des toggles');
+
+    // Districts
+    const districtButtons = document.querySelectorAll('.toggle-district-btn');
+    console.log('Nombre de boutons district trouvés:', districtButtons.length);
+
+    districtButtons.forEach(button => {
+        console.log('Ajout event listener sur bouton district:', button);
+        button.addEventListener('click', function(e) {
+            console.log('Click sur district détecté!');
+            e.stopPropagation();
+            e.preventDefault();
+
+            const card = this.closest('.district-card');
+            const content = card.querySelector('.district-content');
+            const icon = this.querySelector('i');
+
+            console.log('Display avant:', content.style.display);
+            console.log('Contenu HTML length:', content.innerHTML.length);
+            console.log('Hauteur du contenu:', content.offsetHeight);
+
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                content.style.opacity = '1';
+                content.style.height = 'auto';
+                content.style.overflow = 'visible';
+                icon.classList.remove('fa-chevron-down');
+                icon.classList.add('fa-chevron-up');
+                console.log('Ouvert - Hauteur après:', content.offsetHeight);
+            } else {
+                content.style.display = 'none';
+                icon.classList.remove('fa-chevron-up');
+                icon.classList.add('fa-chevron-down');
+                console.log('Fermé');
+            }
+        });
+    });
+
+    // Communes
+    document.querySelectorAll('.toggle-commune-btn').forEach(button => {
+        button.addEventListener('click', function(e) {
+            e.stopPropagation();
+            e.preventDefault();
+
+            const card = this.closest('.commune-card');
+            const content = card.querySelector('.commune-content');
+            const icon = this.querySelector('i');
+
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                icon.classList.remove('fa-chevron-down');
+                icon.classList.add('fa-chevron-up');
+            } else {
+                content.style.display = 'none';
+                icon.classList.remove('fa-chevron-up');
+                icon.classList.add('fa-chevron-down');
+            }
+        });
+    });
+
+    // Ouvrages
+    document.querySelectorAll('.toggle-ouvrage-btn').forEach(button => {
+        button.addEventListener('click', function(e) {
+            e.stopPropagation();
+            e.preventDefault();
+
+            const card = this.closest('.ouvrage-card');
+            const content = card.querySelector('.ouvrage-content');
+            const icon = this.querySelector('i');
+
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                icon.classList.remove('fa-chevron-down');
+                icon.classList.add('fa-chevron-up');
+            } else {
+                content.style.display = 'none';
+                icon.classList.remove('fa-chevron-up');
+                icon.classList.add('fa-chevron-down');
+            }
+        });
+    });
+});
+</script>
+
+<!-- Bandeau Footer : Chartes de Remplissage -->
+<div class="fixed bottom-0 left-0 right-0 bg-gradient-to-r from-info to-primary text-white shadow-lg z-40">
+    <div class="container mx-auto px-4 py-3">
+        <div class="flex items-start gap-4">
+            <div class="flex-shrink-0">
+                <i class="fas fa-info-circle text-2xl"></i>
+            </div>
+            <div class="flex-1">
+                <h3 class="font-bold text-lg mb-2 flex items-center gap-2">
+                    📋 Chartes de Remplissage des Descriptions (Extraction Automatique)
+                    <button onclick="toggleCharte()" class="btn btn-xs btn-ghost">
+                        <i id="charteIcon" class="fas fa-chevron-up"></i>
+                    </button>
+                </h3>
+                <div id="charteContent" class="space-y-2 text-sm">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <!-- Formats acceptés -->
+                        <div class="bg-white/10 rounded-lg p-3">
+                            <p class="font-semibold mb-2">✅ Formats Acceptés :</p>
+                            <ul class="space-y-1 ml-4 list-disc">
+                                <li><code class="bg-black/20 px-1 rounded">Indemnité [NOM_POINT_EAU] [DATE]</code></li>
+                                <li><code class="bg-black/20 px-1 rounded">Indemnités [NOM_POINT_EAU] DD/MM/YYYY</code></li>
+                                <li><code class="bg-black/20 px-1 rounded">[NOM_POINT_EAU] indemnité YYYY MM</code></li>
+                                <li><code class="bg-black/20 px-1 rounded">Paiement forfaitaire [NOM_POINT_EAU]</code></li>
+                            </ul>
+                        </div>
+
+                        <!-- Exemples concrets -->
+                        <div class="bg-white/10 rounded-lg p-3">
+                            <p class="font-semibold mb-2">💡 Exemples Concrets :</p>
+                            <ul class="space-y-1 ml-4 list-disc">
+                                <li><code class="bg-success/30 px-1 rounded">Indemnité Ambanja BP 01/01/2025</code></li>
+                                <li><code class="bg-success/30 px-1 rounded">Indemnités Maromitety BF1 2025 01</code></li>
+                                <li><code class="bg-success/30 px-1 rounded">Nosy Be PMH indemnité 15/01/2025</code></li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-2 bg-warning/20 rounded p-2 mt-2">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <p class="text-xs">
+                            <strong>Note :</strong> Le nom du point d'eau doit correspondre exactement au champ
+                            <code class="bg-black/20 px-1 rounded">nomabonne</code> ou
+                            <code class="bg-black/20 px-1 rounded">code_point_eau</code> dans la base de données.
+                            Les dates sont optionnelles pour l'extraction du point d'eau.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleCharte() {
+    const content = document.getElementById('charteContent');
+    const icon = document.getElementById('charteIcon');
+
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        icon.classList.remove('fa-chevron-down');
+        icon.classList.add('fa-chevron-up');
+    } else {
+        content.style.display = 'none';
+        icon.classList.remove('fa-chevron-up');
+        icon.classList.add('fa-chevron-down');
+    }
+}
+</script>
+
+<!-- Ajout de padding-bottom pour éviter que le contenu soit caché par le footer -->
+<style>
+body {
+    padding-bottom: 200px;
+}
+</style>
+
+{% endblock %}

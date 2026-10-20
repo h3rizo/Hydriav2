@@ -1,0 +1,136 @@
+<dialog id="{{ map_prefix }}-coordinate-modal" class="modal">
+    <div class="modal-box max-w-xl">
+        <h3 class="text-lg font-bold"><i class="fas fa-map-pin mr-2 text-error"></i>Affecter les coordonnées</h3>
+        <p class="mt-1 text-sm opacity-70">Choisissez l’entité existante qui doit recevoir la position sélectionnée sur la carte.</p>
+
+        <form id="{{ map_prefix }}-coordinate-form" class="mt-4 space-y-4"
+              data-url="{{ assignment_url }}" data-entity-type="{{ entity_type }}">
+            {% csrf_token %}
+            <label class="form-control">
+                <span class="label"><span class="label-text font-semibold">{% if entity_type == 'point_eau' %}Point d’eau{% else %}Équipement{% endif %}</span></span>
+                <select class="select select-bordered w-full" name="entity_id" required>
+                    <option value="">Choisir une entité…</option>
+                    {% for entity in entities %}
+                    <option value="{{ entity.pk }}" data-has-gps="{% if entity.latitude != None and entity.longitude != None %}1{% else %}0{% endif %}">
+                        {% if entity_type == 'point_eau' %}{{ entity.nomabonne|default:entity.code_point_eau|default:"Point d'eau" }}{% else %}{{ entity.nom|default:entity.code_equipement|default:"Équipement" }}{% endif %}{% if entity.latitude != None and entity.longitude != None %} — GPS existant{% endif %}
+                    </option>
+                    {% endfor %}
+                </select>
+            </label>
+            <div id="{{ map_prefix }}-coordinate-replace-warning" class="alert alert-warning hidden py-2 text-sm">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span>Cette entité possède déjà des coordonnées. Elles seront remplacées.</span>
+            </div>
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label class="form-control">
+                    <span class="label"><span class="label-text">Latitude</span></span>
+                    <input name="latitude" type="number" step="any" min="-90" max="90" class="input input-bordered font-mono" required>
+                </label>
+                <label class="form-control">
+                    <span class="label"><span class="label-text">Longitude</span></span>
+                    <input name="longitude" type="number" step="any" min="-180" max="180" class="input input-bordered font-mono" required>
+                </label>
+            </div>
+            <div id="{{ map_prefix }}-coordinate-feedback" class="alert hidden py-2 text-sm"></div>
+            <div class="modal-action">
+                <button type="button" class="btn" data-coordinate-cancel>Annuler</button>
+                <button type="submit" class="btn btn-primary" data-coordinate-submit>
+                    <i class="fas fa-save mr-1"></i>Enregistrer et vérifier
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>Fermer</button></form>
+</dialog>
+
+<script>
+window.setupHydriaMapCoordinateAssignment = window.setupHydriaMapCoordinateAssignment || function (map, prefix) {
+    const modeButton = document.getElementById(prefix + '-assign-mode');
+    const modal = document.getElementById(prefix + '-coordinate-modal');
+    const form = document.getElementById(prefix + '-coordinate-form');
+    if (!map || !modeButton || !modal || !form) return;
+
+    const select = form.elements.entity_id;
+    const latitudeInput = form.elements.latitude;
+    const longitudeInput = form.elements.longitude;
+    const warning = document.getElementById(prefix + '-coordinate-replace-warning');
+    const feedback = document.getElementById(prefix + '-coordinate-feedback');
+    const submitButton = form.querySelector('[data-coordinate-submit]');
+    let assignmentMode = false;
+    let temporaryMarker = null;
+
+    function setAssignmentMode(active) {
+        assignmentMode = active;
+        modeButton.classList.toggle('btn-error', active);
+        modeButton.classList.toggle('btn-outline', !active);
+        modeButton.innerHTML = active
+            ? '<i class="fas fa-crosshairs mr-1"></i>Cliquez maintenant sur la carte'
+            : '<i class="fas fa-map-pin mr-1"></i>Affecter une position';
+        map.getContainer().style.cursor = active ? 'crosshair' : '';
+    }
+
+    function clearTemporaryMarker() {
+        if (temporaryMarker) map.removeLayer(temporaryMarker);
+        temporaryMarker = null;
+    }
+
+    modeButton.addEventListener('click', () => setAssignmentMode(!assignmentMode));
+    map.on('click', event => {
+        if (!assignmentMode) return;
+        setAssignmentMode(false);
+        clearTemporaryMarker();
+        temporaryMarker = L.circleMarker(event.latlng, {
+            radius: 9, color: '#dc2626', fillColor: '#ef4444', fillOpacity: 0.8, weight: 3,
+        }).addTo(map);
+        latitudeInput.value = event.latlng.lat.toFixed(8);
+        longitudeInput.value = event.latlng.lng.toFixed(8);
+        feedback.classList.add('hidden');
+        modal.showModal();
+    });
+
+    select.addEventListener('change', () => {
+        const option = select.options[select.selectedIndex];
+        warning.classList.toggle('hidden', option?.dataset.hasGps !== '1');
+    });
+    form.querySelector('[data-coordinate-cancel]').addEventListener('click', () => modal.close());
+    modal.addEventListener('close', () => {
+        setAssignmentMode(false);
+        clearTemporaryMarker();
+    });
+
+    form.addEventListener('submit', async event => {
+        event.preventDefault();
+        submitButton.disabled = true;
+        submitButton.innerHTML = '<span class="loading loading-spinner loading-xs"></span> Enregistrement';
+        feedback.className = 'alert hidden py-2 text-sm';
+        try {
+            const response = await fetch(form.dataset.url, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': form.querySelector('[name="csrfmiddlewaretoken"]').value,
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: JSON.stringify({
+                    entity_type: form.dataset.entityType,
+                    entity_id: select.value,
+                    latitude: latitudeInput.value,
+                    longitude: longitudeInput.value
+                })
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || !data.success) throw new Error(data.error || 'Enregistrement impossible.');
+            feedback.className = 'alert alert-success py-2 text-sm';
+            feedback.textContent = data.message;
+            window.setTimeout(() => window.location.reload(), 700);
+        } catch (error) {
+            feedback.className = 'alert alert-error py-2 text-sm';
+            feedback.textContent = error.message || 'Enregistrement impossible.';
+        } finally {
+            submitButton.disabled = false;
+            submitButton.innerHTML = '<i class="fas fa-save mr-1"></i>Enregistrer et vérifier';
+        }
+    });
+};
+</script>

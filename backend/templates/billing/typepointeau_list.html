@@ -1,0 +1,904 @@
+{% extends 'base.html' %}
+{% load hydria_asset_icons %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- En-tête -->
+    <div class="flex justify-between items-center">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">🏷️ {{ title }}</h1>
+            <p class="text-base-content/70">Gestion des types de points d'eau (forage, puits, borne fontaine, etc.)</p>
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'billing:typepointeau_create' %}" class="btn btn-primary">
+                <i class="fas fa-plus mr-2"></i>Nouveau Type
+            </a>
+        </div>
+    </div>
+
+    <!-- Tableau des types -->
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title mb-4">
+                Types de Points d'Eau
+                <span class="badge badge-info">{{ types|length }}</span>
+            </h2>
+
+            {% if types %}
+            <div class="overflow-x-auto">
+                <table class="table table-zebra w-full">
+                    <thead>
+                        <tr>
+                            <th class="w-8"></th>
+                            <th>Nom du Type</th>
+                            <th>Description</th>
+                            <th>Points d'Eau</th>
+                            <th>Créé le</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for type in types %}
+                        <tr class="hover cursor-pointer" onclick="selectTypePointEauRow('{{ type.pk }}')">
+                            <td onclick="event.stopPropagation();">
+                                <input id="type-point-eau-{{ type.pk }}" type="radio" name="selectedTypePointEau" value="{{ type.pk }}" class="peer sr-only"
+                                       onchange="selectTypePointEauRadio('{{ type.pk }}')">
+                                <label for="type-point-eau-{{ type.pk }}" class="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-base-300 bg-base-100 transition peer-checked:border-primary peer-checked:ring-2 peer-checked:ring-primary/30" title="Sélectionner {{ type.nom_type }}">
+                                    <i class="fas {{ type.nom_type|point_eau_icon }} {{ type.nom_type|point_eau_icon_tone }} text-lg" aria-hidden="true"></i>
+                                </label>
+                            </td>
+                            <td class="font-semibold"><i class="fas {{ type.nom_type|point_eau_icon }} {{ type.nom_type|point_eau_icon_tone }} mr-2 text-lg" aria-hidden="true"></i>{{ type.nom_type }}</td>
+                            <td>{{ type.description|truncatewords:10|default:'-' }}</td>
+                            <td class="text-center">
+                                <span class="badge badge-info">{{ type.pointeau_set.count }}</span>
+                            </td>
+                            <td>{{ type.created_at|date:"d/m/Y" }}</td>
+                            <td onclick="event.stopPropagation();">
+                                <div class="flex gap-1">
+                                    <a href="{% url 'billing:typepointeau_detail' type.pk %}" class="btn btn-ghost btn-xs" title="Voir les détails">
+                                        <i class="fas fa-eye"></i>
+                                    </a>
+                                    <a href="{% url 'billing:typepointeau_edit' type.pk %}" class="btn btn-ghost btn-xs" title="Modifier">
+                                        <i class="fas fa-edit"></i>
+                                    </a>
+                                    <a href="{% url 'billing:typepointeau_delete' type.pk %}" class="btn btn-ghost btn-xs text-error" title="Supprimer">
+                                        <i class="fas fa-trash"></i>
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-12">
+                <i class="fas fa-tint text-6xl text-base-content/20 mb-4"></i>
+                <p class="text-xl text-base-content/70 mb-4">Aucun type de point d'eau trouvé</p>
+                <a href="{% url 'billing:typepointeau_create' %}" class="btn btn-primary">
+                    <i class="fas fa-plus mr-2"></i>Créer le premier type
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Section des composants (affichée quand un type est sélectionné) -->
+    <div id="composants-section" class="card bg-base-100 shadow-xl" style="display: none;">
+        <div class="card-body">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="card-title">
+                    🔧 Composants du type : <span id="selected-type-name" class="text-primary"></span>
+                </h2>
+                <div class="flex gap-2">
+                    <button onclick="hideComposantsSection()" class="btn btn-ghost btn-sm">
+                        <i class="fas fa-times mr-2"></i>Fermer
+                    </button>
+                    <button onclick="openComposantModal()" class="btn btn-primary btn-sm">
+                        <i class="fas fa-plus mr-2"></i>Nouveau Composant
+                    </button>
+                </div>
+            </div>
+
+            <div class="alert alert-info mb-4">
+                <i class="fas fa-info-circle"></i>
+                <span>Cliquez sur un composant pour gérer ses points de contrôle spécifiques.</span>
+            </div>
+
+            <!-- Tableau des composants -->
+            <div id="composants-table-container">
+                <div class="text-center py-8">
+                    <div class="loading loading-spinner loading-lg text-primary"></div>
+                    <p class="mt-2">Chargement des composants...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Section des points de contrôle par composant (affichée quand un composant est sélectionné) -->
+    <div id="points-controle-section" class="card bg-base-100 shadow-xl mt-6" style="display: none;">
+        <div class="card-body">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="card-title">
+                    🔍 Points de contrôle du composant : <span id="selected-composant-name" class="text-primary"></span>
+                </h2>
+                <div class="flex gap-2">
+                    <button onclick="hidePointsControleSection()" class="btn btn-ghost btn-sm">
+                        <i class="fas fa-times mr-2"></i>Fermer
+                    </button>
+                    <button onclick="openPointControleModal()" class="btn btn-primary btn-sm">
+                        <i class="fas fa-plus mr-2"></i>Ajouter Point de Contrôle
+                    </button>
+                </div>
+            </div>
+
+            <div class="alert alert-info mb-4">
+                <i class="fas fa-info-circle"></i>
+                <span>Configurez les points de contrôle spécifiques à inspecter pour ce composant lors des inspections.</span>
+            </div>
+
+            <!-- Tableau des points de contrôle -->
+            <div id="points-controle-table-container">
+                <div class="text-center py-8">
+                    <div class="loading loading-spinner loading-lg text-primary"></div>
+                    <p class="mt-2">Chargement des points de contrôle...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal pour créer/modifier composant -->
+<div id="composant-modal" class="modal">
+    <div class="modal-box w-11/12 max-w-3xl">
+        <h3 class="font-bold text-lg" id="modal-title">Nouveau Composant</h3>
+        <form id="composant-form" class="space-y-4 mt-4">
+            <input type="hidden" id="composant-id" name="composant-id">
+            <input type="hidden" id="type-point-eau-id" name="type-point-eau-id">
+
+            <!-- Nom du composant -->
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text font-semibold">Nom du composant *</span>
+                </label>
+                <input type="text" id="nom-composant" name="nom_composant"
+                       class="input input-bordered w-full"
+                       placeholder="Ex: Bassin versant, Périmètre rapproché..." required>
+            </div>
+
+            <!-- Description -->
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text font-semibold">Description</span>
+                </label>
+                <textarea id="description-composant" name="description"
+                          class="textarea textarea-bordered h-24"
+                          placeholder="Description détaillée du composant..."></textarea>
+            </div>
+
+            <!-- Ordre et obligatoire -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Ordre d'affichage</span>
+                    </label>
+                    <input type="number" id="ordre-affichage" name="ordre_affichage"
+                           class="input input-bordered" min="1" max="100" value="1">
+                </div>
+                <div class="form-control">
+                    <label class="label cursor-pointer">
+                        <span class="label-text font-semibold">Obligatoire</span>
+                        <input type="checkbox" id="est-obligatoire" name="est_obligatoire"
+                               class="checkbox checkbox-primary" checked>
+                    </label>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" onclick="closeComposantModal()" class="btn btn-ghost">Annuler</button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <div class="modal-backdrop" onclick="closeComposantModal()"></div>
+</div>
+
+<!-- Modal pour ajouter/modifier point de contrôle -->
+<div id="point-controle-modal" class="modal">
+    <div class="modal-box w-11/12 max-w-4xl">
+        <h3 class="font-bold text-lg" id="point-controle-modal-title">Ajouter Point de Contrôle</h3>
+        <form id="point-controle-form" class="space-y-4 mt-4">
+            <input type="hidden" id="point-controle-composant-id" name="point-controle-composant-id">
+            <input type="hidden" id="composant-id-controle" name="composant-id">
+
+            <!-- Sélection du point de contrôle -->
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text font-semibold">Point de contrôle *</span>
+                </label>
+                <select id="point-de-controle-select" name="point_de_controle" class="select select-bordered w-full" required>
+                    <option value="">Sélectionner un point de contrôle...</option>
+                </select>
+                <label class="label">
+                    <span class="label-text-alt">Choisissez dans la liste des points de contrôle définis</span>
+                </label>
+            </div>
+
+            <!-- Détails du point de contrôle sélectionné -->
+            <div id="point-controle-details" class="hidden">
+                <div class="bg-base-200 p-4 rounded-lg">
+                    <h4 class="font-semibold mb-2">Détails du point de contrôle :</h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                        <div>
+                            <strong>Description :</strong>
+                            <p id="point-controle-description" class="text-gray-600"></p>
+                        </div>
+                        <div>
+                            <strong>Type de résultat :</strong>
+                            <span id="point-controle-type" class="badge badge-outline"></span>
+                        </div>
+                        <div>
+                            <strong>Unité :</strong>
+                            <span id="point-controle-unite" class="text-gray-600"></span>
+                        </div>
+                        <div>
+                            <strong>Valeurs de référence :</strong>
+                            <span id="point-controle-valeurs" class="text-gray-600"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Configuration spécifique -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Ordre d'affichage</span>
+                    </label>
+                    <input type="number" id="ordre-affichage-controle" name="ordre_affichage"
+                           class="input input-bordered" min="1" max="100" value="1">
+                </div>
+                <div class="form-control">
+                    <label class="label cursor-pointer">
+                        <span class="label-text font-semibold">Obligatoire</span>
+                        <input type="checkbox" id="est-obligatoire-controle" name="est_obligatoire"
+                               class="checkbox checkbox-primary" checked>
+                    </label>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" onclick="closePointControleModal()" class="btn btn-ghost">Annuler</button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <div class="modal-backdrop" onclick="closePointControleModal()"></div>
+</div>
+
+<script>
+let selectedTypeId = null;
+let selectedTypeName = '';
+let selectedComposantId = null;
+let selectedComposantName = '';
+
+// Fonction pour gérer la sélection via radio button
+function selectTypePointEauRadio(typeId) {
+    console.log('📻 Radio sélectionné pour type point d\'eau:', typeId);
+    selectTypePointEau(typeId);
+}
+
+// Fonction pour gérer le clic sur la ligne
+function selectTypePointEauRow(typeId) {
+    console.log('👆 Ligne cliquée pour type point d\'eau:', typeId);
+
+    // Cocher le radio button
+    const radioButton = document.querySelector(`input[value="${typeId}"]`);
+    if (radioButton) {
+        radioButton.checked = true;
+    }
+
+    selectTypePointEau(typeId);
+}
+
+// Fonction commune pour sélectionner un type
+function selectTypePointEau(typeId) {
+    // Mettre à jour l'affichage visuel - retirer la sélection précédente
+    document.querySelectorAll('tbody tr').forEach(row => {
+        row.classList.remove('bg-accent', 'text-accent-content');
+    });
+
+    // Trouver et sélectionner la bonne ligne
+    const selectedRow = document.querySelector(`input[value="${typeId}"]`).closest('tr');
+    if (selectedRow) {
+        selectedRow.classList.add('bg-accent', 'text-accent-content');
+
+        // Récupérer le nom du type depuis la ligne sélectionnée
+        selectedTypeName = selectedRow.querySelector('td:nth-child(2)').textContent.trim();
+        selectedTypeName = selectedTypeName.replace('🏷️', '').trim(); // Enlever l'icône
+    }
+
+    selectedTypeId = typeId;
+
+    // Afficher la section des composants
+    showComposantsSection();
+
+    // Charger les composants
+    loadComposants(typeId);
+}
+
+function showComposantsSection() {
+    document.getElementById('composants-section').style.display = 'block';
+    document.getElementById('selected-type-name').textContent = selectedTypeName;
+
+    // Scroll vers la section
+    document.getElementById('composants-section').scrollIntoView({ behavior: 'smooth' });
+}
+
+function hideComposantsSection() {
+    document.getElementById('composants-section').style.display = 'none';
+
+    // Décocher le radio button
+    const checkedRadio = document.querySelector('input[name="selectedTypePointEau"]:checked');
+    if (checkedRadio) {
+        checkedRadio.checked = false;
+        checkedRadio.closest('tr').classList.remove('bg-accent', 'text-accent-content');
+    }
+
+    selectedTypeId = null;
+}
+
+function loadComposants(typeId) {
+    const container = document.getElementById('composants-table-container');
+
+    // Afficher le loading
+    container.innerHTML = `
+        <div class="text-center py-8">
+            <div class="loading loading-spinner loading-lg text-primary"></div>
+            <p class="mt-2">Chargement des composants...</p>
+        </div>
+    `;
+
+    // Charger les composants via AJAX
+    fetch(`/facturation/api/composants-type-point-eau/${typeId}/`)
+        .then(response => response.json())
+        .then(data => {
+            displayComposants(data.composants);
+        })
+        .catch(error => {
+            console.error('Erreur lors du chargement des composants:', error);
+            container.innerHTML = `
+                <div class="text-center py-8">
+                    <i class="fas fa-exclamation-triangle text-error text-4xl mb-4"></i>
+                    <p class="text-error">Erreur lors du chargement des composants</p>
+                </div>
+            `;
+        });
+}
+
+function displayComposants(composants) {
+    const container = document.getElementById('composants-table-container');
+
+    if (composants.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-8">
+                <i class="fas fa-puzzle-piece text-6xl text-base-content/20 mb-4"></i>
+                <p class="text-xl text-base-content/70 mb-4">Aucun composant défini</p>
+                <p class="text-base-content/50">Ce type n'a pas encore de composants configurés.</p>
+            </div>
+        `;
+        return;
+    }
+
+    let tableHTML = `
+        <div class="overflow-x-auto">
+            <table class="table table-zebra w-full">
+                <thead>
+                    <tr>
+                        <th>Ordre</th>
+                        <th>Nom du Composant</th>
+                        <th>Description</th>
+                        <th>Obligatoire</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+
+    composants.forEach(composant => {
+        const obligatoireBadge = composant.est_obligatoire
+            ? '<span class="badge badge-error">Obligatoire</span>'
+            : '<span class="badge badge-warning">Optionnel</span>';
+
+        tableHTML += `
+            <tr class="hover:bg-primary/10 cursor-pointer transition-colors"
+                onclick="selectComposant('${composant.id}', '${composant.nom_composant}')"
+                title="Cliquer pour gérer les points de contrôle de ce composant">
+                <td class="text-center">
+                    <span class="badge badge-neutral">${composant.ordre_affichage}</span>
+                </td>
+                <td class="font-semibold">
+                    <i class="fas fa-cog text-primary mr-2"></i>
+                    ${composant.nom_composant}
+                    <i class="fas fa-arrow-right text-primary ml-2 opacity-50"></i>
+                </td>
+                <td>${composant.description || '-'}</td>
+                <td class="text-center">${obligatoireBadge}</td>
+                <td onclick="event.stopPropagation()">
+                    <div class="flex gap-1">
+                        <button onclick="editComposant('${composant.id}')" class="btn btn-ghost btn-xs" title="Modifier">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button onclick="deleteComposant('${composant.id}', '${composant.nom_composant}')"
+                                class="btn btn-ghost btn-xs text-error" title="Supprimer">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    });
+
+    tableHTML += `
+                </tbody>
+            </table>
+        </div>
+    `;
+
+    container.innerHTML = tableHTML;
+}
+
+// Gestion du modal
+function openComposantModal(composantData = null) {
+    document.getElementById('type-point-eau-id').value = selectedTypeId;
+
+    if (composantData) {
+        // Mode édition
+        document.getElementById('modal-title').textContent = 'Modifier le Composant';
+        document.getElementById('composant-id').value = composantData.id;
+        document.getElementById('nom-composant').value = composantData.nom_composant;
+        document.getElementById('description-composant').value = composantData.description || '';
+        document.getElementById('ordre-affichage').value = composantData.ordre_affichage;
+        document.getElementById('est-obligatoire').checked = composantData.est_obligatoire;
+    } else {
+        // Mode création
+        document.getElementById('modal-title').textContent = 'Nouveau Composant';
+        document.getElementById('composant-form').reset();
+        // reset() ne remet pas à zéro un champ caché : sans cela, un id resté d'une modification
+        // précédente ferait partir la création vers /edit/ (404, ou écrasement de l'ancien composant)
+        document.getElementById('composant-id').value = '';
+        document.getElementById('type-point-eau-id').value = selectedTypeId;
+        document.getElementById('ordre-affichage').value = 1;
+        document.getElementById('est-obligatoire').checked = true;
+    }
+
+    document.getElementById('composant-modal').classList.add('modal-open');
+}
+
+function closeComposantModal() {
+    document.getElementById('composant-modal').classList.remove('modal-open');
+    document.getElementById('composant-form').reset();
+    document.getElementById('composant-id').value = '';
+}
+
+// Soumission du formulaire
+document.getElementById('composant-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(this);
+    const composantId = document.getElementById('composant-id').value;
+
+    const url = composantId
+        ? `/facturation/api/composants-type-point-eau/${selectedTypeId}/${composantId}/edit/`
+        : `/facturation/api/composants-type-point-eau/${selectedTypeId}/create/`;
+
+    fetch(url, {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            closeComposantModal();
+            loadComposants(selectedTypeId);
+            // Afficher un message de succès
+            showMessage(data.message, 'success');
+        } else {
+            showMessage(data.message, 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        showMessage('Erreur lors de l\'enregistrement', 'error');
+    });
+});
+
+// Gestionnaire pour le formulaire de point de contrôle
+document.getElementById('point-controle-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(this);
+    const pointControleComposantId = document.getElementById('point-controle-composant-id').value;
+
+    const url = pointControleComposantId
+        ? `/facturation/api/composants-type-point-eau/${selectedComposantId}/points-controle/${pointControleComposantId}/edit/`
+        : `/facturation/api/composants-type-point-eau/${selectedComposantId}/points-controle/create/`;
+
+    fetch(url, {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            closePointControleModal();
+            loadPointsControleComposant(selectedComposantId);
+            // Afficher un message de succès
+            showMessage(data.message, 'success');
+        } else {
+            showMessage(data.message, 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        showMessage('Erreur lors de l\'enregistrement', 'error');
+    });
+});
+
+function editComposant(composantId) {
+    // Récupérer les données du composant
+    fetch(`/facturation/api/composants-type-point-eau/${selectedTypeId}/${composantId}/`)
+        .then(response => response.json())
+        .then(data => {
+            openComposantModal(data.composant);
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            showMessage('Erreur lors du chargement du composant', 'error');
+        });
+}
+
+function deleteComposant(composantId, nomComposant) {
+    if (confirm(`Êtes-vous sûr de vouloir supprimer le composant "${nomComposant}" ?`)) {
+        fetch(`/facturation/api/composants-type-point-eau/${selectedTypeId}/${composantId}/delete/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                loadComposants(selectedTypeId);
+                showMessage(data.message, 'success');
+            } else {
+                showMessage(data.message, 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            showMessage('Erreur lors de la suppression', 'error');
+        });
+    }
+}
+
+// ========================================
+// NOUVELLES FONCTIONS POUR GESTION POINTS DE CONTRÔLE PAR COMPOSANT
+// ========================================
+
+// Fonction pour sélectionner un composant et afficher ses points de contrôle
+function selectComposant(composantId, composantName) {
+    console.log('🔧 Composant sélectionné:', composantId, composantName);
+
+    selectedComposantId = composantId;
+    selectedComposantName = composantName;
+
+    // Mettre à jour l'affichage
+    document.getElementById('selected-composant-name').textContent = composantName;
+
+    // Afficher la section points de contrôle
+    document.getElementById('points-controle-section').style.display = 'block';
+
+    // Charger les points de contrôle du composant
+    loadPointsControleComposant(composantId);
+}
+
+// Fonction pour charger les points de contrôle d'un composant
+function loadPointsControleComposant(composantId) {
+    const container = document.getElementById('points-controle-table-container');
+
+    container.innerHTML = `
+        <div class="text-center py-8">
+            <div class="loading loading-spinner loading-lg text-primary"></div>
+            <p class="mt-2">Chargement des points de contrôle...</p>
+        </div>
+    `;
+
+    fetch(`/facturation/api/composants-type-point-eau/${composantId}/points-controle/`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                displayPointsControleTable(data.points_controle);
+            } else {
+                container.innerHTML = `
+                    <div class="text-center py-8 text-error">
+                        <i class="fas fa-exclamation-triangle text-4xl mb-2"></i>
+                        <p>Erreur lors du chargement : ${data.error}</p>
+                    </div>
+                `;
+            }
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            container.innerHTML = `
+                <div class="text-center py-8 text-error">
+                    <i class="fas fa-exclamation-triangle text-4xl mb-2"></i>
+                    <p>Erreur lors du chargement des points de contrôle</p>
+                </div>
+            `;
+        });
+}
+
+// Fonction pour afficher le tableau des points de contrôle
+function displayPointsControleTable(pointsControle) {
+    const container = document.getElementById('points-controle-table-container');
+
+    if (pointsControle.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-8">
+                <i class="fas fa-search text-6xl text-gray-300 mb-4"></i>
+                <h3 class="text-xl font-semibold mb-2">Aucun point de contrôle configuré</h3>
+                <p class="text-gray-500 mb-4">Ce composant n'a pas encore de points de contrôle définis.</p>
+                <button onclick="openPointControleModal()" class="btn btn-primary">
+                    <i class="fas fa-plus mr-2"></i>Ajouter le premier point de contrôle
+                </button>
+            </div>
+        `;
+        return;
+    }
+
+    let tableHTML = `
+        <div class="overflow-x-auto">
+            <table class="table table-zebra w-full">
+                <thead>
+                    <tr>
+                        <th>Point de Contrôle</th>
+                        <th>Type</th>
+                        <th>Unité</th>
+                        <th>Valeurs Référence</th>
+                        <th>Ordre</th>
+                        <th>Obligatoire</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+
+    pointsControle.forEach(pc => {
+        const obligatoireBadge = pc.est_obligatoire
+            ? '<span class="badge badge-error">Obligatoire</span>'
+            : '<span class="badge badge-warning">Optionnel</span>';
+
+        const valeursRef = pc.valeur_min || pc.valeur_max
+            ? `${pc.valeur_min || 'Min'} - ${pc.valeur_max || 'Max'}`
+            : '-';
+
+        tableHTML += `
+            <tr class="hover">
+                <td>
+                    <div class="font-semibold">${pc.nom}</div>
+                    <div class="text-xs text-gray-500">${pc.description}</div>
+                </td>
+                <td><span class="badge badge-outline">${pc.type_resultat}</span></td>
+                <td class="text-center">${pc.unite || '-'}</td>
+                <td class="text-center">${valeursRef}</td>
+                <td class="text-center">
+                    <span class="badge badge-neutral">${pc.ordre_affichage}</span>
+                </td>
+                <td class="text-center">${obligatoireBadge}</td>
+                <td>
+                    <div class="flex gap-1">
+                        <button onclick="editPointControleComposant('${pc.id}')" class="btn btn-ghost btn-xs" title="Modifier">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button onclick="deletePointControleComposant('${pc.id}', '${pc.nom}')" class="btn btn-ghost btn-xs text-error" title="Supprimer">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    });
+
+    tableHTML += `
+                </tbody>
+            </table>
+        </div>
+    `;
+
+    container.innerHTML = tableHTML;
+}
+
+// Fonction pour fermer la section points de contrôle
+function hidePointsControleSection() {
+    document.getElementById('points-controle-section').style.display = 'none';
+    selectedComposantId = null;
+    selectedComposantName = '';
+}
+
+// Fonction pour ouvrir le modal d'ajout de point de contrôle
+function openPointControleModal() {
+    if (!selectedComposantId) {
+        alert('Aucun composant sélectionné');
+        return;
+    }
+
+    // Réinitialiser le formulaire
+    document.getElementById('point-controle-form').reset();
+    document.getElementById('point-controle-composant-id').value = '';
+    document.getElementById('composant-id-controle').value = selectedComposantId;
+    document.getElementById('point-controle-modal-title').textContent = 'Ajouter Point de Contrôle';
+
+    // Réactiver le select en mode création
+    document.getElementById('point-de-controle-select').disabled = false;
+
+    // Réinitialiser les valeurs par défaut
+    document.getElementById('ordre-affichage-controle').value = 1;
+    document.getElementById('est-obligatoire-controle').checked = true;
+
+    // Charger les points de contrôle disponibles
+    loadPointsControleDisponibles();
+
+    // Ouvrir le modal
+    document.getElementById('point-controle-modal').classList.add('modal-open');
+}
+
+// Fonction pour charger la liste des points de contrôle disponibles
+function loadPointsControleDisponibles() {
+    const select = document.getElementById('point-de-controle-select');
+    select.innerHTML = '<option value="">Chargement...</option>';
+
+    fetch('/facturation/api/points-controle/')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                select.innerHTML = '<option value="">Sélectionner un point de contrôle...</option>';
+                data.points_controle.forEach(pc => {
+                    const option = document.createElement('option');
+                    option.value = pc.id;
+                    option.textContent = `${pc.nom} (${pc.type_resultat})`;
+                    option.dataset.description = pc.description;
+                    option.dataset.type = pc.type_resultat;
+                    option.dataset.unite = pc.unite || '';
+                    option.dataset.valeurMin = pc.valeur_min || '';
+                    option.dataset.valeurMax = pc.valeur_max || '';
+                    select.appendChild(option);
+                });
+            }
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            select.innerHTML = '<option value="">Erreur de chargement</option>';
+        });
+}
+
+// Fonction pour fermer le modal de point de contrôle
+function closePointControleModal() {
+    document.getElementById('point-controle-modal').classList.remove('modal-open');
+    document.getElementById('point-controle-details').classList.add('hidden');
+}
+
+// Gestion de l'affichage des détails du point de contrôle sélectionné
+document.addEventListener('DOMContentLoaded', function() {
+    const select = document.getElementById('point-de-controle-select');
+    const details = document.getElementById('point-controle-details');
+
+    select?.addEventListener('change', function() {
+        const selectedOption = this.options[this.selectedIndex];
+
+        if (this.value && selectedOption.dataset.description) {
+            document.getElementById('point-controle-description').textContent = selectedOption.dataset.description;
+            document.getElementById('point-controle-type').textContent = selectedOption.dataset.type;
+            document.getElementById('point-controle-unite').textContent = selectedOption.dataset.unite || 'Aucune';
+
+            const valeurs = selectedOption.dataset.valeurMin || selectedOption.dataset.valeurMax
+                ? `${selectedOption.dataset.valeurMin || 'Min'} - ${selectedOption.dataset.valeurMax || 'Max'}`
+                : 'Aucune';
+            document.getElementById('point-controle-valeurs').textContent = valeurs;
+
+            details.classList.remove('hidden');
+        } else {
+            details.classList.add('hidden');
+        }
+    });
+});
+
+// Fonction pour éditer un point de contrôle du composant
+function editPointControleComposant(pointControleComposantId) {
+    fetch(`/facturation/api/composants-type-point-eau/${selectedComposantId}/points-controle/${pointControleComposantId}/edit/`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const pc = data.point_controle;
+
+                // Pré-remplir le formulaire
+                document.getElementById('point-controle-modal-title').textContent = 'Modifier Point de Contrôle';
+                document.getElementById('point-controle-composant-id').value = pointControleComposantId;
+                document.getElementById('composant-id-controle').value = selectedComposantId;
+                document.getElementById('ordre-affichage-controle').value = pc.ordre_affichage;
+                document.getElementById('est-obligatoire-controle').checked = pc.est_obligatoire;
+
+                // Charger les points de contrôle et pré-sélectionner le bon
+                loadPointsControleDisponibles();
+                setTimeout(() => {
+                    document.getElementById('point-de-controle-select').value = pc.point_de_controle_id;
+                    document.getElementById('point-de-controle-select').dispatchEvent(new Event('change'));
+                    document.getElementById('point-de-controle-select').disabled = true; // Ne pas permettre de changer le point de contrôle en mode édition
+                }, 100);
+
+                // Ouvrir le modal
+                document.getElementById('point-controle-modal').classList.add('modal-open');
+            } else {
+                showMessage('Erreur lors du chargement du point de contrôle', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            showMessage('Erreur lors du chargement du point de contrôle', 'error');
+        });
+}
+
+// Fonction pour supprimer un point de contrôle du composant
+function deletePointControleComposant(pointControleComposantId, nomPointControle) {
+    if (confirm(`Êtes-vous sûr de vouloir retirer le point de contrôle "${nomPointControle}" de ce composant ?`)) {
+        fetch(`/facturation/api/composants-type-point-eau/${selectedComposantId}/points-controle/${pointControleComposantId}/delete/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                loadPointsControleComposant(selectedComposantId);
+                showMessage(data.message, 'success');
+            } else {
+                showMessage(data.message || 'Erreur lors de la suppression', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            showMessage('Erreur lors de la suppression', 'error');
+        });
+    }
+}
+
+function showMessage(message, type) {
+    // Créer un toast simple
+    const toast = document.createElement('div');
+    toast.className = `alert ${type === 'success' ? 'alert-success' : 'alert-error'} fixed top-4 right-4 z-50 w-auto shadow-lg`;
+    toast.innerHTML = `
+        <div>
+            <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'} mr-2"></i>
+            ${message}
+        </div>
+    `;
+
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+        toast.remove();
+    }, 3000);
+}
+</script>
+{% endblock %}

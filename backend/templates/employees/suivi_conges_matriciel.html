@@ -1,0 +1,727 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Suivi Matriciel des Congés{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- En-tête -->
+    <div class="mb-6 flex justify-between items-center">
+        <div>
+            <h1 class="text-3xl font-bold">Suivi Matriciel des Congés</h1>
+            <p class="text-base-content/70 mt-2">
+                Vue calendrier pour suivre les congés par base et par poste
+                {% if user_organisation %}
+                <span class="badge badge-primary ml-2">{{ user_organisation.nom_organisation }}</span>
+                {% endif %}
+            </p>
+        </div>
+        <a href="{% url 'employees:suivi_conges' %}" class="btn btn-outline">
+            <i class="fas fa-list mr-2"></i>Vue Liste
+        </a>
+    </div>
+
+    <!-- Filtres et Navigation -->
+    <div class="card bg-base-100 shadow-xl mb-6">
+        <div class="card-body">
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                <!-- Base -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Base</span>
+                    </label>
+                    <select id="filterBase" class="select select-bordered">
+                        <option value="">Toutes les bases</option>
+                        {% for base in bases %}
+                        <option value="{{ base.id }}">{{ base.nom_base }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Vue -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Vue</span>
+                    </label>
+                    <select id="filterVue" class="select select-bordered">
+                        <option value="mensuel">Mensuel (jours)</option>
+                        <option value="annuel">Annuel (mois)</option>
+                    </select>
+                </div>
+
+                <!-- Mois (visible uniquement en vue mensuelle) -->
+                <div class="form-control" id="filtre-mois">
+                    <label class="label">
+                        <span class="label-text">Mois</span>
+                    </label>
+                    <select id="filterMois" class="select select-bordered">
+                        <option value="1">Janvier</option>
+                        <option value="2">Février</option>
+                        <option value="3">Mars</option>
+                        <option value="4">Avril</option>
+                        <option value="5">Mai</option>
+                        <option value="6">Juin</option>
+                        <option value="7">Juillet</option>
+                        <option value="8">Août</option>
+                        <option value="9">Septembre</option>
+                        <option value="10">Octobre</option>
+                        <option value="11">Novembre</option>
+                        <option value="12">Décembre</option>
+                    </select>
+                </div>
+
+                <!-- Année -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Année</span>
+                    </label>
+                    <input type="number" id="filterAnnee" class="input input-bordered" value="{{ annee_defaut }}" min="2020" max="2030">
+                </div>
+
+                <!-- Boutons Navigation -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">&nbsp;</span>
+                    </label>
+                    <div class="flex gap-2">
+                        <button onclick="naviguerPeriode(-1)" class="btn btn-outline flex-1">
+                            <i class="fas fa-chevron-left"></i>
+                        </button>
+                        <button onclick="chargerMatrice()" class="btn btn-primary flex-1">
+                            <i class="fas fa-sync mr-1"></i>
+                        </button>
+                        <button onclick="naviguerPeriode(1)" class="btn btn-outline flex-1">
+                            <i class="fas fa-chevron-right"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Légende -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body py-3">
+            <div class="flex flex-wrap gap-4 text-sm">
+                <div class="flex items-center gap-2">
+                    <div class="w-6 h-6 rounded bg-success"></div>
+                    <span>Congé</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-6 h-6 rounded bg-warning"></div>
+                    <span>Permission (demi-journée)</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-6 h-6 rounded bg-info"></div>
+                    <span>Récupération</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-6 h-6 rounded bg-primary"></div>
+                    <span>Repos</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-6 h-6 rounded bg-secondary"></div>
+                    <span>Jour férié</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-6 h-6 rounded bg-base-300"></div>
+                    <span>Week-end</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-6 h-6 rounded border-2 border-base-content/20"></div>
+                    <span>Travail</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Zone de chargement -->
+    <div id="loading" class="hidden text-center py-8">
+        <span class="loading loading-spinner loading-lg text-primary"></span>
+        <p class="mt-4 text-base-content/70">Chargement du calendrier...</p>
+    </div>
+
+    <!-- Matrice des congés -->
+    <div id="matrice-container" class="card bg-base-100 shadow-xl overflow-x-auto">
+        <div class="card-body p-0">
+            <div id="matrice-content">
+                <!-- Sera rempli dynamiquement -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentMois = {{ mois_defaut }};
+let currentAnnee = {{ annee_defaut }};
+
+// Initialisation
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('filterMois').value = currentMois;
+    document.getElementById('filterAnnee').value = currentAnnee;
+    chargerMatrice();
+
+    // Event listener pour vue
+    document.getElementById('filterVue').addEventListener('change', () => {
+        const vue = document.getElementById('filterVue').value;
+        const filtreMois = document.getElementById('filtre-mois');
+        filtreMois.style.display = vue === 'mensuel' ? 'block' : 'none';
+        chargerMatrice();
+    });
+});
+
+async function chargerMatrice() {
+    document.getElementById('loading').classList.remove('hidden');
+    document.getElementById('matrice-content').innerHTML = '';
+
+    const baseId = document.getElementById('filterBase').value;
+    const vue = document.getElementById('filterVue').value;
+    const mois = parseInt(document.getElementById('filterMois').value);
+    const annee = parseInt(document.getElementById('filterAnnee').value);
+
+    const params = new URLSearchParams({
+        base_id: baseId,
+        vue: vue,
+        mois: mois,
+        annee: annee
+    });
+
+    try {
+        const response = await fetch(`{% url 'employees:api_conges_matriciel' %}?${params}`);
+        const data = await response.json();
+
+        if (data.success) {
+            afficherMatrice(data);
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors du chargement des données');
+    } finally {
+        document.getElementById('loading').classList.add('hidden');
+    }
+}
+
+function afficherMatrice(data) {
+    const container = document.getElementById('matrice-content');
+
+    if (!data.employes_par_base || data.employes_par_base.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-8 text-base-content/50">
+                Aucun employé trouvé pour cette période
+            </div>
+        `;
+        return;
+    }
+
+    let html = `
+        <div class="p-4">
+            <h2 class="text-xl font-bold mb-4">${data.mois_nom}</h2>
+        </div>
+    `;
+
+    // Pour chaque base
+    data.employes_par_base.forEach(base => {
+        html += `
+            <div class="mb-6">
+                <!-- En-tête de base -->
+                <div class="bg-primary text-primary-content px-4 py-2 font-bold sticky left-0">
+                    <i class="fas fa-building mr-2"></i>
+                    ${base.base_nom} (${base.employes.length} employé${base.employes.length > 1 ? 's' : ''})
+                </div>
+
+                <!-- Tableau scrollable -->
+                <div class="overflow-x-auto">
+                    <table class="table table-sm table-pin-rows">
+                        <thead>
+                            <tr class="bg-base-200">
+                                <th class="sticky left-0 bg-base-200 z-10 min-w-[200px]">Employé / Poste</th>
+                                ${data.jours.map(jour => `
+                                    <th class="text-center min-w-[40px] ${jour.est_weekend ? 'bg-base-300' : ''}">
+                                        <div class="text-xs">${jour.nom_jour}</div>
+                                        <div class="font-bold">${jour.numero}</div>
+                                    </th>
+                                `).join('')}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${base.employes.map(employe => `
+                                <tr class="hover">
+                                    <td class="sticky left-0 bg-base-100 z-10">
+                                        <div class="font-semibold">${employe.nom_complet}</div>
+                                        <div class="text-xs text-base-content/70">${employe.poste}</div>
+                                    </td>
+                                    ${data.jours.map(jour => {
+                                        const planning = employe.plannings[jour.date];
+                                        let cellClass = 'text-center';
+                                        let cellContent = '';
+                                        let bgClass = '';
+
+                                        if (planning) {
+                                            switch(planning.type) {
+                                                case 'conge':
+                                                    bgClass = 'bg-success text-success-content';
+                                                    cellContent = '<i class="fas fa-umbrella-beach"></i>';
+                                                    break;
+                                                case 'permission':
+                                                    bgClass = 'bg-warning text-warning-content';
+                                                    cellContent = '<i class="fas fa-clock"></i>';
+                                                    break;
+                                                case 'recuperation':
+                                                    bgClass = 'bg-info text-info-content';
+                                                    cellContent = '<i class="fas fa-exchange-alt"></i>';
+                                                    break;
+                                                case 'repos':
+                                                    bgClass = 'bg-primary text-primary-content';
+                                                    cellContent = '<i class="fas fa-bed"></i>';
+                                                    break;
+                                                case 'ferie':
+                                                    bgClass = 'bg-secondary text-secondary-content';
+                                                    cellContent = '<i class="fas fa-star"></i>';
+                                                    break;
+                                                default:
+                                                    bgClass = 'border border-base-content/20';
+                                                    cellContent = '<i class="fas fa-briefcase text-base-content/50"></i>';
+                                            }
+                                        } else if (jour.est_weekend) {
+                                            bgClass = 'bg-base-300';
+                                            cellContent = '';
+                                        } else {
+                                            cellContent = '';
+                                        }
+
+                                        // Rendre la cellule cliquable pour créer/modifier un congé
+                                        const clickHandler = `onclick="handleCellClick('${employe.id}', '${jour.date}', ${planning ? `'${planning.type}'` : 'null'})"`;
+                                        const cursorClass = 'cursor-pointer hover:opacity-80';
+
+                                        return `<td class="${cellClass} ${bgClass} ${cursorClass}" ${clickHandler} title="${planning ? planning.activite : 'Cliquer pour ajouter un congé'}">${cellContent}</td>`;
+                                    }).join('')}
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+}
+
+function naviguerPeriode(direction) {
+    const vue = document.getElementById('filterVue').value;
+
+    if (vue === 'mensuel') {
+        currentMois += direction;
+        if (currentMois > 12) {
+            currentMois = 1;
+            currentAnnee++;
+        } else if (currentMois < 1) {
+            currentMois = 12;
+            currentAnnee--;
+        }
+        document.getElementById('filterMois').value = currentMois;
+    } else {
+        currentAnnee += direction;
+    }
+
+    document.getElementById('filterAnnee').value = currentAnnee;
+    chargerMatrice();
+}
+
+// ==================== GESTION INTERACTIVE DES CONGÉS ====================
+
+let selectedEmployeId = null;
+let selectedDate = null;
+let selectedType = null;
+
+// Gérer le clic sur une cellule du calendrier
+function handleCellClick(employeId, date, currentType) {
+    selectedEmployeId = employeId;
+    selectedDate = date;
+    selectedType = currentType;
+
+    // Déterminer si c'est un jour de congé ou un jour de travail
+    const typesConges = ['conge', 'permission', 'recuperation', 'repos', 'ferie'];
+
+    if (currentType && typesConges.includes(currentType)) {
+        // C'est un jour de congé : ouvrir le modal de gestion des congés
+        openEditCongeModal();
+    } else if (currentType) {
+        // C'est un jour de travail : ouvrir le modal de détails
+        openPlanningDetailsModal(employeId, date);
+    } else {
+        // Cellule vide : créer une nouvelle demande de congé
+        openCreateCongeModal();
+    }
+}
+
+// Modal de création de congé
+function openCreateCongeModal() {
+    document.getElementById('modal-title').textContent = 'Nouvelle demande de congé';
+    document.getElementById('date-debut').value = selectedDate;
+    document.getElementById('date-fin').value = selectedDate;
+    document.getElementById('employe-id').value = selectedEmployeId;
+    document.getElementById('action-type').value = 'create';
+
+    // Réinitialiser les champs
+    document.getElementById('type-conge').value = 'conge';
+    document.getElementById('motif').value = '';
+
+    // Masquer le bouton supprimer en mode création
+    document.getElementById('btn-delete').style.display = 'none';
+
+    // Ouvrir le modal
+    document.getElementById('conge-modal').showModal();
+}
+
+// Modal d'édition de congé
+function openEditCongeModal() {
+    document.getElementById('modal-title').textContent = 'Modifier le congé';
+    document.getElementById('date-debut').value = selectedDate;
+    document.getElementById('date-fin').value = selectedDate;
+    document.getElementById('employe-id').value = selectedEmployeId;
+    document.getElementById('action-type').value = 'edit';
+
+    // Pré-remplir le type
+    const typeMap = {
+        'conge': 'conge',
+        'permission': 'permission',
+        'recuperation': 'recuperation',
+        'repos': 'repos'
+    };
+    document.getElementById('type-conge').value = typeMap[selectedType] || 'conge';
+
+    // Afficher le bouton supprimer en mode édition
+    document.getElementById('btn-delete').style.display = 'inline-flex';
+
+    // Ouvrir le modal
+    document.getElementById('conge-modal').showModal();
+}
+
+// Soumettre le formulaire de congé
+async function submitCongeForm(event) {
+    event.preventDefault();
+
+    const actionType = document.getElementById('action-type').value;
+    const formData = {
+        employe_id: document.getElementById('employe-id').value,
+        date_debut: document.getElementById('date-debut').value,
+        date_fin: document.getElementById('date-fin').value,
+        type_conge: document.getElementById('type-conge').value,
+        motif: document.getElementById('motif').value
+    };
+
+    try {
+        const url = actionType === 'create'
+            ? '{% url "employees:api_creer_demande_conge_rapide" %}'
+            : '{% url "employees:api_modifier_conge_matriciel" %}';
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(formData)
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(data.message);
+            document.getElementById('conge-modal').close();
+            chargerMatrice(); // Recharger la matrice
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors de la soumission');
+    }
+}
+
+// Supprimer un congé
+async function deleteConge() {
+    if (!confirm('Êtes-vous sûr de vouloir supprimer ce congé ?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('{% url "employees:api_supprimer_conge_matriciel" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                employe_id: selectedEmployeId,
+                date: selectedDate
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(data.message);
+            document.getElementById('conge-modal').close();
+            chargerMatrice();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors de la suppression');
+    }
+}
+
+// Ouvrir le modal de détails du planning (jour de travail)
+async function openPlanningDetailsModal(employeId, date) {
+    try {
+        // Appeler l'API pour récupérer les détails
+        console.log('Fetching planning details for:', employeId, date);
+        const response = await fetch(`/api/details-planning/${employeId}/${date}/`);
+        console.log('Response status:', response.status);
+
+        const data = await response.json();
+        console.log('Response data:', data);
+
+        if (data.success) {
+            const details = data.details;
+
+            // Remplir les champs du modal
+            document.getElementById('details-employe').textContent =
+                `${details.employe.nom_complet} - ${details.employe.poste}`;
+
+            // Formater la date en français
+            const dateObj = new Date(details.date + 'T00:00:00');
+            const dateFormatted = dateObj.toLocaleDateString('fr-FR', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+            document.getElementById('details-date').textContent = dateFormatted;
+
+            // Activité
+            document.getElementById('details-activite').textContent = details.activite.nom;
+            const activityDesc = document.getElementById('details-activite-desc');
+            if (details.activite.description) {
+                activityDesc.textContent = details.activite.description;
+                activityDesc.style.display = 'block';
+            } else {
+                activityDesc.style.display = 'none';
+            }
+
+            // Ouvrage
+            const ouvrageSection = document.getElementById('details-ouvrage-section');
+            if (details.ouvrage) {
+                document.getElementById('details-ouvrage').textContent = details.ouvrage.nom;
+                const ouvrageType = document.getElementById('details-ouvrage-type');
+                if (details.ouvrage.type) {
+                    ouvrageType.textContent = details.ouvrage.type;
+                    ouvrageType.style.display = 'block';
+                } else {
+                    ouvrageType.style.display = 'none';
+                }
+                ouvrageSection.style.display = 'block';
+            } else {
+                ouvrageSection.style.display = 'none';
+            }
+
+            // Remarques
+            const remarquesSection = document.getElementById('details-remarques-section');
+            if (details.remarques) {
+                document.getElementById('details-remarques').textContent = details.remarques;
+                remarquesSection.style.display = 'block';
+            } else {
+                remarquesSection.style.display = 'none';
+            }
+
+            // Statut de validation
+            const badgeValide = document.getElementById('details-valide');
+            if (details.valide) {
+                badgeValide.textContent = 'Validé';
+                badgeValide.className = 'badge badge-success';
+            } else {
+                badgeValide.textContent = 'En attente de validation';
+                badgeValide.className = 'badge badge-warning';
+            }
+
+            // Ouvrir le modal
+            document.getElementById('planning-details-modal').showModal();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors de la récupération des détails du planning');
+    }
+}
+
+// Helper pour récupérer le CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+</script>
+
+<!-- Modal de gestion des congés -->
+<dialog id="conge-modal" class="modal">
+    <div class="modal-box">
+        <h3 id="modal-title" class="font-bold text-lg mb-4">Nouvelle demande de congé</h3>
+
+        <form onsubmit="submitCongeForm(event)">
+            <input type="hidden" id="employe-id">
+            <input type="hidden" id="action-type" value="create">
+
+            <!-- Dates -->
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Date début</span>
+                    </label>
+                    <input type="date" id="date-debut" class="input input-bordered" required>
+                </div>
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Date fin</span>
+                    </label>
+                    <input type="date" id="date-fin" class="input input-bordered" required>
+                </div>
+            </div>
+
+            <!-- Type de congé -->
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Type</span>
+                </label>
+                <select id="type-conge" class="select select-bordered" required>
+                    <option value="conge">Congé normal</option>
+                    <option value="conge_demi">Congé demi-journée</option>
+                    <option value="permission">Permission</option>
+                    <option value="recuperation">Récupération</option>
+                    <option value="repos">Repos</option>
+                    <option value="repos_medical">Repos médical</option>
+                    <option value="jour_ferie">Jour férié</option>
+                </select>
+            </div>
+
+            <!-- Motif -->
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Motif (optionnel)</span>
+                </label>
+                <textarea id="motif" class="textarea textarea-bordered" rows="3" placeholder="Raison du congé..."></textarea>
+            </div>
+
+            <!-- Actions -->
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('conge-modal').close()">Annuler</button>
+                <button type="button" class="btn btn-error" id="btn-delete" onclick="deleteConge()" style="display: none;">
+                    <i class="fas fa-trash mr-2"></i>Supprimer
+                </button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Modal de détails du planning (jour de travail) -->
+<dialog id="planning-details-modal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-briefcase text-primary mr-2"></i>
+            Détails du Planning
+        </h3>
+
+        <div id="planning-details-content">
+            <!-- Employé -->
+            <div class="mb-4">
+                <h4 class="font-semibold text-sm text-base-content/70 mb-1">Employé</h4>
+                <p id="details-employe" class="text-base"></p>
+            </div>
+
+            <!-- Date -->
+            <div class="mb-4">
+                <h4 class="font-semibold text-sm text-base-content/70 mb-1">Date</h4>
+                <p id="details-date" class="text-base"></p>
+            </div>
+
+            <!-- Activité -->
+            <div class="mb-4">
+                <h4 class="font-semibold text-sm text-base-content/70 mb-1">Activité</h4>
+                <p id="details-activite" class="text-base font-medium"></p>
+                <p id="details-activite-desc" class="text-sm text-base-content/60 mt-1"></p>
+            </div>
+
+            <!-- Ouvrage -->
+            <div class="mb-4" id="details-ouvrage-section">
+                <h4 class="font-semibold text-sm text-base-content/70 mb-1">Ouvrage</h4>
+                <p id="details-ouvrage" class="text-base font-medium"></p>
+                <p id="details-ouvrage-type" class="text-sm text-base-content/60 mt-1"></p>
+            </div>
+
+            <!-- Remarques -->
+            <div class="mb-4" id="details-remarques-section">
+                <h4 class="font-semibold text-sm text-base-content/70 mb-1">Remarques</h4>
+                <p id="details-remarques" class="text-base"></p>
+            </div>
+
+            <!-- Statut validation -->
+            <div class="mb-4">
+                <h4 class="font-semibold text-sm text-base-content/70 mb-1">Statut</h4>
+                <span id="details-valide" class="badge"></span>
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="modal-action">
+            <button type="button" class="btn" onclick="document.getElementById('planning-details-modal').close()">Fermer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+
+<style>
+/* Assurer que la première colonne reste visible au scroll horizontal */
+.table-pin-rows thead tr th:first-child,
+.table-pin-rows tbody tr td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 10;
+}
+
+/* Améliorer la lisibilité des cellules */
+.table td, .table th {
+    padding: 0.5rem;
+}
+
+/* Responsive pour petits écrans */
+@media (max-width: 768px) {
+    .table td, .table th {
+        padding: 0.25rem;
+        font-size: 0.75rem;
+    }
+}
+</style>
+{% endblock %}

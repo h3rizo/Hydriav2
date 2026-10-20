@@ -1,0 +1,417 @@
+{% extends "planning/base.html" %}
+{% load humanize %}
+{% load employee_grouping %}
+
+{% block title %}Retour Indemnités - Impression Factures{% endblock %}
+
+{% block content %}
+<div class="space-y-6" id="mainContent">
+    <!-- Header -->
+    <div class="flex flex-wrap justify-between items-center gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">
+                <i class="fas fa-file-invoice-dollar mr-2 text-success"></i>
+                Retour Indemnités
+            </h1>
+            <p class="text-base-content/70 mt-1">
+                Confirmer les indemnités avancées et imprimer les factures
+            </p>
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'planning:indemnites' %}" class="btn btn-ghost">
+                <i class="fas fa-arrow-left mr-2"></i>Retour à la liste
+            </a>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <h2 class="card-title mb-4">
+                <i class="fas fa-filter mr-2 text-primary"></i>Filtres
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mois</span></label>
+                    <select id="filterMois" class="select select-bordered w-full" onchange="loadIndemnites()">
+                        <option value="">Tous les mois</option>
+                        {% for m in mois_disponibles %}
+                            <option value="{{ m.value }}">{{ m.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Base</span></label>
+                    <select id="filterBase" class="select select-bordered w-full" onchange="loadIndemnites()">
+                        <option value="">Toutes les bases</option>
+                        {% for base in bases %}
+                            <option value="{{ base.id }}" {% if default_base_id and default_base_id == base.id|stringformat:"s" %}selected{% endif %}>{{ base.nom_base }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Employé</span></label>
+                    <select id="filterEmploye" class="select select-bordered w-full" onchange="loadIndemnites()">
+                        {% grouped_employee_options employes "" "Tous les employés" %}
+                    </select>
+                </div>
+                <div class="form-control justify-end">
+                    <label class="label"><span class="label-text">&nbsp;</span></label>
+                    <button onclick="loadIndemnites()" class="btn btn-primary">
+                        <i class="fas fa-search mr-2"></i>Rechercher
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Liste des employés avec indemnités à confirmer -->
+    <div id="employesList">
+        <div class="text-center py-8 text-base-content/50">
+            <i class="fas fa-info-circle mr-2"></i>
+            Sélectionnez un mois pour voir les indemnités avancées à confirmer
+        </div>
+    </div>
+</div>
+
+<!-- Zone d'impression (masquée par défaut) -->
+<div id="printArea" class="hidden print:block">
+    <!-- Contenu généré dynamiquement -->
+</div>
+
+<style>
+@media print {
+    #mainContent { display: none !important; }
+    #printArea { display: block !important; }
+    .no-print { display: none !important; }
+
+    .facture-indemnite {
+        page-break-after: always;
+        padding: 20px;
+        font-family: Arial, sans-serif;
+    }
+
+    .facture-indemnite:last-child {
+        page-break-after: auto;
+    }
+
+    .facture-header {
+        text-align: center;
+        margin-bottom: 30px;
+        border-bottom: 2px solid #333;
+        padding-bottom: 20px;
+    }
+
+    .facture-header img {
+        max-height: 80px;
+        margin-bottom: 10px;
+    }
+
+    .facture-header h1 {
+        font-size: 24px;
+        margin: 10px 0;
+    }
+
+    .facture-header .mois {
+        font-size: 18px;
+        color: #555;
+    }
+
+    .facture-info {
+        margin-bottom: 20px;
+    }
+
+    .facture-info p {
+        margin: 5px 0;
+    }
+
+    .facture-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+    }
+
+    .facture-table th,
+    .facture-table td {
+        border: 1px solid #333;
+        padding: 8px;
+        text-align: left;
+    }
+
+    .facture-table th {
+        background-color: #f0f0f0;
+    }
+
+    .facture-table .montant {
+        text-align: right;
+    }
+
+    .facture-total {
+        text-align: right;
+        font-size: 18px;
+        font-weight: bold;
+        margin-top: 20px;
+    }
+
+    .facture-signature {
+        margin-top: 50px;
+        display: flex;
+        justify-content: space-between;
+    }
+
+    .signature-box {
+        width: 45%;
+        text-align: center;
+    }
+
+    .signature-line {
+        border-top: 1px solid #333;
+        margin-top: 60px;
+        padding-top: 5px;
+    }
+}
+</style>
+
+<script>
+let employesData = [];
+
+async function loadIndemnites() {
+    const mois = document.getElementById('filterMois').value;
+    const base_id = document.getElementById('filterBase').value;
+    const employe_id = document.getElementById('filterEmploye').value;
+
+    const params = new URLSearchParams();
+    if (mois) params.append('mois', mois);
+    if (base_id) params.append('base_id', base_id);
+    if (employe_id) params.append('employe_id', employe_id);
+
+    try {
+        const response = await fetch(`{% url 'planning:api_indemnites_a_confirmer' %}?${params.toString()}`);
+        const data = await response.json();
+
+        if (data.success) {
+            employesData = data.employes;
+            displayEmployes();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau');
+    }
+}
+
+function displayEmployes() {
+    const container = document.getElementById('employesList');
+
+    if (employesData.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-8 text-base-content/50">
+                <i class="fas fa-inbox text-4xl mb-2"></i>
+                <p>Aucune indemnité avancée à confirmer</p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = employesData.map(emp => `
+        <div class="card bg-base-100 shadow-lg mb-4">
+            <div class="card-body">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h3 class="card-title">
+                            <i class="fas fa-user mr-2 text-primary"></i>
+                            ${emp.employe_nom}
+                        </h3>
+                        <p class="text-sm text-base-content/70">
+                            ${emp.employe_base} - ${emp.employe_poste}
+                        </p>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-2xl font-bold text-warning">${emp.total.toLocaleString('fr-FR')} Ar</div>
+                        <div class="text-sm text-base-content/70">${emp.indemnites.length} jour(s)</div>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto mt-4">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th><input type="checkbox" class="checkbox checkbox-sm" checked onchange="toggleEmployeSelection('${emp.employe_id}', this)"></th>
+                                <th>Date</th>
+                                <th>Ouvrages</th>
+                                <th>Activités</th>
+                                <th class="text-right">Montant</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${emp.indemnites.map(ind => `
+                                <tr>
+                                    <td><input type="checkbox" class="checkbox checkbox-sm ind-cb-${emp.employe_id}" data-id="${ind.id}" checked></td>
+                                    <td class="font-mono">${formatDate(ind.date)}</td>
+                                    <td class="max-w-xs truncate">${ind.ouvrages_visites}</td>
+                                    <td class="max-w-xs truncate">${ind.activites || 'N/A'}</td>
+                                    <td class="text-right font-mono">${ind.montant.toLocaleString('fr-FR')} Ar</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="card-actions justify-end mt-4">
+                    <button onclick="confirmerEtImprimer('${emp.employe_id}')" class="btn btn-success">
+                        <i class="fas fa-print mr-2"></i>Confirmer & Imprimer Facture
+                    </button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function toggleEmployeSelection(employeId, mainCheckbox) {
+    document.querySelectorAll(`.ind-cb-${employeId}`).forEach(cb => {
+        cb.checked = mainCheckbox.checked;
+    });
+}
+
+async function confirmerEtImprimer(employeId) {
+    // Récupérer les IDs sélectionnés
+    const checkboxes = document.querySelectorAll(`.ind-cb-${employeId}:checked`);
+    const ids = Array.from(checkboxes).map(cb => cb.dataset.id);
+
+    if (ids.length === 0) {
+        alert('Veuillez sélectionner au moins une indemnité');
+        return;
+    }
+
+    if (!confirm(`Confirmer et imprimer ${ids.length} indemnité(s) ?`)) return;
+
+    try {
+        const response = await fetch('{% url "planning:api_imprimer_facture_indemnite" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ indemnite_ids: ids })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            // Générer et imprimer la facture
+            genererFacture(data.facture);
+
+            // Recharger la liste après impression
+            setTimeout(() => {
+                loadIndemnites();
+            }, 2000);
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau');
+    }
+}
+
+function genererFacture(facture) {
+    const printArea = document.getElementById('printArea');
+
+    printArea.innerHTML = `
+        <div class="facture-indemnite">
+            <div class="facture-header">
+                ${facture.organisation.logo ? `<img src="${facture.organisation.logo}" alt="Logo">` : ''}
+                <h1>${facture.organisation.nom}</h1>
+                <h2>FACTURE D'INDEMNITÉ</h2>
+                <p class="mois">${facture.mois}</p>
+            </div>
+
+            <div class="facture-info">
+                <p><strong>Employé:</strong> ${facture.employe.nom}</p>
+                <p><strong>Poste:</strong> ${facture.employe.poste}</p>
+                <p><strong>Base:</strong> ${facture.employe.base}</p>
+                <p><strong>Nombre de jours terrain:</strong> ${facture.nb_jours}</p>
+            </div>
+
+            <table class="facture-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Activités</th>
+                        <th>Ouvrages visités</th>
+                        <th class="montant">Montant</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${facture.lignes.map(ligne => `
+                        <tr>
+                            <td>${ligne.date}</td>
+                            <td>${ligne.activites || 'N/A'}</td>
+                            <td>${ligne.ouvrages}</td>
+                            <td class="montant">${ligne.montant.toLocaleString('fr-FR')} Ar</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+
+            <div class="facture-total">
+                TOTAL: ${facture.total.toLocaleString('fr-FR')} Ar
+            </div>
+
+            <div class="facture-signature">
+                <div class="signature-box">
+                    <p>Signature de l'employé</p>
+                    <div class="signature-line">
+                        ${facture.employe.nom}
+                    </div>
+                </div>
+                <div class="signature-box">
+                    <p>Visa du responsable</p>
+                    <div class="signature-line">
+                        Date: _______________
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Déclencher l'impression
+    setTimeout(() => {
+        window.print();
+    }, 100);
+}
+
+function formatDate(dateStr) {
+    const parts = dateStr.split('-');
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Auto-select current month
+document.addEventListener('DOMContentLoaded', function() {
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    document.getElementById('filterMois').value = currentMonth;
+    const defaultBaseId = '{{ default_base_id|default:"" }}';
+    if (defaultBaseId) {
+        document.getElementById('filterBase').value = defaultBaseId;
+    }
+    loadIndemnites();
+});
+</script>
+{% endblock %}

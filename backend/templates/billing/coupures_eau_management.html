@@ -1,0 +1,911 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Gestion coupures eau{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto p-4 space-y-4">
+    <div class="flex items-center justify-between">
+        <h1 class="text-2xl font-bold">
+            <i class="fas fa-faucet-drip mr-2 text-primary"></i>
+            Gestion coupures / remises en eau
+        </h1>
+        <div class="flex gap-2">
+            <a href="{% url 'billing:historique_coupures_eau' %}" class="btn btn-outline btn-sm"><i class="fas fa-clock-rotate-left"></i> Historique complet</a>
+            <a href="{% url 'billing:releves' %}" class="btn btn-ghost btn-sm">Retour releves</a>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3">
+                <div>
+                    <label class="label"><span class="label-text">Region</span></label>
+                    <select id="region-select" class="select select-bordered w-full">
+                        <option value="">Toutes les regions</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="label"><span class="label-text">District</span></label>
+                    <select id="district-select" class="select select-bordered w-full">
+                        <option value="">Tous les districts</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="label"><span class="label-text">Commune</span></label>
+                    <select id="commune-select" class="select select-bordered w-full">
+                        <option value="">Toutes les communes</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="label"><span class="label-text">Modalite de paiement</span></label>
+                    <select id="modalite-paiement-select" class="select select-bordered w-full">
+                        <option value="">Toutes les modalites</option>
+                        {% for option in modalites_paiement_options %}
+                            <option value="{{ option.value }}">{{ option.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="xl:col-span-2">
+                    <label class="label"><span class="label-text">Recherche ouvrage (autocompletion)</span></label>
+                    <input id="ouvrage-search" type="text" class="input input-bordered w-full" placeholder="Tapez le nom de l'ouvrage..." />
+                </div>
+            </div>
+
+            <label class="label mt-2"><span class="label-text">Ouvrage</span></label>
+            <select id="ouvrage-select" class="select select-bordered w-full">
+                <option value="">Selectionner un ouvrage</option>
+                {% for ouvrage in ouvrages %}
+                    <option value="{{ ouvrage.id }}">{{ ouvrage.nom_ouvrage }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title text-error"><i class="fas fa-ban"></i> Couper un point d'eau</h2>
+                <label class="label"><span class="label-text">Point d'eau</span></label>
+                <select id="point-couper-select" class="select select-bordered w-full">
+                    <option value="">Selectionner un point d'eau actif</option>
+                </select>
+
+                <label class="label"><span class="label-text">Date de coupure</span></label>
+                <input id="date-coupure" type="date" class="input input-bordered w-full" />
+
+                <label class="label"><span class="label-text">Motif</span></label>
+                <textarea id="motif-coupure" class="textarea textarea-bordered" rows="2"></textarea>
+
+                <div class="card-actions justify-end">
+                    <button class="btn btn-outline btn-sm" type="button" onclick="openTarifModalFromSelect('point-couper-select')">Modifier tarif forfaitaire</button>
+                    <button class="btn btn-error" onclick="submitCoupure()">Enregistrer coupure</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title text-success"><i class="fas fa-power-off"></i> Remettre en eau</h2>
+                <label class="label"><span class="label-text">Point d'eau coupe</span></label>
+                <select id="point-remise-select" class="select select-bordered w-full">
+                    <option value="">Selectionner un point d'eau coupe</option>
+                </select>
+
+                <label class="label"><span class="label-text">Date de remise</span></label>
+                <input id="date-remise" type="date" class="input input-bordered w-full" />
+
+                <label class="label"><span class="label-text">Motif</span></label>
+                <textarea id="motif-remise" class="textarea textarea-bordered" rows="2"></textarea>
+
+                <div class="card-actions justify-end">
+                    <button class="btn btn-outline btn-sm" type="button" onclick="openTarifModalFromSelect('point-remise-select')">Modifier tarif forfaitaire</button>
+                    <button class="btn btn-success" onclick="submitRemise()">Enregistrer remise</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="alert alert-warning shadow-sm">
+        <i class="fas fa-circle-info"></i>
+        <span>Le tarif forfaitaire n'est efface automatiquement que pour les ouvrages dont la modalite active comporte une part forfaitaire (`Forfaitaire` ou `Mixte`). Les ouvrages `Au volume` restent exclus via le filtre de modalite.</span>
+    </div>
+
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <div class="flex items-center justify-between">
+                <h2 class="card-title"><i class="fas fa-history text-warning"></i> Historique coupures / remises</h2>
+                <button class="btn btn-sm" onclick="loadHistorique()">Actualiser</button>
+            </div>
+            <div class="overflow-x-auto max-h-[65vh]">
+                <table class="table table-sm table-zebra">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Type</th>
+                            <th>Detail evenement</th>
+                            <th>Notes</th>
+                            <th class="text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historique-body">
+                        <tr><td colspan="5" class="text-center text-base-content/60">Aucune donnee</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<dialog id="tarif-forfaitaire-modal" class="modal">
+    <div class="modal-box max-w-lg">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+        </form>
+        <h3 class="font-bold text-lg">Modifier le tarif forfaitaire</h3>
+        <div class="mt-4 space-y-3">
+            <div>
+                <div id="tarif-modal-point-label" class="font-semibold text-base-content">Point d'eau</div>
+                <div id="tarif-modal-point-meta" class="text-sm text-base-content/70"></div>
+            </div>
+            <div id="tarif-modal-status" class="text-sm text-base-content/80"></div>
+            <div>
+                <label class="label"><span class="label-text">Tarif forfaitaire</span></label>
+                <input id="tarifforfaitaire-input" type="number" min="0" step="0.01" class="input input-bordered w-full" placeholder="Montant en Ar" />
+                <div class="label">
+                    <span class="label-text-alt">Laisser vide pour effacer le tarif forfaitaire.</span>
+                </div>
+            </div>
+        </div>
+        <div class="modal-action">
+            <button class="btn btn-ghost" type="button" onclick="closeTarifModal()">Annuler</button>
+            <button class="btn btn-outline" type="button" onclick="clearTarifForfaitaire()">Vider</button>
+            <button id="save-tarif-btn" class="btn btn-primary" type="button" onclick="submitTarifForfaitaire()">Enregistrer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+{{ ouvrages_geo_data|json_script:"ouvrages-geo-data" }}
+
+<script>
+let OUVRAGES_GEO_DATA = [];
+try {
+    const geoDataScript = document.getElementById('ouvrages-geo-data');
+    OUVRAGES_GEO_DATA = JSON.parse((geoDataScript && geoDataScript.textContent) || '[]');
+} catch (e) {
+    OUVRAGES_GEO_DATA = [];
+}
+
+const OUVRAGES_FALLBACK = Array.from(document.querySelectorAll('#ouvrage-select option'))
+    .filter(opt => opt.value)
+    .map(opt => ({
+        id: opt.value,
+        nom: opt.textContent.trim(),
+        region_id: '',
+        region_nom: '',
+        district_id: '',
+        district_nom: '',
+        commune_id: '',
+        commune_nom: '',
+        modalite_paiement: '',
+        modalite_paiement_label: ''
+    }));
+
+const OUVRAGES_SOURCE_DATA = (OUVRAGES_GEO_DATA && OUVRAGES_GEO_DATA.length)
+    ? OUVRAGES_GEO_DATA
+    : OUVRAGES_FALLBACK;
+const historiqueRowsCache = new Map();
+const pointEauStateCache = new Map();
+let currentTarifForfaitairePointId = '';
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+function todayIso() {
+    return new Date().toISOString().slice(0, 10);
+}
+
+function uniqueById(items) {
+    const seen = new Set();
+    const out = [];
+    (items || []).forEach(item => {
+        const id = item.id || '';
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        out.push(item);
+    });
+    return out;
+}
+
+function normalize(v) {
+    return (v || '').toString().trim().toLowerCase();
+}
+
+function populateRegionOptions() {
+    const select = document.getElementById('region-select');
+    const regions = uniqueById(
+        OUVRAGES_SOURCE_DATA
+            .filter(o => o.region_id)
+            .map(o => ({ id: o.region_id, nom: o.region_nom || 'Region' }))
+            .sort((a, b) => a.nom.localeCompare(b.nom))
+    );
+    select.innerHTML = '<option value="">Toutes les regions</option>' +
+        regions.map(r => `<option value="${r.id}">${r.nom}</option>`).join('');
+}
+
+function populateDistrictOptions() {
+    const regionId = document.getElementById('region-select').value;
+    const select = document.getElementById('district-select');
+    const districts = uniqueById(
+        OUVRAGES_SOURCE_DATA
+            .filter(o => (!regionId || o.region_id === regionId) && o.district_id)
+            .map(o => ({ id: o.district_id, nom: o.district_nom || 'District' }))
+            .sort((a, b) => a.nom.localeCompare(b.nom))
+    );
+    const current = select.value;
+    select.innerHTML = '<option value="">Tous les districts</option>' +
+        districts.map(d => `<option value="${d.id}">${d.nom}</option>`).join('');
+    if (districts.some(d => d.id === current)) {
+        select.value = current;
+    }
+}
+
+function populateCommuneOptions() {
+    const regionId = document.getElementById('region-select').value;
+    const districtId = document.getElementById('district-select').value;
+    const select = document.getElementById('commune-select');
+    const communes = uniqueById(
+        OUVRAGES_SOURCE_DATA
+            .filter(o => (!regionId || o.region_id === regionId) && (!districtId || o.district_id === districtId) && o.commune_id)
+            .map(o => ({ id: o.commune_id, nom: o.commune_nom || 'Commune' }))
+            .sort((a, b) => a.nom.localeCompare(b.nom))
+    );
+    const current = select.value;
+    select.innerHTML = '<option value="">Toutes les communes</option>' +
+        communes.map(c => `<option value="${c.id}">${c.nom}</option>`).join('');
+    if (communes.some(c => c.id === current)) {
+        select.value = current;
+    }
+}
+
+function getFilteredOuvrages() {
+    const regionId = document.getElementById('region-select').value;
+    const districtId = document.getElementById('district-select').value;
+    const communeId = document.getElementById('commune-select').value;
+    const modalitePaiement = document.getElementById('modalite-paiement-select').value;
+    const search = normalize(document.getElementById('ouvrage-search').value);
+
+    return OUVRAGES_SOURCE_DATA.filter(o => {
+        if (regionId && o.region_id !== regionId) return false;
+        if (districtId && o.district_id !== districtId) return false;
+        if (communeId && o.commune_id !== communeId) return false;
+        if (modalitePaiement && o.modalite_paiement !== modalitePaiement) return false;
+        if (search && !normalize(o.nom).includes(search)) return false;
+        return true;
+    }).sort((a, b) => (a.nom || '').localeCompare(b.nom || ''));
+}
+
+function getActiveOuvrageFilterContext() {
+    const selectedOuvrageId = document.getElementById('ouvrage-select').value;
+    const searchValue = normalize(document.getElementById('ouvrage-search').value);
+    const filteredOuvrages = getFilteredOuvrages();
+    const filteredOuvrageIds = filteredOuvrages.map(o => o.id).filter(Boolean);
+    const effectiveOuvrageIds = searchValue
+        ? filteredOuvrageIds
+        : (selectedOuvrageId ? [selectedOuvrageId] : filteredOuvrageIds);
+
+    return {
+        selectedOuvrageId,
+        searchValue,
+        filteredOuvrages,
+        filteredOuvrageIds,
+        effectiveOuvrageIds
+    };
+}
+
+function buildOuvrageQueryParams() {
+    const context = getActiveOuvrageFilterContext();
+    const params = new URLSearchParams();
+    const regionId = document.getElementById('region-select').value;
+    const districtId = document.getElementById('district-select').value;
+    const communeId = document.getElementById('commune-select').value;
+    const modalitePaiement = document.getElementById('modalite-paiement-select').value;
+    const ouvrageSearch = document.getElementById('ouvrage-search').value.trim();
+
+    if (context.selectedOuvrageId) {
+        params.set('ouvrage_id', context.selectedOuvrageId);
+    } else {
+        if (regionId) {
+            params.set('region_id', regionId);
+        }
+        if (districtId) {
+            params.set('district_id', districtId);
+        }
+        if (communeId) {
+            params.set('commune_id', communeId);
+        }
+        if (modalitePaiement) {
+            params.set('modalite_paiement', modalitePaiement);
+        }
+        if (ouvrageSearch) {
+            params.set('ouvrage_search', ouvrageSearch);
+        }
+    }
+
+    return {
+        params,
+        context
+    };
+}
+
+function renderOuvrageOptions() {
+    const select = document.getElementById('ouvrage-select');
+    const current = select.value;
+    const ouvrages = getFilteredOuvrages();
+
+    select.innerHTML = '<option value="">Selectionner un ouvrage</option>' + ouvrages.map(o => {
+        const geo = [o.commune_nom, o.district_nom].filter(Boolean).join(' / ');
+        const modalite = o.modalite_paiement_label ? ` - ${o.modalite_paiement_label}` : '';
+        const label = geo ? `${o.nom} (${geo})${modalite}` : `${o.nom}${modalite}`;
+        return `<option value="${o.id}">${label}</option>`;
+    }).join('');
+
+    if (ouvrages.some(o => o.id === current)) {
+        select.value = current;
+    } else {
+        select.value = '';
+    }
+}
+
+async function onGeoFiltersChanged() {
+    populateDistrictOptions();
+    populateCommuneOptions();
+    renderOuvrageOptions();
+    await reloadAllData();
+}
+
+async function reloadAllData() {
+    await loadPointsActifs();
+    await loadPointsCoupes();
+    await loadHistorique();
+}
+window.reloadAllData = reloadAllData;
+
+async function loadPointsActifs() {
+    const select = document.getElementById('point-couper-select');
+    const current = select.value;
+    select.innerHTML = '<option value="">Chargement...</option>';
+    const { params, context } = buildOuvrageQueryParams();
+
+    if (!context.effectiveOuvrageIds.length) {
+        select.innerHTML = '<option value="">Selectionner ou rechercher un ouvrage</option>';
+        return;
+    }
+
+    const response = await fetch(`/facturation/api/points-eau-actifs/?${params.toString()}`);
+    if (!response.ok) {
+        select.innerHTML = '<option value="">Erreur de chargement</option>';
+        return;
+    }
+    const data = await response.json();
+    const points = data.points_eau || [];
+    const ouvrageCount = new Set(points.map(p => p.ouvrage_id).filter(Boolean)).size;
+
+    select.innerHTML = "<option value=\"\">Selectionner un point d'eau actif</option>";
+    points.forEach(p => {
+        rememberPointState(p);
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        const suffix = ouvrageCount > 1 ? ` - ${p.ouvrage || 'N/A'}` : '';
+        opt.textContent = `${p.code || 'N/A'} - ${p.nom || 'N/A'} (${p.village || 'N/A'})${suffix}`;
+        select.appendChild(opt);
+    });
+
+    if (points.some(p => p.id === current)) {
+        select.value = current;
+    }
+}
+
+async function loadPointsCoupes() {
+    const select = document.getElementById('point-remise-select');
+    const current = select.value;
+    select.innerHTML = '<option value="">Chargement...</option>';
+    const { params, context } = buildOuvrageQueryParams();
+    if (!context.effectiveOuvrageIds.length) {
+        select.innerHTML = '<option value="">Selectionner ou rechercher un ouvrage</option>';
+        return;
+    }
+    const url = context.effectiveOuvrageIds.length
+        ? `/facturation/api/points-eau-coupes/?${params.toString()}`
+        : '/facturation/api/points-eau-coupes/';
+
+    const response = await fetch(url);
+    if (!response.ok) {
+        select.innerHTML = '<option value="">Erreur de chargement</option>';
+        return;
+    }
+    const data = await response.json();
+    const points = data.points_eau_coupes || [];
+    const ouvrageCount = new Set(points.map(p => p.ouvrage).filter(Boolean)).size;
+
+    select.innerHTML = "<option value=\"\">Selectionner un point d'eau coupe</option>";
+    points.forEach(p => {
+        rememberPointState(p);
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        const suffix = ouvrageCount > 1 ? ` - ${p.ouvrage || 'N/A'}` : '';
+        opt.textContent = `${p.code || 'N/A'} - ${p.abonne || 'N/A'} (coupe le ${p.date_arret_display || '-'})${suffix}`;
+        select.appendChild(opt);
+    });
+
+    if (points.some(p => p.id === current)) {
+        select.value = current;
+    }
+}
+
+function escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function compareText(a, b) {
+    return String(a || '').localeCompare(String(b || ''), undefined, { sensitivity: 'base' });
+}
+
+function rememberPointState(point) {
+    const pointId = point.point_eau_id || point.id || '';
+    if (!pointId) return;
+    pointEauStateCache.set(pointId, {
+        point_eau_id: pointId,
+        code: point.code || point.code_point_eau || '',
+        abonne: point.abonne || point.nom || '',
+        ouvrage: point.ouvrage || '',
+        village: point.village || '',
+        tarifforfaitaire: point.tarifforfaitaire ?? null,
+        tarifforfaitaire_display: point.tarifforfaitaire_display || 'Non defini',
+        date_arret_display: point.date_arret_display || point.date_arret_display_current || '',
+        est_coupe_plus_un_an: Boolean(point.est_coupe_plus_un_an),
+    });
+}
+
+function renderHistoriqueRows(rows) {
+    const tbody = document.getElementById('historique-body');
+    tbody.innerHTML = '';
+    historiqueRowsCache.clear();
+
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-base-content/60">Aucun historique</td></tr>';
+        return;
+    }
+
+    const groupedRows = [];
+    const sortedRows = [...rows].sort((a, b) =>
+        compareText(a.ouvrage, b.ouvrage) ||
+        compareText(a.code_point_eau, b.code_point_eau) ||
+        compareText(a.abonne, b.abonne) ||
+        compareText(a.date_evenement, b.date_evenement) ||
+        compareText(a.created_at_iso, b.created_at_iso) ||
+        compareText(a.type_evenement, b.type_evenement)
+    );
+
+    sortedRows.forEach(item => {
+        rememberPointState(item);
+        const pointId = item.point_eau_id || item.id || '';
+        let group = groupedRows.find(entry => entry.pointId === pointId);
+        if (!group) {
+            group = {
+                pointId,
+                pointState: pointEauStateCache.get(pointId) || {},
+                rows: []
+            };
+            groupedRows.push(group);
+        }
+        group.rows.push(item);
+    });
+
+    groupedRows.forEach(group => {
+        const pointState = group.pointState || {};
+        const groupTr = document.createElement('tr');
+        groupTr.className = pointState.est_coupe_plus_un_an ? 'bg-warning/10' : 'bg-base-200/70';
+        const groupTd = document.createElement('td');
+        groupTd.colSpan = 5;
+        const statusBadge = pointState.est_coupe_plus_un_an
+            ? `<span class="badge badge-warning">Coupe > 1 an${pointState.date_arret_display ? ` depuis ${escapeHtml(pointState.date_arret_display)}` : ''}</span>`
+            : (pointState.date_arret_display ? `<span class="badge badge-error">Coupe depuis ${escapeHtml(pointState.date_arret_display)}</span>` : '<span class="badge badge-success">Actif</span>');
+        groupTd.innerHTML = `
+            <div class="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <div class="font-semibold">${escapeHtml(pointState.code || 'N/A')} - ${escapeHtml(pointState.abonne || 'Sans abonne')}</div>
+                    <div class="text-xs text-base-content/70">${escapeHtml(pointState.ouvrage || 'N/A')} - ${escapeHtml(pointState.village || 'N/A')}</div>
+                </div>
+                <div class="flex flex-wrap items-center justify-end gap-2">
+                    <span class="badge badge-ghost">Tarif: ${escapeHtml(pointState.tarifforfaitaire_display || 'Non defini')}</span>
+                    ${statusBadge}
+                    <button type="button" class="btn btn-xs btn-outline btn-primary" data-action="edit-tarif" data-point-id="${escapeHtml(pointState.point_eau_id || '')}">
+                        <i class="fas fa-money-bill-wave mr-1"></i> Tarif forfaitaire
+                    </button>
+                </div>
+            </div>
+        `;
+        groupTr.appendChild(groupTd);
+        tbody.appendChild(groupTr);
+
+        group.rows.forEach(item => {
+        const badgeClass = item.type_evenement === 'coupure' ? 'badge-error' : 'badge-success';
+        const notes = item.notes || '';
+        const canEdit = item.editable !== false;
+        const tr = document.createElement('tr');
+
+        const dateTd = document.createElement('td');
+        dateTd.textContent = item.date_evenement_display || '-';
+        tr.appendChild(dateTd);
+
+        const typeTd = document.createElement('td');
+        typeTd.innerHTML = `<span class="badge badge-sm ${badgeClass}">${item.type_label || item.type_evenement || ''}</span>`;
+        tr.appendChild(typeTd);
+
+        const detailTd = document.createElement('td');
+        const detailParts = [];
+        if (item.raison_label) {
+            detailParts.push(item.raison_label);
+        }
+        if (item.cree_par && item.cree_par !== 'N/A') {
+            detailParts.push(`par ${item.cree_par}`);
+        }
+        if (item.created_at) {
+            detailParts.push(`saisi ${item.created_at}`);
+        }
+        detailTd.textContent = detailParts.join(' - ') || '-';
+        tr.appendChild(detailTd);
+
+        const notesTd = document.createElement('td');
+        notesTd.textContent = notes || '-';
+        tr.appendChild(notesTd);
+
+        const actionsTd = document.createElement('td');
+        actionsTd.className = 'text-right';
+
+        if (canEdit) {
+            const actions = document.createElement('div');
+            actions.className = 'flex justify-end gap-1';
+
+            const editBtn = document.createElement('button');
+            editBtn.type = 'button';
+            editBtn.className = 'btn btn-xs btn-info';
+            editBtn.setAttribute('data-action', 'edit-historique');
+            editBtn.setAttribute('data-id', escapeHtml(item.id || ''));
+            editBtn.innerHTML = '<i class="fas fa-pen"></i>';
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
+            deleteBtn.className = 'btn btn-xs btn-error';
+            deleteBtn.setAttribute('data-action', 'delete-historique');
+            deleteBtn.setAttribute('data-id', escapeHtml(item.id || ''));
+            deleteBtn.setAttribute('data-type-label', escapeHtml(item.type_label || item.type_evenement || 'coupure'));
+            deleteBtn.setAttribute('data-date-display', escapeHtml(item.date_evenement_display || '-'));
+            deleteBtn.innerHTML = '<i class="fas fa-trash"></i>';
+
+            actions.appendChild(editBtn);
+            actions.appendChild(deleteBtn);
+            actionsTd.appendChild(actions);
+        } else {
+            actionsTd.textContent = '-';
+        }
+
+        tr.appendChild(actionsTd);
+        tbody.appendChild(tr);
+        historiqueRowsCache.set(item.id, item);
+        });
+    });
+}
+
+async function loadHistorique() {
+    const tbody = document.getElementById('historique-body');
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center">Chargement...</td></tr>';
+
+    const { params, context } = buildOuvrageQueryParams();
+    const pointEauId = document.getElementById('point-couper-select').value || document.getElementById('point-remise-select').value;
+    if (!pointEauId && !context.effectiveOuvrageIds.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-base-content/60">Aucun historique</td></tr>';
+        return;
+    }
+    if (pointEauId) {
+        params.set('point_eau_id', pointEauId);
+    }
+
+    const response = await fetch(`/facturation/api/historique-coupures/?${params.toString()}`);
+    if (!response.ok) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-error">Erreur de chargement</td></tr>';
+        return;
+    }
+
+    const data = await response.json();
+    if (!data.success) {
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-error">${escapeHtml(data.error || 'Erreur de chargement')}</td></tr>`;
+        return;
+    }
+
+    renderHistoriqueRows(Array.isArray(data.historique) ? data.historique : []);
+}
+
+function closeTarifModal() {
+    document.getElementById('tarif-forfaitaire-modal')?.close();
+}
+
+function openTarifModal(pointId) {
+    const pointState = pointEauStateCache.get(pointId);
+    if (!pointState) {
+        alert("Impossible de charger les informations du point d'eau.");
+        return;
+    }
+
+    currentTarifForfaitairePointId = pointId;
+    document.getElementById('tarif-modal-point-label').textContent = `${pointState.code || 'N/A'} - ${pointState.abonne || 'Sans abonne'}`;
+    document.getElementById('tarif-modal-point-meta').textContent = `${pointState.ouvrage || 'N/A'} - ${pointState.village || 'N/A'}`;
+    document.getElementById('tarifforfaitaire-input').value = pointState.tarifforfaitaire ?? '';
+
+    const statusEl = document.getElementById('tarif-modal-status');
+    const inputEl = document.getElementById('tarifforfaitaire-input');
+    const saveBtn = document.getElementById('save-tarif-btn');
+
+    if (pointState.est_coupe_plus_un_an) {
+        statusEl.innerHTML = `<span class="badge badge-warning mb-2">Coupe > 1 an</span><div>Le tarif forfaitaire doit rester vide tant que ce point d'eau n'est pas remis en eau.</div>`;
+        inputEl.disabled = true;
+        saveBtn.disabled = true;
+    } else {
+        statusEl.innerHTML = pointState.date_arret_display
+            ? `<span class="badge badge-error mb-2">Coupe depuis ${escapeHtml(pointState.date_arret_display)}</span>`
+            : '<span class="badge badge-success mb-2">Point actif</span>';
+        inputEl.disabled = false;
+        saveBtn.disabled = false;
+    }
+
+    document.getElementById('tarif-forfaitaire-modal')?.showModal();
+}
+
+function openTarifModalFromSelect(selectId) {
+    const pointId = document.getElementById(selectId)?.value || '';
+    if (!pointId) {
+        alert("Selectionnez d'abord un point d'eau.");
+        return;
+    }
+    openTarifModal(pointId);
+}
+
+async function submitTarifForfaitaire(forceClear = false) {
+    if (!currentTarifForfaitairePointId) {
+        alert("Aucun point d'eau selectionne.");
+        return;
+    }
+
+    const payload = {
+        point_eau_id: currentTarifForfaitairePointId,
+        tarifforfaitaire: forceClear ? '' : document.getElementById('tarifforfaitaire-input').value
+    };
+
+    const response = await fetch('/facturation/api/points-eau/tarif-forfaitaire/modifier/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    if (data.point_eau) {
+        rememberPointState(data.point_eau);
+    }
+    if (!data.success) {
+        alert(data.error || 'Mise a jour impossible');
+        return;
+    }
+
+    alert(data.message || 'Tarif forfaitaire mis a jour');
+    closeTarifModal();
+    await reloadAllData();
+}
+
+async function clearTarifForfaitaire() {
+    await submitTarifForfaitaire(true);
+}
+
+async function submitCoupure() {
+    const pointEauId = document.getElementById('point-couper-select').value;
+    const dateCoupure = document.getElementById('date-coupure').value;
+    const motif = document.getElementById('motif-coupure').value || '';
+    if (!pointEauId || !dateCoupure) {
+        alert("Point d'eau et date obligatoires.");
+        return;
+    }
+
+    const response = await fetch('/facturation/api/couper-point-eau/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({
+            point_eau_id: pointEauId,
+            date_coupure: dateCoupure,
+            motif: motif
+        })
+    });
+    const data = await response.json();
+    if (!data.success) {
+        alert(data.error || 'Erreur lors de la coupure');
+        return;
+    }
+    alert(data.message || 'Coupure enregistree');
+    document.getElementById('motif-coupure').value = '';
+    await reloadAllData();
+}
+
+async function submitRemise() {
+    const pointEauId = document.getElementById('point-remise-select').value;
+    const dateRemise = document.getElementById('date-remise').value;
+    const motif = document.getElementById('motif-remise').value || '';
+    if (!pointEauId || !dateRemise) {
+        alert("Point d'eau et date obligatoires.");
+        return;
+    }
+
+    const response = await fetch('/facturation/api/remettre-point-eau/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({
+            point_eau_id: pointEauId,
+            date_remise: dateRemise,
+            motif: motif
+        })
+    });
+    const data = await response.json();
+    if (!data.success) {
+        alert(data.error || 'Erreur lors de la remise');
+        return;
+    }
+    alert(data.message || 'Remise en eau enregistree');
+    document.getElementById('motif-remise').value = '';
+    await reloadAllData();
+}
+
+async function editHistorique(id, currentDate, currentType, currentRaison, currentNotes) {
+    const date = prompt('Nouvelle date (YYYY-MM-DD)', currentDate || '');
+    if (date === null) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test((date || '').trim())) {
+        alert('Date invalide (YYYY-MM-DD)');
+        return;
+    }
+    const response = await fetch('/facturation/api/historique-coupures/modifier/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({
+            coupure_id: id,
+            date_evenement: date.trim(),
+            type_evenement: currentType || '',
+            raison: currentRaison || 'autre',
+            notes: currentNotes || ''
+        })
+    });
+    const data = await response.json();
+    if (!data.success) {
+        alert(data.error || 'Modification impossible');
+        return;
+    }
+    await reloadAllData();
+}
+
+async function deleteHistorique(id, typeLabel, dateDisplay) {
+    if (!confirm(`Supprimer ${typeLabel} du ${dateDisplay} ?`)) return;
+    const response = await fetch('/facturation/api/historique-coupures/supprimer/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({ coupure_id: id })
+    });
+    const data = await response.json();
+    if (!data.success) {
+        alert(data.error || 'Suppression impossible');
+        return;
+    }
+    await reloadAllData();
+}
+
+document.getElementById('historique-body')?.addEventListener('click', async function (event) {
+    const btn = event.target.closest('button[data-action]');
+    if (!btn) return;
+
+    const action = btn.dataset.action;
+    if (action === 'edit-tarif') {
+        openTarifModal(btn.dataset.pointId);
+        return;
+    }
+
+    if (action === 'edit-historique') {
+        const selectedItem = historiqueRowsCache.get(btn.dataset.id) || {};
+        await editHistorique(
+            btn.dataset.id,
+            selectedItem.date_evenement || '',
+            selectedItem.type_evenement || '',
+            selectedItem.raison || '',
+            selectedItem.notes || ''
+        );
+        return;
+    }
+
+    if (action === 'delete-historique') {
+        await deleteHistorique(
+            btn.dataset.id,
+            btn.dataset.typeLabel,
+            btn.dataset.dateDisplay
+        );
+    }
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('date-coupure').value = todayIso();
+    document.getElementById('date-remise').value = todayIso();
+
+    populateRegionOptions();
+    populateDistrictOptions();
+    populateCommuneOptions();
+    renderOuvrageOptions();
+
+    const ouvrageSelect = document.getElementById('ouvrage-select');
+    if (!ouvrageSelect.value && ouvrageSelect.options.length > 1) {
+        ouvrageSelect.selectedIndex = 1;
+    }
+
+    document.getElementById('region-select').addEventListener('change', onGeoFiltersChanged);
+    document.getElementById('district-select').addEventListener('change', onGeoFiltersChanged);
+    document.getElementById('commune-select').addEventListener('change', async () => {
+        renderOuvrageOptions();
+        await reloadAllData();
+    });
+    document.getElementById('modalite-paiement-select').addEventListener('change', async () => {
+        renderOuvrageOptions();
+        await reloadAllData();
+    });
+    document.getElementById('ouvrage-search').addEventListener('input', async () => {
+        renderOuvrageOptions();
+        await reloadAllData();
+    });
+    document.getElementById('ouvrage-select').addEventListener('change', async () => {
+        if (document.getElementById('ouvrage-select').value) {
+            document.getElementById('ouvrage-search').value = '';
+        }
+        await reloadAllData();
+    });
+    document.getElementById('point-couper-select').addEventListener('change', loadHistorique);
+    document.getElementById('point-remise-select').addEventListener('change', loadHistorique);
+
+    reloadAllData();
+});
+</script>
+{% endblock %}

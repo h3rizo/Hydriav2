@@ -1,0 +1,814 @@
+{% extends planning_shell_base_template %}
+{% load static %}
+
+{% block title %}Traiter Activité - {{ planning.fiche_poste_display }}{% endblock %}
+
+{% block breadcrumb %}
+<div class="breadcrumbs text-sm">
+    <ul>
+        <li><a href="{% url 'core:home' %}"><i class="fas fa-home"></i></a></li>
+        <li><a href="{% url 'planning:dashboard' %}">Plannings</a></li>
+        <li>Traiter Activité</li>
+    </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- Bouton retour -->
+    <div class="mb-4">
+        <a href="{% url 'planning:workflow_terrain' %}" class="btn btn-ghost gap-2">
+            <i class="fas fa-arrow-left"></i>
+            Retour au workflow terrain
+        </a>
+    </div>
+
+    <!-- En-tête de l'activité -->
+    <div class="card bg-base-100 shadow-xl mb-6">
+        <div class="card-body">
+            <h2 class="card-title text-2xl">
+                <i class="fas fa-tasks text-primary"></i>
+                {{ planning.fiche_poste_display }}
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                <div>
+                    <p class="text-sm opacity-70">Date</p>
+                    <p class="font-semibold">{{ planning.date|date:"d/m/Y" }}</p>
+                </div>
+                <div>
+                    <p class="text-sm opacity-70">Employé</p>
+                    <p class="font-semibold">{{ planning.employe.nom_affichage }}</p>
+                </div>
+                <div>
+                    <p class="text-sm opacity-70">Ouvrage</p>
+                    <p class="font-semibold">{{ planning.ouvrage.nom_ouvrage|default:"N/A" }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script pour injecter les données du planning -->
+    <script>
+    window.planningData = {
+        employe: '{{ planning.employe.nom_affichage|escapejs }}',
+        ouvrage: '{{ planning.ouvrage.nom_ouvrage|default:"N/A"|escapejs }}',
+        organisation: '{% if planning.employe.base and planning.employe.base.organisation %}{{ planning.employe.base.organisation.nom_organisation|escapejs }}{% else %}HYDRIA{% endif %}',
+        logo_url: '{% if planning.employe.base and planning.employe.base.organisation and planning.employe.base.organisation.logo %}{{ planning.employe.base.organisation.logo.url }}{% endif %}',
+        nif: '{% if planning.employe.base and planning.employe.base.organisation %}{{ planning.employe.base.organisation.nif|default:""|escapejs }}{% endif %}',
+        stat: '{% if planning.employe.base and planning.employe.base.organisation %}{{ planning.employe.base.organisation.stat|default:""|escapejs }}{% endif %}',
+        base: '{% if planning.employe.base %}{{ planning.employe.base.nom_base|escapejs }}{% endif %}'
+    };
+    console.log('✅ Données planning injectées');
+    </script>
+
+    <!-- Charger les scripts workflow -->
+    <script src="{% static 'js/workflow_terrain.js' %}?v=2025102601"></script>
+    <script src="{% static 'js/workflow_livraisons.js' %}"></script>
+    <script src="{% static 'js/workflow_avances.js' %}"></script>
+
+    <script>
+    // Vérifier que window.imprimerTicket est bien chargé
+    console.log('🔍 Vérification chargement scripts...');
+    console.log('window.imprimerTicket type:', typeof window.imprimerTicket);
+    if (typeof window.imprimerTicket !== 'function') {
+        console.error('⚠️ ERREUR: window.imprimerTicket n\'est pas chargé!');
+    } else {
+        console.log('✅ window.imprimerTicket est bien chargé');
+    }
+    </script>
+
+    <!-- Livraisons -->
+    <div class="mb-6">
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h3 class="card-title">
+                    <i class="fas fa-hiking text-success"></i>
+                    Livraisons à utiliser ({{ bons_livraison|length }})
+                </h3>
+
+                {% if bons_livraison %}
+                <!-- Bouton Utiliser les livraisons sélectionnées -->
+                <div class="mb-4">
+                    <button class="btn btn-primary" id="btn-utiliser-livraisons" onclick="handleUtiliserLivraisons()">
+                        <i class="fas fa-check mr-2"></i>Utiliser les lignes sélectionnées (<span id="count-livraisons-selection">0</span>)
+                    </button>
+                </div>
+
+                <!-- Les fonctions globales sont définies au début du fichier (ligne 43) -->
+
+                <div class="overflow-x-auto">
+                    <table class="table w-full">
+                        <thead>
+                            <tr>
+                                <th>Sélection</th>
+                                <th>Désignation</th>
+                                <th>Quantité</th>
+                                <th>Magasin</th>
+                                <th>Statut</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for bon in bons_livraison %}
+                            <tr id="row-livraison-{{ bon.id }}" class="border-b-0">
+                                <td class="align-top">
+                                    {% if not bon.utilise %}
+                                    <input type="checkbox"
+                                           value="{{ bon.id }}"
+                                           class="checkbox checkbox-primary livraison-select"
+                                           data-detail-id="{{ bon.id }}"
+                                           data-designation="{{ bon.designation.nom }}"
+                                           data-quantity="{{ bon.quantite }}"
+                                           onchange="updateLivraisonCount()">
+                                    {% else %}
+                                    <i class="fas fa-check-circle text-success"></i>
+                                    {% endif %}
+                                </td>
+                                <td class="align-top">
+                                    <i class="fas fa-hiking text-primary mr-2"></i>
+                                    {{ bon.designation.nom }}
+                                </td>
+                                <td class="align-top">{{ bon.quantite }}</td>
+                                <td class="align-top">{{ bon.magasin|default:"N/A" }}</td>
+                                <td class="align-top">
+                                    {% if bon.utilise %}
+                                        <span class="badge badge-success gap-2">
+                                            <i class="fas fa-check"></i>Utilisé le {{ bon.date_utilisation|date:"d/m/Y H:i" }}
+                                        </span>
+                                    {% else %}
+                                        <span class="badge badge-warning gap-2">
+                                            <i class="fas fa-clock"></i>En attente
+                                        </span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            <!-- Ligne de détails toujours visible -->
+                            <tr class="bg-base-200 border-b-4">
+                                <td colspan="5" class="py-2">
+                                    <div class="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1 text-xs">
+                                        <div class="flex gap-2">
+                                            <span class="font-semibold text-gray-500">Équipement:</span>
+                                            <span>{{ bon.equipement.nom|default:"N/A" }}</span>
+                                        </div>
+                                        <div class="flex gap-2">
+                                            <span class="font-semibold text-gray-500">Point d'eau:</span>
+                                            <span>{% if bon.point_eau %}{{ bon.point_eau.idxls|default:bon.point_eau.code_point_eau|default:bon.point_eau.id }}{% else %}N/A{% endif %}</span>
+                                        </div>
+                                        <div class="flex gap-2">
+                                            <span class="font-semibold text-gray-500">N° Bon:</span>
+                                            <span>{{ bon.numero_bon|default:"Non généré" }}</span>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i>
+                    <span>Aucune livraison à traiter</span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Avances -->
+    <div class="mb-6">
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h3 class="card-title">
+                    <i class="fas fa-money-bill-wave text-warning"></i>
+                    Avances à traiter ({{ details_avances|length }})
+                </h3>
+
+                {% if details_avances %}
+                <!-- Bouton Traiter les avances sélectionnées -->
+                <div class="mb-4">
+                    <button class="btn btn-warning" id="btn-traiter-avances" onclick="handleTraiterAvances()">
+                        <i class="fas fa-edit mr-2"></i>Traiter les lignes sélectionnées (<span id="count-avances-selection">0</span>)
+                    </button>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="table w-full">
+                        <thead>
+                            <tr>
+                                <th>Sélection</th>
+                                <th>Désignation</th>
+                                <th>Quantité</th>
+                                <th>P.U.</th>
+                                <th>Montant</th>
+                                <th>Fournisseur</th>
+                                <th>Statut</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for detail in details_avances %}
+                            <tr class="border-b-0">
+                                <td class="align-top">
+                                    {% if not detail.utilise %}
+                                    <input type="checkbox"
+                                           value="{{ detail.id }}"
+                                           class="checkbox checkbox-warning avance-select"
+                                           data-detail-id="{{ detail.id }}"
+                                           data-designation="{{ detail.designation.nom|escapejs }}"
+                                           data-designation-id="{{ detail.designation.id }}"
+                                           data-quantity="{{ detail.quantity }}"
+                                           data-pu="{{ detail.pu }}"
+                                           data-montant="{{ detail.montant }}"
+                                           data-fournisseur="{{ detail.fournisseur.id|default:'' }}"
+                                           onchange="updateAvanceCount()">
+                                    {% else %}
+                                    <i class="fas fa-check-circle text-success"></i>
+                                    {% endif %}
+                                </td>
+                                <td class="align-top">
+                                    {% if detail.designation.type_avance_caissiere == 'Bon de livraison' %}
+                                        <i class="fas fa-hiking text-primary mr-2"></i>
+                                    {% elif detail.designation.type_avance_caissiere == 'Avance' %}
+                                        <i class="fas fa-money-bill-wave text-warning mr-2"></i>
+                                    {% elif detail.designation.type_avance_caissiere == 'Recette' %}
+                                        <i class="fas fa-hand-holding-usd text-success mr-2"></i>
+                                    {% endif %}
+                                    {{ detail.designation.nom }}
+                                </td>
+                                <td class="align-top">{{ detail.quantity }}</td>
+                                <td class="align-top">{{ detail.pu|floatformat:0 }} Ar</td>
+                                <td class="align-top">{{ detail.montant|floatformat:0 }} Ar</td>
+                                <td class="align-top">
+                                    {% if detail.fournisseur %}
+                                        <span class="badge badge-outline">{{ detail.fournisseur.nom_fournisseur }}</span>
+                                    {% else %}
+                                        <span class="text-xs opacity-50">Non renseigné</span>
+                                    {% endif %}
+                                </td>
+                                <td class="align-top">
+                                    {% if detail.utilise %}
+                                        <span class="badge badge-success gap-2">
+                                            <i class="fas fa-check"></i>Traité le {{ detail.date_utilisation|date:"d/m/Y H:i" }}
+                                        </span>
+                                    {% else %}
+                                        <span class="badge badge-warning gap-2">
+                                            <i class="fas fa-clock"></i>En attente
+                                        </span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            <!-- Ligne de détails toujours visible -->
+                            <tr class="bg-base-200 border-b-4">
+                                <td colspan="7" class="py-2">
+                                    <div class="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1 text-xs">
+                                        <div class="flex gap-2">
+                                            <span class="font-semibold text-gray-500">Compte:</span>
+                                            <span>{{ detail.compte|default:"Non spécifié" }}</span>
+                                        </div>
+                                        <div class="flex gap-2">
+                                            <span class="font-semibold text-gray-500">Magasin:</span>
+                                            <span>{{ detail.magasin|default:"Non spécifié" }}</span>
+                                        </div>
+                                        <div class="flex gap-2">
+                                            <span class="font-semibold text-gray-500">Acheteur:</span>
+                                            <span>{{ detail.acheteur|default:"Non spécifié" }}</span>
+                                        </div>
+                                        <div class="flex gap-2">
+                                            <span class="font-semibold text-gray-500">Équipement:</span>
+                                            <span>{{ detail.equipement_constitutif.nom|default:"N/A" }}</span>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Bouton pour générer facture groupée -->
+                <div class="divider"></div>
+                <div class="flex justify-end gap-2">
+                    <button class="btn btn-success" onclick="genererFactureGroupee()" id="btn-facture-groupee" disabled>
+                        <i class="fas fa-print mr-2"></i>Générer Facture Groupée
+                        <span class="badge badge-primary" id="count-selection">0</span>
+                    </button>
+                </div>
+                {% else %}
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i>
+                    <span>Aucune avance à traiter</span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- Modal Utiliser Livraison -->
+<dialog id="modal-utiliser-livraison" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-check-circle text-success"></i>
+            Utiliser Livraison
+        </h3>
+        <form id="form-utiliser-livraison"
+              action="{% url 'planning:marquer_utilise_livraisons' %}"
+              method="POST"
+              enctype="multipart/form-data"
+              onsubmit="return handleSubmitLivraison(event);">
+            {% csrf_token %}
+            <input type="hidden" id="livraison-detail-id" name="detail_id">
+            <input type="hidden" id="livraison-detail-ids" name="detail_ids">
+
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text font-semibold">Article(s) à utiliser</span>
+                </label>
+                <input type="text" id="livraison-designation" class="input input-bordered" readonly>
+            </div>
+
+            <div class="alert alert-info mb-4">
+                <i class="fas fa-info-circle"></i>
+                <div>
+                    <p class="font-semibold">Bon de livraison</p>
+                    <p class="text-sm">Confirmez l'utilisation de cette livraison. Un bon de livraison sera imprimé avec espace pour signatures manuelles.</p>
+                </div>
+            </div>
+
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text font-semibold">Photo justificatif (optionnel)</span>
+                </label>
+                <input type="file" name="photo" accept="image/*" capture="camera" class="file-input file-input-bordered w-full">
+                <label class="label">
+                    <span class="label-text-alt">Prenez une photo de la livraison utilisée</span>
+                </label>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('modal-utiliser-livraison').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-check mr-2"></i>Confirmer Utilisation
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Modal Traiter Avances (Plusieurs lignes) -->
+<dialog id="modal-traiter-avance" class="modal">
+    <div class="modal-box w-11/12 max-w-5xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-edit text-warning"></i>
+            Traiter Avances - Bon d'Avance
+        </h3>
+        <form id="form-traiter-avance"
+              action="{% url 'planning:marquer_utilise_avances' %}"
+              method="POST"
+              enctype="multipart/form-data"
+              onsubmit="return handleSubmitAvance(event);">
+            {% csrf_token %}
+            <input type="hidden" id="avance-detail-ids" name="detail_ids">
+
+            <div class="alert alert-info mb-4">
+                <i class="fas fa-info-circle"></i>
+                <div>
+                    <p class="font-semibold">Bon d'avance avec prix</p>
+                    <p class="text-sm">Vous pouvez modifier les quantités et prix unitaires avant impression. Le bon d'avance affichera les prix et montants.</p>
+                </div>
+            </div>
+
+            <!-- Tableau des lignes éditables -->
+            <div class="overflow-x-auto mb-4">
+                <table class="table table-sm w-full">
+                    <thead>
+                        <tr>
+                            <th>Désignation</th>
+                            <th class="w-24">Quantité</th>
+                            <th class="w-32">P.U. (Ar)</th>
+                            <th class="w-32">Montant (Ar)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="avance-lignes-table-body">
+                        <!-- Rempli dynamiquement par JavaScript -->
+                    </tbody>
+                    <tfoot>
+                        <tr class="font-bold">
+                            <td colspan="3" class="text-right">TOTAL:</td>
+                            <td><span id="avance-montant-total">0</span> Ar</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            <div class="divider">Informations Complémentaires</div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div class="form-control relative">
+                    <label class="label">
+                        <span class="label-text font-semibold">Fournisseur (optionnel)</span>
+                    </label>
+                    <input type="text"
+                           id="avance-fournisseur-search"
+                           class="input input-bordered"
+                           placeholder="Rechercher un fournisseur..."
+                           oninput="rechercherFournisseursAvance(this.value)"
+                           autocomplete="off">
+                    <input type="hidden" id="avance-fournisseur-id" name="fournisseur_id">
+                    <div id="fournisseurs-results-avance" class="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-base-100 border border-base-300 rounded-lg shadow-lg z-50"></div>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Compte (optionnel)</span>
+                    </label>
+                    <select id="avance-compte" name="compte" class="select select-bordered">
+                        <option value="">-- Chargement... --</option>
+                    </select>
+                    <label class="label">
+                        <span class="label-text-alt">Les comptes autorisés pour cette désignation</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text font-semibold">Photo justificatif (optionnel)</span>
+                </label>
+                <input type="file" name="photo" accept="image/*" capture="camera" class="file-input file-input-bordered w-full">
+                <label class="label">
+                    <span class="label-text-alt">Prenez une photo du bon d'avance ou de la facture</span>
+                </label>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('modal-traiter-avance').close()">Annuler</button>
+                <button type="submit" class="btn btn-warning">
+                    <i class="fas fa-print mr-2"></i>Imprimer Bon d'Avance
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<script>
+console.log('🚀 Script workflow terrain chargé');
+
+// Gestion des livraisons - Sélection multiple avec checkboxes
+const livraisonsSelection = new Set();
+let livraisonFournisseurActuel = null;
+
+function toggleLivraisonSelection(detailId, fournisseurId) {
+    const checkbox = document.querySelector(`.livraison-select[data-detail-id="${detailId}"]`);
+
+    if (checkbox.checked) {
+        // Vérifier si même fournisseur que les autres sélections
+        if (livraisonsSelection.size > 0 && livraisonFournisseurActuel && livraisonFournisseurActuel !== fournisseurId) {
+            alert('Toutes les livraisons doivent avoir le même fournisseur pour être traitées ensemble.');
+            checkbox.checked = false;
+            return;
+        }
+
+        livraisonFournisseurActuel = fournisseurId || null;
+        livraisonsSelection.add(detailId);
+    } else {
+        // Décocher
+        livraisonsSelection.delete(detailId);
+
+        // Si plus de sélections, réinitialiser le fournisseur
+        if (livraisonsSelection.size === 0) {
+            livraisonFournisseurActuel = null;
+        }
+    }
+
+    // Mettre à jour le compteur et l'état du bouton
+    const count = livraisonsSelection.size;
+    document.getElementById('count-livraisons-selection').textContent = count;
+    document.getElementById('btn-utiliser-livraisons').disabled = count === 0;
+}
+
+function utiliserLivraisonsSelectionnees() {
+    if (livraisonsSelection.size === 0) {
+        alert('Veuillez sélectionner au moins une livraison');
+        return;
+    }
+
+    // Récupérer les données des lignes sélectionnées
+    const lignesSelectionnees = Array.from(livraisonsSelection).map(detailId => {
+        const checkbox = document.querySelector(`.livraison-select[data-detail-id="${detailId}"]`);
+        return {
+            id: detailId,
+            designation: checkbox.dataset.designation,
+            quantity: checkbox.dataset.quantity,
+            pu: checkbox.dataset.pu,
+            montant: checkbox.dataset.montant
+        };
+    });
+
+    // Ouvrir le modal avec les données
+    openUtiliserLivraisonModal(lignesSelectionnees);
+}
+
+// NOTE: window.imprimerTicket est déjà définie en haut du fichier (ligne 61)
+// pour qu'elle soit disponible dès le chargement de la page
+console.log('✅ window.imprimerTicket déjà définie en haut du fichier');
+
+// Gestion des signatures tactiles
+const signaturePads = {};
+
+function initSignaturePad(canvasId) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return null;
+
+    const ctx = canvas.getContext('2d');
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width;
+
+    let isDrawing = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    function getPos(e) {
+        const rect = canvas.getBoundingClientRect();
+        const touch = e.touches ? e.touches[0] : e;
+        return {
+            x: touch.clientX - rect.left,
+            y: touch.clientY - rect.top
+        };
+    }
+
+    function startDrawing(e) {
+        e.preventDefault();
+        isDrawing = true;
+        const pos = getPos(e);
+        lastX = pos.x;
+        lastY = pos.y;
+    }
+
+    function draw(e) {
+        e.preventDefault();
+        if (!isDrawing) return;
+
+        const pos = getPos(e);
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(lastX, lastY);
+        ctx.lineTo(pos.x, pos.y);
+        ctx.stroke();
+
+        lastX = pos.x;
+        lastY = pos.y;
+    }
+
+    function stopDrawing() {
+        isDrawing = false;
+    }
+
+    // Événements souris
+    canvas.addEventListener('mousedown', startDrawing);
+    canvas.addEventListener('mousemove', draw);
+    canvas.addEventListener('mouseup', stopDrawing);
+    canvas.addEventListener('mouseout', stopDrawing);
+
+    // Événements tactiles
+    canvas.addEventListener('touchstart', startDrawing);
+    canvas.addEventListener('touchmove', draw);
+    canvas.addEventListener('touchend', stopDrawing);
+
+    return canvas;
+}
+
+function clearSignature(canvasId) {
+    const canvas = document.getElementById(canvasId);
+    if (canvas) {
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+}
+
+function getSignatureData(canvasId) {
+    const canvas = document.getElementById(canvasId);
+    return canvas ? canvas.toDataURL('image/png') : null;
+}
+
+function openUtiliserLivraisonModal(lignes) {
+    // Si lignes est un array, c'est une sélection multiple
+    if (Array.isArray(lignes)) {
+        // Stocker les IDs et lignes dans le modal
+        document.getElementById('livraison-detail-ids').value = lignes.map(l => l.id).join(',');
+        document.getElementById('livraison-designation').value = `${lignes.length} ligne(s) sélectionnée(s)`;
+
+        // Stocker les lignes dans une variable globale pour l'affichage du ticket
+        window.lignesFacture = lignes;
+    } else {
+        // Ancien code pour une seule ligne (rétrocompatibilité)
+        document.getElementById('livraison-detail-ids').value = lignes;
+        document.getElementById('livraison-designation').value = lignes;
+        window.lignesFacture = null;
+    }
+
+    document.getElementById('modal-utiliser-livraison').showModal();
+
+    // Initialiser les canvas de signature
+    setTimeout(() => {
+        initSignaturePad('signature-employe-livraison');
+        initSignaturePad('signature-fournisseur-livraison');
+    }, 100);
+}
+
+// NOTE: Le handler de soumission du formulaire de livraison est maintenant dans workflow_livraisons.js
+// Il utilise la nouvelle API /plannings/terrain/livraisons/utiliser/ qui gère plusieurs lignes à la fois
+console.log('✅ Handler de formulaire géré par workflow_livraisons.js (nouvelle API)');
+
+// Gestion des avances
+let detailsSelection = new Set();
+let fournisseurSelection = null;
+
+function openTraiterAvanceModal(detailId, detail) {
+    document.getElementById('avance-detail-id').value = detailId;
+    document.getElementById('avance-quantity').value = detail.quantity;
+    document.getElementById('avance-pu').value = detail.pu;
+    updateMontantAvance();
+    document.getElementById('modal-traiter-avance').showModal();
+}
+
+// Protéger l'attachement des listeners avance (éléments peuvent ne pas exister)
+const avanceQty = document.getElementById('avance-quantity');
+const avancePu = document.getElementById('avance-pu');
+if (avanceQty && avancePu) {
+    avanceQty.addEventListener('input', updateMontantAvance);
+    avancePu.addEventListener('input', updateMontantAvance);
+}
+
+function updateMontantAvance() {
+    const quantity = parseFloat(document.getElementById('avance-quantity').value) || 0;
+    const pu = parseFloat(document.getElementById('avance-pu').value) || 0;
+    const montant = quantity * pu;
+    document.getElementById('avance-montant').value = montant.toLocaleString() + ' Ar';
+}
+
+async function rechercherFournisseurs() {
+    const query = document.getElementById('search-fournisseur').value;
+
+    if (query.length < 2) {
+        document.getElementById('fournisseurs-results').innerHTML = '';
+        return;
+    }
+
+    try {
+        const response = await fetch('/plannings/terrain/fournisseurs/rechercher/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify({
+                query: query,
+                ouvrage_id: '{{ planning.ouvrage.id|default:"" }}'
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            const results = data.fournisseurs.map(f => `
+                <div class="card bg-base-200 p-3 mb-2 cursor-pointer hover:bg-base-300" onclick="selectFournisseur('${f.id}', '${f.nom}')">
+                    <div class="font-semibold">${f.nom}</div>
+                    <div class="text-xs opacity-70">${f.telephone || 'Telephone non renseigne'}</div>
+                    <div class="text-xs opacity-50">${f.adresse}</div>
+                </div>
+            `).join('');
+
+            document.getElementById('fournisseurs-results').innerHTML = results || '<div class="text-sm opacity-50">Aucun résultat</div>';
+        }
+    } catch (error) {
+        console.error('Erreur recherche fournisseurs:', error);
+    }
+}
+
+function selectFournisseur(id, nom) {
+    document.getElementById('avance-fournisseur-id').value = id;
+    document.getElementById('search-fournisseur').value = nom;
+    document.getElementById('fournisseurs-results').innerHTML = '';
+}
+
+// Protéger l'attachement du listener formulaire avance
+const formTraiterAvance = document.getElementById('form-traiter-avance');
+if (formTraiterAvance) {
+    formTraiterAvance.addEventListener('submit', async function(e) {
+        e.preventDefault();
+
+        const detailId = document.getElementById('avance-detail-id').value;
+    const formData = {
+        quantity: document.getElementById('avance-quantity').value,
+        pu: document.getElementById('avance-pu').value,
+        fournisseur_id: document.getElementById('avance-fournisseur-id').value
+    };
+
+    // Vérifier si création d'un nouveau fournisseur
+    if (document.getElementById('toggle-nouveau-fournisseur').checked) {
+        formData.nouveau_fournisseur = {
+            nom: document.getElementById('nouveau-fournisseur-nom').value,
+            telephone: document.getElementById('nouveau-fournisseur-telephone').value,
+            email: document.getElementById('nouveau-fournisseur-email').value,
+            nif: document.getElementById('nouveau-fournisseur-nif').value,
+            stat: document.getElementById('nouveau-fournisseur-stat').value
+        };
+    }
+
+    const avanceEndpoint = `/plannings/terrain/avance/${detailId}/traiter/`;
+
+    if (!navigator.onLine) {
+        await enregistrerActionOffline('avance_detail', avanceEndpoint, { detail_id: detailId, ...formData });
+        return;
+    }
+
+    try {
+        const response = await fetch(avanceEndpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify(formData)
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert('Avance traitée avec succès');
+            location.reload();
+        } else {
+            alert('Erreur : ' + data.error);
+        }
+    } catch (error) {
+        if (!navigator.onLine || error instanceof TypeError) {
+            await enregistrerActionOffline('avance_detail', avanceEndpoint, { detail_id: detailId, ...formData });
+        } else {
+            alert('Erreur : ' + error.message);
+        }
+    }
+    });
+}
+
+// Sélection pour facture groupée
+function selectionnerPourFacture(detailId, fournisseurId) {
+    if (fournisseurSelection === null) {
+        fournisseurSelection = fournisseurId;
+    } else if (fournisseurSelection !== fournisseurId) {
+        alert('Tous les détails doivent avoir le même fournisseur');
+        return;
+    }
+
+    if (detailsSelection.has(detailId)) {
+        detailsSelection.delete(detailId);
+    } else {
+        detailsSelection.add(detailId);
+    }
+
+    document.getElementById('count-selection').textContent = detailsSelection.size;
+    document.getElementById('btn-facture-groupee').disabled = detailsSelection.size === 0;
+}
+
+function genererFactureGroupee() {
+    if (detailsSelection.size === 0) {
+        alert('Sélectionnez au moins un détail');
+        return;
+    }
+
+    const params = new URLSearchParams();
+    detailsSelection.forEach(id => params.append('detail_ids[]', id));
+
+    window.open(`/plannings/terrain/facture/generer/?${params.toString()}`, '_blank');
+}
+
+// Fonction pour afficher/masquer les détails d'une ligne
+function toggleDetails(rowId) {
+    const detailsRow = document.getElementById('details-' + rowId);
+    const icon = document.getElementById('icon-' + rowId);
+
+    if (detailsRow.classList.contains('hidden')) {
+        detailsRow.classList.remove('hidden');
+        icon.classList.remove('fa-chevron-down');
+        icon.classList.add('fa-chevron-up');
+    } else {
+        detailsRow.classList.add('hidden');
+        icon.classList.remove('fa-chevron-up');
+        icon.classList.add('fa-chevron-down');
+    }
+}
+
+// Initialiser les compteurs après le chargement complet du tableau
+setTimeout(function() {
+    if (typeof updateLivraisonCount === 'function') updateLivraisonCount();
+}, 100);
+</script>
+{% endblock %}

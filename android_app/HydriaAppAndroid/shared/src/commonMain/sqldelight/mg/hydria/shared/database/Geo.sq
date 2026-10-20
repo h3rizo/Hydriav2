@@ -1,0 +1,229 @@
+-- Miroir des tables navigation/GPS de TerrainDatabase.kt (app/) : geo_entities,
+-- geo_landmark_types, geo_position_history, geo_placement_candidates. Gere
+-- par GeoRepository.kt (app/) - carte, marquage terrain, reperes. Pas encore
+-- branchee sur l'app (Phase 2 du plan de migration KMP). Le RTree spatial
+-- n'est pas repris ici non plus (deja remplace par des index B-tree simples
+-- cote app pour compatibilite materielle, cf. TerrainDatabase.createNavigationTables).
+
+CREATE TABLE geoEntities (
+    spatialId INTEGER PRIMARY KEY AUTOINCREMENT,
+    entityId TEXT NOT NULL,
+    category TEXT NOT NULL,
+    name TEXT NOT NULL,
+    typeLabel TEXT,
+    code TEXT,
+    ouvrageId TEXT,
+    latitude REAL,
+    longitude REAL,
+    altitude REAL,
+    accuracyM REAL,
+    captureMethod TEXT,
+    capturedAt TEXT,
+    serverUpdatedAt TEXT,
+    localUpdatedAt INTEGER NOT NULL,
+    syncState TEXT NOT NULL DEFAULT 'synced',
+    isArchived INTEGER NOT NULL DEFAULT 0,
+    isFieldMarker INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(category, entityId)
+);
+
+CREATE INDEX idx_geo_entities_category ON geoEntities(category, isArchived);
+CREATE INDEX idx_geo_entities_work ON geoEntities(ouvrageId, category);
+CREATE INDEX idx_geo_entities_latitude ON geoEntities(latitude);
+CREATE INDEX idx_geo_entities_longitude ON geoEntities(longitude);
+
+CREATE TABLE geoLandmarkTypes (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    iconKey TEXT NOT NULL,
+    colorHex TEXT NOT NULL,
+    displayOrder INTEGER NOT NULL DEFAULT 0,
+    isActive INTEGER NOT NULL DEFAULT 1,
+    serverUpdatedAt TEXT
+);
+
+CREATE TABLE geoPositionHistory (
+    localUuid TEXT NOT NULL PRIMARY KEY,
+    entityKind TEXT NOT NULL,
+    entityId TEXT NOT NULL,
+    oldLatitude REAL,
+    oldLongitude REAL,
+    newLatitude REAL NOT NULL,
+    newLongitude REAL NOT NULL,
+    altitude REAL,
+    accuracyM REAL,
+    captureMethod TEXT NOT NULL,
+    capturedAt TEXT NOT NULL,
+    syncState TEXT NOT NULL DEFAULT 'pending',
+    createdAt INTEGER NOT NULL
+);
+
+CREATE TABLE geoPlacementCandidates (
+    entityId TEXT NOT NULL,
+    category TEXT NOT NULL,
+    name TEXT NOT NULL,
+    code TEXT,
+    villageName TEXT,
+    referenceLatitude REAL,
+    referenceLongitude REAL,
+    hasPhoto INTEGER NOT NULL DEFAULT 0,
+    servedVillageIds TEXT,
+    ouvrageId TEXT,
+    serverUpdatedAt TEXT,
+    PRIMARY KEY(category, entityId)
+);
+
+CREATE INDEX idx_geo_candidates_category ON geoPlacementCandidates(category);
+
+-- ── geoEntities ──
+
+selectForUpsertCheck:
+SELECT spatialId, syncState FROM geoEntities WHERE category = ? AND entityId = ?;
+
+insertEntity:
+INSERT INTO geoEntities(
+    entityId, category, name, typeLabel, code, ouvrageId, latitude, longitude,
+    altitude, accuracyM, captureMethod, capturedAt, serverUpdatedAt, localUpdatedAt,
+    syncState, isArchived, isFieldMarker
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?);
+
+-- Reservee a la migration unique depuis TerrainDatabase.geo_entities (app/) :
+-- copie fidele d'une ligne existante (etat de sync et archivage inclus, sans
+-- passer par la logique "import serveur" qui forcerait syncState='synced').
+seedEntity:
+INSERT OR IGNORE INTO geoEntities(
+    entityId, category, name, typeLabel, code, ouvrageId, latitude, longitude,
+    altitude, accuracyM, captureMethod, capturedAt, serverUpdatedAt, localUpdatedAt,
+    syncState, isArchived, isFieldMarker
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- isArchived est remis a 0 ici : le comportement historique (TerrainDatabase.
+-- GeoRepository.upsertServerEntity) desarchive une entite reimportee depuis le
+-- serveur, meme si elle avait ete archivee localement entre-temps.
+updateEntityBySpatialId:
+UPDATE geoEntities SET
+    name = ?, typeLabel = ?, code = ?, ouvrageId = ?, latitude = ?, longitude = ?,
+    altitude = ?, accuracyM = ?, captureMethod = ?, capturedAt = ?, serverUpdatedAt = ?,
+    localUpdatedAt = ?, syncState = ?, isArchived = 0
+WHERE spatialId = ?;
+
+updatePositionFields:
+UPDATE geoEntities SET
+    latitude = ?, longitude = ?, altitude = ?, accuracyM = ?, captureMethod = ?,
+    capturedAt = ?, localUpdatedAt = ?, syncState = 'pending'
+WHERE category = ? AND entityId = ?;
+
+archiveByCategoryAndId:
+UPDATE geoEntities SET isArchived = 1, syncState = 'pending', localUpdatedAt = ?
+WHERE category = ? AND entityId = ?;
+
+archiveIfSyncedByCategoryAndId:
+UPDATE geoEntities SET isArchived = 1
+WHERE category = ? AND entityId = ? AND syncState = 'synced';
+
+markEntitySyncedByCategoryAndId:
+UPDATE geoEntities SET syncState = 'synced' WHERE category = ? AND entityId = ?;
+
+markEntitySyncedAndArchivedByCategoryAndId:
+UPDATE geoEntities SET syncState = 'synced', isArchived = 1 WHERE category = ? AND entityId = ?;
+
+markEntityConflictByCategoryAndId:
+UPDATE geoEntities SET syncState = 'conflict' WHERE category = ? AND entityId = ?;
+
+selectEntityByCategoryAndId:
+SELECT entityId, category, name, typeLabel, code, ouvrageId, latitude, longitude,
+       altitude, accuracyM, syncState, serverUpdatedAt, isFieldMarker
+FROM geoEntities WHERE category = ? AND entityId = ? LIMIT 1;
+
+selectEntitiesByCategories:
+SELECT entityId, category, name, typeLabel, code, ouvrageId, latitude, longitude,
+       altitude, accuracyM, syncState, serverUpdatedAt, isFieldMarker
+FROM geoEntities
+WHERE isArchived = 0 AND latitude IS NOT NULL AND longitude IS NOT NULL
+  AND category IN ?
+ORDER BY name COLLATE NOCASE;
+
+selectEntitiesInBoundingBox:
+SELECT entityId, category, name, typeLabel, code, ouvrageId, latitude, longitude,
+       altitude, accuracyM, syncState, serverUpdatedAt, isFieldMarker
+FROM geoEntities
+WHERE latitude >= ? AND latitude <= ? AND longitude >= ? AND longitude <= ? AND isArchived = 0;
+
+selectEntitiesInBoundingBoxOrderedByDistance:
+SELECT entityId, category, name, typeLabel, code, ouvrageId, latitude, longitude,
+       altitude, accuracyM, syncState, serverUpdatedAt, isFieldMarker
+FROM geoEntities
+WHERE latitude >= ? AND latitude <= ? AND longitude >= ? AND longitude <= ? AND isArchived = 0
+ORDER BY ((latitude - ?) * (latitude - ?)) + ((longitude - ?) * (longitude - ?)) ASC
+LIMIT ?;
+
+selectCategoryEntitiesInBoundingBox:
+SELECT entityId, name, latitude, longitude
+FROM geoEntities
+WHERE category = ? AND isArchived = 0
+  AND latitude >= ? AND latitude <= ? AND longitude >= ? AND longitude <= ?;
+
+-- ── geoLandmarkTypes ──
+
+selectActiveLandmarkTypes:
+SELECT id, name FROM geoLandmarkTypes WHERE isActive = 1 ORDER BY displayOrder, name;
+
+deleteLandmarkTypeByIconExcept:
+DELETE FROM geoLandmarkTypes WHERE iconKey = ? AND id <> ?;
+
+upsertLandmarkType:
+INSERT OR REPLACE INTO geoLandmarkTypes(id, name, description, iconKey, colorHex, displayOrder, isActive, serverUpdatedAt)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+seedLandmarkType:
+INSERT OR IGNORE INTO geoLandmarkTypes(id, name, description, iconKey, colorHex, displayOrder, isActive, serverUpdatedAt)
+VALUES (?, ?, NULL, ?, ?, ?, 1, NULL);
+
+-- ── geoPlacementCandidates ──
+
+selectPlacementCandidateState:
+SELECT hasPhoto, servedVillageIds FROM geoPlacementCandidates WHERE category = ? AND entityId = ? LIMIT 1;
+
+upsertPlacementCandidate:
+INSERT OR REPLACE INTO geoPlacementCandidates(
+    entityId, category, name, code, villageName, referenceLatitude, referenceLongitude,
+    hasPhoto, servedVillageIds, ouvrageId, serverUpdatedAt
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectPlacementCandidatesByCategory:
+SELECT entityId, name, code, villageName, referenceLatitude, referenceLongitude, hasPhoto,
+       servedVillageIds, ouvrageId, serverUpdatedAt
+FROM geoPlacementCandidates WHERE category = ? ORDER BY name COLLATE NOCASE;
+
+markCandidatePhotoQueued:
+UPDATE geoPlacementCandidates SET hasPhoto = 1 WHERE category = ? AND entityId = ?;
+
+selectCandidateOuvrageVillageNames:
+SELECT ouvrageId, villageName FROM geoPlacementCandidates
+WHERE category = ? AND ouvrageId IS NOT NULL AND TRIM(ouvrageId) <> ''
+  AND villageName IS NOT NULL AND TRIM(villageName) <> '';
+
+-- ── geoPositionHistory ──
+
+insertPositionHistory:
+INSERT INTO geoPositionHistory(
+    localUuid, entityKind, entityId, oldLatitude, oldLongitude, newLatitude, newLongitude,
+    altitude, accuracyM, captureMethod, capturedAt, syncState, createdAt
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?);
+
+-- Reservee a la migration unique depuis TerrainDatabase.geo_position_history :
+-- copie fidele (etat de sync inclus).
+seedPositionHistory:
+INSERT OR IGNORE INTO geoPositionHistory(
+    localUuid, entityKind, entityId, oldLatitude, oldLongitude, newLatitude, newLongitude,
+    altitude, accuracyM, captureMethod, capturedAt, syncState, createdAt
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+markPositionHistorySynced:
+UPDATE geoPositionHistory SET syncState = 'synced' WHERE localUuid = ?;

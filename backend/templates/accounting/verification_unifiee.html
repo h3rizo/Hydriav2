@@ -1,0 +1,902 @@
+{% extends "accounting/base.html" %}
+{% load humanize %}
+{% load static %}
+
+{% block title %}Vérification Comptable Unifiée{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6 print:px-0">
+    {% include 'accounting/includes/verification_nav.html' with current_page='unifiee' %}
+    <!-- Header avec actions -->
+    <div class="flex justify-between items-center mb-6 print:mb-2">
+        <h1 class="text-3xl font-bold print:text-2xl">
+            <i class="fas fa-clipboard-check mr-3 text-primary"></i>Vérification Comptable Unifiée
+        </h1>
+        <div class="flex gap-2 print:hidden">
+            <button onclick="window.print()" class="btn btn-primary btn-sm">
+                <i class="fas fa-print mr-2"></i>Imprimer
+            </button>
+            <a href="{% url 'accounting:dashboard_comptabilite' %}" class="btn btn-ghost btn-sm">
+                <i class="fas fa-arrow-left mr-2"></i>Retour
+            </a>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-200 shadow-md mb-6 print:hidden">
+        <div class="card-body p-4">
+            <h2 class="card-title text-base mb-4">
+                <i class="fas fa-filter mr-2"></i>Filtres
+            </h2>
+            <form method="get" class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mois</span></label>
+                    <input type="month" name="mois" value="{{ filter_mois }}" class="input input-bordered input-sm">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Fichier source</span></label>
+                    <select name="fichier" class="select select-bordered select-sm">
+                        <option value="">Tous</option>
+                        {% for fichier in fichiers_list %}
+                        <option value="{{ fichier }}" {% if fichier == filter_fichier %}selected{% endif %}>{{ fichier }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Programme</span></label>
+                    <select name="prog" class="select select-bordered select-sm">
+                        <option value="">Tous</option>
+                        {% for prog in progs_list %}
+                        <option value="{{ prog }}" {% if prog == filter_prog %}selected{% endif %}>{{ prog }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">&nbsp;</span></label>
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="fas fa-search mr-2"></i>Filtrer
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Statistiques globales -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <!-- Stats Scans -->
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-primary">
+                <div class="radial-progress text-primary" style="--value:{{ stats_scans.taux_scans_valides }}; --size:4rem; --thickness:4px;" role="progressbar">
+                    {{ stats_scans.taux_scans_valides }}%
+                </div>
+            </div>
+            <div class="stat-title">Scans</div>
+            <div class="stat-value text-primary text-2xl">{{ stats_scans.scans_valides|intcomma }}</div>
+            <div class="stat-desc">{{ stats_scans.taux_scans_valides }}% sur {{ stats_scans.total|intcomma }}</div>
+        </div>
+
+        <!-- Stats Employés -->
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-success">
+                <div class="radial-progress text-success" style="--value:{{ stats_employes.taux_conformite }}; --size:4rem; --thickness:4px;" role="progressbar">
+                    {{ stats_employes.taux_conformite }}%
+                </div>
+            </div>
+            <div class="stat-title">Paiements Employés</div>
+            <div class="stat-value text-success text-2xl">{{ stats_employes.conformes|intcomma }}</div>
+            <div class="stat-desc">{{ stats_employes.taux_conformite }}% sur {{ stats_employes.total|intcomma }}</div>
+        </div>
+
+        <!-- Stats Fournisseurs -->
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-info">
+                <div class="radial-progress text-info" style="--value:{{ stats_fournisseurs.taux_conformite }}; --size:4rem; --thickness:4px;" role="progressbar">
+                    {{ stats_fournisseurs.taux_conformite }}%
+                </div>
+            </div>
+            <div class="stat-title">Fournisseurs</div>
+            <div class="stat-value text-info text-2xl">{{ stats_fournisseurs.conformes|intcomma }}</div>
+            <div class="stat-desc">{{ stats_fournisseurs.taux_conformite }}% sur {{ stats_fournisseurs.total|intcomma }}</div>
+        </div>
+
+        <!-- Stats Autres -->
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-warning">
+                <div class="radial-progress text-warning" style="--value:{{ stats_autres.taux_conformite }}; --size:4rem; --thickness:4px;" role="progressbar">
+                    {{ stats_autres.taux_conformite }}%
+                </div>
+            </div>
+            <div class="stat-title">Autres Comptes</div>
+            <div class="stat-value text-warning text-2xl">{{ stats_autres.conformes|intcomma }}</div>
+            <div class="stat-desc">{{ stats_autres.taux_conformite }}% sur {{ stats_autres.total|intcomma }}</div>
+        </div>
+    </div>
+
+    <!-- Section 1: Scans -->
+    <div class="collapse collapse-arrow bg-base-100 shadow-md mb-4 print:collapse-open">
+        <input type="checkbox" checked />
+        <div class="collapse-title text-xl font-medium flex items-center gap-3">
+            <i class="fas fa-file-image text-primary"></i>
+            <span>1. Vérification des Scans ({{ stats_scans.sans_scan|intcomma }} manquants)</span>
+        </div>
+        <div class="collapse-content">
+            <div class="alert alert-info mb-4">
+                <i class="fas fa-info-circle"></i>
+                <span>Dernière vérification : {{ date_derniere_verif_scans|date:"d/m/Y H:i" }}</span>
+            </div>
+            <div class="stats stats-vertical lg:stats-horizontal shadow w-full mb-4">
+                <div class="stat">
+                    <div class="stat-title">Scans valides</div>
+                    <div class="stat-value text-success">{{ stats_scans.scans_valides|intcomma }}</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title">Liens morts</div>
+                    <div class="stat-value text-error">{{ stats_scans.liens_morts|intcomma }}</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title">Sans scan</div>
+                    <div class="stat-value text-warning">{{ stats_scans.sans_scan|intcomma }}</div>
+                </div>
+            </div>
+
+            <!-- Tableau détaillé par programme -->
+            {% if regroupement_prog %}
+                <h4 class="font-bold text-lg mb-3">Détails par Programme</h4>
+                <div class="overflow-x-auto mb-6">
+                    <table class="table table-zebra table-sm">
+                        <thead>
+                            <tr class="bg-base-200">
+                                <th>Programme</th>
+                                <th class="text-right">Nombre d'entrées</th>
+                                <th class="text-right">Montant Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for prog, prog_info in regroupement_prog.items %}
+                            <tr>
+                                <td class="font-mono">{{ prog }}</td>
+                                <td class="text-right">{{ prog_info.total|intcomma }}</td>
+                                <td class="text-right font-mono">{{ prog_info.montant_total|floatformat:0|intcomma }} Ar</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Détails par Compte (plié par défaut) -->
+                <div class="collapse collapse-arrow bg-base-200 mb-4">
+                    <input type="checkbox" />
+                    <div class="collapse-title font-bold">
+                        <i class="fas fa-table mr-2"></i>Détails par Compte ({{ regroupement_compte|length }} comptes)
+                    </div>
+                    <div class="collapse-content">
+                        <div class="overflow-x-auto">
+                            <table class="table table-zebra table-sm">
+                                <thead>
+                                    <tr class="bg-base-200">
+                                        <th>Compte</th>
+                                        <th class="text-right">Nombre</th>
+                                        <th class="text-right">Montant Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for compte, compte_info in regroupement_compte.items %}
+                                    <tr>
+                                        <td class="font-mono">{{ compte }}</td>
+                                        <td class="text-right">{{ compte_info.total|intcomma }}</td>
+                                        <td class="text-right font-mono">{{ compte_info.montant_total|floatformat:0|intcomma }} Ar</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            {% else %}
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i>
+                    <span>Aucune donnée à afficher</span>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Section 2: Paiements Employés -->
+    <div class="collapse collapse-arrow bg-base-100 shadow-md mb-4 print:collapse-open">
+        <input type="checkbox" checked />
+        <div class="collapse-title text-xl font-medium flex items-center gap-3">
+            <i class="fas fa-users text-success"></i>
+            <span>2. Paiements Employés ({{ stats_employes.anomalies|intcomma }} anomalies)</span>
+        </div>
+        <div class="collapse-content">
+            {% if anomalies_employes_groupees %}
+            <div class="overflow-x-auto">
+                {% for prog, prog_data in anomalies_employes_groupees.items %}
+                <!-- Regroupement Prog -->
+                <div class="mb-6">
+                    <h4 class="text-lg font-bold bg-primary text-primary-content p-2 rounded mb-2">
+                        <i class="fas fa-folder mr-2"></i>Programme: {{ prog }}
+                        <span class="badge badge-lg ml-2">{{ prog_data.total }} anomalie(s)</span>
+                    </h4>
+
+                    {% for compte, compte_data in prog_data.comptes.items %}
+                    <!-- Regroupement Compte -->
+                    <div class="ml-4 mb-4">
+                        <h5 class="text-base font-semibold bg-base-200 p-2 rounded mb-1">
+                            <i class="fas fa-file-invoice-dollar mr-2"></i>Compte: <span class="font-mono">{{ compte }}</span>
+                            {% if compte_data.nom_compte %}
+                                <span class="font-normal">- {{ compte_data.nom_compte }}</span>
+                            {% endif %}
+                            <span class="badge badge-sm ml-2">{{ compte_data.anomalies|length }} anomalie(s)</span>
+                        </h5>
+
+                        <table class="table table-zebra table-sm ml-6">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Description</th>
+                                    <th>Surnom</th>
+                                    <th>Préfixe</th>
+                                    <th>Montant</th>
+                                    <th>Type détecté</th>
+                                    <th>Statut</th>
+                                    <th>Scan</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for anomalie in compte_data.anomalies %}
+                                <tr>
+                                    <td>{{ anomalie.entry.date_m|date:"d/m/Y" }}</td>
+                                    <td class="max-w-xs truncate">{{ anomalie.entry.description }}</td>
+                                    <td>{{ anomalie.employe_surnom|default:"-" }}</td>
+                                    <td><span class="badge badge-sm badge-outline">{{ anomalie.employe_prefixe|default:"-" }}</span></td>
+                                    <td class="text-right font-mono">{{ anomalie.entry.montant_out|floatformat:0|intcomma }} Ar</td>
+                                    <td>
+                                        {% if anomalie.type_trouve %}
+                                        <span class="badge badge-info badge-sm">{{ anomalie.type_trouve }}</span>
+                                        {% else %}
+                                        <span class="badge badge-ghost badge-sm">Non détecté</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if not anomalie.conforme_description %}
+                                        <div class="flex flex-col gap-1 items-start">
+                                            <span class="badge badge-error badge-sm">Description</span>
+                                            {% for error in anomalie.charte_errors %}
+                                            <span class="text-[10px] text-error leading-tight italic">{{ error }}</span>
+                                            {% endfor %}
+                                        </div>
+                                        {% endif %}
+                                        {% if not anomalie.conforme_compte %}
+                                        <span class="badge badge-warning badge-sm">Compte</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if anomalie.scan_status == 'exists' %}
+                                            <span class="badge badge-xs badge-success gap-1"><i class="fas fa-check"></i>OK</span>
+                                        {% elif anomalie.scan_status == 'missing' %}
+                                            <span class="badge badge-xs badge-error gap-1"><i class="fas fa-times"></i>Sans scan</span>
+                                        {% elif anomalie.scan_status == 'dead' %}
+                                            <span class="badge badge-xs badge-warning gap-1"><i class="fas fa-unlink"></i>Lien mort</span>
+                                        {% elif anomalie.scan_status == 'invalid' %}
+                                            <span class="badge badge-xs badge-info gap-1"><i class="fas fa-exclamation-triangle"></i>Prog invalide</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <div class="flex gap-1">
+                                            {% if anomalie.scan_status == 'exists' or anomalie.scan_status == 'dead' or anomalie.scan_status == 'invalid' %}
+                                                <button onclick="openScanSmart('{{ anomalie.full_scan_path|default:anomalie.entry.scan|escapejs }}', {{ anomalie.entry.id }})" class="btn btn-xs btn-success" title="Ouvrir le scan">
+                                                    <i class="fas fa-folder-open"></i>
+                                                </button>
+                                            {% endif %}
+                                            <button onclick="openEditModal({{ anomalie.entry.id }}, '{{ anomalie.entry.description|escapejs }}', '{{ anomalie.entry.info|escapejs }}', '{{ anomalie.entry.compte_code|escapejs }}', '{{ anomalie.entry.detail|escapejs }}', '{{ anomalie.entry.fichier_source|escapejs }}')" class="btn btn-xs btn-primary" title="Modifier l'entrée">
+                                                <i class="fas fa-edit"></i>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="alert alert-success">
+                <i class="fas fa-check-circle"></i>
+                <span>Aucune anomalie détectée</span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Section 3: Fournisseurs -->
+    <div class="collapse collapse-arrow bg-base-100 shadow-md mb-4 print:collapse-open">
+        <input type="checkbox" checked />
+        <div class="collapse-title text-xl font-medium flex items-center gap-3">
+            <i class="fas fa-hiking text-info"></i>
+            <span>3. Dépenses Fournisseurs ({{ stats_fournisseurs.anomalies|intcomma }} anomalies)</span>
+        </div>
+        <div class="collapse-content">
+            {% if anomalies_fournisseurs %}
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Prog</th>
+                            <th>Compte</th>
+                            <th>Description</th>
+                            <th>Montant</th>
+                            <th>Type détecté</th>
+                            <th>Statut</th>
+                            <th>Scan</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for anomalie in anomalies_fournisseurs %}
+                        <tr>
+                            <td>{{ anomalie.entry.date_m|date:"d/m/Y" }}</td>
+                            <td><span class="badge badge-sm">{{ anomalie.entry.prog|default:"-" }}</span></td>
+                            <td><span class="font-mono text-xs">{{ anomalie.entry.compte_code }}</span></td>
+                            <td class="max-w-xs truncate">{{ anomalie.entry.description }}</td>
+                            <td class="text-right font-mono">{{ anomalie.entry.montant_out|floatformat:0|intcomma }} Ar</td>
+                            <td>
+                                {% if anomalie.type_trouve %}
+                                <span class="badge badge-info badge-sm">{{ anomalie.type_trouve }}</span>
+                                {% else %}
+                                <span class="badge badge-ghost badge-sm">Non détecté</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if not anomalie.conforme_description %}
+                                <span class="badge badge-error badge-sm">Description</span>
+                                {% endif %}
+                                {% if not anomalie.conforme_compte %}
+                                <span class="badge badge-warning badge-sm">Compte</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if anomalie.scan_status == 'exists' %}
+                                    <span class="badge badge-xs badge-success gap-1"><i class="fas fa-check"></i>OK</span>
+                                {% elif anomalie.scan_status == 'missing' %}
+                                    <span class="badge badge-xs badge-error gap-1"><i class="fas fa-times"></i>Sans scan</span>
+                                {% elif anomalie.scan_status == 'dead' %}
+                                    <span class="badge badge-xs badge-warning gap-1"><i class="fas fa-unlink"></i>Lien mort</span>
+                                {% elif anomalie.scan_status == 'invalid' %}
+                                    <span class="badge badge-xs badge-info gap-1"><i class="fas fa-exclamation-triangle"></i>Prog invalide</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="flex gap-1">
+                                    {% if anomalie.scan_status == 'exists' or anomalie.scan_status == 'dead' or anomalie.scan_status == 'invalid' %}
+                                        <button onclick="openScanSmart('{{ anomalie.full_scan_path|default:anomalie.entry.scan|escapejs }}', {{ anomalie.entry.id }})" class="btn btn-xs btn-success" title="Ouvrir le scan">
+                                            <i class="fas fa-folder-open"></i>
+                                        </button>
+                                    {% endif %}
+                                    <button onclick="openEditModal({{ anomalie.entry.id }}, '{{ anomalie.entry.description|escapejs }}', '{{ anomalie.entry.info|escapejs }}', '{{ anomalie.entry.compte_code|escapejs }}', '{{ anomalie.entry.detail|escapejs }}', '{{ anomalie.entry.fichier_source|escapejs }}')" class="btn btn-xs btn-primary" title="Modifier l'entrée">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="alert alert-success">
+                <i class="fas fa-check-circle"></i>
+                <span>Aucune anomalie détectée</span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Section 4: Autres Comptes -->
+    <div class="collapse collapse-arrow bg-base-100 shadow-md mb-4 print:collapse-open">
+        <input type="checkbox" checked />
+        <div class="collapse-title text-xl font-medium flex items-center gap-3">
+            <i class="fas fa-file-alt text-warning"></i>
+            <span>4. Autres Comptes ({{ stats_autres.anomalies|intcomma }} anomalies)</span>
+        </div>
+        <div class="collapse-content">
+            {% if anomalies_autres %}
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Prog</th>
+                            <th>Compte</th>
+                            <th>Description</th>
+                            <th>PERS</th>
+                            <th>Montant</th>
+                            <th>Problème</th>
+                            <th>Scan</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for anomalie in anomalies_autres %}
+                        <tr>
+                            <td>{{ anomalie.entry.date_m|date:"d/m/Y" }}</td>
+                            <td><span class="badge badge-sm">{{ anomalie.entry.prog|default:"-" }}</span></td>
+                            <td><span class="font-mono text-xs">{{ anomalie.entry.compte_code }}</span></td>
+                            <td class="max-w-xs truncate">{{ anomalie.entry.description|default:"-" }}</td>
+                            <td>{{ anomalie.entry.pers|default:"-" }}</td>
+                            <td class="text-right font-mono">{{ anomalie.entry.montant_out|floatformat:0|intcomma }} Ar</td>
+                            <td>
+                                {% if anomalie.manque_description %}
+                                <span class="badge badge-error badge-sm">Description manquante</span>
+                                {% endif %}
+                                {% if anomalie.manque_pers %}
+                                <span class="badge badge-warning badge-sm">PERS manquant</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if anomalie.scan_status == 'exists' %}
+                                    <span class="badge badge-xs badge-success gap-1"><i class="fas fa-check"></i>OK</span>
+                                {% elif anomalie.scan_status == 'missing' %}
+                                    <span class="badge badge-xs badge-error gap-1"><i class="fas fa-times"></i>Sans scan</span>
+                                {% elif anomalie.scan_status == 'dead' %}
+                                    <span class="badge badge-xs badge-warning gap-1"><i class="fas fa-unlink"></i>Lien mort</span>
+                                {% elif anomalie.scan_status == 'invalid' %}
+                                    <span class="badge badge-xs badge-info gap-1"><i class="fas fa-exclamation-triangle"></i>Prog invalide</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="flex gap-1">
+                                    {% if anomalie.scan_status == 'exists' or anomalie.scan_status == 'dead' or anomalie.scan_status == 'invalid' %}
+                                        <button onclick="openScanSmart('{{ anomalie.full_scan_path|default:anomalie.entry.scan|escapejs }}', {{ anomalie.entry.id }})" class="btn btn-xs btn-success" title="Ouvrir le scan">
+                                            <i class="fas fa-folder-open"></i>
+                                        </button>
+                                    {% endif %}
+                                    <button onclick="openEditModal({{ anomalie.entry.id }}, '{{ anomalie.entry.description|escapejs }}', '{{ anomalie.entry.info|escapejs }}', '{{ anomalie.entry.compte_code|escapejs }}', '{{ anomalie.entry.detail|escapejs }}', '{{ anomalie.entry.fichier_source|escapejs }}')" class="btn btn-xs btn-primary" title="Modifier l'entrée">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="alert alert-success">
+                <i class="fas fa-check-circle"></i>
+                <span>Aucune anomalie détectée</span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Section 5: Regroupement par Programme -->
+    <div class="collapse collapse-arrow bg-base-100 shadow-md mb-4 print:collapse-open">
+        <input type="checkbox" />
+        <div class="collapse-title text-xl font-medium flex items-center gap-3">
+            <i class="fas fa-layer-group text-purple-600"></i>
+            <span>5. Regroupement par Programme</span>
+        </div>
+        <div class="collapse-content">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm">
+                    <thead>
+                        <tr>
+                            <th>Programme</th>
+                            <th class="text-right">Nb Transactions</th>
+                            <th class="text-right">Montant Total</th>
+                            <th class="text-right">Anomalies Employés</th>
+                            <th class="text-right">Anomalies Fournisseurs</th>
+                            <th class="text-right">Anomalies Autres</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for prog, data in regroupement_prog.items %}
+                        <tr>
+                            <td><span class="badge badge-primary badge-sm">{{ prog }}</span></td>
+                            <td class="text-right font-mono">{{ data.total|intcomma }}</td>
+                            <td class="text-right font-mono">{{ data.montant_total|floatformat:0|intcomma }} Ar</td>
+                            <td class="text-right">
+                                {% if data.anomalies_employes > 0 %}
+                                <span class="badge badge-error badge-sm">{{ data.anomalies_employes }}</span>
+                                {% else %}
+                                <span class="text-success">0</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-right">
+                                {% if data.anomalies_fournisseurs > 0 %}
+                                <span class="badge badge-warning badge-sm">{{ data.anomalies_fournisseurs }}</span>
+                                {% else %}
+                                <span class="text-success">0</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-right">
+                                {% if data.anomalies_autres > 0 %}
+                                <span class="badge badge-info badge-sm">{{ data.anomalies_autres }}</span>
+                                {% else %}
+                                <span class="text-success">0</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Section 6: Regroupement par Compte -->
+    <div class="collapse collapse-arrow bg-base-100 shadow-md mb-4 print:collapse-open">
+        <input type="checkbox" />
+        <div class="collapse-title text-xl font-medium flex items-center gap-3">
+            <i class="fas fa-chart-pie text-green-600"></i>
+            <span>6. Regroupement par Compte</span>
+        </div>
+        <div class="collapse-content">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm">
+                    <thead>
+                        <tr>
+                            <th>Compte</th>
+                            <th class="text-right">Nb Transactions</th>
+                            <th class="text-right">Montant Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for compte, data in regroupement_compte.items %}
+                        <tr>
+                            <td><span class="font-mono text-xs">{{ compte }}</span></td>
+                            <td class="text-right font-mono">{{ data.total|intcomma }}</td>
+                            <td class="text-right font-mono">{{ data.montant_total|floatformat:0|intcomma }} Ar</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+@media print {
+    /* Ouvrir tous les collapse à l'impression */
+    .collapse-content {
+        display: block !important;
+        height: auto !important;
+        padding: 1rem !important;
+    }
+
+    .collapse-title {
+        page-break-after: avoid;
+        background: #f3f4f6 !important;
+        border-bottom: 2px solid #000;
+    }
+
+    .collapse {
+        page-break-inside: avoid;
+        border: none !important;
+        box-shadow: none !important;
+    }
+
+    /* Amélioration des tableaux pour l'impression */
+    table {
+        page-break-inside: auto;
+        border-collapse: collapse !important;
+        width: 100% !important;
+    }
+
+    thead {
+        display: table-header-group;
+        background: #e5e7eb !important;
+    }
+
+    tr {
+        page-break-inside: avoid;
+        page-break-after: auto;
+    }
+
+    th, td {
+        border: 1px solid #d1d5db !important;
+        padding: 0.25rem 0.5rem !important;
+        font-size: 0.75rem !important;
+    }
+
+    /* Badges et stats */
+    .stat {
+        border: 1px solid #d1d5db !important;
+        box-shadow: none !important;
+    }
+
+    .badge {
+        border: 1px solid #000 !important;
+    }
+
+    /* Cartes et sections */
+    .card {
+        border: 1px solid #d1d5db !important;
+        box-shadow: none !important;
+    }
+
+    /* Headers colorés */
+    .bg-primary {
+        background: #e5e7eb !important;
+        color: #000 !important;
+    }
+
+    .bg-base-200 {
+        background: #f3f4f6 !important;
+    }
+
+    /* Aligner le texte pour économiser l'espace */
+    .max-w-xs {
+        max-width: 200px !important;
+        white-space: normal !important;
+    }
+
+    /* Supprimer les ombres et arrondis inutiles */
+    .shadow, .shadow-md {
+        box-shadow: none !important;
+    }
+
+    .rounded, .rounded-lg {
+        border-radius: 0 !important;
+    }
+
+    /* En-tête de page */
+    h1 {
+        font-size: 1.5rem !important;
+        border-bottom: 3px solid #000 !important;
+        padding-bottom: 0.5rem !important;
+        margin-bottom: 1rem !important;
+    }
+
+    h4, h5 {
+        font-size: 1rem !important;
+        font-weight: bold !important;
+    }
+
+    /* Pagination */
+    @page {
+        margin: 1.5cm;
+    }
+}
+</style>
+
+<!-- Modal d'édition -->
+<dialog id="edit_modal" class="modal">
+    <div class="modal-box w-11/12 max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-edit mr-2 text-primary"></i>Modifier l'entrée
+        </h3>
+
+        <!-- Alerte fichier Access -->
+        <div class="alert alert-info mb-4">
+            <i class="fas fa-database"></i>
+            <div>
+                <span class="font-semibold">Fichier Access modifié :</span>
+                <span id="edit_fichier_source" class="font-mono ml-2"></span>
+            </div>
+        </div>
+
+        <form id="edit_form" class="space-y-4">
+            {% csrf_token %}
+            <input type="hidden" id="entry_id" name="entry_id" />
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Description</span></label>
+                <input type="text" id="edit_description" name="description" class="input input-bordered" />
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Info</span></label>
+                <input type="text" id="edit_info" name="info" class="input input-bordered" />
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Compte</span></label>
+                <select id="edit_compte" name="compte_code" class="select select-bordered">
+                    <option value="">-- Sélectionner un compte --</option>
+                    {% for compte in comptes_list %}
+                    <option value="{{ compte.compte }}">{{ compte.compte }} - {{ compte.nom_compte }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Détail (Employé)</span></label>
+                <select id="edit_detail" name="detail" class="select select-bordered">
+                    <option value="">-- Sélectionner un employé --</option>
+                    {% for employe in employes_list %}
+                    <option value="{{ employe.surnom }}">{{ employe.surnom }} - {{ employe.surnom|default:employe.nom }} {{ employe.nom }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div id="edit_messages" class="hidden"></div>
+
+            <div class="modal-action">
+                <button type="button" onclick="document.getElementById('edit_modal').close()" class="btn btn-ghost">
+                    <i class="fas fa-times mr-2"></i>Annuler
+                </button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<script>
+// Ouvrir le modal d'édition
+function openEditModal(entryId, description, info, compteCode, detail, fichierSource) {
+    document.getElementById('entry_id').value = entryId;
+    document.getElementById('edit_description').value = description || '';
+    document.getElementById('edit_info').value = info || '';
+
+    // Sélectionner le compte dans le dropdown
+    const compteSelect = document.getElementById('edit_compte');
+    if (compteSelect && compteCode) {
+        compteSelect.value = compteCode;
+    }
+
+    // Sélectionner l'employé dans le dropdown
+    const detailSelect = document.getElementById('edit_detail');
+    if (detailSelect && detail) {
+        detailSelect.value = detail;
+    }
+
+    document.getElementById('edit_fichier_source').textContent = fichierSource || 'Non spécifié';
+    document.getElementById('edit_messages').classList.add('hidden');
+    document.getElementById('edit_modal').showModal();
+}
+
+// Soumettre le formulaire d'édition
+async function tryLocalAccessUpdateFallback(data) {
+    if (!data || !data.success || data.access_updated || !data.access_payload) {
+        return data;
+    }
+    try {
+        const response = await fetch('http://127.0.0.1:8765/update-entry-access', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data.access_payload)
+        });
+        const result = await response.json();
+        if (response.ok && result.success) {
+            data.access_updated = true;
+            data.message = 'Modification enregistree dans Django et Access (local)';
+            data.access_error = null;
+        } else {
+            data.access_error = result.error || data.access_error || 'Echec mise a jour Access locale';
+        }
+    } catch (e) {
+        data.access_error = data.access_error || ('Erreur agent local: ' + e.message);
+    }
+    return data;
+}
+
+document.getElementById('edit_form').addEventListener('submit', function(e) {
+    e.preventDefault();
+
+    const entryId = document.getElementById('entry_id').value;
+    const formData = new FormData(this);
+    const messagesDiv = document.getElementById('edit_messages');
+
+    fetch(`{% url 'accounting:update_entry' 0 %}`.replace('0', entryId), {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        }
+    })
+    .then(response => response.json())
+    .then(async data => {
+        data = await tryLocalAccessUpdateFallback(data);
+        if (data.success) {
+            let debugHtml = '';
+            if (data.debug_info) {
+                debugHtml = `<details class="text-xs mt-2">
+                    <summary class="cursor-pointer">Détails de débogage</summary>
+                    <pre class="mt-2 p-2 bg-base-300 rounded">${JSON.stringify(data.debug_info, null, 2)}</pre>
+                    ${data.access_error ? `<p class="text-error mt-1">Erreur: ${data.access_error}</p>` : ''}
+                </details>`;
+            }
+
+            // Message d'avertissement pour mise à jour partielle
+            let warningHtml = '';
+            if (data.partial && data.warning) {
+                warningHtml = `<p class="text-xs mt-1 opacity-75"><i class="fas fa-info-circle"></i> ${data.warning}</p>`;
+            }
+
+            // Déterminer le type d'alerte
+            let alertType = 'success';
+            if (!data.access_updated) alertType = 'warning';
+            else if (data.partial) alertType = 'info';
+
+            messagesDiv.innerHTML = `
+                <div class="alert alert-${alertType}">
+                    <div class="flex-1">
+                        <i class="fas fa-${data.access_updated ? 'check' : 'exclamation-triangle'}"></i>
+                        <div>
+                            <span>${data.message}</span>
+                            ${warningHtml}
+                            ${debugHtml}
+                        </div>
+                    </div>
+                </div>
+            `;
+            messagesDiv.classList.remove('hidden');
+
+            // Recharger la page après 1.5 secondes si succès (complet ou partiel)
+            if (data.access_updated) {
+                setTimeout(() => {
+                    location.reload();
+                }, 1500);
+            }
+        } else {
+            messagesDiv.innerHTML = `
+                <div class="alert alert-error">
+                    <i class="fas fa-times"></i>
+                    <span>${data.message || 'Erreur lors de la mise à jour'}</span>
+                </div>
+            `;
+            messagesDiv.classList.remove('hidden');
+        }
+    })
+    .catch(error => {
+        messagesDiv.innerHTML = `
+            <div class="alert alert-error">
+                <i class="fas fa-times"></i>
+                <span>Erreur réseau : ${error.message}</span>
+            </div>
+        `;
+        messagesDiv.classList.remove('hidden');
+    });
+});
+
+function isLikelyLocalPath(filePath) {
+    if (!filePath) return false;
+    return /^[a-zA-Z]:[\\/]/.test(filePath) || filePath.startsWith('\\\\') || filePath.startsWith('/');
+}
+
+function openFileViaLocalAgent(filePath) {
+    return fetch('http://127.0.0.1:8765/open-file', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ file_path: filePath })
+    }).then(r => r.json());
+}
+
+function openScanSmart(filePath, entryId) {
+    if (entryId) {
+        window.open('/comptabilite/scan/' + entryId + '/', '_blank');
+        return;
+    }
+
+    if (filePath && isLikelyLocalPath(filePath)) {
+        openFileViaLocalAgent(filePath)
+            .then(data => {
+                if (!data.ok || !data.success) {
+                    alert('Impossible d ouvrir le scan localement. Detail: ' + (data.error || 'Erreur inconnue'));
+                }
+            })
+            .catch(error => {
+                alert('Agent local injoignable. Detail: ' + error.message);
+            });
+        return;
+    }
+
+    alert('Aucun scan disponible.');
+}
+</script>
+{% endblock %}

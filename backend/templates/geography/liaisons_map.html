@@ -1,0 +1,493 @@
+{% extends 'base.html' %}
+{% load humanize static %}
+
+{% block title %}Gestion des liaisons entre villages{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8 space-y-6">
+    <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">Gestion des liaisons entre villages</h1>
+            <p class="mt-2 max-w-3xl text-sm text-base-content/70">
+                Cliquez sur un village pour gérer ses liaisons, cliquez sur un trait pour modifier ou supprimer la liaison (distance, moyen d'accès), ou utilisez « Tracer une liaison » puis cliquez sur deux villages pour les relier.
+            </p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <a href="{% url 'geography:village_list' %}" class="btn btn-outline btn-sm">Gérer les villages</a>
+            <a href="{% url 'geography:list' %}" class="btn btn-ghost btn-sm">Retour géographie</a>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 gap-4 xl:grid-cols-4">
+        <div class="space-y-4 xl:col-span-1">
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body p-4">
+                    <h2 class="card-title text-sm">Village sélectionné</h2>
+                    <div id="village-panel" class="text-sm"></div>
+                </div>
+            </div>
+
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body p-4">
+                    <h2 class="card-title text-sm">Niveaux de zoom</h2>
+                    <div class="space-y-2 text-sm">
+                        <div class="rounded-lg bg-base-200 px-3 py-2"><strong>Zoom 6-7 :</strong> Régions</div>
+                        <div class="rounded-lg bg-base-200 px-3 py-2"><strong>Zoom 8-9 :</strong> Districts</div>
+                        <div class="rounded-lg bg-base-200 px-3 py-2"><strong>Zoom 10-11 :</strong> Communes, villages et liaisons</div>
+                        <div class="rounded-lg bg-base-200 px-3 py-2"><strong>Zoom 12+ :</strong> Fokontany, villages et liaisons détaillées</div>
+                    </div>
+                    <div class="mt-4 text-xs text-base-content/60">
+                        Le niveau affiché se met à jour automatiquement selon le zoom de la carte.
+                    </div>
+                    <div class="mt-3 badge badge-primary badge-outline" id="active-zoom-label">Chargement...</div>
+                </div>
+            </div>
+
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body p-4">
+                    <h2 class="card-title text-sm">Statistiques</h2>
+                    <div class="stats stats-vertical bg-base-200 shadow">
+                        <div class="stat py-2 px-3">
+                            <div class="stat-title text-xs">Régions</div>
+                            <div class="stat-value text-lg text-primary">{{ stats.total_regions }}</div>
+                        </div>
+                        <div class="stat py-2 px-3">
+                            <div class="stat-title text-xs">Districts</div>
+                            <div class="stat-value text-lg text-secondary">{{ stats.total_districts }}</div>
+                        </div>
+                        <div class="stat py-2 px-3">
+                            <div class="stat-title text-xs">Communes</div>
+                            <div class="stat-value text-lg text-info">{{ stats.total_communes }}</div>
+                        </div>
+                        <div class="stat py-2 px-3">
+                            <div class="stat-title text-xs">Fokontany</div>
+                            <div class="stat-value text-lg text-accent">{{ stats.total_fokontany }}</div>
+                        </div>
+                        <div class="stat py-2 px-3">
+                            <div class="stat-title text-xs">Villages</div>
+                            <div class="stat-value text-lg text-success">{{ stats.total_villages }}</div>
+                        </div>
+                        <div class="stat py-2 px-3">
+                            <div class="stat-title text-xs">Liaisons actives</div>
+                            <div class="stat-value text-lg text-warning" id="stat-liaisons">{{ stats.total_liaisons }}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body p-4">
+                    <h2 class="card-title text-sm">Légende</h2>
+                    <div class="space-y-3 text-xs">
+                        <div class="flex items-center gap-2"><span class="inline-block h-3 w-6 rounded bg-red-400"></span><span>Régions</span></div>
+                        <div class="flex items-center gap-2"><span class="inline-block h-3 w-6 rounded bg-indigo-500"></span><span>Districts</span></div>
+                        <div class="flex items-center gap-2"><span class="inline-block h-3 w-3 rounded-full bg-sky-500"></span><span>Communes</span></div>
+                        <div class="flex items-center gap-2"><span class="inline-block h-3 w-6 rounded bg-emerald-500/50 border border-emerald-700"></span><span>Fokontany</span></div>
+                        <div class="flex items-center gap-2"><span class="inline-block h-3 w-3 rounded-full bg-amber-500"></span><span>Villages</span></div>
+                        <div class="flex items-center gap-2"><span class="inline-block h-1 w-6 rounded bg-fuchsia-600"></span><span>Liaisons entre villages (➤ = sens)</span></div>
+                        <div class="flex items-center gap-2"><span class="inline-block h-1 w-6 rounded bg-orange-600"></span><span>Liaisons du village sélectionné</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="xl:col-span-3">
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body p-0">
+                    <div id="liaisons-map" class="w-full" style="height: 820px;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="{% static 'js/liaisons_editor.js' %}"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const map = L.map('liaisons-map', { zoomSnap: 0.5 }).setView([-18.8792, 47.5079], 6.2);
+    const zoomLabel = document.getElementById('active-zoom-label');
+    const panel = document.getElementById('village-panel');
+    const statLiaisons = document.getElementById('stat-liaisons');
+    const loaded = {};
+    const loading = {};
+    const activeLayers = {};
+    const villageIndex = {};          // id -> { id, nom, commune, lat, lng, marker }
+    let liaisonFeatures = [];
+    let focusedId = new URLSearchParams(window.location.search).get('village');
+    let drawSourceId = null;
+
+    const layerConfig = {
+        regions: { min: 0, max: 7.99, url: '/geography/api/geojson/regions/' },
+        districts: { min: 8, max: 9.99, url: '/geography/api/geojson/districts/' },
+        communes: { min: 10, max: 11.99, url: '/geography/api/geojson/communes/' },
+        fokontany: { min: 12, max: 99, url: '/geography/api/geojson/fokontany/' },
+        villages: { min: 10, max: 99, url: '/geography/api/geojson/villages/' },
+        liaisons: { min: 10, max: 99, url: '/geography/api/geojson/liaisons-villages/' },
+    };
+
+    map.createPane('liaisonsPane');
+    map.getPane('liaisonsPane').style.zIndex = 660;
+    map.createPane('arrowsPane');
+    map.getPane('arrowsPane').style.zIndex = 665;
+    map.createPane('villagesPane');
+    map.getPane('villagesPane').style.zIndex = 670;
+    const arrowLayer = L.layerGroup();
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors',
+        maxZoom: 19
+    }).addTo(map);
+
+    // ---------- Utilitaires ----------
+    function el(tag, className, text) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined) node.textContent = text;
+        return node;
+    }
+
+    function formatNumber(num) {
+        if (num === null || num === undefined) return 'N/A';
+        return Number(num).toLocaleString('fr-FR');
+    }
+
+    function notify(text) {
+        const toast = el('div', 'toast toast-end z-[2000]');
+        toast.appendChild(el('div', 'alert alert-success text-sm', text));
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 2500);
+    }
+
+    function updateZoomLabel(zoom) {
+        let label = 'Régions';
+        if (zoom >= 12) label = 'Fokontany, villages et liaisons détaillées';
+        else if (zoom >= 10) label = 'Communes, villages et liaisons';
+        else if (zoom >= 8) label = 'Districts';
+        zoomLabel.textContent = `Zoom ${zoom.toFixed(1)} : ${label}`;
+    }
+
+    // ---------- Styles ----------
+    const styleRegions = () => ({ fillColor: '#f87171', fillOpacity: 0.45, color: '#991b1b', weight: 2 });
+    const styleDistricts = () => ({ fillColor: '#6366f1', fillOpacity: 0.35, color: '#3730a3', weight: 1.5 });
+    const styleFokontany = () => ({ fillColor: '#10b981', fillOpacity: 0.22, color: '#047857', weight: 1 });
+
+    function pointToCommune(feature, latlng) {
+        return L.circleMarker(latlng, { radius: 8, fillColor: '#0ea5e9', fillOpacity: 0.75, color: '#0369a1', weight: 1.5 });
+    }
+
+    function villageStyle(id) {
+        const zoom = map.getZoom();
+        if (id === drawSourceId) return { radius: 10, fillColor: '#7c3aed', fillOpacity: 0.95, color: '#fff', weight: 3 };
+        if (id === focusedId) return { radius: 10, fillColor: '#2563eb', fillOpacity: 0.95, color: '#fff', weight: 3 };
+        return { radius: zoom >= 13 ? 6 : 4, fillColor: '#f59e0b', fillOpacity: 0.85, color: '#b45309', weight: 1 };
+    }
+
+    function restyleVillages() {
+        Object.values(villageIndex).forEach((v) => v.marker.setStyle(villageStyle(v.id)));
+        if (focusedId && villageIndex[focusedId]) villageIndex[focusedId].marker.bringToFront();
+    }
+
+    function liaisonStyle(p) {
+        const zoom = map.getZoom();
+        const base = zoom >= 13 ? 3.6 : zoom >= 11 ? 2.8 : 2.2;
+        const involved = focusedId && (p.source_id === focusedId || p.cible_id === focusedId);
+        return {
+            color: involved ? '#ea580c' : (p.type_liaison === 'proximite' ? '#c026d3' : '#7c3aed'),
+            weight: involved ? base + 1.8 : base,
+            opacity: focusedId ? (involved ? 1 : 0.28) : (zoom >= 13 ? 0.95 : zoom >= 11 ? 0.85 : 0.72),
+        };
+    }
+
+    // ---------- Editeur ----------
+    const editor = LiaisonsEditor.create({
+        map,
+        onChange: onLiaisonChange,
+        onDrawSource: (village) => { drawSourceId = village ? village.id : null; restyleVillages(); },
+    });
+    editor.addDrawControl();
+
+    function onLiaisonChange(evt) {
+        if (evt.type === 'deleted') {
+            liaisonFeatures = liaisonFeatures.filter((f) => f.properties.id !== evt.liaison.id);
+        } else {
+            const p = evt.liaison;
+            const s = villageIndex[p.source_id];
+            const c = villageIndex[p.cible_id];
+            if (!s || !c) { window.location.reload(); return; }
+            const feature = {
+                type: 'Feature',
+                properties: p,
+                geometry: { type: 'LineString', coordinates: evt.trace_route || [[s.lng, s.lat], [c.lng, c.lat]] },
+            };
+            const idx = liaisonFeatures.findIndex((f) => f.properties.id === p.id);
+            if (idx >= 0) liaisonFeatures[idx] = feature; else liaisonFeatures.push(feature);
+        }
+        if (statLiaisons) statLiaisons.textContent = liaisonFeatures.length;
+        rebuildLiaisons();
+        renderPanel();
+        notify({ created: 'Liaison créée', updated: 'Liaison mise à jour', deleted: 'Liaison supprimée' }[evt.type]);
+    }
+
+    // ---------- Villages ----------
+    function openVillagePopup(v) {
+        const box = el('div', 'space-y-1');
+        box.appendChild(el('strong', '', v.nom));
+        box.appendChild(el('div', 'text-xs', v.commune || ''));
+        const actions = el('div', 'mt-2 flex flex-col gap-1');
+        const manage = el('button', 'btn btn-primary btn-xs', 'Gérer ses liaisons');
+        manage.onclick = () => { map.closePopup(); focusVillage(v.id, false); };
+        const link = el('button', 'btn btn-secondary btn-xs', 'Lier à un autre village');
+        link.onclick = () => { map.closePopup(); focusVillage(v.id, false); editor.startDraw(v); };
+        const fiche = el('a', 'link link-primary text-xs', 'Ouvrir la fiche');
+        fiche.href = `/geography/villages/${v.id}/`;
+        actions.append(manage, link, fiche);
+        box.appendChild(actions);
+        L.popup().setLatLng([v.lat, v.lng]).setContent(box).openOn(map);
+    }
+
+    function onVillageClick(v) {
+        if (editor.handleVillageClick(v)) return;
+        openVillagePopup(v);
+    }
+
+    function pointToVillage(feature, latlng) {
+        const p = feature.properties;
+        const marker = L.circleMarker(latlng, Object.assign({ pane: 'villagesPane' }, villageStyle(p.id)));
+        const v = { id: p.id, nom: p.nom, commune: p.commune, lat: latlng.lat, lng: latlng.lng, marker };
+        villageIndex[p.id] = v;
+        marker.bindTooltip(p.nom, { direction: 'top', className: 'liaison-label' });
+        marker.on('click', (e) => { L.DomEvent.stopPropagation(e); onVillageClick(v); });
+        return marker;
+    }
+
+    // ---------- Liaisons ----------
+    function lineTooltipText(p) {
+        const extra = LiaisonsEditor.edgeText(p);
+        return `${p.source_nom} → ${p.cible_nom}${extra ? ' · ' + extra : ''}`;
+    }
+
+    function buildLiaisonLayer() {
+        const group = L.featureGroup();
+        liaisonFeatures.forEach((f) => {
+            const p = f.properties;
+            const latlngs = f.geometry.coordinates.map(([x, y]) => [y, x]);
+            const line = L.polyline(latlngs, Object.assign({ pane: 'liaisonsPane' }, liaisonStyle(p)));
+            line._props = p;
+            line.bindTooltip(lineTooltipText(p), { sticky: true });
+            line.on('click', (e) => {
+                L.DomEvent.stopPropagation(e);
+                if (!editor.isDrawing()) editor.openEdit(p);
+            });
+            line.on('mouseover', () => line.setStyle({ weight: liaisonStyle(p).weight + 2 }));
+            line.on('mouseout', () => line.setStyle(liaisonStyle(p)));
+            line.addTo(group);
+        });
+        return group;
+    }
+
+    function rebuildLiaisons() {
+        if (loaded.liaisons && map.hasLayer(loaded.liaisons)) map.removeLayer(loaded.liaisons);
+        loaded.liaisons = buildLiaisonLayer();
+        refreshLayers();
+    }
+
+    function restyleLiaisons() {
+        if (!loaded.liaisons) return;
+        loaded.liaisons.eachLayer((line) => line.setStyle(liaisonStyle(line._props)));
+    }
+
+    // ---------- Etiquettes et fleches (selon zoom et emprise) ----------
+    function setLabel(layer, key, wanted, bind) {
+        if (wanted && layer[key] !== true) { layer.unbindTooltip(); bind(); layer[key] = true; }
+        else if (!wanted && layer[key] === true) { layer.unbindTooltip(); bind(false); layer[key] = false; }
+    }
+
+    function updateDecor() {
+        const zoom = map.getZoom();
+        const bounds = map.getBounds().pad(0.1);
+
+        Object.values(villageIndex).forEach((v) => {
+            const wanted = zoom >= 12 && bounds.contains(v.marker.getLatLng());
+            setLabel(v.marker, '_labelled', wanted, (permanent = true) => {
+                v.marker.bindTooltip(v.nom, permanent
+                    ? { permanent: true, direction: 'top', offset: [0, -6], className: 'liaison-label' }
+                    : { direction: 'top', className: 'liaison-label' });
+            });
+        });
+
+        arrowLayer.clearLayers();
+        const showLines = loaded.liaisons && map.hasLayer(loaded.liaisons);
+        if (showLines) {
+            loaded.liaisons.eachLayer((line) => {
+                const inView = bounds.intersects(line.getBounds());
+                const edgeWanted = zoom >= 13 && inView && LiaisonsEditor.edgeText(line._props) !== '';
+                setLabel(line, '_edgeLabelled', edgeWanted, (permanent = true) => {
+                    line.bindTooltip(permanent ? LiaisonsEditor.edgeText(line._props) : lineTooltipText(line._props),
+                        permanent ? { permanent: true, className: 'liaison-edge-label', direction: 'center' } : { sticky: true });
+                });
+                if (zoom >= 12 && inView) addArrow(line);
+            });
+        }
+        if (zoom >= 12 && showLines) { if (!map.hasLayer(arrowLayer)) arrowLayer.addTo(map); }
+        else if (map.hasLayer(arrowLayer)) map.removeLayer(arrowLayer);
+    }
+
+    function addArrow(line) {
+        const [a, b] = line.getLatLngs();
+        const pa = map.latLngToLayerPoint(a);
+        const pb = map.latLngToLayerPoint(b);
+        if (pa.distanceTo(pb) < 40) return;
+        const angle = Math.atan2(pb.y - pa.y, pb.x - pa.x) * 180 / Math.PI;
+        const at = L.latLng(a.lat + (b.lat - a.lat) * 0.6, a.lng + (b.lng - a.lng) * 0.6);
+        const icon = L.divIcon({
+            className: '',
+            html: `<div class="liaison-arrow" style="transform:rotate(${angle}deg)">➤</div>`,
+            iconSize: [16, 16], iconAnchor: [8, 8],
+        });
+        L.marker(at, { icon, pane: 'arrowsPane', keyboard: false })
+            .on('click', (e) => { L.DomEvent.stopPropagation(e); if (!editor.isDrawing()) editor.openEdit(line._props); })
+            .addTo(arrowLayer);
+    }
+
+    // ---------- Panneau village ----------
+    function focusVillage(id, fly) {
+        focusedId = id || null;
+        const url = new URL(window.location.href);
+        if (focusedId) url.searchParams.set('village', focusedId); else url.searchParams.delete('village');
+        window.history.replaceState({}, '', url);
+        restyleVillages();
+        restyleLiaisons();
+        renderPanel();
+        const v = focusedId && villageIndex[focusedId];
+        if (v && fly) map.flyTo([v.lat, v.lng], Math.max(map.getZoom(), 13.5), { duration: 0.8 });
+    }
+
+    function renderPanel() {
+        panel.replaceChildren();
+        if (!focusedId) {
+            panel.appendChild(el('p', 'text-base-content/60', 'Cliquez sur un village de la carte (zoom 10 et plus) pour gérer ses liaisons.'));
+            return;
+        }
+        const v = villageIndex[focusedId];
+        if (!v) {
+            panel.appendChild(el('p', 'text-warning', "Ce village n'a pas de coordonnées GPS : il ne peut pas être placé sur la carte."));
+            const fiche = el('a', 'btn btn-outline btn-xs mt-2', 'Ouvrir la fiche');
+            fiche.href = `/geography/villages/${focusedId}/`;
+            panel.append(fiche, el('br'));
+            const close = el('button', 'btn btn-ghost btn-xs mt-1', 'Quitter la sélection');
+            close.onclick = () => focusVillage(null, false);
+            panel.appendChild(close);
+            return;
+        }
+        panel.appendChild(el('div', 'font-bold text-base', v.nom));
+        panel.appendChild(el('div', 'text-xs text-base-content/60', v.commune || ''));
+
+        const bar = el('div', 'mt-2 flex flex-wrap gap-1');
+        const add = el('button', 'btn btn-primary btn-xs', '+ Ajouter une liaison');
+        add.onclick = () => editor.startDraw(v);
+        const fiche = el('a', 'btn btn-outline btn-xs', 'Fiche village');
+        fiche.href = `/geography/villages/${v.id}/`;
+        const close = el('button', 'btn btn-ghost btn-xs', 'Quitter');
+        close.onclick = () => focusVillage(null, false);
+        bar.append(add, fiche, close);
+        panel.appendChild(bar);
+
+        const mine = liaisonFeatures.map((f) => f.properties).filter((p) => p.source_id === v.id || p.cible_id === v.id);
+        panel.appendChild(el('div', 'divider my-2 text-xs', `${mine.length} liaison(s)`));
+        if (!mine.length) {
+            panel.appendChild(el('p', 'text-xs text-base-content/60', 'Aucune liaison. Utilisez « Ajouter une liaison » puis cliquez sur le village d\'arrivée.'));
+        }
+        mine.forEach((p) => {
+            const outgoing = p.source_id === v.id;
+            const otherId = outgoing ? p.cible_id : p.source_id;
+            const otherName = outgoing ? p.cible_nom : p.source_nom;
+            const row = el('div', 'mb-2 rounded-lg border border-base-300 bg-base-200 p-2');
+            const title = el('button', 'link link-primary text-left font-semibold', `${outgoing ? '→' : '←'} ${otherName}`);
+            title.onclick = () => focusVillage(otherId, true);
+            row.appendChild(title);
+            const info = LiaisonsEditor.edgeText(p);
+            row.appendChild(el('div', 'text-xs text-base-content/70', `${p.type_liaison_display}${info ? ' · ' + info : ''}`));
+            const edit = el('button', 'btn btn-ghost btn-xs mt-1', 'Modifier / supprimer');
+            edit.onclick = () => editor.openEdit(p);
+            row.appendChild(edit);
+            panel.appendChild(row);
+        });
+    }
+
+    // ---------- Popups des autres niveaux ----------
+    function bindPopupForLayer(feature, layer, name) {
+        const p = feature.properties || {};
+        const safe = (t) => String(t ?? '-').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        if (name === 'regions') {
+            layer.bindPopup(`<div><strong>${safe(p.nom)}</strong><br>Districts : ${formatNumber(p.nb_districts)}<br>Population : ${formatNumber(p.population)}</div>`);
+        } else if (name === 'districts') {
+            layer.bindPopup(`<div><strong>${safe(p.nom)}</strong><br>Région : ${safe(p.region)}<br>Population : ${formatNumber(p.population)}</div>`);
+        } else if (name === 'communes') {
+            const sample = (p.sample_villages || []).map(safe).join(', ');
+            layer.bindPopup(`<div><strong>${safe(p.nom)}</strong><br>District : ${safe(p.district)}<br>Villages GPS : ${formatNumber(p.villages_count)}${sample ? `<br>Aperçu : ${sample}` : ''}</div>`);
+        } else if (name === 'fokontany') {
+            layer.bindPopup(`<div><strong>${safe(p.nom)}</strong><br>Commune : ${safe(p.commune)}<br>Population : ${formatNumber(p.population)}</div>`);
+        }
+    }
+
+    function createLayer(name, data) {
+        if (name === 'regions') return L.geoJSON(data, { style: styleRegions, onEachFeature: (f, l) => bindPopupForLayer(f, l, name) });
+        if (name === 'districts') return L.geoJSON(data, { style: styleDistricts, onEachFeature: (f, l) => bindPopupForLayer(f, l, name) });
+        if (name === 'communes') return L.geoJSON(data, { pointToLayer: pointToCommune, onEachFeature: (f, l) => bindPopupForLayer(f, l, name) });
+        if (name === 'fokontany') return L.geoJSON(data, { style: styleFokontany, onEachFeature: (f, l) => bindPopupForLayer(f, l, name) });
+        if (name === 'villages') return L.geoJSON(data, { pointToLayer: pointToVillage });
+        if (name === 'liaisons') { liaisonFeatures = data.features; return buildLiaisonLayer(); }
+        return null;
+    }
+
+    function ensureLayerLoaded(name) {
+        if (loaded[name]) return Promise.resolve(loaded[name]);
+        if (!loading[name]) {
+            loading[name] = fetch(layerConfig[name].url, { credentials: 'same-origin' })
+                .then((r) => r.json())
+                .then((data) => { loaded[name] = createLayer(name, data); return loaded[name]; });
+        }
+        return loading[name];
+    }
+
+    async function refreshLayers() {
+        const zoom = map.getZoom();
+        updateZoomLabel(zoom);
+
+        for (const [name, config] of Object.entries(layerConfig)) {
+            const shouldShow = zoom >= config.min && zoom <= config.max;
+            if (shouldShow) {
+                const layer = await ensureLayerLoaded(name);
+                if (name === 'villages') restyleVillages();
+                else if (name === 'liaisons') restyleLiaisons();
+                if (!map.hasLayer(layer)) layer.addTo(map);
+                activeLayers[name] = layer;
+            } else if (activeLayers[name] && map.hasLayer(activeLayers[name])) {
+                map.removeLayer(activeLayers[name]);
+            }
+        }
+        if (statLiaisons && loaded.liaisons) statLiaisons.textContent = liaisonFeatures.length;
+        updateDecor();
+    }
+
+    map.on('zoomend', refreshLayers);
+    map.on('moveend', updateDecor);
+    map.on('click', () => { if (editor.isDrawing() && editor.drawSource()) editor.stopDraw(); });
+
+    async function init() {
+        renderPanel();
+        if (focusedId) {
+            await Promise.all([ensureLayerLoaded('villages'), ensureLayerLoaded('liaisons')]);
+            const v = villageIndex[focusedId];
+            if (v) map.setView([v.lat, v.lng], 14);
+            renderPanel();
+        }
+        refreshLayers();
+    }
+    init();
+});
+</script>
+{% endblock %}

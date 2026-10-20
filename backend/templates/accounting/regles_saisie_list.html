@@ -1,0 +1,152 @@
+{% extends "accounting/base.html" %}
+{% load static %}
+
+{% block title %}Regles de saisie{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+        <div>
+            <h1 class="text-2xl font-bold"><i class="fas fa-sliders mr-2 text-primary"></i>Regles de saisie guidee</h1>
+            <p class="text-sm text-base-content/70">
+                Comment le formulaire de saisie compose la description a partir des champs, par compte.
+                {% if organisation %}<span class="badge badge-outline ml-2">{{ organisation.nom_organisation }}</span>{% endif %}
+            </p>
+        </div>
+        <div class="flex gap-2">
+            <select id="filtre-mode" class="select select-bordered select-sm">
+                <option value="">Tous les modes</option>
+                <option value="fournisseur">Fournisseur</option>
+                <option value="employe">Employe</option>
+                <option value="recette">Recette</option>
+                <option value="libre">Libre</option>
+                <option value="sans_regle">Sans regle configuree</option>
+            </select>
+            <input id="filtre-q" type="text" placeholder="Rechercher un compte ou un nom..." class="input input-bordered input-sm w-64" />
+        </div>
+    </div>
+
+    <div id="alert"></div>
+
+    <div class="overflow-x-auto rounded-xl border border-base-300">
+        <table class="table table-sm table-zebra">
+            <thead>
+                <tr>
+                    <th>Compte</th><th>Nom du compte</th><th>Mode</th><th>Sens</th><th>Libelle</th>
+                    <th class="text-center">Champs</th><th class="text-center">Fournisseurs autorises</th>
+                    <th class="text-center">Actif</th><th></th>
+                </tr>
+            </thead>
+            <tbody id="tbody"><tr><td colspan="9" class="text-center py-6 text-base-content/50">Chargement...</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+const URL_LIST = "{% url 'accounting:api_regles_saisie_list' %}";
+const URL_CREER = "{% url 'accounting:api_regle_saisie_creer_pour_compte' %}";
+const URL_PEUPLER = "{% url 'accounting:api_regle_saisie_peupler_fournisseurs' %}";
+let REGLES = [];
+
+function getCookie(name) {
+    const m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+    return m ? decodeURIComponent(m.pop()) : '';
+}
+
+function badge(mode) {
+    if (!mode) return '<span class="badge badge-sm badge-outline">aucune</span>';
+    const c = {fournisseur:'badge-info', employe:'badge-warning', recette:'badge-success', libre:'badge-ghost'}[mode] || 'badge-ghost';
+    return `<span class="badge badge-sm ${c}">${mode}</span>`;
+}
+
+function render() {
+    const q = document.getElementById('filtre-q').value.toLowerCase().trim();
+    const m = document.getElementById('filtre-mode').value;
+    const rows = REGLES.filter(r => {
+        if (m === 'sans_regle' && r.id) return false;
+        if (m && m !== 'sans_regle' && r.mode !== m) return false;
+        if (q && !r.compte.toLowerCase().includes(q) && !(r.nom_compte || '').toLowerCase().includes(q)) return false;
+        return true;
+    });
+    const tb = document.getElementById('tbody');
+    if (!rows.length) { tb.innerHTML = '<tr><td colspan="9" class="text-center py-6 text-base-content/50">Aucun compte</td></tr>'; return; }
+    tb.innerHTML = rows.map(r => `
+        <tr>
+            <td class="font-mono font-semibold">${r.compte}${r.herite ? '<span class="text-warning" title="Regle heritee du prefixe ' + r.compte_cible + '">*</span>' : ''}</td>
+            <td>${r.nom_compte || '-'}</td>
+            <td>${badge(r.mode)}</td>
+            <td>${r.sens ? `<span class="badge badge-sm ${r.sens === 'in' ? 'badge-success' : 'badge-error'}">${r.sens}</span>` : '-'}</td>
+            <td>${r.libelle || '-'}</td>
+            <td class="text-center">${r.nb_champs}</td>
+            <td class="text-center">${r.id ? (r.nb_fournisseurs || '<span class="text-base-content/40">tous</span>') : '-'}</td>
+            <td class="text-center">${r.id ? (r.actif ? '<i class="fas fa-check text-success"></i>' : '<i class="fas fa-xmark text-error"></i>') : '<span class="text-base-content/30">-</span>'}</td>
+            <td class="text-right whitespace-nowrap">
+                ${r.id
+                    ? `<a href="/comptabilite/regles-saisie/${r.id}/" class="btn btn-xs btn-primary">Editer</a>`
+                    : `<button class="btn btn-xs btn-outline" onclick="creerRegle('${r.compte}')">Creer une regle</button>
+                       <button class="btn btn-xs btn-outline btn-info ml-1" onclick="peuplerFournisseurs('${r.compte}', this)" title="Cree la regle (mode fournisseur) et autorise les fournisseurs deja utilises sur ce compte dans l'historique DiameX">
+                           <i class="fas fa-clock-rotate-left mr-1"></i>Depuis l'historique
+                       </button>`}
+            </td>
+        </tr>`).join('');
+}
+
+async function creerRegle(compte) {
+    try {
+        const res = await fetch(URL_CREER, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify({ compte }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Erreur');
+        window.location.href = `/comptabilite/regles-saisie/${data.id}/`;
+    } catch (e) {
+        document.getElementById('alert').innerHTML = `<div class="alert alert-error mb-4">${e.message}</div>`;
+    }
+}
+
+async function peuplerFournisseurs(compte, btn) {
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="loading loading-spinner loading-xs"></span>'; }
+    try {
+        const res = await fetch(URL_PEUPLER, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify({ compte }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Erreur');
+        let msg = `Compte ${compte} : regle creee (sens ${data.sens}), ${data.crees} fournisseur(s) autorise(s)`
+            + ` sur ${data.trouves} trouve(s) dans ${data.nb_ecritures} ecriture(s) DiameX.`;
+        if (data.inconnus && data.inconnus.length) {
+            msg += ` Non reconnus : ${data.inconnus.map(i => `${i.libelle} (x${i.occurrences})`).join(', ')}.`;
+        }
+        document.getElementById('alert').innerHTML = `<div class="alert alert-success mb-4">${msg}
+            <a href="/comptabilite/regles-saisie/${data.id}/" class="btn btn-xs btn-ghost ml-2">Ouvrir la regle</a></div>`;
+        await load();
+    } catch (e) {
+        document.getElementById('alert').innerHTML = `<div class="alert alert-warning mb-4">${e.message}</div>`;
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-clock-rotate-left mr-1"></i>Depuis l\'historique'; }
+    }
+}
+
+async function load() {
+    try {
+        const res = await fetch(URL_LIST, { credentials: 'same-origin' });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Erreur');
+        REGLES = data.regles;
+        render();
+    } catch (e) {
+        document.getElementById('alert').innerHTML = `<div class="alert alert-error mb-4">${e.message}</div>`;
+        document.getElementById('tbody').innerHTML = '';
+    }
+}
+
+document.getElementById('filtre-q').addEventListener('input', render);
+document.getElementById('filtre-mode').addEventListener('change', render);
+load();
+</script>
+{% endblock %}

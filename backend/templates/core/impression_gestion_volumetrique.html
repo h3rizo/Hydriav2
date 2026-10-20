@@ -1,0 +1,398 @@
+{% load humanize %}
+{% load planning_extras %}
+{% load static %}
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Suivi Paiements Volumétriques {{ annee }} - {{ ouvrage_nom }} - Impression</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.4.19/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @media print {
+            body {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            .container {
+                margin: 0 !important;
+                padding: 0 !important;
+                max-width: none !important;
+            }
+            .no-print {
+                display: none !important;
+            }
+            .table-sm td, .table-sm th {
+                padding: 0.25rem 0.5rem !important;
+                font-size: 0.65rem;
+            }
+            .card {
+                break-inside: avoid;
+                page-break-inside: avoid;
+            }
+            thead {
+                display: table-header-group;
+            }
+            tr {
+                page-break-inside: avoid;
+            }
+        }
+
+        @page {
+            size: A4 landscape;
+            margin: 0.5cm;
+        }
+
+        .parcelle-banner {
+            background-color: #dbeafe;
+            border-left: 4px solid #1e40af;
+            padding: 6px 12px;
+            margin-top: 12px;
+            margin-bottom: 8px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+    </style>
+</head>
+
+<body class="bg-base-100">
+    <div class="container mx-auto p-6">
+        <!-- Bouton Imprimer (masqué à l'impression) -->
+        <div class="no-print mb-6 flex justify-between items-center">
+            <h1 class="text-3xl font-bold">
+                <i class="fas fa-chart-line text-info mr-2"></i>
+                Suivi Volumétrique {{ annee }}
+            </h1>
+            <button type="button" onclick="window.print()" class="btn btn-primary">
+                <i class="fas fa-print mr-2"></i>Imprimer
+            </button>
+        </div>
+
+        <!-- En-tête du rapport -->
+        <div class="card bg-base-200 shadow-sm mb-6">
+            <div class="card-body p-4">
+                <div class="text-center">
+                    <h2 class="text-2xl font-bold mb-2">
+                        Suivi des Paiements Volumétriques {{ annee }}
+                    </h2>
+                    <div class="text-sm text-base-content/70">
+                        <span class="font-semibold">Ouvrage :</span> {{ ouvrage_nom }}
+                        {% if commune_nom %}
+                        <span class="mx-2">|</span>
+                        <span class="font-semibold">Commune :</span> {{ commune_nom }}
+                        {% endif %}
+                        <span class="mx-2">|</span>
+                        <span class="font-semibold">Période :</span> {{ periode_libelle }}
+                        {% if non_pointes_totalement %}
+                        <span class="mx-2">|</span>
+                        <span class="font-semibold text-warning">Points d'eau non totalement pointés uniquement</span>
+                        {% endif %}
+                        <span class="mx-2">|</span>
+                        <span class="font-semibold">Impression :</span> {{ date_impression }}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Blocs KPI : Général / Mois passés / Mois en cours (harmonisé) -->
+        {% include 'planning/_volume_kpi_blocks.html' %}
+
+        <!-- Interrupteurs d'affichage (non imprimés ; leur effet, lui, est imprimé) -->
+        <div class="flex flex-wrap items-center gap-2 mb-4 no-print">
+            <label class="label cursor-pointer gap-3 rounded-lg border border-base-300 bg-base-200 px-3 py-2">
+                <span class="label-text font-bold"><i class="fas fa-calendar-day mr-2"></i>Masquer le mois en cours</span>
+                <input type="checkbox" id="toggle-hide-current-month" class="toggle toggle-accent toggle-sm" checked onchange="applyVolumeRecouvrementToggles()" />
+            </label>
+            <label class="label cursor-pointer gap-3 rounded-lg border border-base-300 bg-base-200 px-3 py-2">
+                <span class="label-text font-bold"><i class="fas fa-calendar-check mr-2"></i>Masquer les mois soldés (100&nbsp;%)</span>
+                <input type="checkbox" id="toggle-hide-settled-months" class="toggle toggle-success toggle-sm" checked onchange="applyVolumeRecouvrementToggles()" />
+            </label>
+            <label class="label cursor-pointer gap-3 rounded-lg border border-base-300 bg-base-200 px-3 py-2">
+                <span class="label-text font-bold"><i class="fas fa-droplet mr-2"></i>Masquer les points d'eau soldés (mois passés)</span>
+                <input type="checkbox" id="toggle-hide-settled-points" class="toggle toggle-primary toggle-sm" checked onchange="applyVolumeRecouvrementToggles()" />
+            </label>
+        </div>
+
+        <!-- Tableau "Calcul depuis Comptabilité" -->
+        {% if tableau_data %}
+        <div class="card bg-base-100 shadow-md mb-6" style="page-break-inside: avoid;">
+            <div class="card-body">
+                <h2 class="card-title mb-4 text-lg">
+                    <i class="fas fa-table text-primary mr-2"></i>
+                    Suivi Global des Paiements Volumétriques
+                    <span class="badge badge-primary badge-sm ml-2">Calcul depuis Comptabilité</span>
+                </h2>
+                <div class="overflow-x-auto">
+                    <table class="table table-xs table-pin-rows js-volume-recouvrement-table">
+                        <thead>
+                            <tr class="bg-base-200">
+                                <th class="bg-base-200" rowspan="2">Ouvrage</th>
+                                <th class="bg-base-200 text-center" rowspan="2">Type</th>
+                                <th class="bg-base-200 text-center" rowspan="2">Nb PE</th>
+                                <th class="bg-base-200 text-center" rowspan="2" title="Points d'eau coupés (datearretbranchement renseigné)">
+                                    <i class="fas fa-cut text-error mr-1"></i>Coupés
+                                </th>
+                                {% for mc in mois_colonnes_visibles %}
+                                <th class="text-center bg-base-200 {% if mc.settled %}js-volume-month-settled{% endif %}"
+                                    rowspan="2" data-volume-month="{{ mc.number }}" {% if mc.is_current %}data-current-month-col{% endif %}>{{ mc.label }}</th>
+                                {% endfor %}
+                                <th class="bg-base-200 text-center border-l border-base-300" colspan="4">Mois passés</th>
+                                <th class="bg-base-200 text-center border-l border-base-300" colspan="4" data-current-month-col>Mois en cours</th>
+                            </tr>
+                            <tr class="bg-base-200">
+                                <th class="bg-base-200 text-center text-[10px] border-l border-base-300">Total</th>
+                                <th class="bg-base-200 text-center text-[10px]">Payés</th>
+                                <th class="bg-base-200 text-center text-[10px]">Impayés</th>
+                                <th class="bg-base-200 text-center text-[10px]">Taux</th>
+                                <th class="bg-base-200 text-center text-[10px] border-l border-base-300" data-current-month-col>Total</th>
+                                <th class="bg-base-200 text-center text-[10px]" data-current-month-col>Payés</th>
+                                <th class="bg-base-200 text-center text-[10px]" data-current-month-col>Impayés</th>
+                                <th class="bg-base-200 text-center text-[10px]" data-current-month-col>Taux</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for data in tableau_data %}
+                            <!-- Ligne de séparation si changement d'ouvrage -->
+                            {% if data.nouveau_groupe_ouvrage and not forloop.first %}
+                            <tr class="border-t-4 border-primary/30" data-parcelle-group="o:{{ data.ouvrage.id }}">
+                                <td colspan="{{ mois_noms|length|add:'12' }}" class="p-0 h-1"></td>
+                            </tr>
+                            {% endif %}
+
+                            <!-- Ligne de sous-total au début de chaque nouveau groupe d'ouvrage -->
+                            {% if data.nouveau_groupe_ouvrage and data.sous_total_ouvrage %}
+                            {% with st=data.sous_total_ouvrage %}
+                            <tr class="bg-primary/10 font-bold border-b-2 border-primary" style="page-break-inside: avoid;" data-parcelle-group="o:{{ data.ouvrage.id }}">
+                                <td colspan="4" class="text-sm">
+                                    <i class="fas fa-building mr-2 text-primary"></i>
+                                    SOUS-TOTAL : {{ st.ouvrage.nom_ouvrage }}
+                                </td>
+                                {% for mc in mois_colonnes_visibles %}
+                                <td class="text-center p-1 text-xs" data-volume-month="{{ mc.number }}" {% if mc.is_current %}data-current-month-col{% endif %}>
+                                    {% with mois_st=st.mois|lookup:mc.number %}
+                                        {% if mois_st.total > 0 %}
+                                            <div class="badge badge-ghost badge-sm w-full" title="{{ mois_st.payes }}/{{ mois_st.total }} payés">{{ mois_st.total }}</div>
+                                        {% else %}
+                                            <span class="text-base-content/20">-</span>
+                                        {% endif %}
+                                    {% endwith %}
+                                </td>
+                                {% endfor %}
+                                <td class="text-center border-l border-base-300"><span class="badge badge-info badge-sm">{{ st.total_releves_passes }}</span></td>
+                                <td class="text-center"><span class="badge badge-success badge-sm">{{ st.total_payes_passes }}</span></td>
+                                <td class="text-center"><span class="badge badge-error badge-sm">{{ st.total_impayes_passes }}</span></td>
+                                <td class="text-center"><span class="font-semibold {% if st.taux_passes >= 80 %}text-success{% elif st.taux_passes >= 50 %}text-warning{% else %}text-error{% endif %}">{{ st.taux_passes }}%</span></td>
+                                <td class="text-center border-l border-base-300" data-current-month-col><span class="badge badge-info badge-sm">{{ st.total_releves_courant }}</span></td>
+                                <td class="text-center" data-current-month-col><span class="badge badge-success badge-sm">{{ st.total_payes_courant }}</span></td>
+                                <td class="text-center" data-current-month-col><span class="badge badge-error badge-sm">{{ st.total_impayes_courant }}</span></td>
+                                <td class="text-center" data-current-month-col><span class="font-semibold {% if st.taux_courant >= 80 %}text-success{% elif st.taux_courant >= 50 %}text-warning{% else %}text-error{% endif %}">{{ st.taux_courant }}%</span></td>
+                            </tr>
+                            {% endwith %}
+                            {% endif %}
+
+                            <!-- Ligne de données -->
+                            <tr class="hover {% if data.nouveau_groupe_ouvrage %}bg-base-200/30{% endif %}" style="page-break-inside: avoid;"
+                                data-parcelle-row="o:{{ data.ouvrage.id }}"
+                                data-point-settled-past="{% if data.settled_past %}1{% else %}0{% endif %}"
+                                data-point-settled-current="{% if data.settled_current %}1{% else %}0{% endif %}">
+                                <td class="text-sm">{{ data.ouvrage.nom_ouvrage }}</td>
+                                <td class="text-center">
+                                    {% with type_nom=data.type_point_eau.nom_type|upper %}
+                                        {% if 'KIOSQUE' in type_nom %}
+                                            <i class="fas fa-store text-info text-lg" title="{{ data.type_point_eau.nom_type }}"></i>
+                                        {% elif 'BI' in type_nom or 'BORNE' in type_nom %}
+                                            <i class="fas fa-faucet text-primary text-lg" title="{{ data.type_point_eau.nom_type }}"></i>
+                                        {% elif 'BP' in type_nom or 'BRANCHEMENT' in type_nom or 'PRIVÉ' in type_nom or 'PRIVE' in type_nom %}
+                                            <i class="fas fa-home text-success text-lg" title="{{ data.type_point_eau.nom_type }}"></i>
+                                        {% else %}
+                                            <i class="fas fa-tint text-base-content/50 text-lg" title="{{ data.type_point_eau.nom_type }}"></i>
+                                        {% endif %}
+                                    {% endwith %}
+                                </td>
+                                <td class="text-center">
+                                    <span class="badge badge-ghost badge-sm">{{ data.nb_points_eau }}</span>
+                                </td>
+                                <td class="text-center">
+                                    {% if data.nb_coupes > 0 %}
+                                        <span class="badge badge-error badge-sm" title="{{ data.nb_coupes }} point(s) d'eau coupé(s)">
+                                            <i class="fas fa-cut mr-1"></i>{{ data.nb_coupes }}
+                                        </span>
+                                    {% else %}
+                                        <span class="text-base-content/20">-</span>
+                                    {% endif %}
+                                </td>
+
+                                <!-- Colonnes mensuelles avec badges -->
+                                {% for mc in mois_colonnes_visibles %}
+                                <td class="text-center p-1" data-volume-month="{{ mc.number }}" {% if mc.is_current %}data-current-month-col{% endif %}>
+                                    {% with mois_data=data.mois|lookup:mc.number %}
+                                        {% if mois_data.total > 0 %}
+                                            {% if mois_data.impayes == 0 %}
+                                                <!-- Tous payés -->
+                                                <div class="badge badge-success badge-sm w-full" title="{{ mois_data.payes }}/{{ mois_data.total }} payés">
+                                                    <i class="fas fa-check"></i>
+                                                </div>
+                                            {% elif mois_data.payes == 0 %}
+                                                <!-- Aucun payé -->
+                                                <div class="badge badge-error badge-sm w-full" title="0/{{ mois_data.total }} payés - {{ mois_data.impayes }} impayé(s)">
+                                                    <i class="fas fa-times"></i>
+                                                </div>
+                                            {% else %}
+                                                <!-- Partiellement payé - afficher le nombre d'impayés -->
+                                                <div class="badge badge-warning badge-sm w-full font-bold" title="{{ mois_data.payes }}/{{ mois_data.total }} payés - {{ mois_data.impayes }} impayé(s)">
+                                                    {{ mois_data.impayes }}
+                                                </div>
+                                            {% endif %}
+                                        {% else %}
+                                            <span class="text-base-content/20">-</span>
+                                        {% endif %}
+                                    {% endwith %}
+                                </td>
+                                {% endfor %}
+
+                                <!-- Synthèse : Mois passés -->
+                                <td class="text-center border-l border-base-300"><span class="badge badge-info badge-sm">{{ data.total_releves_passes }}</span></td>
+                                <td class="text-center"><span class="badge badge-success badge-sm">{{ data.total_payes_passes }}</span></td>
+                                <td class="text-center"><span class="badge badge-error badge-sm">{{ data.total_impayes_passes }}</span></td>
+                                <td class="text-center"><span class="font-semibold {% if data.taux_passes >= 80 %}text-success{% elif data.taux_passes >= 50 %}text-warning{% else %}text-error{% endif %}">{{ data.taux_passes }}%</span></td>
+                                <!-- Synthèse : Mois en cours -->
+                                <td class="text-center border-l border-base-300" data-current-month-col><span class="badge badge-info badge-sm">{{ data.total_releves_courant }}</span></td>
+                                <td class="text-center" data-current-month-col><span class="badge badge-success badge-sm">{{ data.total_payes_courant }}</span></td>
+                                <td class="text-center" data-current-month-col><span class="badge badge-error badge-sm">{{ data.total_impayes_courant }}</span></td>
+                                <td class="text-center" data-current-month-col><span class="font-semibold {% if data.taux_courant >= 80 %}text-success{% elif data.taux_courant >= 50 %}text-warning{% else %}text-error{% endif %}">{{ data.taux_courant }}%</span></td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="{{ mois_noms|length|add:'12' }}" class="text-center py-8 text-base-content/50">
+                                    <i class="fas fa-inbox text-4xl mb-2"></i>
+                                    <p>Aucune donnée trouvée pour les filtres sélectionnés</p>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Tableau matriciel des paiements -->
+        <div class="overflow-x-auto">
+            {% for parcelle in parcelles_organisees %}
+            <div data-volume-parcelle-block>
+
+            <!-- Bannière Parcelle -->
+            <div class="parcelle-banner {% if not forloop.first %}mt-6{% endif %}">
+                <i class="fas fa-layer-group text-blue-700"></i>
+                <span>{{ parcelle.parcelle_nom }}</span>
+            </div>
+
+            <!-- Table pour cette parcelle -->
+            <table class="table table-sm w-full mb-4 js-volume-recouvrement-table">
+                <thead>
+                    <tr class="bg-base-200">
+                        <th class="text-center w-20">IDxls</th>
+                        <th class="w-48">Abonné</th>
+                        <th class="text-center w-16">Type</th>
+                        {% for mc in mois_colonnes_visibles %}
+                        <th class="text-center w-12 {% if mc.settled %}js-volume-month-settled{% endif %}"
+                            data-volume-month="{{ mc.number }}" {% if mc.is_current %}data-current-month-col{% endif %}>{{ mc.label }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for data in parcelle.points_eau %}
+                    <tr class="hover:bg-base-200/50 {% if data.est_coupe %}bg-warning/10{% elif data.tout_paye %}bg-success/10{% endif %}"
+                        data-point-settled-past="{% if data.settled_past %}1{% else %}0{% endif %}"
+                        data-point-settled-current="{% if data.settled_current %}1{% else %}0{% endif %}">
+                        <td class="text-center font-mono font-semibold">
+                            {{ data.point_eau.idxls|default:"-" }}
+                            {% if data.est_coupe %}
+                            <i class="fas fa-cut text-error ml-1" title="Point d'eau coupé (datearretbranchement renseigné)"></i>
+                            {% endif %}
+                            {% if data.tout_paye %}
+                            <i class="fas fa-check-circle text-success ml-1" title="Tout payé"></i>
+                            {% endif %}
+                        </td>
+                        <td class="truncate max-w-xs" title="{{ data.point_eau.nomabonne|default:'-' }}">
+                            {{ data.point_eau.nomabonne|default:"-" }}
+                        </td>
+                        <td class="text-center">
+                            {% with type_nom=data.point_eau.type_point_eau.nom_type|upper %}
+                                {% if 'KIOSQUE' in type_nom %}
+                                    <i class="fas fa-store text-info text-lg" title="Kiosque"></i>
+                                {% elif 'BI' in type_nom or 'BORNE' in type_nom %}
+                                    <i class="fas fa-faucet text-primary text-lg" title="Borne fontaine"></i>
+                                {% elif 'BP' in type_nom or 'BRANCHEMENT' in type_nom or 'PRIVÉ' in type_nom or 'PRIVE' in type_nom %}
+                                    <i class="fas fa-home text-success text-lg" title="Branchement privé"></i>
+                                {% else %}
+                                    <i class="fas fa-tint text-base-content/50 text-lg" title="{{ data.point_eau.type_point_eau.nom_type }}"></i>
+                                {% endif %}
+                            {% endwith %}
+                        </td>
+
+                        <!-- Colonnes mois -->
+                        {% for mc in mois_colonnes_visibles %}
+                        <td class="text-center p-1" data-volume-month="{{ mc.number }}" {% if mc.is_current %}data-current-month-col{% endif %}>
+                            {% with mois_data=data.mois|lookup:mc.number %}
+                                {% if mois_data.releve_id %}
+                                    {% if mois_data.paye %}
+                                        <span class="badge badge-success badge-xs">✓</span>
+                                    {% else %}
+                                        <span class="badge badge-error badge-xs whitespace-nowrap"
+                                              style="font-size: 0.55rem;"
+                                              title="Montant non pointé : {{ mois_data.montant|floatformat:0|intcomma }} Ar">
+                                            {{ mois_data.montant|floatformat:0|intcomma }}
+                                        </span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="text-base-content/20">-</span>
+                                {% endif %}
+                            {% endwith %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
+
+            {% empty %}
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle mr-2"></i>
+                <span>Aucune donnée à afficher pour les filtres sélectionnés.</span>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Légende -->
+        <div class="card bg-base-200 mt-6 no-print">
+            <div class="card-body p-4">
+                <h3 class="card-title text-sm mb-2">
+                    <i class="fas fa-info-circle mr-2"></i>Légende
+                </h3>
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
+                    <div><span class="badge badge-success badge-xs mr-1">✓</span> Payé</div>
+                    <div><span class="badge badge-error badge-xs mr-1">12 000</span> Montant non pointé</div>
+                    <div><i class="fas fa-store text-info mr-1"></i> Kiosque</div>
+                    <div><i class="fas fa-faucet text-primary mr-1"></i> Borne fontaine (BI)</div>
+                    <div><i class="fas fa-home text-success mr-1"></i> Branchement privé (BP)</div>
+                    <div><i class="fas fa-exclamation-triangle text-warning mr-1"></i> À risque (2+ impayés consécutifs)</div>
+                    <div><i class="fas fa-check-circle text-success mr-1"></i> Tout payé</div>
+                    <div><span class="bg-warning/10 px-2 py-1 rounded">Fond jaune</span> À risque</div>
+                    <div><span class="bg-success/10 px-2 py-1 rounded">Fond vert</span> Tout payé</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{% static 'js/volume_recouvrement_toggles.js' %}?v=20260908c"></script>
+</body>
+</html>

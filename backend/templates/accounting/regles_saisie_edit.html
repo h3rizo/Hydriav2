@@ -1,0 +1,237 @@
+{% extends "accounting/base.html" %}
+{% load static %}
+
+{% block title %}Regle {{ regle.compte_cible }}{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+        <div>
+            <a href="{% url 'accounting:regles_saisie_list' %}" class="text-sm text-primary hover:underline">&larr; Toutes les regles</a>
+            <h1 class="text-2xl font-bold font-mono">{{ regle.compte_cible }}{% if regle.est_prefixe %}<span class="text-warning">*</span> <span class="text-sm font-sans font-normal">(prefixe)</span>{% endif %}</h1>
+        </div>
+        <button id="btn-save" class="btn btn-success btn-sm"><i class="fas fa-save mr-1"></i>Enregistrer</button>
+    </div>
+
+    <div id="alert"></div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Colonne gauche : parametres + config -->
+        <div class="space-y-4">
+            <div class="card bg-base-100 border border-base-300">
+                <div class="card-body gap-3">
+                    <h2 class="card-title text-base">Parametres</h2>
+                    <div class="grid grid-cols-2 gap-3">
+                        <label class="form-control">
+                            <span class="label-text text-xs">Mode</span>
+                            <select id="mode" class="select select-bordered select-sm"></select>
+                        </label>
+                        <label class="form-control">
+                            <span class="label-text text-xs">Sens</span>
+                            <select id="sens" class="select select-bordered select-sm"></select>
+                        </label>
+                    </div>
+                    <label class="form-control">
+                        <span class="label-text text-xs">Libelle de la regle</span>
+                        <input id="libelle" class="input input-bordered input-sm" />
+                    </label>
+                    <label class="label cursor-pointer justify-start gap-2">
+                        <input id="actif" type="checkbox" class="checkbox checkbox-sm" />
+                        <span class="label-text">Regle active</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="card bg-base-100 border border-base-300">
+                <div class="card-body gap-2">
+                    <div class="flex items-center justify-between">
+                        <h2 class="card-title text-base">Configuration (JSON)</h2>
+                        <button id="btn-valider" class="btn btn-xs btn-outline">Valider</button>
+                    </div>
+                    <p class="text-xs text-base-content/60">
+                        <code>champs</code> : liste des champs du formulaire. <code>description</code> : gabarit
+                        (segments <code>{"lit":"_"}</code> / <code>{"champ":"code"}</code> /
+                        <code>{"auto":"nif_fournisseur"|"prefixe_nom_employe"}</code>, cle optionnelle <code>"si"</code>).
+                        <code>sortie</code> d'un champ : <code>fournisseur</code>/<code>detail</code>/<code>activ</code>/<code>fin</code>
+                        ou <code>sens</code> — un champ <code>select</code> avec <code>"sortie":"sens"</code> et des options
+                        <code>val:"in"</code>/<code>val:"out"</code> permet de faire varier le sens selon la saisie
+                        (ex : compte 00PERS, utilise a la fois en avance (out) et en remboursement (in)). Le sens
+                        choisi ci-dessus reste le sens par defaut tant que ce champ n'est pas renseigne.
+                    </p>
+                    <textarea id="config" class="textarea textarea-bordered font-mono text-xs h-96 leading-tight"></textarea>
+                    <div id="config-errors" class="text-xs text-error"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Colonne droite : apercu + fournisseurs -->
+        <div class="space-y-4">
+            <div class="card bg-base-100 border border-base-300">
+                <div class="card-body gap-2">
+                    <h2 class="card-title text-base">Apercu</h2>
+                    <p class="text-xs text-base-content/60">Renseigne des valeurs de test, puis compose. Les champs
+                        d'autocompletion attendent un <em>ID</em> reel (fournisseur / ouvrage / employe / vehicule).</p>
+                    <div id="apercu-form" class="space-y-2"></div>
+                    <button id="btn-composer" class="btn btn-sm btn-primary mt-1">Composer</button>
+                    <div id="apercu-result" class="hidden mt-2 rounded-lg bg-base-200 p-3 text-sm space-y-1"></div>
+                </div>
+            </div>
+
+            <div class="card bg-base-100 border border-base-300">
+                <div class="card-body gap-2">
+                    <h2 class="card-title text-base">Fournisseurs autorises</h2>
+                    <p id="fourn-note" class="text-xs text-base-content/60"></p>
+                    <div class="join">
+                        <input id="fourn-q" class="input input-bordered input-sm join-item w-full" placeholder="Rechercher un fournisseur..." />
+                    </div>
+                    <div id="fourn-search" class="max-h-40 overflow-y-auto text-sm"></div>
+                    <div class="divider my-1 text-xs">Autorises</div>
+                    <div id="fourn-liste" class="flex flex-wrap gap-2"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const RID = "{{ regle.id }}";
+const U = {
+    detail: `/comptabilite/regles-saisie/api/${RID}/`,
+    update: `/comptabilite/regles-saisie/api/${RID}/update/`,
+    preview: `/comptabilite/regles-saisie/api/${RID}/preview/`,
+    fourn: `/comptabilite/regles-saisie/api/${RID}/fournisseurs/`,
+    search: "{% url 'accounting:api_regles_saisie_fournisseurs_search' %}",
+};
+function csrf(){ const e=document.querySelector('[name=csrfmiddlewaretoken]'); return e?e.value:''; }
+function alertBox(msg, ok){ document.getElementById('alert').innerHTML =
+    `<div class="alert ${ok?'alert-success':'alert-error'} mb-4 text-sm">${msg}</div>`;
+    setTimeout(()=>{document.getElementById('alert').innerHTML='';}, 4000); }
+
+let CONFIG = {};
+
+async function load() {
+    const d = await (await fetch(U.detail, {credentials:'same-origin'})).json();
+    if (!d.success) { alertBox(d.error||'Erreur'); return; }
+    const r = d.regle;
+    document.getElementById('mode').innerHTML = d.modes.map(m=>`<option value="${m}">${m}</option>`).join('');
+    document.getElementById('sens').innerHTML = d.sens_choices.map(s=>`<option value="${s}">${s}</option>`).join('');
+    document.getElementById('mode').value = r.mode;
+    document.getElementById('sens').value = r.sens;
+    document.getElementById('libelle').value = r.libelle || '';
+    document.getElementById('actif').checked = r.actif;
+    CONFIG = r.config || {};
+    document.getElementById('config').value = JSON.stringify(CONFIG, null, 2);
+    buildApercuForm();
+    loadFournisseurs();
+}
+
+function readConfig() {
+    try { return JSON.parse(document.getElementById('config').value); }
+    catch(e){ document.getElementById('config-errors').textContent = 'JSON invalide : '+e.message; return null; }
+}
+
+function buildApercuForm() {
+    const cfg = readConfig() || CONFIG;
+    const champs = (cfg.champs||[]);
+    document.getElementById('apercu-form').innerHTML = champs.map(ch => {
+        const id = 'v_'+ch.code;
+        if (ch.type === 'prestation')
+            return `<label class="label cursor-pointer justify-start gap-2 py-0"><input id="${id}" type="checkbox" class="checkbox checkbox-xs"><span class="label-text text-xs">${ch.label||ch.code}</span></label>`;
+        if (ch.type === 'select') {
+            const opts = (ch.options||[]).map(o=>`<option value="${o.val}">${o.val}${o.marker?' ('+o.marker+')':''}</option>`).join('');
+            return `<label class="form-control"><span class="label-text text-xs">${ch.label||ch.code}</span><select id="${id}" class="select select-bordered select-xs">${opts}</select></label>`;
+        }
+        const hint = ch.type.endsWith('_ac') ? ' (ID)' : '';
+        return `<label class="form-control"><span class="label-text text-xs">${ch.label||ch.code}${hint}</span><input id="${id}" class="input input-bordered input-xs" ${ch.fixe!=null?`value="${ch.fixe}"`:''}></label>`;
+    }).join('');
+}
+
+async function compose() {
+    const cfg = readConfig();
+    const valeurs = {};
+    ((cfg||CONFIG).champs||[]).forEach(ch => {
+        const el = document.getElementById('v_'+ch.code); if (!el) return;
+        valeurs[ch.code] = ch.type === 'prestation' ? el.checked : el.value;
+    });
+    const res = await (await fetch(U.preview, {
+        method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':csrf()},
+        credentials:'same-origin', body: JSON.stringify({valeurs, config: cfg||undefined})
+    })).json();
+    const box = document.getElementById('apercu-result');
+    box.classList.remove('hidden');
+    if (!res.success) { box.innerHTML = `<span class="text-error">${res.error}</span>`; return; }
+    const r = res.resultat;
+    box.innerHTML = `
+        <div><span class="text-base-content/60">Description :</span> <span class="font-mono font-semibold">${r.description||'—'}</span></div>
+        <div><span class="text-base-content/60">Fournisseur :</span> <span class="font-mono">${r.fournisseur||'—'}</span></div>
+        <div><span class="text-base-content/60">Detail :</span> <span class="font-mono">${r.detail||'—'}</span></div>
+        <div><span class="text-base-content/60">Sens :</span> ${r.sens}</div>
+        ${(r.warnings||[]).length?`<div class="text-warning">${r.warnings.join('<br>')}</div>`:''}`;
+}
+
+async function validerConfig() {
+    const cfg = readConfig(); if (!cfg) return;
+    document.getElementById('config-errors').textContent = '';
+    const res = await (await fetch(U.update, {
+        method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':csrf()},
+        credentials:'same-origin', body: JSON.stringify({config: cfg, _validate_only: true})
+    })).json();
+    // update valide+enregistre ; pour "valider seul" on relit juste les erreurs
+    if (!res.success) document.getElementById('config-errors').textContent = (res.details||[res.error]).join(' ; ');
+    else { alertBox('Config valide et enregistree.', true); CONFIG = cfg; buildApercuForm(); }
+}
+
+async function save() {
+    const cfg = readConfig(); if (!cfg) { alertBox('JSON invalide'); return; }
+    const res = await (await fetch(U.update, {
+        method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':csrf()},
+        credentials:'same-origin', body: JSON.stringify({
+            mode: document.getElementById('mode').value,
+            sens: document.getElementById('sens').value,
+            libelle: document.getElementById('libelle').value,
+            actif: document.getElementById('actif').checked,
+            config: cfg,
+        })
+    })).json();
+    if (!res.success) { document.getElementById('config-errors').textContent = (res.details||[res.error]).join(' ; '); alertBox(res.error||'Erreur'); }
+    else { alertBox('Enregistre.', true); CONFIG = cfg; buildApercuForm(); }
+}
+
+// --- fournisseurs autorises ---
+async function loadFournisseurs() {
+    const d = await (await fetch(U.fourn, {credentials:'same-origin'})).json();
+    document.getElementById('fourn-note').textContent = d.note || '';
+    document.getElementById('fourn-liste').innerHTML = (d.fournisseurs||[]).map(f =>
+        `<span class="badge badge-outline gap-1">${f.idxls||''} ${f.nom}
+         <button data-id="${f.id}" class="fourn-del text-error">&times;</button></span>`).join('')
+        || '<span class="text-xs text-base-content/40">Aucun (tous autorises)</span>';
+    document.querySelectorAll('.fourn-del').forEach(b => b.onclick = () => majFourn({retirer:[b.dataset.id]}));
+}
+async function majFourn(payload) {
+    await fetch(U.fourn, {method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':csrf()},
+        credentials:'same-origin', body: JSON.stringify(payload)});
+    loadFournisseurs();
+}
+let tmr;
+document.getElementById('fourn-q').addEventListener('input', e => {
+    clearTimeout(tmr); tmr = setTimeout(async () => {
+        const q = e.target.value.trim();
+        const box = document.getElementById('fourn-search');
+        if (q.length < 2) { box.innerHTML=''; return; }
+        const d = await (await fetch(U.search+'?q='+encodeURIComponent(q), {credentials:'same-origin'})).json();
+        box.innerHTML = (d.fournisseurs||[]).map(f =>
+            `<div class="flex justify-between items-center py-1 hover:bg-base-200 px-1 rounded">
+               <span>${f.idxls||''} ${f.nom}</span>
+               <button data-id="${f.id}" class="fourn-add btn btn-xs btn-ghost">+ ajouter</button></div>`).join('');
+        document.querySelectorAll('.fourn-add').forEach(b => b.onclick = () => { majFourn({ajouter:[b.dataset.id]}); e.target.value=''; box.innerHTML=''; });
+    }, 300);
+});
+
+document.getElementById('btn-save').onclick = save;
+document.getElementById('btn-valider').onclick = save;   // valider = enregistrer (avec validation serveur)
+document.getElementById('btn-composer').onclick = compose;
+document.getElementById('config').addEventListener('input', () => { document.getElementById('config-errors').textContent=''; });
+document.getElementById('mode').addEventListener('change', () => {});
+load();
+</script>
+{% endblock %}

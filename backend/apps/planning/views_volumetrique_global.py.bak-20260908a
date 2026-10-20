@@ -1,0 +1,735 @@
+"""Vue globale pour le suivi des paiements volumétriques - Vue par ouvrage et type"""
+from django.shortcuts import render
+from django.contrib.auth.decorators import login_required
+from django.db.models import Q, Count, Sum
+from django.utils import timezone
+from datetime import datetime
+from decimal import Decimal
+import pytz
+
+from apps.billing.models import Releve, PointEau, ModaliteGestion
+from apps.accounting.models import BaseDiameX
+from apps.accounting.views_verification_ouvrages import diviser_paiement_volume_multi
+from apps.accounting.extracteurs_description import extraire_ouvrage_et_mois_generique
+from apps.accounting.dashboard_employee_filter import (
+    build_employee_geo_filter_options,
+    calculate_water_point_score,
+    get_water_point_score_gap_ids,
+    is_closed_payment_month,
+    resolve_dashboard_employee_filter,
+    resolve_score_scope,
+)
+from apps.geography.models import Commune, District, Region
+from apps.organization.models import Ouvrage, Base
+from apps.organization.scoping import (
+    apply_user_responsable_ouvrage_scope,
+    get_user_accessible_gestionnaire_ids,
+    get_user_organisation,
+)
+
+
+def _get_user_gestionnaire_ids(user):
+    return get_user_accessible_gestionnaire_ids(user)
+
+
+@login_required
+def suivi_paiements_global(request):
+    """Vue globale des paiements volumétriques par ouvrage et type de point d'eau"""
+
+    # Filtres
+    annee_filter = request.GET.get('annee', str(datetime.now().year))
+    regions_ids = request.GET.getlist('regions')  # Multi-sélection
+    districts_ids = request.GET.getlist('districts')  # Multi-sélection
+    communes_ids = request.GET.getlist('communes')  # Multi-sélection
+    ouvrages_ids = request.GET.getlist('ouvrages')  # Multi-sélection
+    employe_filter = request.GET.get('employe', '')
+    score_ecart_filter = str(request.GET.get('score_ecart', '') or '').strip().lower()
+    show_only_score_gap = score_ecart_filter in {'1', 'true', 'on', 'yes'}
+
+    # Récupérer les ouvrages avec modalité volumétrique
+    gestionnaire_ids = _get_user_gestionnaire_ids(request.user)
+    modalites_qs = ModaliteGestion.objects.filter(
+        date_fin__isnull=True,
+        modalitepaiement__in=['au_volume', 'mixte']
+    )
+    if gestionnaire_ids is not None:
+        if gestionnaire_ids:
+            modalites_qs = modalites_qs.filter(gestionnaire_id__in=gestionnaire_ids)
+        else:
+            modalites_qs = modalites_qs.none()
+
+    ouvrages_volumetriques_ids = set(
+        modalites_qs.values_list('ouvrage_id', flat=True).distinct()
+    )
+    ouvrages_volumetriques_ids = apply_user_responsable_ouvrage_scope(
+        ouvrages_volumetriques_ids,
+        request.user,
+        allow_same_base_support_roles=True,
+    )
+    ouvrages_filter_scope = set(ouvrages_volumetriques_ids)
+    employes_responsables, ouvrages_volumetriques_ids = resolve_dashboard_employee_filter(
+        ouvrages_volumetriques_ids,
+        employe_filter,
+    )
+    if employe_filter and not any(
+        str(option.get('id', '')) == str(employe_filter)
+        for option in employes_responsables
+    ):
+        employe_filter = ''
+
+    # Base queryset des points d'eau
+    points_eau_qs = PointEau.objects.filter(
+        ouvrage_id__in=ouvrages_volumetriques_ids
+    ).select_related(
+        'ouvrage',
+        'parcelle__village__fokontany__commune__district__region',
+        'type_point_eau'
+    )
+
+    # Filtrer par régions (multi-sélection)
+    if regions_ids and regions_ids != ['']:
+        points_eau_qs = points_eau_qs.filter(
+            parcelle__village__fokontany__commune__district__region_id__in=regions_ids
+        )
+
+    # Filtrer par districts (multi-sélection)
+    if districts_ids and districts_ids != ['']:
+        points_eau_qs = points_eau_qs.filter(
+            parcelle__village__fokontany__commune__district_id__in=districts_ids
+        )
+
+    # Filtrer par communes (multi-sélection)
+    if communes_ids and communes_ids != ['']:
+        points_eau_qs = points_eau_qs.filter(
+            parcelle__village__fokontany__commune_id__in=communes_ids
+        )
+
+    # Filtrer par ouvrages (multi-sélection)
+    if ouvrages_ids and ouvrages_ids != ['']:
+        points_eau_qs = points_eau_qs.filter(ouvrage_id__in=ouvrages_ids)
+
+    # Récupérer les relevés de l'année
+    # CRITICAL: Ne garder que les relevés avec montant > 0 (factures réelles)
+    # ET exclure les relevés avec "coupé" dans la remarque (pas de facture à recouvrer)
+    tz_madagascar = pytz.timezone('Indian/Antananarivo')
+    releves = Releve.objects.filter(
+        point_eau__in=points_eau_qs
+    ).exclude(
+        Q(montant__isnull=True) | Q(montant=0) | Q(remarque__icontains='coupé')
+    ).select_related('point_eau__ouvrage', 'point_eau__type_point_eau')
+
+    from apps.accounting.views import (
+        _build_coupure_periods_by_point,
+        _is_releve_non_recouvrable,
+    )
+    point_eau_ids_releves = {
+        str(releve.point_eau_id) for releve in releves if releve.point_eau_id
+    }
+    periodes_coupure = _build_coupure_periods_by_point(point_eau_ids_releves)
+
+    from dateutil.relativedelta import relativedelta
+
+    score_reference_month = timezone.localdate().replace(day=1)
+    score_totals_by_point = {}
+    score_point_ouvrage_ids = {}
+    for releve in releves:
+        if not releve.datereleve or not releve.point_eau_id:
+            continue
+        date_facture = releve.datereleve + relativedelta(months=1)
+        if date_facture.year != int(annee_filter):
+            continue
+        if not is_closed_payment_month(date_facture, score_reference_month):
+            continue
+        if _is_releve_non_recouvrable(releve, periodes_coupure):
+            continue
+
+        point_eau_id = str(releve.point_eau_id)
+        totals = score_totals_by_point.setdefault(
+            point_eau_id,
+            {'expected': Decimal('0'), 'paid': Decimal('0')},
+        )
+        montant = Decimal(str(releve.montant or 0))
+        totals['expected'] += montant
+        if releve.numeroDiameX and releve.baseDiameX:
+            totals['paid'] += montant
+        if releve.point_eau and releve.point_eau.ouvrage_id:
+            score_point_ouvrage_ids[point_eau_id] = str(releve.point_eau.ouvrage_id)
+
+    employee_points_score = calculate_water_point_score(
+        score_totals_by_point.keys(),
+        score_totals_by_point,
+    )
+    score_gap_point_ids = get_water_point_score_gap_ids(
+        score_totals_by_point.keys(),
+        score_totals_by_point,
+    )
+    score_gap_ouvrage_ids = {
+        score_point_ouvrage_ids[point_id]
+        for point_id in score_gap_point_ids
+        if point_id in score_point_ouvrage_ids
+    }
+    organisation_user = get_user_organisation(request.user)
+    employee_points_score.update({
+        'visible': True,
+        **resolve_score_scope(
+            employee_options=employes_responsables,
+            employee_id=employe_filter,
+            default_organisation_name=getattr(organisation_user, 'nom_organisation', '') or '',
+        ),
+    })
+
+    # Organiser les données par ouvrage et type de point d'eau
+    donnees_par_ouvrage_type = {}
+    mois_liste = list(range(1, 13))  # Janvier à Décembre
+
+    # Initialiser la structure
+    for pe in points_eau_qs:
+        if not pe.ouvrage or not pe.type_point_eau:
+            continue
+
+        key = (str(pe.ouvrage.id), str(pe.type_point_eau.id))
+
+        if key not in donnees_par_ouvrage_type:
+            donnees_par_ouvrage_type[key] = {
+                'ouvrage': pe.ouvrage,
+                'type_point_eau': pe.type_point_eau,
+                'nb_points_eau': 0,
+                'points_eau_ids': set(),
+                'nb_coupes': 0,  # Ajout compteur points d'eau coupés
+                'mois': {
+                    mois: {'total': 0, 'payes': 0, 'impayes': 0, 'non_recouvrables': 0}
+                    for mois in mois_liste
+                }
+            }
+
+        donnees_par_ouvrage_type[key]['points_eau_ids'].add(str(pe.id))
+
+        # Incrémenter le compteur si le point d'eau est coupé
+        if pe.is_cut:
+            donnees_par_ouvrage_type[key]['nb_coupes'] += 1
+
+    # Remplir les données des relevés
+    for releve in releves:
+        if not releve.datereleve or not releve.point_eau.ouvrage or not releve.point_eau.type_point_eau:
+            continue
+
+        date_obj = releve.datereleve
+
+        # CRITICAL: La facture est pour le mois SUIVANT le relevé
+        # Un relevé de mars → facture d'avril
+        date_facture = date_obj + relativedelta(months=1)
+
+        # Filtrer par année (année de la facture, pas du relevé)
+        if date_facture.year != int(annee_filter):
+            continue
+
+        pe = releve.point_eau
+        key = (str(pe.ouvrage.id), str(pe.type_point_eau.id))
+        mois = date_facture.month
+
+        if key in donnees_par_ouvrage_type:
+            non_recouvrable = _is_releve_non_recouvrable(releve, periodes_coupure)
+
+            # Vérifier si payé (numeroDiameX renseigné)
+            est_paye = bool(releve.numeroDiameX and str(releve.numeroDiameX).strip())
+
+            if non_recouvrable:
+                donnees_par_ouvrage_type[key]['mois'][mois]['non_recouvrables'] += 1
+            elif est_paye:
+                donnees_par_ouvrage_type[key]['mois'][mois]['total'] += 1
+                donnees_par_ouvrage_type[key]['mois'][mois]['payes'] += 1
+            else:
+                donnees_par_ouvrage_type[key]['mois'][mois]['total'] += 1
+                donnees_par_ouvrage_type[key]['mois'][mois]['impayes'] += 1
+
+    # Calculer le nombre de points d'eau par ligne
+    for key, data in donnees_par_ouvrage_type.items():
+        data['nb_points_eau'] = len(data['points_eau_ids'])
+
+    # Calculer le nombre de points d'eau coupés
+    points_eau_coupes = points_eau_qs.filter(datearretbranchement__isnull=False).count()
+
+    # Préparer les données pour le template
+    tableau_data = []
+    stats_globales = {
+        'total_points_eau': 0,
+        'total_factures': 0,
+        'factures_payees': 0,
+        'factures_impayees': 0,
+        'points_eau_coupes': points_eau_coupes,
+        'taux_paiement': 0,
+        # Répartition par statut
+        'nb_tout_paye': 0,
+        'nb_partiellement_paye': 0,
+        'nb_non_paye': 0
+    }
+
+    for key, data in donnees_par_ouvrage_type.items():
+        # Ne garder que les lignes avec au moins un relevé
+        total_releves = sum(m['total'] for m in data['mois'].values())
+        total_non_recouvrables = sum(m['non_recouvrables'] for m in data['mois'].values())
+        if total_releves == 0 and total_non_recouvrables == 0:
+            continue
+
+        # Calculer les stats par ligne
+        total_payes = sum(m['payes'] for m in data['mois'].values())
+        total_impayes = sum(m['impayes'] for m in data['mois'].values())
+        taux = int(round(total_payes / total_releves * 100)) if total_releves > 0 else 0
+
+        # Déterminer le statut global (pour couleur)
+        if total_releves == 0 and total_non_recouvrables > 0:
+            statut_global = 'hors_recouvrement'
+        elif total_impayes == 0 and total_payes > 0:
+            statut_global = 'tout_paye'
+        elif total_payes == 0:
+            statut_global = 'non_paye'
+        else:
+            statut_global = 'partiel'
+
+        tableau_data.append({
+            'ouvrage': data['ouvrage'],
+            'type_point_eau': data['type_point_eau'],
+            'nb_points_eau': data['nb_points_eau'],
+            'points_eau_ids': data['points_eau_ids'],
+            'nb_coupes': data['nb_coupes'],  # Ajout du nombre de coupés
+            'mois': data['mois'],
+            'total_releves': total_releves,
+            'total_payes': total_payes,
+            'total_impayes': total_impayes,
+            'total_non_recouvrables': total_non_recouvrables,
+            'taux': taux,
+            'statut_global': statut_global
+        })
+
+        # Mettre à jour les stats globales
+        stats_globales['total_points_eau'] += data['nb_points_eau']
+        stats_globales['total_factures'] += total_releves
+        stats_globales['factures_payees'] += total_payes
+        stats_globales['factures_impayees'] += total_impayes
+
+        # Compter les statuts pour la répartition
+        if statut_global == 'tout_paye':
+            stats_globales['nb_tout_paye'] += 1
+        elif statut_global == 'non_paye':
+            stats_globales['nb_non_paye'] += 1
+        elif statut_global == 'partiel':
+            stats_globales['nb_partiellement_paye'] += 1
+
+    # Calculer le taux de paiement global
+    if stats_globales['total_factures'] > 0:
+        stats_globales['taux_paiement'] = int(round(
+            (stats_globales['factures_payees'] / stats_globales['total_factures']) * 100
+        ))
+
+    if show_only_score_gap:
+        tableau_data = [
+            data for data in tableau_data
+            if data['points_eau_ids'] & score_gap_point_ids
+        ]
+
+    mois_colonnes_globales = [
+        {'number': 1, 'label': 'Jan'},
+        {'number': 2, 'label': 'Fév'},
+        {'number': 3, 'label': 'Mar'},
+        {'number': 4, 'label': 'Avr'},
+        {'number': 5, 'label': 'Mai'},
+        {'number': 6, 'label': 'Jun'},
+        {'number': 7, 'label': 'Jul'},
+        {'number': 8, 'label': 'Aoû'},
+        {'number': 9, 'label': 'Sep'},
+        {'number': 10, 'label': 'Oct'},
+        {'number': 11, 'label': 'Nov'},
+        {'number': 12, 'label': 'Déc'},
+    ]
+    visible_mois_liste = [
+        month['number']
+        for month in mois_colonnes_globales
+        if any(
+            data['mois'][month['number']]['total'] > 0
+            or data['mois'][month['number']]['payes'] > 0
+            or data['mois'][month['number']]['impayes'] > 0
+            or data['mois'][month['number']]['non_recouvrables'] > 0
+            for data in tableau_data
+        )
+    ]
+    visible_mois_colonnes_globales = [
+        month
+        for month in mois_colonnes_globales
+        if month['number'] in visible_mois_liste
+    ]
+
+    # Trier par ouvrage puis par type
+    tableau_data.sort(key=lambda x: (x['ouvrage'].nom_ouvrage, x['type_point_eau'].nom_type))
+
+    # Calculer les sous-totaux par ouvrage
+    sous_totaux_par_ouvrage = {}
+    for data in tableau_data:
+        ouvrage_id = str(data['ouvrage'].id)
+
+        if ouvrage_id not in sous_totaux_par_ouvrage:
+            sous_totaux_par_ouvrage[ouvrage_id] = {
+                'ouvrage': data['ouvrage'],
+                'nb_points_eau': 0,
+                'mois': {
+                    mois: {'total': 0, 'payes': 0, 'impayes': 0, 'non_recouvrables': 0}
+                    for mois in mois_liste
+                },
+                'total_releves': 0,
+                'total_payes': 0,
+                'total_impayes': 0,
+                'total_non_recouvrables': 0,
+                'taux': 0
+            }
+
+        # Accumuler les totaux
+        sous_totaux_par_ouvrage[ouvrage_id]['nb_points_eau'] += data['nb_points_eau']
+        sous_totaux_par_ouvrage[ouvrage_id]['total_releves'] += data['total_releves']
+        sous_totaux_par_ouvrage[ouvrage_id]['total_payes'] += data['total_payes']
+        sous_totaux_par_ouvrage[ouvrage_id]['total_impayes'] += data['total_impayes']
+        sous_totaux_par_ouvrage[ouvrage_id]['total_non_recouvrables'] += data['total_non_recouvrables']
+
+        # Accumuler par mois
+        for mois in mois_liste:
+            sous_totaux_par_ouvrage[ouvrage_id]['mois'][mois]['total'] += data['mois'][mois]['total']
+            sous_totaux_par_ouvrage[ouvrage_id]['mois'][mois]['payes'] += data['mois'][mois]['payes']
+            sous_totaux_par_ouvrage[ouvrage_id]['mois'][mois]['impayes'] += data['mois'][mois]['impayes']
+            sous_totaux_par_ouvrage[ouvrage_id]['mois'][mois]['non_recouvrables'] += data['mois'][mois]['non_recouvrables']
+
+    # Calculer les taux pour chaque sous-total
+    for ouvrage_id, st in sous_totaux_par_ouvrage.items():
+        if st['total_releves'] > 0:
+            st['taux'] = int(round(st['total_payes'] / st['total_releves'] * 100))
+
+    # Ajouter un indicateur de changement d'ouvrage et les sous-totaux
+    ouvrage_precedent = None
+    for i, data in enumerate(tableau_data):
+        ouvrage_id = str(data['ouvrage'].id)
+        data['nouveau_groupe_ouvrage'] = (ouvrage_precedent is None or ouvrage_id != ouvrage_precedent)
+
+        # Ajouter le sous-total pour cet ouvrage
+        if data['nouveau_groupe_ouvrage']:
+            data['sous_total_ouvrage'] = sous_totaux_par_ouvrage[ouvrage_id]
+
+        ouvrage_precedent = ouvrage_id
+
+    # Calculer les taux de recouvrement mensuels par ouvrage (montants), align? dashboard-paiements-volume
+    annee_int = int(annee_filter)
+    recouvrement_par_ouvrage_mois = {}
+    pointed_pairs_par_cle_mois = {}
+    taux_mensuels_par_ouvrage = {}
+
+    def _pair_key(numero_diamex, base_diamex):
+        num = str(numero_diamex or '').strip().lower()
+        base = str(base_diamex or '').strip().lower()
+        if not num or not base:
+            return ''
+        return f"{num}||{base}"
+
+    ouvrages_scope_ids = {
+        str(oid) for oid in points_eau_qs.values_list('ouvrage_id', flat=True).distinct() if oid
+    }
+
+    # 1) Montants releves + couples pointes (numeroDiameX/baseDiameX)
+    from dateutil.relativedelta import relativedelta
+
+    for releve in releves:
+        if not releve.datereleve or not releve.point_eau or not releve.point_eau.ouvrage:
+            continue
+
+        date_facture = releve.datereleve + relativedelta(months=1)
+        if date_facture.year != annee_int:
+            continue
+
+        ouvrage_id = str(releve.point_eau.ouvrage.id)
+        if ouvrage_id not in ouvrages_scope_ids:
+            continue
+
+        cle_mois = f"{ouvrage_id}_{annee_int}_{date_facture.month:02d}"
+        if cle_mois not in recouvrement_par_ouvrage_mois:
+            recouvrement_par_ouvrage_mois[cle_mois] = {
+                'ouvrage_id': ouvrage_id,
+                'ouvrage_nom': releve.point_eau.ouvrage.nom_ouvrage,
+                'mois': date_facture.month,
+                'total_releves': Decimal('0'),
+                'total_diamex': Decimal('0'),
+                'montant_non_pointe_releve': Decimal('0'),
+                'montant_non_pointe_compta': Decimal('0'),
+                'nb_non_pointe_releve': 0,
+                'nb_non_pointe_compta': 0,
+                'montant_non_recouvrable': Decimal('0'),
+                'nb_non_recouvrable': 0,
+            }
+        if cle_mois not in pointed_pairs_par_cle_mois:
+            pointed_pairs_par_cle_mois[cle_mois] = set()
+
+        montant_releve = Decimal(str(releve.montant or 0))
+        non_recouvrable = _is_releve_non_recouvrable(releve, periodes_coupure)
+        if non_recouvrable:
+            recouvrement_par_ouvrage_mois[cle_mois]['montant_non_recouvrable'] += montant_releve
+            recouvrement_par_ouvrage_mois[cle_mois]['nb_non_recouvrable'] += 1
+        else:
+            recouvrement_par_ouvrage_mois[cle_mois]['total_releves'] += montant_releve
+
+        pair_key = _pair_key(releve.numeroDiameX, releve.baseDiameX)
+        if pair_key:
+            pointed_pairs_par_cle_mois[cle_mois].add(pair_key)
+        elif not non_recouvrable:
+            # Montants releves non pointes en compta
+            recouvrement_par_ouvrage_mois[cle_mois]['montant_non_pointe_compta'] += montant_releve
+            recouvrement_par_ouvrage_mois[cle_mois]['nb_non_pointe_compta'] += 1
+
+    # 2) Montants DiameX (compte 707401), segmentes par ouvrage/mois
+    diamex_707401 = BaseDiameX.objects.filter(compte_code='707401')
+    if gestionnaire_ids is not None:
+        allowed_progs = list(
+            Base.objects.filter(organisation_id__in=gestionnaire_ids)
+            .exclude(prog_diamex__isnull=True)
+            .exclude(prog_diamex='')
+            .values_list('prog_diamex', flat=True)
+            .distinct()
+        ) if gestionnaire_ids else []
+        diamex_707401 = diamex_707401.filter(prog__in=allowed_progs) if allowed_progs else diamex_707401.none()
+
+    for entry in diamex_707401:
+        segments = []
+        if entry.description and ';' in entry.description:
+            segments = diviser_paiement_volume_multi(
+                entry.description,
+                entry.compte_code,
+                entry.montant_in if entry.montant_in else 0
+            )
+
+        if segments:
+            for segment in segments:
+                extraction = segment.get('extraction') or {}
+                ouvrage_obj = extraction.get('ouvrage_obj')
+                mois = extraction.get('mois')
+                annee_segment = extraction.get('annee')
+                if not ouvrage_obj or not mois or annee_segment != annee_int:
+                    continue
+
+                ouvrage_id = str(ouvrage_obj.id)
+                if ouvrage_id not in ouvrages_scope_ids:
+                    continue
+
+                cle_mois = f"{ouvrage_id}_{annee_int}_{mois:02d}"
+                if cle_mois not in recouvrement_par_ouvrage_mois:
+                    recouvrement_par_ouvrage_mois[cle_mois] = {
+                        'ouvrage_id': ouvrage_id,
+                        'ouvrage_nom': ouvrage_obj.nom_ouvrage,
+                        'mois': mois,
+                        'total_releves': Decimal('0'),
+                        'total_diamex': Decimal('0'),
+                        'montant_non_pointe_releve': Decimal('0'),
+                        'montant_non_pointe_compta': Decimal('0'),
+                        'nb_non_pointe_releve': 0,
+                        'nb_non_pointe_compta': 0,
+                    }
+                if cle_mois not in pointed_pairs_par_cle_mois:
+                    pointed_pairs_par_cle_mois[cle_mois] = set()
+
+                montant_segment = Decimal(str(segment.get('montant') or 0))
+                recouvrement_par_ouvrage_mois[cle_mois]['total_diamex'] += montant_segment
+
+                diamex_pair_key = _pair_key(entry.id_access, entry.prog)
+                is_diamex_pointe = bool(
+                    diamex_pair_key and diamex_pair_key in pointed_pairs_par_cle_mois.get(cle_mois, set())
+                )
+                if not is_diamex_pointe:
+                    # Montants DiameX non pointes en releves
+                    recouvrement_par_ouvrage_mois[cle_mois]['montant_non_pointe_releve'] += montant_segment
+                    recouvrement_par_ouvrage_mois[cle_mois]['nb_non_pointe_releve'] += 1
+        else:
+            extraction = extraire_ouvrage_et_mois_generique(entry.description or '', entry.compte_code)
+            ouvrage_obj = extraction.get('ouvrage_obj')
+            mois = extraction.get('mois')
+            annee_entry = extraction.get('annee')
+            if not ouvrage_obj or not mois or annee_entry != annee_int:
+                continue
+
+            ouvrage_id = str(ouvrage_obj.id)
+            if ouvrage_id not in ouvrages_scope_ids:
+                continue
+
+            cle_mois = f"{ouvrage_id}_{annee_int}_{mois:02d}"
+            if cle_mois not in recouvrement_par_ouvrage_mois:
+                recouvrement_par_ouvrage_mois[cle_mois] = {
+                    'ouvrage_id': ouvrage_id,
+                    'ouvrage_nom': ouvrage_obj.nom_ouvrage,
+                    'mois': mois,
+                    'total_releves': Decimal('0'),
+                    'total_diamex': Decimal('0'),
+                    'montant_non_pointe_releve': Decimal('0'),
+                    'montant_non_pointe_compta': Decimal('0'),
+                    'nb_non_pointe_releve': 0,
+                    'nb_non_pointe_compta': 0,
+                }
+            if cle_mois not in pointed_pairs_par_cle_mois:
+                pointed_pairs_par_cle_mois[cle_mois] = set()
+
+            montant_entry = Decimal(str(entry.montant_in or 0))
+            recouvrement_par_ouvrage_mois[cle_mois]['total_diamex'] += montant_entry
+
+            diamex_pair_key = _pair_key(entry.id_access, entry.prog)
+            is_diamex_pointe = bool(
+                diamex_pair_key and diamex_pair_key in pointed_pairs_par_cle_mois.get(cle_mois, set())
+            )
+            if not is_diamex_pointe:
+                recouvrement_par_ouvrage_mois[cle_mois]['montant_non_pointe_releve'] += montant_entry
+                recouvrement_par_ouvrage_mois[cle_mois]['nb_non_pointe_releve'] += 1
+
+    # 3) Formatage des 12 mois / ouvrage pour le template
+    for cle_mois, data in recouvrement_par_ouvrage_mois.items():
+        ouvrage_id = data['ouvrage_id']
+        mois = data['mois']
+
+        if ouvrage_id not in taux_mensuels_par_ouvrage:
+            taux_mensuels_par_ouvrage[ouvrage_id] = {
+                'ouvrage_id': ouvrage_id,
+                'ouvrage_nom': data['ouvrage_nom'],
+                'taux_par_mois': {}
+            }
+
+        total_releves_mois = Decimal(str(data.get('total_releves') or 0))
+        total_diamex_mois = Decimal(str(data.get('total_diamex') or 0))
+        non_pointe_releve_mois = Decimal(str(data.get('montant_non_pointe_releve') or 0))
+        non_pointe_compta_mois = Decimal(str(data.get('montant_non_pointe_compta') or 0))
+        nb_non_pointe_releve_mois = int(data.get('nb_non_pointe_releve') or 0)
+        nb_non_pointe_compta_mois = int(data.get('nb_non_pointe_compta') or 0)
+        montant_non_recouvrable_mois = Decimal(str(data.get('montant_non_recouvrable') or 0))
+        nb_non_recouvrable_mois = int(data.get('nb_non_recouvrable') or 0)
+
+        ecart_mois = total_releves_mois - total_diamex_mois
+        taux = int((total_diamex_mois / total_releves_mois) * 100) if total_releves_mois > 0 else 0
+
+        # Montants pointes (complements des montants non pointes)
+        pointe_releve_mois = total_releves_mois - non_pointe_compta_mois
+        pointe_diamex_mois = total_diamex_mois - non_pointe_releve_mois
+        if pointe_releve_mois < 0:
+            pointe_releve_mois = Decimal('0')
+        if pointe_diamex_mois < 0:
+            pointe_diamex_mois = Decimal('0')
+
+        taux_mensuels_par_ouvrage[ouvrage_id]['taux_par_mois'][mois] = {
+            'taux': taux,
+            'total_releves': float(total_releves_mois),
+            'total_diamex': float(total_diamex_mois),
+            'ecart': float(ecart_mois),
+            'non_pointe_releve': float(non_pointe_releve_mois),
+            'non_pointe_compta': float(non_pointe_compta_mois),
+            'nb_non_pointe_releve': nb_non_pointe_releve_mois,
+            'nb_non_pointe_compta': nb_non_pointe_compta_mois,
+            'pointe_releve': float(pointe_releve_mois),
+            'pointe_diamex': float(pointe_diamex_mois),
+            'montant_non_recouvrable': float(montant_non_recouvrable_mois),
+            'nb_non_recouvrable': nb_non_recouvrable_mois,
+        }
+
+    for ouvrage_id, data in taux_mensuels_par_ouvrage.items():
+        data['taux_mois_list'] = [
+            data['taux_par_mois'].get(mois, None) for mois in range(1, 13)
+        ]
+
+    if show_only_score_gap:
+        taux_mensuels_par_ouvrage = {
+            ouvrage_id: data
+            for ouvrage_id, data in taux_mensuels_par_ouvrage.items()
+            if str(ouvrage_id) in score_gap_ouvrage_ids
+        }
+
+    taux_mensuels_visible_months = [
+        {'number': 1, 'label': 'Jan'},
+        {'number': 2, 'label': 'Fev'},
+        {'number': 3, 'label': 'Mar'},
+        {'number': 4, 'label': 'Avr'},
+        {'number': 5, 'label': 'Mai'},
+        {'number': 6, 'label': 'Jui'},
+        {'number': 7, 'label': 'Jlt'},
+        {'number': 8, 'label': 'Aou'},
+        {'number': 9, 'label': 'Sep'},
+        {'number': 10, 'label': 'Oct'},
+        {'number': 11, 'label': 'Nov'},
+        {'number': 12, 'label': 'Dec'},
+    ]
+    visible_month_numbers = [
+        month['number']
+        for month in taux_mensuels_visible_months
+        if any(
+            data['taux_par_mois'].get(month['number'])
+            and (
+                Decimal(str(data['taux_par_mois'][month['number']].get('total_releves') or 0)) > 0
+                or Decimal(str(data['taux_par_mois'][month['number']].get('total_diamex') or 0)) > 0
+                or Decimal(str(data['taux_par_mois'][month['number']].get('ecart') or 0)) != 0
+                or Decimal(str(data['taux_par_mois'][month['number']].get('non_pointe_releve') or 0)) > 0
+                or Decimal(str(data['taux_par_mois'][month['number']].get('non_pointe_compta') or 0)) > 0
+                or Decimal(str(data['taux_par_mois'][month['number']].get('pointe_releve') or 0)) > 0
+                or Decimal(str(data['taux_par_mois'][month['number']].get('pointe_diamex') or 0)) > 0
+                or Decimal(str(data['taux_par_mois'][month['number']].get('montant_non_recouvrable') or 0)) > 0
+            )
+            for data in taux_mensuels_par_ouvrage.values()
+        )
+    ]
+    taux_mensuels_visible_months = [
+        month
+        for month in taux_mensuels_visible_months
+        if month['number'] in visible_month_numbers
+    ]
+    for data in taux_mensuels_par_ouvrage.values():
+        data['visible_months'] = [
+            {
+                'number': month['number'],
+                'data': data['taux_par_mois'].get(month['number']),
+            }
+            for month in taux_mensuels_visible_months
+        ]
+
+    # Grouper les ouvrages avec taux mensuels par district
+    taux_mensuels_par_district = {}
+    for ouvrage_id, taux_data in taux_mensuels_par_ouvrage.items():
+        # Récupérer le district de cet ouvrage via les points d'eau
+        ouvrage_points = points_eau_qs.filter(ouvrage_id=ouvrage_id).first()
+        if ouvrage_points and ouvrage_points.parcelle:
+            district_nom = ouvrage_points.parcelle.village.fokontany.commune.district.nom_district
+
+            if district_nom not in taux_mensuels_par_district:
+                taux_mensuels_par_district[district_nom] = []
+
+            taux_mensuels_par_district[district_nom].append(taux_data)
+
+    # Trier les ouvrages par nom dans chaque district
+    for district_nom in taux_mensuels_par_district:
+        taux_mensuels_par_district[district_nom].sort(key=lambda x: x['ouvrage_nom'])
+
+    # Contexte
+    regions, districts, communes, ouvrages = build_employee_geo_filter_options(
+        ouvrages_filter_scope,
+        employes_responsables,
+        require_forfait_tariff=False,
+    )
+
+    context = {
+        'title': 'Suivi Global - Paiements Volumétriques',
+        'tableau_data': tableau_data,
+        'mois_liste': visible_mois_liste,
+        'mois_noms': [month['label'] for month in visible_mois_colonnes_globales],
+        'visible_mois_colonnes_globales': visible_mois_colonnes_globales,
+        'annee_filter': annee_filter,
+        'regions_ids': regions_ids,
+        'districts_ids': districts_ids,
+        'communes_ids': communes_ids,
+        'ouvrages_ids': ouvrages_ids,
+        'employe_filter': employe_filter,
+        'employes_responsables': employes_responsables,
+        'regions': regions,
+        'districts': districts,
+        'communes': communes,
+        'ouvrages': ouvrages,
+        'stats': stats_globales,
+        'employee_points_score': employee_points_score,
+        'show_only_score_gap': show_only_score_gap,
+        'is_directeur_poste': bool(getattr(getattr(request.user, 'employe', None), 'is_directeur', False)),
+        'taux_mensuels_par_district': taux_mensuels_par_district,  # Nouveau: tableau matriciel
+        'taux_mensuels_visible_months': taux_mensuels_visible_months,
+    }
+
+    return render(request, 'planning/suivi_paiements_global.html', context)

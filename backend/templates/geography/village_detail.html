@@ -1,0 +1,1177 @@
+{% extends 'base.html' %}
+{% load l10n static %}
+
+{% block extra_head %}
+{{ block.super }}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+    #village-mini-map {
+        height: 280px;
+        min-height: 280px;
+        width: 100%;
+        z-index: 0;
+    }
+
+    @media (min-width: 1024px) {
+        #village-mini-map {
+            height: 420px;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div>
+        <h1 class="text-3xl font-bold text-base-content">{{ title }}</h1>
+    </div>
+
+    <div class="card border border-base-300 bg-base-100 shadow-sm">
+        <div class="card-body">
+            <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div>
+                    <h2 class="card-title">Changer de village</h2>
+                    <p class="text-sm text-base-content/60">Navigation rapide avec filtres en cascade.</p>
+                </div>
+                <div class="badge badge-outline">Village courant : {{ village.nom_village }}</div>
+            </div>
+
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+                <label class="form-control">
+                    <span class="label-text mb-1">Region</span>
+                    <select id="village-filter-region" class="select select-bordered w-full">
+                        <option value="">Choisir une region</option>
+                        {% for item in regions %}
+                        <option value="{{ item.id }}" {% if current_region_id == item.id|stringformat:"s" %}selected{% endif %}>{{ item.nom_region }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+
+                <label class="form-control">
+                    <span class="label-text mb-1">District</span>
+                    <select id="village-filter-district" class="select select-bordered w-full" disabled>
+                        <option value="">Choisir un district</option>
+                    </select>
+                </label>
+
+                <label class="form-control">
+                    <span class="label-text mb-1">Commune</span>
+                    <select id="village-filter-commune" class="select select-bordered w-full" disabled>
+                        <option value="">Choisir une commune</option>
+                    </select>
+                </label>
+
+                <label class="form-control">
+                    <span class="label-text mb-1">Fokontany</span>
+                    <select id="village-filter-fokontany" class="select select-bordered w-full" disabled>
+                        <option value="">Choisir un fokontany</option>
+                    </select>
+                </label>
+
+                <label class="form-control">
+                    <span class="label-text mb-1">Village</span>
+                    <select id="village-filter-village" class="select select-bordered w-full" disabled>
+                        <option value="">Choisir un village</option>
+                    </select>
+                </label>
+            </div>
+
+            <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+                <a href="{% url 'geography:village_list' %}" class="btn btn-outline">
+                    <i class="fas fa-arrow-left mr-2"></i>Retour à la liste
+                </a>
+                <a href="{% url 'geography:village_update' village.pk %}" class="btn btn-warning">
+                    <i class="fas fa-edit mr-2"></i>Modifier
+                </a>
+                <a href="{% url 'geography:village_delete' village.pk %}" class="btn btn-error">
+                    <i class="fas fa-trash mr-2"></i>Supprimer
+                </a>
+                <a href="{% url 'geography:liaisons_map' %}?village={{ village.pk }}" class="btn btn-accent">
+                    <i class="fas fa-project-diagram mr-2"></i>Gérer les liaisons sur la carte
+                </a>
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('liaison-tools-modal').showModal()">
+                    <i class="fas fa-link mr-2"></i>Lier un autre village
+                </button>
+                <button id="village-filter-open" type="button" class="btn btn-primary" disabled>
+                    Ouvrir la fiche du village
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="card border border-base-300 bg-base-100 shadow-sm">
+        <div class="card-body">
+            <h2 class="card-title">Informations du village</h2>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div>
+                    <div class="text-sm text-base-content/60">Nom du village</div>
+                    <div class="text-lg font-semibold">{{ village.nom_village }}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-base-content/60">Fokontany</div>
+                    <div class="text-lg">{{ village.fokontany.nom_fokontany }}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-base-content/60">Commune</div>
+                    <div class="text-lg">
+                        <a href="{% url 'geography:commune_detail' village.fokontany.commune.pk %}" class="link link-primary">
+                            {{ village.fokontany.commune.nom_commune }}
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="divider my-2"></div>
+
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div>
+                    <div class="text-sm text-base-content/60">GPS</div>
+                    <div class="mt-1">
+                        {% if village.latitude and village.longitude %}
+                        <span class="badge badge-primary badge-outline">{{ village.latitude }}, {{ village.longitude }}</span>
+                        {% else %}
+                        <span class="badge badge-ghost">Non renseigne</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div>
+                    <div class="text-sm text-base-content/60">Accessibilite</div>
+                    <div class="mt-1">
+                        {% if village.accessibilite %}
+                        <span class="badge badge-info badge-outline">{{ village.get_accessibilite_display }}</span>
+                        {% else %}
+                        <span class="badge badge-ghost">Non renseigne</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div>
+                    <div class="text-sm text-base-content/60">Enclavement</div>
+                    <div class="mt-1">
+                        <span class="badge {{ village.get_enclavement_badge_class }}">{{ village.enclavement }}</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-5 w-full overflow-hidden rounded-xl border border-base-300 bg-base-200 shadow-sm">
+                <div class="flex flex-col gap-2 border-b border-base-300 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                        <h3 class="font-semibold"><i class="fas fa-map-marked-alt mr-2 text-primary"></i>Repérage du village</h3>
+                        <p class="text-xs text-base-content/60">Village courant, villages liés et voisins proches</p>
+                    </div>
+                    {% if village.latitude and village.longitude %}
+                    <a href="https://www.openstreetmap.org/?mlat={{ village.latitude|unlocalize }}&mlon={{ village.longitude|unlocalize }}#map=16/{{ village.latitude|unlocalize }}/{{ village.longitude|unlocalize }}"
+                       target="_blank" rel="noopener" class="btn btn-outline btn-xs">
+                        <i class="fas fa-external-link-alt mr-1"></i>Ouvrir la carte
+                    </a>
+                    {% endif %}
+                </div>
+                {% if village.latitude and village.longitude %}
+                <div class="flex flex-wrap gap-x-4 gap-y-1 border-b border-base-300 bg-base-100/70 px-4 py-2 text-xs">
+                    <span class="inline-flex items-center gap-1.5"><span class="h-3 w-3 rounded-full bg-primary"></span>Village courant</span>
+                    <span class="inline-flex items-center gap-1.5"><span class="h-3 w-3 rounded-full bg-success"></span>Village lié</span>
+                    <span class="inline-flex items-center gap-1.5"><span class="h-3 w-3 rounded-full bg-warning"></span>Village proche non lié</span>
+                </div>
+                <div id="village-mini-map"
+                     data-latitude="{{ village.latitude|unlocalize }}"
+                     data-longitude="{{ village.longitude|unlocalize }}"
+                     data-village-name="{{ village.nom_village|escape }}"></div>
+                {% else %}
+                <div class="flex min-h-56 flex-col items-center justify-center p-6 text-center text-base-content/60">
+                    <i class="fas fa-map-marker-alt mb-3 text-4xl text-base-content/30"></i>
+                    <p>Impossible d’afficher la carte : les coordonnées GPS du village ne sont pas renseignées.</p>
+                    <a href="{% url 'geography:village_update' village.pk %}" class="btn btn-primary btn-sm mt-4">Ajouter les coordonnées GPS</a>
+                </div>
+                {% endif %}
+            </div>
+            {{ village_map_points|json_script:"village-map-points" }}
+            {{ village_liaisons_json|json_script:"village-liaisons" }}
+        </div>
+    </div>
+
+    <div>
+        <dialog id="liaison-tools-modal" class="modal">
+            <div class="modal-box max-h-[92vh] max-w-3xl overflow-y-auto">
+                <div>
+                    <div class="flex items-center justify-between">
+                        <h2 class="card-title">Lier un autre village</h2>
+                        <div class="flex items-center gap-2">
+                            <div class="badge badge-outline">{{ liaisons_total }} liaisons</div>
+                            <form method="dialog">
+                                <button type="submit" class="btn btn-circle btn-ghost btn-sm" aria-label="Fermer">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <div class="rounded-lg border border-primary/20 bg-primary/5 p-4">
+                        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                            <div>
+                                <div class="font-semibold">Peuplement automatique initial</div>
+                                <div class="text-sm text-base-content/70">
+                                    Cree automatiquement jusqu'a {{ suggested_auto_link_count }} liaisons de proximite vers les villages non lies les plus proches, avec la distance a vol d'oiseau.
+                                </div>
+                            </div>
+                            <form method="post" action="{% url 'geography:village_liaisons_autofill' village.pk %}" class="flex items-center gap-2">
+                                {% csrf_token %}
+                                <input type="number" name="limit" min="1" max="20" value="{% if suggested_auto_link_count %}{{ suggested_auto_link_count }}{% else %}3{% endif %}" class="input input-bordered input-sm w-24">
+                                <button type="submit" class="btn btn-primary btn-sm" {% if not village.latitude or not village.longitude %}disabled{% endif %}>
+                                    Auto-lier les plus proches
+                                </button>
+                            </form>
+                        </div>
+                        {% if not village.latitude or not village.longitude %}
+                        <div class="mt-2 text-xs text-error">
+                            Coordonnees GPS manquantes sur ce village. Le peuplement automatique est desactive.
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="divider">Ajouter une liaison manuellement</div>
+                    <form method="post" action="{% url 'geography:village_liaison_create' village.pk %}" class="space-y-4">
+                        {% csrf_token %}
+                        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                            <label class="form-control">
+                                <span class="label-text mb-1">Sens</span>
+                                <select name="direction" class="select select-bordered w-full">
+                                    <option value="sortant" selected>{{ village.nom_village }} alimente / pointe vers</option>
+                                    <option value="entrant">Un autre village alimente / pointe vers {{ village.nom_village }}</option>
+                                </select>
+                            </label>
+                            <label class="form-control">
+                                <span class="label-text mb-1">Type de liaison</span>
+                                <select name="type_liaison" class="select select-bordered w-full">
+                                    {% for value, label in liaison_type_choices %}
+                                    <option value="{{ value }}">{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </label>
+                        </div>
+
+                        <label class="form-control">
+                            <span class="label-text mb-1">Autre village</span>
+                            <select name="target_village_id" class="select select-bordered w-full" required>
+                                <option value="">Choisir un village</option>
+                                {% for item in villages_candidats %}
+                                <option value="{{ item.id }}">
+                                    {{ item.nom_village }}{% if item.fokontany_id %} - {{ item.fokontany.nom_fokontany }} / {{ item.fokontany.commune.nom_commune }}{% endif %}{% if item.air_distance_km is not None %} - {{ item.air_distance_km|floatformat:2 }} km vol d'oiseau{% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </label>
+
+                        <label class="form-control">
+                            <span class="label-text mb-1">Ordre d'affichage</span>
+                            <input type="number" name="ordre" min="0" value="0" class="input input-bordered w-full">
+                        </label>
+
+                        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                            <label class="form-control">
+                                <span class="label-text mb-1">Type de route</span>
+                                <select name="type_route" class="select select-bordered w-full">
+                                    <option value="">Non renseigne</option>
+                                    {% for value, label in liaison_route_choices %}
+                                    <option value="{{ value }}">{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </label>
+                            <label class="form-control">
+                                <span class="label-text mb-1">Moyen d'acces</span>
+                                <select name="moyen_acces" class="select select-bordered w-full">
+                                    <option value="">Non renseigne</option>
+                                    {% for value, label in liaison_moyen_choices %}
+                                    <option value="{{ value }}">{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </label>
+                        </div>
+
+                        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                            <label class="form-control">
+                                <span class="label-text mb-1">Distance (km)</span>
+                                <input type="number" name="distance_km" min="0" step="0.01" class="input input-bordered w-full">
+                            </label>
+                            <label class="form-control">
+                                <span class="label-text mb-1">Temps d'acces (minutes)</span>
+                                <input type="number" name="temps_acces_minutes" min="0" step="1" class="input input-bordered w-full">
+                            </label>
+                        </div>
+
+                        <div class="modal-action">
+                            <button type="button" class="btn btn-ghost" onclick="document.getElementById('liaison-tools-modal').close()">Annuler</button>
+                            <button type="submit" class="btn btn-primary">
+                                Ajouter la liaison
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            <form method="dialog" class="modal-backdrop">
+                <button type="submit">Fermer</button>
+            </form>
+        </dialog>
+
+        <div>
+            <div class="card border border-base-300 bg-base-100 shadow-sm">
+                <div class="card-body gap-5">
+                    <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                        <div>
+                            <h2 class="card-title">Organigramme des villages</h2>
+                            <p class="text-sm text-base-content/60">Vue directe des liaisons entrantes et sortantes autour de ce village.</p>
+                        </div>
+                        <div class="flex gap-2">
+                            <div class="badge badge-info badge-outline">{{ liaisons_entrantes|length }} entrantes</div>
+                            <div class="badge badge-success badge-outline">{{ liaisons_sortantes|length }} sortantes</div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                        <div class="rounded-xl border border-base-300 bg-base-200 p-4">
+                            <div class="mb-3 flex items-center justify-between">
+                                <h3 class="font-semibold">Entrants</h3>
+                                <span class="badge badge-info">{{ liaisons_entrantes|length }}</span>
+                            </div>
+                            <div class="space-y-3">
+                                {% for liaison in liaisons_entrantes %}
+                                <div
+                                    class="rounded-lg border border-base-300 bg-base-100 p-3 cursor-grab"
+                                    draggable="true"
+                                    data-draggable-village="true"
+                                    data-village-id="{{ liaison.autre_village.id }}"
+                                    data-village-name="{{ liaison.autre_village.nom_village|escape }}"
+                                    data-village-distance="{% if liaison.distance_vol_oiseau_km is not None %}{{ liaison.distance_vol_oiseau_km|floatformat:2 }}{% endif %}"
+                                    data-liaison-id="{{ liaison.id }}"
+                                    data-map-village="{{ liaison.autre_village.id }}"
+                                    title="Cliquer pour gérer les liaisons de {{ liaison.autre_village.nom_village|escape }} sur la carte"
+                                    data-liaison-sens="{{ liaison.sens }}"
+                                    data-liaison-type="{{ liaison.type_liaison }}"
+                                    data-liaison-type-display="{{ liaison.type_liaison_display }}"
+                                    data-liaison-route="{{ liaison.type_route|default:'' }}"
+                                    data-liaison-route-display="{{ liaison.type_route_display|default:'' }}"
+                                    data-liaison-moyen="{{ liaison.moyen_acces|default:'' }}"
+                                    data-liaison-moyen-display="{{ liaison.moyen_acces_display|default:'' }}"
+                                    data-liaison-ordre="{{ liaison.ordre }}"
+                                    data-liaison-distance-km="{% if liaison.distance_km is not None %}{{ liaison.distance_km|floatformat:2 }}{% endif %}"
+                                    data-liaison-temps-minutes="{{ liaison.temps_acces_minutes|default:'' }}"
+                                >
+                                    <div class="font-semibold">{{ liaison.autre_village.nom_village }}</div>
+                                    <div class="text-sm text-base-content/60">{{ liaison.autre_village.commune|default:"Commune non renseignee" }}</div>
+                                    {% if liaison.type_route_display or liaison.distance_km or liaison.distance_vol_oiseau_km is not None or liaison.temps_acces_minutes or liaison.moyen_acces_display %}
+                                    <div class="mt-2 flex flex-wrap gap-2 text-xs">
+                                        {% if liaison.type_route_display %}<span class="badge badge-outline">{{ liaison.type_route_display }}</span>{% endif %}
+                                        {% if liaison.distance_km %}<span class="badge badge-outline">{{ liaison.distance_km|floatformat:2 }} km</span>{% endif %}
+                                        {% if liaison.distance_vol_oiseau_km is not None %}<span class="badge badge-outline badge-info">{{ liaison.distance_vol_oiseau_km|floatformat:2 }} km vol d'oiseau</span>{% endif %}
+                                        {% if liaison.route_statut == 'ok' %}<span class="badge badge-outline badge-success" title="Itinéraire calculé sur le réseau routier"><i class="fas fa-road mr-1"></i>{{ liaison.distance_route_km|floatformat:2 }} km par la route{% if liaison.duree_route_min %} · {{ liaison.duree_route_min }} min{% endif %}</span>{% elif liaison.route_statut == 'introuvable' %}<span class="badge badge-outline badge-warning" title="Le réseau routier ne relie pas ces deux villages">pas de route</span>{% endif %}
+                                        {% if liaison.temps_acces_minutes %}<span class="badge badge-outline">{{ liaison.temps_acces_minutes }} min</span>{% endif %}
+                                        {% if liaison.moyen_acces_display %}<span class="badge badge-outline">{{ liaison.moyen_acces_display }}</span>{% endif %}
+                                    </div>
+                                    {% endif %}
+                                    <div class="mt-2 flex items-center justify-between gap-2">
+                                        <span class="badge badge-info badge-outline">{{ liaison.type_liaison_display }}</span>
+                                        <div class="flex items-center gap-1">
+                                            <button
+                                                type="button"
+                                                class="btn btn-ghost btn-xs"
+                                                onclick="openEditLiaisonModal(this.closest('[data-liaison-id]'))"
+                                            >
+                                                Modifier
+                                            </button>
+                                            <form method="post" action="{% url 'geography:village_liaison_delete' liaison.id %}">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="redirect_village_id" value="{{ village.id }}">
+                                                <button type="submit" class="btn btn-ghost btn-xs text-error">Supprimer</button>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% empty %}
+                                <div class="rounded-lg border border-dashed border-base-300 p-4 text-sm text-base-content/60">
+                                    Aucun village ne pointe encore vers {{ village.nom_village }}.
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-center">
+                            <div id="village-dropzone" class="w-full max-w-xs rounded-2xl border border-primary/30 bg-primary/10 p-5 text-center shadow-sm transition-all duration-200">
+                                <div class="text-xs font-semibold uppercase tracking-wide text-primary">Village pivot</div>
+                                <div class="mt-2 text-xl font-bold text-base-content">{{ village.nom_village }}</div>
+                                <div class="mt-1 text-sm text-base-content/60">{{ village.fokontany.commune.nom_commune }}</div>
+                                <div class="mt-4 flex justify-center gap-2 text-xs">
+                                    <span class="badge badge-info badge-outline">{{ liaisons_entrantes|length }} entrants</span>
+                                    <span class="badge badge-success badge-outline">{{ liaisons_sortantes|length }} sortants</span>
+                                </div>
+                                <div class="mt-4 rounded-lg border border-dashed border-primary/40 px-3 py-2 text-xs text-base-content/70">
+                                    Glisser un village proche ici pour pre-remplir une liaison
+                                </div>
+                                <a href="{% url 'geography:liaisons_map' %}?village={{ village.pk }}" class="btn btn-primary btn-xs mt-3">
+                                    <i class="fas fa-map-marked-alt mr-1"></i>Gérer sur la carte
+                                </a>
+                                <div class="mt-2 text-xs text-base-content/60">Cliquez sur un village entrant/sortant pour ouvrir sa gestion des liaisons.</div>
+                            </div>
+                        </div>
+
+                        <div class="rounded-xl border border-base-300 bg-base-200 p-4">
+                            <div class="mb-3 flex items-center justify-between">
+                                <h3 class="font-semibold">Sortants</h3>
+                                <span class="badge badge-success">{{ liaisons_sortantes|length }}</span>
+                            </div>
+                            <div class="space-y-3">
+                                {% for liaison in liaisons_sortantes %}
+                                <div
+                                    class="rounded-lg border border-base-300 bg-base-100 p-3 cursor-grab"
+                                    draggable="true"
+                                    data-draggable-village="true"
+                                    data-village-id="{{ liaison.autre_village.id }}"
+                                    data-village-name="{{ liaison.autre_village.nom_village|escape }}"
+                                    data-village-distance="{% if liaison.distance_vol_oiseau_km is not None %}{{ liaison.distance_vol_oiseau_km|floatformat:2 }}{% endif %}"
+                                    data-liaison-id="{{ liaison.id }}"
+                                    data-map-village="{{ liaison.autre_village.id }}"
+                                    title="Cliquer pour gérer les liaisons de {{ liaison.autre_village.nom_village|escape }} sur la carte"
+                                    data-liaison-sens="{{ liaison.sens }}"
+                                    data-liaison-type="{{ liaison.type_liaison }}"
+                                    data-liaison-type-display="{{ liaison.type_liaison_display }}"
+                                    data-liaison-route="{{ liaison.type_route|default:'' }}"
+                                    data-liaison-route-display="{{ liaison.type_route_display|default:'' }}"
+                                    data-liaison-moyen="{{ liaison.moyen_acces|default:'' }}"
+                                    data-liaison-moyen-display="{{ liaison.moyen_acces_display|default:'' }}"
+                                    data-liaison-ordre="{{ liaison.ordre }}"
+                                    data-liaison-distance-km="{% if liaison.distance_km is not None %}{{ liaison.distance_km|floatformat:2 }}{% endif %}"
+                                    data-liaison-temps-minutes="{{ liaison.temps_acces_minutes|default:'' }}"
+                                >
+                                    <div class="font-semibold">{{ liaison.autre_village.nom_village }}</div>
+                                    <div class="text-sm text-base-content/60">{{ liaison.autre_village.commune|default:"Commune non renseignee" }}</div>
+                                    {% if liaison.type_route_display or liaison.distance_km or liaison.distance_vol_oiseau_km is not None or liaison.temps_acces_minutes or liaison.moyen_acces_display %}
+                                    <div class="mt-2 flex flex-wrap gap-2 text-xs">
+                                        {% if liaison.type_route_display %}<span class="badge badge-outline">{{ liaison.type_route_display }}</span>{% endif %}
+                                        {% if liaison.distance_km %}<span class="badge badge-outline">{{ liaison.distance_km|floatformat:2 }} km</span>{% endif %}
+                                        {% if liaison.distance_vol_oiseau_km is not None %}<span class="badge badge-outline badge-info">{{ liaison.distance_vol_oiseau_km|floatformat:2 }} km vol d'oiseau</span>{% endif %}
+                                        {% if liaison.route_statut == 'ok' %}<span class="badge badge-outline badge-success" title="Itinéraire calculé sur le réseau routier"><i class="fas fa-road mr-1"></i>{{ liaison.distance_route_km|floatformat:2 }} km par la route{% if liaison.duree_route_min %} · {{ liaison.duree_route_min }} min{% endif %}</span>{% elif liaison.route_statut == 'introuvable' %}<span class="badge badge-outline badge-warning" title="Le réseau routier ne relie pas ces deux villages">pas de route</span>{% endif %}
+                                        {% if liaison.temps_acces_minutes %}<span class="badge badge-outline">{{ liaison.temps_acces_minutes }} min</span>{% endif %}
+                                        {% if liaison.moyen_acces_display %}<span class="badge badge-outline">{{ liaison.moyen_acces_display }}</span>{% endif %}
+                                    </div>
+                                    {% endif %}
+                                    <div class="mt-2 flex items-center justify-between gap-2">
+                                        <span class="badge badge-success badge-outline">{{ liaison.type_liaison_display }}</span>
+                                        <div class="flex items-center gap-1">
+                                            <button
+                                                type="button"
+                                                class="btn btn-ghost btn-xs"
+                                                onclick="openEditLiaisonModal(this.closest('[data-liaison-id]'))"
+                                            >
+                                                Modifier
+                                            </button>
+                                            <form method="post" action="{% url 'geography:village_liaison_delete' liaison.id %}">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="redirect_village_id" value="{{ village.id }}">
+                                                <button type="submit" class="btn btn-ghost btn-xs text-error">Supprimer</button>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% empty %}
+                                <div class="rounded-lg border border-dashed border-base-300 p-4 text-sm text-base-content/60">
+                                    {{ village.nom_village }} ne pointe encore vers aucun autre village.
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+
+                    {% if organigram_edges %}
+                    <div class="rounded-xl border border-base-300 bg-base-200 p-4">
+                        <h3 class="mb-3 font-semibold">Resume des liaisons</h3>
+                        <div class="flex flex-wrap gap-2">
+                            {% for edge in organigram_edges %}
+                            <span class="badge badge-outline p-3">
+                                {{ edge.source_name }} -> {{ edge.target_name }} : {{ edge.label }}
+                            </span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <div class="rounded-xl border border-base-300 bg-base-200 p-4">
+                        <div class="mb-3 flex items-center justify-between">
+                            <h3 class="font-semibold">Villages proches non lies</h3>
+                            <span class="badge badge-outline">{{ villages_proches_non_lies|length }}</span>
+                        </div>
+                        {% if villages_proches_non_lies %}
+                        <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                            {% for item in villages_proches_non_lies %}
+                            <div
+                                class="rounded-lg border border-dashed border-primary/40 bg-base-100 p-3 cursor-grab"
+                                draggable="true"
+                                data-draggable-village="true"
+                                data-village-id="{{ item.id }}"
+                                data-village-name="{{ item.nom_village|escape }}"
+                                data-village-distance="{{ item.air_distance_km|floatformat:2 }}"
+                            >
+                                <div class="flex items-start justify-between gap-3">
+                                    <div>
+                                        <div class="font-semibold">{{ item.nom_village }}</div>
+                                        <div class="text-sm text-base-content/60">
+                                            {% if item.fokontany_id %}{{ item.fokontany.nom_fokontany }} / {{ item.fokontany.commune.nom_commune }}{% else %}Localisation non renseignee{% endif %}
+                                        </div>
+                                    </div>
+                                    <span class="badge badge-info badge-outline">{{ item.air_distance_km|floatformat:2 }} km</span>
+                                </div>
+                                <div class="mt-3 text-xs text-base-content/60">
+                                    Suggestion visuelle: village proche a evaluer pour creation de liaison.
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <div class="rounded-lg border border-dashed border-base-300 p-4 text-sm text-base-content/60">
+                            Aucun village proche non lie avec coordonnees GPS disponibles.
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <dialog id="liaison-drag-modal" class="modal">
+        <div class="modal-box max-w-2xl">
+            <div class="flex items-center justify-between gap-4">
+                <h3 class="text-lg font-bold">Creer une liaison par glisser-deposer</h3>
+                <form method="dialog">
+                    <button class="btn btn-sm btn-circle btn-ghost">✕</button>
+                </form>
+            </div>
+            <p class="mt-2 text-sm text-base-content/70">
+                Le village glisse est deja selectionne. Complete les metadonnees puis enregistre.
+            </p>
+
+            <form method="post" action="{% url 'geography:village_liaison_create' village.pk %}" class="mt-4 space-y-4">
+                {% csrf_token %}
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <label class="form-control">
+                        <span class="label-text mb-1">Sens</span>
+                        <select name="direction" id="drag-direction" class="select select-bordered w-full">
+                            <option value="sortant" selected>{{ village.nom_village }} alimente / pointe vers</option>
+                            <option value="entrant">Le village glisse alimente / pointe vers {{ village.nom_village }}</option>
+                        </select>
+                    </label>
+                    <label class="form-control">
+                        <span class="label-text mb-1">Type de liaison</span>
+                        <select name="type_liaison" class="select select-bordered w-full">
+                            {% for value, label in liaison_type_choices %}
+                            <option value="{{ value }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                </div>
+
+                <label class="form-control">
+                    <span class="label-text mb-1">Village selectionne</span>
+                    <input type="hidden" name="target_village_id" id="drag-target-village-id">
+                    <input type="text" id="drag-target-village-label" class="input input-bordered w-full" readonly>
+                </label>
+
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <label class="form-control">
+                        <span class="label-text mb-1">Type de route</span>
+                        <select name="type_route" class="select select-bordered w-full">
+                            <option value="">Non renseigne</option>
+                            {% for value, label in liaison_route_choices %}
+                            <option value="{{ value }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <label class="form-control">
+                        <span class="label-text mb-1">Moyen d'acces</span>
+                        <select name="moyen_acces" class="select select-bordered w-full">
+                            <option value="">Non renseigne</option>
+                            {% for value, label in liaison_moyen_choices %}
+                            <option value="{{ value }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                </div>
+
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <label class="form-control">
+                        <span class="label-text mb-1">Distance terrain (km)</span>
+                        <input type="number" name="distance_km" min="0" step="0.01" class="input input-bordered w-full">
+                    </label>
+                    <label class="form-control">
+                        <span class="label-text mb-1">Temps d'acces (minutes)</span>
+                        <input type="number" name="temps_acces_minutes" min="0" step="1" class="input input-bordered w-full">
+                    </label>
+                    <label class="form-control">
+                        <span class="label-text mb-1">Ordre</span>
+                        <input type="number" name="ordre" min="0" step="1" value="0" class="input input-bordered w-full">
+                    </label>
+                </div>
+
+                <div class="rounded-lg border border-base-300 bg-base-200 px-3 py-2 text-sm text-base-content/70">
+                    Distance a vol d'oiseau: <span id="drag-target-air-distance" class="font-semibold text-base-content">-</span>
+                </div>
+
+                <div class="modal-action">
+                    <button class="btn btn-ghost" type="button" onclick="document.getElementById('liaison-drag-modal').close()">Annuler</button>
+                    <button type="submit" class="btn btn-primary">Creer la liaison</button>
+                </div>
+            </form>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+
+    <dialog id="liaison-edit-modal" class="modal">
+        <div class="modal-box max-w-2xl">
+            <div class="flex items-center justify-between gap-4">
+                <h3 class="text-lg font-bold">Modifier la liaison</h3>
+                <form method="dialog">
+                    <button class="btn btn-sm btn-circle btn-ghost">x</button>
+                </form>
+            </div>
+            <p class="mt-2 text-sm text-base-content/70">
+                Mets a jour la liaison existante, y compris le sens et le village lie.
+            </p>
+
+            <form id="liaison-edit-form" method="post" class="mt-4 space-y-4">
+                {% csrf_token %}
+                <input type="hidden" name="redirect_village_id" value="{{ village.id }}">
+
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <label class="form-control">
+                        <span class="label-text mb-1">Sens</span>
+                        <select name="direction" id="edit-liaison-direction" class="select select-bordered w-full">
+                            <option value="sortant">{{ village.nom_village }} alimente / pointe vers</option>
+                            <option value="entrant">Un autre village alimente / pointe vers {{ village.nom_village }}</option>
+                        </select>
+                    </label>
+                    <label class="form-control">
+                        <span class="label-text mb-1">Type de liaison</span>
+                        <select name="type_liaison" id="edit-liaison-type" class="select select-bordered w-full">
+                            {% for value, label in liaison_type_choices %}
+                            <option value="{{ value }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                </div>
+
+                <label class="form-control">
+                    <span class="label-text mb-1">Village lie</span>
+                    <input type="hidden" name="target_village_id" id="edit-liaison-target-id">
+                    <input type="text" id="edit-liaison-target-label" class="input input-bordered w-full" readonly>
+                </label>
+
+                <label class="form-control">
+                    <span class="label-text mb-1">Changer vers un autre village</span>
+                    <select id="edit-liaison-target-select" class="select select-bordered w-full">
+                        <option value="">Conserver le village actuel</option>
+                        {% for item in villages_candidats %}
+                        <option
+                            value="{{ item.id }}"
+                            data-name="{{ item.nom_village|escape }}"
+                            data-distance="{% if item.air_distance_km is not None %}{{ item.air_distance_km|floatformat:2 }}{% endif %}"
+                        >
+                            {{ item.nom_village }}{% if item.fokontany_id %} - {{ item.fokontany.nom_fokontany }} / {{ item.fokontany.commune.nom_commune }}{% endif %}{% if item.air_distance_km is not None %} - {{ item.air_distance_km|floatformat:2 }} km vol d'oiseau{% endif %}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </label>
+
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <label class="form-control">
+                        <span class="label-text mb-1">Type de route</span>
+                        <select name="type_route" id="edit-liaison-route" class="select select-bordered w-full">
+                            <option value="">Non renseigne</option>
+                            {% for value, label in liaison_route_choices %}
+                            <option value="{{ value }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <label class="form-control">
+                        <span class="label-text mb-1">Moyen d'acces</span>
+                        <select name="moyen_acces" id="edit-liaison-moyen" class="select select-bordered w-full">
+                            <option value="">Non renseigne</option>
+                            {% for value, label in liaison_moyen_choices %}
+                            <option value="{{ value }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                </div>
+
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <label class="form-control">
+                        <span class="label-text mb-1">Distance terrain (km)</span>
+                        <input type="number" name="distance_km" id="edit-liaison-distance" min="0" step="0.01" class="input input-bordered w-full">
+                    </label>
+                    <label class="form-control">
+                        <span class="label-text mb-1">Temps d'acces (minutes)</span>
+                        <input type="number" name="temps_acces_minutes" id="edit-liaison-temps" min="0" step="1" class="input input-bordered w-full">
+                    </label>
+                    <label class="form-control">
+                        <span class="label-text mb-1">Ordre</span>
+                        <input type="number" name="ordre" id="edit-liaison-ordre" min="0" step="1" class="input input-bordered w-full">
+                    </label>
+                </div>
+
+                <div class="rounded-lg border border-base-300 bg-base-200 px-3 py-2 text-sm text-base-content/70">
+                    Distance a vol d'oiseau : <span id="edit-liaison-air-distance" class="font-semibold text-base-content">-</span>
+                </div>
+
+                <div class="modal-action">
+                    <button class="btn btn-ghost" type="button" onclick="document.getElementById('liaison-edit-modal').close()">Annuler</button>
+                    <button type="submit" class="btn btn-primary">Enregistrer</button>
+                </div>
+            </form>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+
+    <div class="card border border-base-300 bg-base-100 shadow-sm">
+        <div class="card-body">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="card-title">Parcelles ({{ parcelles.count }})</h2>
+                <a href="{% url 'geography:parcelle_create' %}" class="btn btn-accent btn-sm">
+                    Nouvelle Parcelle
+                </a>
+            </div>
+
+            {% if parcelles %}
+            <div class="overflow-x-auto">
+                <table class="table table-zebra w-full">
+                    <thead>
+                        <tr>
+                            <th>Reference</th>
+                            <th>Habitants</th>
+                            <th>Menages</th>
+                            <th>Points d'eau</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for parcelle in parcelles %}
+                        <tr class="hover">
+                            <td>
+                                <a href="{% url 'geography:parcelle_detail' parcelle.pk %}" class="link link-primary font-semibold">
+                                    {{ parcelle.reference_parcelle }}
+                                </a>
+                            </td>
+                            <td>{{ parcelle.nombre_habitants|default:"-" }}</td>
+                            <td>{{ parcelle.nombre_menages|default:"-" }}</td>
+                            <td><span class="badge badge-accent">{{ parcelle.pointeau_set.count }}</span></td>
+                            <td>
+                                <div class="flex gap-1">
+                                    <a href="{% url 'geography:parcelle_detail' parcelle.pk %}" class="btn btn-ghost btn-xs" title="Voir details">
+                                        <i class="fas fa-eye"></i>
+                                    </a>
+                                    <a href="{% url 'geography:parcelle_update' parcelle.pk %}" class="btn btn-ghost btn-xs" title="Modifier">
+                                        <i class="fas fa-edit"></i>
+                                    </a>
+                                    <a href="{% url 'geography:parcelle_delete' parcelle.pk %}" class="btn btn-ghost btn-xs text-error" title="Supprimer">
+                                        <i class="fas fa-trash"></i>
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="rounded-xl border border-dashed border-base-300 p-6 text-center text-base-content/70">
+                Aucune parcelle dans ce village.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="{% static 'js/liaisons_editor.js' %}"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const regionSelect = document.getElementById('village-filter-region');
+    const districtSelect = document.getElementById('village-filter-district');
+    const communeSelect = document.getElementById('village-filter-commune');
+    const fokontanySelect = document.getElementById('village-filter-fokontany');
+    const villageSelect = document.getElementById('village-filter-village');
+    const openButton = document.getElementById('village-filter-open');
+    const dragModal = document.getElementById('liaison-drag-modal');
+    const editModal = document.getElementById('liaison-edit-modal');
+    const editForm = document.getElementById('liaison-edit-form');
+    const editTargetId = document.getElementById('edit-liaison-target-id');
+    const editTargetLabel = document.getElementById('edit-liaison-target-label');
+    const editDirection = document.getElementById('edit-liaison-direction');
+    const editTargetSelect = document.getElementById('edit-liaison-target-select');
+    const editType = document.getElementById('edit-liaison-type');
+    const editRoute = document.getElementById('edit-liaison-route');
+    const editMoyen = document.getElementById('edit-liaison-moyen');
+    const editDistance = document.getElementById('edit-liaison-distance');
+    const editTemps = document.getElementById('edit-liaison-temps');
+    const editOrdre = document.getElementById('edit-liaison-ordre');
+    const editAirDistance = document.getElementById('edit-liaison-air-distance');
+    const dragTargetIdInput = document.getElementById('drag-target-village-id');
+    const dragTargetLabelInput = document.getElementById('drag-target-village-label');
+    const dragTargetDistanceLabel = document.getElementById('drag-target-air-distance');
+    const dropzone = document.getElementById('village-dropzone');
+    const draggableCards = document.querySelectorAll('[data-draggable-village="true"]');
+    const miniMapElement = document.getElementById('village-mini-map');
+    const mapPointsElement = document.getElementById('village-map-points');
+    let villageMapPoints = [];
+    if (mapPointsElement) {
+        try {
+            villageMapPoints = JSON.parse(mapPointsElement.textContent || '[]');
+        } catch (error) {
+            console.error('Données cartographiques des villages invalides', error);
+        }
+    }
+
+    if (miniMapElement) {
+        const latitude = Number.parseFloat(miniMapElement.dataset.latitude || '');
+        const longitude = Number.parseFloat(miniMapElement.dataset.longitude || '');
+
+        if (Number.isFinite(latitude) && Number.isFinite(longitude) && typeof L !== 'undefined') {
+            const miniMap = L.map(miniMapElement, {
+                scrollWheelZoom: false,
+                zoomControl: true,
+            }).setView([latitude, longitude], 16);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap',
+            }).addTo(miniMap);
+
+            const popupContent = document.createElement('div');
+            const popupTitle = document.createElement('strong');
+            popupTitle.textContent = miniMapElement.dataset.villageName || 'Village courant';
+            const popupCoordinates = document.createElement('div');
+            popupCoordinates.className = 'text-xs';
+            popupCoordinates.textContent = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+            popupContent.appendChild(popupTitle);
+            popupContent.appendChild(popupCoordinates);
+
+            const currentVillage = {
+                id: '{{ village.id }}',
+                nom: miniMapElement.dataset.villageName || 'Village courant',
+                lat: latitude,
+                lng: longitude,
+            };
+            const editor = LiaisonsEditor.create({ map: miniMap, onChange: () => window.location.reload() });
+            editor.addDrawControl();
+
+            const labelOptions = { permanent: true, direction: 'top', className: 'liaison-label' };
+            const currentMarker = L.marker([latitude, longitude])
+                .addTo(miniMap)
+                .bindTooltip(currentVillage.nom, Object.assign({ offset: [0, -30] }, labelOptions));
+            currentMarker.on('click', () => {
+                if (editor.handleVillageClick(currentVillage)) return;
+                L.popup().setLatLng([latitude, longitude]).setContent(popupContent).openOn(miniMap);
+            });
+            const pointPositions = { [currentVillage.id]: [latitude, longitude] };
+            L.circle([latitude, longitude], {
+                radius: 80,
+                color: '#2563eb',
+                fillColor: '#3b82f6',
+                fillOpacity: 0.12,
+                weight: 2,
+            }).addTo(miniMap);
+
+            const mapBounds = L.latLngBounds([[latitude, longitude]]);
+            villageMapPoints.forEach((point) => {
+                const pointLatitude = Number.parseFloat(point.latitude);
+                const pointLongitude = Number.parseFloat(point.longitude);
+                if (!Number.isFinite(pointLatitude) || !Number.isFinite(pointLongitude)) return;
+
+                const isLinked = point.status === 'linked';
+                const pointColor = isLinked ? '#16a34a' : '#f59e0b';
+                const pointPosition = [pointLatitude, pointLongitude];
+                mapBounds.extend(pointPosition);
+
+                pointPositions[point.id] = pointPosition;
+
+                const popup = document.createElement('div');
+                const title = document.createElement('strong');
+                title.textContent = point.name || 'Village';
+                popup.appendChild(title);
+
+                if (point.commune) {
+                    const commune = document.createElement('div');
+                    commune.className = 'text-xs';
+                    commune.textContent = point.commune;
+                    popup.appendChild(commune);
+                }
+                if (point.distance_km !== null && point.distance_km !== undefined) {
+                    const distance = document.createElement('div');
+                    distance.className = 'mt-1 text-xs';
+                    distance.textContent = `${Number(point.distance_km).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} km à vol d’oiseau`;
+                    popup.appendChild(distance);
+                }
+                if (isLinked && Array.isArray(point.relation_labels) && point.relation_labels.length) {
+                    const relation = document.createElement('div');
+                    relation.className = 'mt-1 text-xs font-semibold text-success';
+                    relation.textContent = `Liaison : ${point.relation_labels.join(', ')}`;
+                    popup.appendChild(relation);
+                }
+
+                const detailLink = document.createElement('a');
+                detailLink.href = `/geography/villages/${encodeURIComponent(point.id)}/`;
+                detailLink.className = 'link link-primary mt-2 inline-block text-xs';
+                detailLink.textContent = 'Ouvrir la fiche';
+                popup.appendChild(detailLink);
+
+                const villageObject = { id: point.id, nom: point.name || 'Village', lat: pointLatitude, lng: pointLongitude };
+                L.circleMarker(pointPosition, {
+                    radius: isLinked ? 8 : 7,
+                    color: '#ffffff',
+                    fillColor: pointColor,
+                    fillOpacity: 0.95,
+                    weight: 2,
+                }).addTo(miniMap)
+                    .bindTooltip(villageObject.nom, Object.assign({ offset: [0, -6] }, labelOptions))
+                    .on('click', () => {
+                        if (editor.handleVillageClick(villageObject)) return;
+                        L.popup().setLatLng(pointPosition).setContent(popup).openOn(miniMap);
+                    });
+            });
+
+            // Liaisons existantes : traits cliquables (modal modifier / supprimer)
+            let villageLiaisons = [];
+            try {
+                villageLiaisons = JSON.parse(document.getElementById('village-liaisons').textContent || '[]');
+            } catch (error) {
+                console.error('Liaisons invalides', error);
+            }
+            villageLiaisons.forEach((props) => {
+                const from = pointPositions[props.source_id];
+                const to = pointPositions[props.cible_id];
+                if (!from || !to) return;
+                const edgeInfo = LiaisonsEditor.edgeText(props);
+                const line = L.polyline([from, to], { color: '#16a34a', opacity: 0.8, weight: 4 }).addTo(miniMap);
+                if (edgeInfo) {
+                    line.bindTooltip(edgeInfo, { permanent: true, direction: 'center', className: 'liaison-edge-label' });
+                } else {
+                    line.bindTooltip(`${props.source_nom} → ${props.cible_nom}`, { sticky: true });
+                }
+                line.on('mouseover', () => line.setStyle({ weight: 6 }));
+                line.on('mouseout', () => line.setStyle({ weight: 4 }));
+                line.on('click', () => { if (!editor.isDrawing()) editor.openEdit(props); });
+            });
+
+            if (villageMapPoints.length > 0 && mapBounds.isValid()) {
+                miniMap.fitBounds(mapBounds, {
+                    padding: [28, 28],
+                    maxZoom: 15,
+                });
+            }
+            L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(miniMap);
+
+            window.setTimeout(() => miniMap.invalidateSize(), 100);
+        } else {
+            miniMapElement.innerHTML = '<div class="flex h-full items-center justify-center p-4 text-center text-error">La carte ne peut pas être chargée.</div>';
+        }
+    }
+
+    const currentDistrictId = '{{ current_district_id }}';
+    const currentCommuneId = '{{ current_commune_id }}';
+    const currentFokontanyId = '{{ current_fokontany_id }}';
+    const currentVillageId = '{{ current_village_id }}';
+
+    function resetSelect(select, placeholder) {
+        select.innerHTML = `<option value="">${placeholder}</option>`;
+        select.disabled = true;
+    }
+
+    function populateSelect(select, items, valueKey, labelBuilder, selectedValue) {
+        select.innerHTML = '<option value="">Choisir</option>';
+        items.forEach((item) => {
+            const option = document.createElement('option');
+            option.value = item[valueKey];
+            option.textContent = labelBuilder(item);
+            if (selectedValue && String(option.value) === String(selectedValue)) {
+                option.selected = true;
+            }
+            select.appendChild(option);
+        });
+        select.disabled = items.length === 0;
+    }
+
+    function updateOpenButton() {
+        openButton.disabled = !villageSelect.value;
+    }
+
+    async function fetchJson(url) {
+        const response = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        return response.json();
+    }
+
+    async function loadDistricts(regionId, selectedDistrictId) {
+        resetSelect(districtSelect, 'Choisir un district');
+        resetSelect(communeSelect, 'Choisir une commune');
+        resetSelect(fokontanySelect, 'Choisir un fokontany');
+        resetSelect(villageSelect, 'Choisir un village');
+        updateOpenButton();
+        if (!regionId) {
+            return;
+        }
+        const items = await fetchJson(`/geography/api/districts/${regionId}/`);
+        populateSelect(districtSelect, items, 'id', (item) => item.nom_district, selectedDistrictId);
+        if (selectedDistrictId) {
+            await loadCommunes(selectedDistrictId, currentCommuneId);
+        }
+    }
+
+    async function loadCommunes(districtId, selectedCommuneId) {
+        resetSelect(communeSelect, 'Choisir une commune');
+        resetSelect(fokontanySelect, 'Choisir un fokontany');
+        resetSelect(villageSelect, 'Choisir un village');
+        updateOpenButton();
+        if (!districtId) {
+            return;
+        }
+        const items = await fetchJson(`/geography/api/communes/${districtId}/`);
+        populateSelect(communeSelect, items, 'id', (item) => item.nom_commune, selectedCommuneId);
+        if (selectedCommuneId) {
+            await loadFokontanys(selectedCommuneId, currentFokontanyId);
+        }
+    }
+
+    async function loadFokontanys(communeId, selectedFokontanyId) {
+        resetSelect(fokontanySelect, 'Choisir un fokontany');
+        resetSelect(villageSelect, 'Choisir un village');
+        updateOpenButton();
+        if (!communeId) {
+            return;
+        }
+        const items = await fetchJson(`/geography/api/fokontanys/${communeId}/`);
+        populateSelect(fokontanySelect, items, 'id', (item) => item.nom_fokontany, selectedFokontanyId);
+        if (selectedFokontanyId) {
+            await loadVillages(selectedFokontanyId, currentVillageId);
+        }
+    }
+
+    async function loadVillages(fokontanyId, selectedVillageId) {
+        resetSelect(villageSelect, 'Choisir un village');
+        updateOpenButton();
+        if (!fokontanyId) {
+            return;
+        }
+        const items = await fetchJson(`/geography/api/villages/${fokontanyId}/`);
+        populateSelect(villageSelect, items, 'id', (item) => item.nom_village, selectedVillageId);
+        updateOpenButton();
+    }
+
+    regionSelect.addEventListener('change', async function () {
+        await loadDistricts(this.value, null);
+    });
+    districtSelect.addEventListener('change', async function () {
+        await loadCommunes(this.value, null);
+    });
+    communeSelect.addEventListener('change', async function () {
+        await loadFokontanys(this.value, null);
+    });
+    fokontanySelect.addEventListener('change', async function () {
+        await loadVillages(this.value, null);
+    });
+    villageSelect.addEventListener('change', updateOpenButton);
+    openButton.addEventListener('click', function () {
+        if (villageSelect.value) {
+            window.location.href = `/geography/villages/${villageSelect.value}/`;
+        }
+    });
+
+    document.querySelectorAll('[data-map-village]').forEach((card) => {
+        card.classList.add('hover:border-primary', 'transition-colors');
+        card.addEventListener('click', function (event) {
+            if (event.target.closest('button, a, form, input, select')) return;
+            window.location.href = `/geography/map/liaisons/?village=${encodeURIComponent(this.dataset.mapVillage)}`;
+        });
+    });
+
+    draggableCards.forEach((card) => {
+        card.addEventListener('dragstart', function (event) {
+            event.dataTransfer.setData('text/plain', JSON.stringify({
+                id: this.dataset.villageId,
+                name: this.dataset.villageName,
+                distance: this.dataset.villageDistance
+            }));
+            this.classList.add('opacity-60');
+        });
+        card.addEventListener('dragend', function () {
+            this.classList.remove('opacity-60');
+        });
+    });
+
+    if (dropzone) {
+        dropzone.addEventListener('dragover', function (event) {
+            event.preventDefault();
+            this.classList.add('scale-[1.02]', 'ring-2', 'ring-primary');
+        });
+        dropzone.addEventListener('dragleave', function () {
+            this.classList.remove('scale-[1.02]', 'ring-2', 'ring-primary');
+        });
+        dropzone.addEventListener('drop', function (event) {
+            event.preventDefault();
+            this.classList.remove('scale-[1.02]', 'ring-2', 'ring-primary');
+            try {
+                const payload = JSON.parse(event.dataTransfer.getData('text/plain'));
+                dragTargetIdInput.value = payload.id || '';
+                dragTargetLabelInput.value = payload.name || '';
+                dragTargetDistanceLabel.textContent = payload.distance ? `${payload.distance} km` : '-';
+                if (dragModal && dragModal.showModal) {
+                    dragModal.showModal();
+                }
+            } catch (error) {
+                console.error('Drop payload invalide', error);
+            }
+        });
+    }
+
+    window.openEditLiaisonModal = function (card) {
+        if (!card || !editModal || !editForm) {
+            return;
+        }
+
+        const liaisonId = card.dataset.liaisonId || '';
+        editForm.action = `/geography/villages/liaisons/${liaisonId}/update/`;
+        editTargetId.value = card.dataset.villageId || '';
+        editTargetLabel.value = card.dataset.villageName || '';
+        editDirection.value = card.dataset.liaisonSens === 'entrant' ? 'entrant' : 'sortant';
+        editTargetSelect.value = '';
+        editType.value = card.dataset.liaisonType || 'desserte';
+        editRoute.value = card.dataset.liaisonRoute || '';
+        editMoyen.value = card.dataset.liaisonMoyen || '';
+        editDistance.value = card.dataset.liaisonDistanceKm || '';
+        editTemps.value = card.dataset.liaisonTempsMinutes || '';
+        editOrdre.value = card.dataset.liaisonOrdre || '0';
+        editAirDistance.textContent = card.dataset.villageDistance ? `${card.dataset.villageDistance} km` : '-';
+
+        if (editModal.showModal) {
+            editModal.showModal();
+        }
+    };
+
+    if (editTargetSelect) {
+        editTargetSelect.addEventListener('change', function () {
+            const selectedOption = this.options[this.selectedIndex];
+            if (this.value) {
+                editTargetId.value = this.value;
+                editTargetLabel.value = selectedOption?.dataset?.name || selectedOption?.textContent || '';
+                editAirDistance.textContent = selectedOption?.dataset?.distance ? `${selectedOption.dataset.distance} km` : '-';
+            }
+        });
+    }
+
+    if (regionSelect.value) {
+        loadDistricts(regionSelect.value, currentDistrictId).catch(console.error);
+    }
+});
+</script>
+{% endblock %}

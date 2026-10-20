@@ -1,0 +1,2 @@
+-keepattributes Signature,*Annotation*
+-keep class mg.hydria.logistique.network.** { *; }

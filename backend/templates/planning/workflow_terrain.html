@@ -1,0 +1,604 @@
+{% extends planning_shell_base_template %}
+{% load static %}
+
+{% block title %}Workflow Terrain - Inspections & Traitement{% endblock %}
+
+{% block extra_css %}
+<style>
+.planning-card {
+    @apply bg-base-200 dark:bg-base-300 rounded-lg p-4 border border-base-300 dark:border-base-600 hover:shadow-lg transition-shadow;
+}
+.planning-filters {
+    @apply bg-base-100 dark:bg-base-200 rounded-lg p-6 shadow-sm border border-base-300 dark:border-base-600;
+}
+.planning-table {
+    @apply bg-base-100 dark:bg-base-200 rounded-lg shadow-sm border border-base-300 dark:border-base-600;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <!-- En-tête -->
+    <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-8">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content mb-2">
+                <i class="fas fa-clipboard-check mr-3"></i>Workflow Terrain
+            </h1>
+            <p class="text-base-content/70">Inspections et traitement des activités - Plannings validés uniquement</p>
+        </div>
+        <div class="mt-4 lg:mt-0 flex gap-3 flex-wrap">
+            <a href="/" class="btn btn-outline btn-sm">
+                <i class="fas fa-home mr-2"></i>Accueil
+            </a>
+            <a href="{% url 'feed:home' %}" class="btn btn-info btn-sm">
+                <i class="fas fa-rss mr-2"></i>Fil d'actualité
+            </a>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="planning-filters mb-8">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <!-- Filtre Mois -->
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text"><i class="fas fa-calendar mr-2"></i>Mois</span>
+                </label>
+                <input type="month" id="filter-mois" class="input input-bordered input-sm" onchange="applyFilters()">
+            </div>
+
+            <!-- Filtre Employé -->
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text"><i class="fas fa-user mr-2"></i>Employé</span>
+                </label>
+                <select id="filter-employe" class="select select-bordered select-sm" onchange="applyFilters()">
+                    <option value="">Tous les employés</option>
+                </select>
+            </div>
+
+            <!-- Filtre Ouvrage -->
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text"><i class="fas fa-building mr-2"></i>Ouvrage</span>
+                </label>
+                <select id="filter-ouvrage" class="select select-bordered select-sm" onchange="applyFilters()">
+                    <option value="">Tous les ouvrages</option>
+                </select>
+            </div>
+
+            <!-- Bouton Réinitialiser -->
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text">&nbsp;</span>
+                </label>
+                <button class="btn btn-ghost btn-sm" onclick="resetFilters()">
+                    <i class="fas fa-redo mr-2"></i>Réinitialiser
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistiques -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+        <!-- Total plannings validés -->
+        <div class="stat bg-base-100 rounded-lg shadow border border-base-300">
+            <div class="stat-figure text-success">
+                <i class="fas fa-check-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Plannings validés</div>
+            <div class="stat-value text-success" id="stat-total">0</div>
+            <div class="stat-desc">Avec équipements ou points d'eau</div>
+        </div>
+
+        <!-- Avec livraisons -->
+        <div class="stat bg-base-100 rounded-lg shadow border border-base-300">
+            <div class="stat-figure text-info">
+                <i class="fas fa-hiking text-3xl"></i>
+            </div>
+            <div class="stat-title">Avec livraisons</div>
+            <div class="stat-value text-info" id="stat-livraisons">0</div>
+            <div class="stat-desc">Plannings avec détails livraison</div>
+        </div>
+
+        <!-- Avec paiements -->
+        <div class="stat bg-base-100 rounded-lg shadow border border-base-300">
+            <div class="stat-figure text-warning">
+                <i class="fas fa-money-bill-wave text-3xl"></i>
+            </div>
+            <div class="stat-title">Avec paiements</div>
+            <div class="stat-value text-warning" id="stat-paiements">0</div>
+            <div class="stat-desc">Paiements forfaitaires</div>
+        </div>
+    </div>
+
+    <!-- Tableau des plannings -->
+    <div class="planning-table">
+        <div class="overflow-x-auto">
+            <table class="table table-sm table-zebra">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Employé</th>
+                        <th>Activité</th>
+                        <th>Ouvrage</th>
+                        <th>Commune</th>
+                        <th class="text-center">Indicateurs</th>
+                        <th class="text-center">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="planning-table-body">
+                    <tr>
+                        <td colspan="7" class="text-center py-8">
+                            <span class="loading loading-spinner loading-lg"></span>
+                            <p class="text-base-content/50 mt-2">Chargement des plannings...</p>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Pagination -->
+    <div class="flex justify-center mt-6">
+        <div class="join" id="pagination">
+            <!-- Pagination dynamique -->
+        </div>
+    </div>
+</div>
+
+<script>
+let allPlannings = [];
+let filteredPlannings = [];
+let currentPage = 1;
+const itemsPerPage = 50;
+
+// Charger les données au démarrage
+document.addEventListener('DOMContentLoaded', async function() {
+    // Initialiser les filtres par défaut
+    const urlParams = new URLSearchParams(window.location.search);
+    const mois = urlParams.get('mois') || getDefaultMonth();
+    const employeUrl = urlParams.get('employe');
+    const employeConnecte = '{{ employe_connecte_id|default:"" }}';
+
+    document.getElementById('filter-mois').value = mois;
+
+    // Charger les employés et ouvrages
+    await loadEmployes();
+    await loadOuvrages();
+
+    // Sélectionner l'employé : priorité URL > employé connecté
+    const employeDefaut = employeUrl || employeConnecte;
+    if (employeDefaut) {
+        document.getElementById('filter-employe').value = employeDefaut;
+    }
+
+    // Charger les plannings
+    await loadPlannings();
+});
+
+function getDefaultMonth() {
+    const now = new Date();
+    return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+}
+
+async function loadEmployes() {
+    try {
+        const response = await fetch('/plannings/api/employees/');
+        const data = await response.json();
+        const select = document.getElementById('filter-employe');
+
+        populateWorkflowEmployeeFilter(select, data);
+    } catch (error) {
+        console.error('Erreur chargement employés:', error);
+    }
+}
+
+function populateWorkflowEmployeeFilter(select, employees) {
+    select.innerHTML = '<option value="">Tous les employés</option>';
+    const groups = new Map();
+
+    (employees || []).forEach(employee => {
+        const baseName = employee.base_name || 'Sans base';
+        const posteName = employee.poste_name || 'Sans poste';
+        if (!groups.has(baseName)) groups.set(baseName, new Map());
+        const postes = groups.get(baseName);
+        if (!postes.has(posteName)) postes.set(posteName, []);
+        postes.get(posteName).push(employee);
+    });
+
+    groups.forEach((postes, baseName) => {
+        const baseGroup = document.createElement('optgroup');
+        baseGroup.label = `Base : ${baseName}`;
+        postes.forEach((posteEmployees, posteName) => {
+            const posteHeader = document.createElement('option');
+            posteHeader.value = '';
+            posteHeader.disabled = true;
+            posteHeader.textContent = `-- ${posteName} --`;
+            baseGroup.appendChild(posteHeader);
+
+            posteEmployees.forEach(employee => {
+                const option = document.createElement('option');
+                option.value = employee.id;
+                option.textContent = `  ${employee.display_name || employee.nom || employee.id}`;
+                baseGroup.appendChild(option);
+            });
+        });
+        select.appendChild(baseGroup);
+    });
+}
+
+async function loadOuvrages() {
+    try {
+        const response = await fetch('/plannings/api/ouvrages/');
+        const data = await response.json();
+        const select = document.getElementById('filter-ouvrage');
+
+        data.forEach(ouv => {
+            const option = document.createElement('option');
+            option.value = ouv.id;
+            option.textContent = ouv.nom_ouvrage || ouv.infra_name || ouv.nom || '';
+            select.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Erreur chargement ouvrages:', error);
+    }
+}
+
+async function loadPlannings() {
+    const mois = document.getElementById('filter-mois').value;
+    const employe = document.getElementById('filter-employe').value;
+    const ouvrage = document.getElementById('filter-ouvrage').value;
+
+    // Construire l'URL avec les filtres
+    let url = '/plannings/api/data/?validation=true&ouvrages_equipements=true';
+    if (mois) url += '&mois=' + mois;
+    if (employe) url += '&employe=' + employe;
+    if (ouvrage) url += '&ouvrage=' + ouvrage;
+
+    try {
+        const response = await fetch(url);
+        const data = await response.json();
+        allPlannings = data;
+        filteredPlannings = allPlannings;
+
+        updateStatistics();
+        renderTable();
+    } catch (error) {
+        console.error('Erreur chargement plannings:', error);
+        document.getElementById('planning-table-body').innerHTML = `
+            <tr>
+                <td colspan="7" class="text-center py-8 text-error">
+                    <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
+                    <p>Erreur lors du chargement des plannings</p>
+                </td>
+            </tr>
+        `;
+    }
+}
+
+function updateStatistics() {
+    const total = filteredPlannings.length;
+    const avecLivraisons = filteredPlannings.filter(p => p.has_livraison).length;
+    const avecPaiements = filteredPlannings.filter(p => p.has_paiement).length;
+
+    document.getElementById('stat-total').textContent = total;
+    document.getElementById('stat-livraisons').textContent = avecLivraisons;
+    document.getElementById('stat-paiements').textContent = avecPaiements;
+}
+
+function renderTable() {
+    const tbody = document.getElementById('planning-table-body');
+
+    if (filteredPlannings.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="7" class="text-center py-8 text-base-content/50">
+                    <i class="fas fa-inbox text-4xl mb-2"></i>
+                    <p>Aucun planning validé avec équipements ou points d'eau</p>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    // Pagination
+    const startIdx = (currentPage - 1) * itemsPerPage;
+    const endIdx = startIdx + itemsPerPage;
+    const pageData = filteredPlannings.slice(startIdx, endIdx);
+
+    // Charger les détails pour chaque planning et construire le HTML
+    Promise.all(pageData.map(async planning => {
+        const date = new Date(planning.date_planning);
+        const dateStr = date.toLocaleDateString('fr-FR');
+
+        // Indicateurs de détails
+        let badges = '';
+        if (planning.has_livraison) {
+            badges += '<span class="badge badge-primary badge-sm mr-1" title="Livraison">📦</span>';
+        }
+        if (planning.has_avance) {
+            badges += '<span class="badge badge-info badge-sm mr-1" title="Avance">💰</span>';
+        }
+        if (planning.has_paiement) {
+            badges += '<span class="badge badge-warning badge-sm mr-1" title="Paiement forfaitaire">💵</span>';
+        }
+
+        // Badge nombre de détails
+        if (planning.nb_details > 0) {
+            badges += `<span class="badge badge-ghost badge-sm" title="Nombre de détails">${planning.nb_details}</span>`;
+        }
+
+        // Indicateurs date (weekend/férié)
+        let dateIndicators = '';
+        if (planning.is_weekend) {
+            dateIndicators += '<i class="fas fa-mug-hot text-info ml-1 text-xs" title="Week-end"></i>';
+        }
+        if (planning.is_ferie) {
+            dateIndicators += '<i class="fas fa-star text-warning ml-1 text-xs" title="Jour férié"></i>';
+        }
+
+        // Afficher bouton Traiter seulement si nb_details > 0
+        const traiterButton = planning.nb_details > 0 ? `
+            <a href="/plannings/terrain/traiter/${planning.id}/"
+               class="btn btn-accent btn-xs"
+               title="Traiter l'activité (${planning.nb_details} détail${planning.nb_details > 1 ? 's' : ''})">
+                <i class="fas fa-wrench"></i> Traiter
+            </a>
+        ` : '';
+
+        // Charger les détails du planning si nb_details > 0
+        let detailsHtml = '';
+        if (planning.nb_details > 0) {
+            try {
+                const response = await fetch(`/plannings/api/details/${planning.id}/`);
+                const details = await response.json();
+
+                if (details && details.length > 0) {
+                    detailsHtml = `
+                        <tr class="bg-base-200">
+                            <td colspan="7" class="py-2">
+                                <div class="text-xs">
+                                    <table class="table table-xs w-full">
+                                        <thead>
+                                            <tr>
+                                                <th>Type</th>
+                                                <th>Désignation</th>
+                                                <th>Équipement</th>
+                                                <th>Point d'eau</th>
+                                                <th class="text-right">Quantité</th>
+                                                <th class="text-right">P.U.</th>
+                                                <th class="text-right">Montant</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${details.map(d => {
+                                                // Debug: afficher le type pour vérifier
+                                                if (d.type_avance_caissiere) {
+                                                    console.log('Type détecté:', d.type_avance_caissiere, 'pour', d.designation);
+                                                }
+
+                                                let typeIcon = '';
+                                                if (d.type_avance_caissiere === 'Bon de livraison') {
+                                                    typeIcon = '<i class="fas fa-hiking text-primary"></i>';
+                                                } else if (d.type_avance_caissiere === 'Avance') {
+                                                    typeIcon = '<i class="fas fa-money-bill-wave text-warning"></i>';
+                                                } else if (d.type_avance_caissiere === 'Recette') {
+                                                    typeIcon = '<i class="fas fa-hand-holding-usd text-success"></i>';
+                                                } else {
+                                                    typeIcon = '-';
+                                                    console.log('Pas de type pour:', d.designation, 'valeur:', d.type_avance_caissiere);
+                                                }
+
+                                                return `
+                                                    <tr>
+                                                        <td>${typeIcon}</td>
+                                                        <td>${d.designation || '-'}</td>
+                                                        <td>${d.equipement_nom || '-'}</td>
+                                                        <td>${d.point_eau_idxlsx || '-'}</td>
+                                                        <td class="text-right">${d.quantity || '-'}</td>
+                                                        <td class="text-right">${d.pu ? d.pu.toLocaleString() + ' Ar' : '-'}</td>
+                                                        <td class="text-right">${d.montant ? d.montant.toLocaleString() + ' Ar' : '-'}</td>
+                                                    </tr>
+                                                `;
+                                            }).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                }
+            } catch (error) {
+                console.error('Erreur chargement détails:', error);
+            }
+        }
+
+        return `
+            <tr class="border-b-0">
+                <td class="align-top">
+                    <div class="font-medium">${dateStr}</div>
+                    ${dateIndicators}
+                </td>
+                <td class="align-top">${planning.employe_surnom || planning.employe_nom}</td>
+                <td class="align-top">
+                    <div class="font-medium">${planning.activite_display}</div>
+                    <div class="text-xs text-base-content/50">${planning.type_activite_nom}</div>
+                </td>
+                <td class="align-top">
+                    <div class="font-medium">${planning.ouvrage_nom}</div>
+                    ${planning.commune_name ? '<div class="text-xs text-base-content/50">' + planning.commune_name + '</div>' : ''}
+                </td>
+                <td class="align-top">${planning.commune_name || '-'}</td>
+                <td class="text-center align-top">${badges || '-'}</td>
+                <td class="text-center align-top">
+                    <div class="flex gap-1 justify-center">
+                        <button onclick="openVisitTypeModal('${planning.id}')"
+                           class="btn btn-success btn-xs"
+                           title="Choisir le type d'inspection">
+                            <i class="fas fa-search"></i> Inspection
+                        </button>
+                        ${traiterButton}
+                    </div>
+                </td>
+            </tr>
+            ${detailsHtml}
+        `;
+    })).then(rows => {
+        tbody.innerHTML = rows.join('');
+        renderPagination();
+    });
+}
+
+function renderPagination() {
+    const totalPages = Math.ceil(filteredPlannings.length / itemsPerPage);
+    const pagination = document.getElementById('pagination');
+
+    if (totalPages <= 1) {
+        pagination.innerHTML = '';
+        return;
+    }
+
+    let html = '';
+    for (let i = 1; i <= totalPages; i++) {
+        html += `
+            <button class="join-item btn btn-sm ${i === currentPage ? 'btn-active' : ''}"
+                    onclick="goToPage(${i})">
+                ${i}
+            </button>
+        `;
+    }
+
+    pagination.innerHTML = html;
+}
+
+function goToPage(page) {
+    currentPage = page;
+    renderTable();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function applyFilters() {
+    currentPage = 1;
+    loadPlannings();
+}
+
+function resetFilters() {
+    document.getElementById('filter-mois').value = getDefaultMonth();
+    document.getElementById('filter-employe').value = '';
+    document.getElementById('filter-ouvrage').value = '';
+    applyFilters();
+}
+
+function formatDate(dateString) {
+    if (!dateString) return '';
+
+    // Parser manuellement YYYY-MM-DD
+    const parts = dateString.split('-');
+    if (parts.length === 3) {
+        const date = new Date(
+            parseInt(parts[0]),
+            parseInt(parts[1]) - 1,
+            parseInt(parts[2])
+        );
+        return date.toLocaleDateString('fr-FR');
+    }
+
+    return dateString;
+}
+
+// ============================================================================
+// GESTION DU MODAL DE TYPE D'INSPECTION
+// ============================================================================
+
+let pendingPlanningId = null;
+
+function openVisitTypeModal(planningId) {
+    pendingPlanningId = planningId;
+    const modal = document.getElementById('visitTypeModal');
+    modal.classList.add('modal-open');
+}
+
+function closeVisitTypeModal() {
+    const modal = document.getElementById('visitTypeModal');
+    modal.classList.remove('modal-open');
+    pendingPlanningId = null;
+}
+
+function selectVisitType(typeVisite) {
+    if (!pendingPlanningId) {
+        alert('Erreur: ID du planning manquant');
+        return;
+    }
+
+    // Rediriger vers la page d'inspection avec le type de visite
+    window.location.href = `/inspections/equipment-selection/?planning_id=${pendingPlanningId}&type_visite=${typeVisite}`;
+}
+</script>
+
+<!-- Modal de sélection du type de visite -->
+<div id="visitTypeModal" class="modal">
+    <div class="modal-box max-w-lg">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-calendar-check mr-2 text-primary"></i>Type de visite
+        </h3>
+
+        <div class="alert alert-info mb-6">
+            <i class="fas fa-info-circle"></i>
+            <div>
+                <div class="font-bold">Choisissez le type d'inspection</div>
+                <div class="text-sm mt-1">
+                    • <strong>Visite Routinière</strong> : Contrôles d'entretien réguliers<br>
+                    • <strong>Visite Annuelle</strong> : Contrôles approfondis (inclut aussi les points routiniers)
+                </div>
+            </div>
+        </div>
+
+        <div class="space-y-3">
+            <!-- Option Visite Routinière -->
+            <button
+                class="btn btn-lg btn-outline btn-primary w-full justify-start text-left h-auto py-4"
+                onclick="selectVisitType('ROUTINIERE')"
+            >
+                <div class="flex-1">
+                    <div class="flex items-center gap-3 mb-2">
+                        <i class="fas fa-calendar-day text-2xl"></i>
+                        <span class="text-lg font-bold">Visite Routinière</span>
+                    </div>
+                    <div class="text-sm opacity-70 ml-9">
+                        Entretien régulier - Points de contrôle essentiels
+                    </div>
+                </div>
+            </button>
+
+            <!-- Option Visite Annuelle -->
+            <button
+                class="btn btn-lg btn-outline btn-secondary w-full justify-start text-left h-auto py-4"
+                onclick="selectVisitType('ANNUELLE')"
+            >
+                <div class="flex-1">
+                    <div class="flex items-center gap-3 mb-2">
+                        <i class="fas fa-calendar-alt text-2xl"></i>
+                        <span class="text-lg font-bold">Visite Annuelle</span>
+                    </div>
+                    <div class="text-sm opacity-70 ml-9">
+                        Contrôle approfondi - Tous les points (routiniers + annuels)
+                    </div>
+                </div>
+            </button>
+        </div>
+
+        <div class="modal-action">
+            <button type="button" class="btn" onclick="closeVisitTypeModal()">
+                <i class="fas fa-times mr-2"></i>
+                Annuler
+            </button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button onclick="closeVisitTypeModal()">close</button>
+    </form>
+</div>
+
+{% endblock %}

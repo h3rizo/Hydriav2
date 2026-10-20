@@ -1,0 +1,207 @@
+{% load humanize %}
+{% load number_filters %}
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calendrier Paiements {{ annee }} - Impression</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.4.19/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+
+            body {
+                font-size: 9pt;
+            }
+
+            .page-break {
+                page-break-after: always;
+            }
+        }
+
+        @page {
+            size: A4 landscape;
+            margin: 1cm;
+        }
+
+        .calendar-day {
+            min-height: 120px;
+            border: 1px solid #e5e7eb;
+            vertical-align: top;
+            width: 14.28% !important; 
+            box-sizing: border-box;
+        }
+
+        .table {
+            table-layout: fixed !important; /* Force la disposition fixe */
+        }
+
+        .payment-card {
+            font-size: 7pt;
+            padding: 2px 4px;
+            margin: 1px 0;
+            border-radius: 3px;
+            border-left: 3px solid;
+        }
+
+        .payment-card.paye {
+            background-color: #d1fae5;
+            border-left-color: #10b981;
+        }
+
+        .payment-card.non-paye {
+            background-color: #fee2e2;
+            border-left-color: #ef4444;
+        }
+    </style>
+</head>
+
+<body class="p-3 bg-base-100">
+    <!-- Boutons d'action (masqués à l'impression) -->
+    <div class="no-print mb-3 flex gap-2">
+        <button onclick="window.print()" class="btn btn-primary btn-sm">
+            <i class="fas fa-print mr-2"></i>Imprimer
+        </button>
+        <button onclick="window.close()" class="btn btn-ghost btn-sm">
+            <i class="fas fa-times mr-2"></i>Fermer
+        </button>
+    </div>
+
+    <!-- En-tête général (une seule fois) -->
+    <div class="text-center mb-6">
+        <h1 class="text-3xl font-bold mb-2">
+            Calendrier des paiements forfaitaires {{ annee }}
+        </h1>
+        <div class="text-sm text-base-content/70 mt-2">
+            <span class="font-semibold">Communes :</span> {{ communes_noms }}
+        </div>
+        {% if employe_nom %}
+        <div class="text-sm text-base-content/70 mt-1">
+            <span class="font-semibold">Employé :</span> {{ employe_nom }}
+            <span class="mx-2">|</span>
+            <span class="font-semibold">Organisation :</span>
+            {% if regroupement_impression == 'employe' %}Par employé, commune et ouvrage{% else %}Par commune et ouvrage{% endif %}
+        </div>
+        {% endif %}
+        {% if ouvrage_nom %}
+        <div class="text-xs text-base-content/60 mt-1">
+            <span class="font-semibold">Ouvrage :</span> {{ ouvrage_nom }}
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Pages calendrier - une par mois -->
+    {% for mois_data in calendrier_mois %}
+    <div class="{% if not forloop.last %}page-break{% endif %}">
+        <!-- En-tête du mois (simplifié) -->
+        <div class="text-center mb-4">
+            <h2 class="text-2xl font-bold">
+                {{ mois_data.nom }} {{ annee }}
+            </h2>
+        </div>
+
+        <!-- Grille calendrier -->
+        <div class="mb-4">
+            <table class="table table-xs w-full border-collapse">
+                <thead>
+                    <tr class="bg-base-200 text-xs">
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for semaine in mois_data.semaines %}
+                    <tr>
+                        {% for jour in semaine %}
+                        <td class="border calendar-day p-1 align-top">
+                        {% if jour %}
+
+            {% make_date jour mois_data.numero annee as date_complete %}
+
+            {% with jour_semaine=date_complete|get_day_of_week %}
+            {% with jour_ferie=date_complete|is_ferie:jours_feries %}
+                    
+                            <div class="text-right text-xs font-semibold mb-1 px-1 flex justify-end items-center">
+                                {% if jour_ferie %}
+                                    <span class="text-warning mr-1" title="Jour Férié">⭐</span>
+                                {% elif jour_semaine|is_weekend %}
+                                    <span class="text-info mr-1" title="Week-end">☕</span>
+                                {% endif %}
+                                {{ jour }} </div>
+
+            {% endwith %}
+            {% endwith %}
+
+            {% if jour in mois_data.paiements %}
+                        <div class="space-y-0.5 px-1">
+
+                        {% regroup mois_data.paiements|get_item:jour by employe as paiements_par_employe %}
+
+                        {% for employe_group in paiements_par_employe %}
+                            
+                            {% regroup employe_group.list by ouvrage as paiements_par_ouvrage %}
+
+                            {% for ouvrage_group in paiements_par_ouvrage %}
+
+                                {% with premier_paiement=ouvrage_group.list.0 %}
+                                {% with commune_nom=premier_paiement.commune|default:"N/D" %}
+
+                                <div class="payment-card {% if ouvrage_group.list|check_paye %}paye{% else %}non-paye{% endif %}">
+                                    
+                                    <div class="flex justify-between items-center mb-0.5">
+                                        <div class="badge badge-xs text-xs font-normal" 
+                                            style="background-color: {{ commune_nom|get_commune_color }}; color: white;" 
+                                            title="Commune: {{ commune_nom }}">
+                                            {{ commune_nom|truncatechars:10 }}
+                                        </div>
+                                        <div class="font-semibold truncate" title="{{ ouvrage_group.grouper }}">
+                                        {{ ouvrage_group.grouper|truncatechars:18 }}</div>
+                                    </div>
+                                    
+                                    {% if employe_group.grouper %}
+                                    <div class="truncate text-gray-600" title="{{ employe_group.grouper }}">
+                                        👤 {{ employe_group.grouper }}
+                                    </div>
+                                    {% endif %}
+                                    
+                                    <div class="truncate" title="{{ ouvrage_group.list|join_idxls }}">
+                                        PEs: {{ ouvrage_group.list|join_idxls }}
+                                    </div>
+                                    
+                                    <div class="font-semibold">
+                                        Qté Totale: {{ ouvrage_group.list|sum_quantite|floatformat:0 }}
+                                    </div>
+                                </div>
+
+                                {% endwith %}
+                                {% endwith %}
+                                
+                            {% endfor %}
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                    {% endif %}
+                    </td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+        <!-- Statistiques du mois (optionnel) -->
+        {% if mois_data.paiements %}
+        <div class="text-xs text-center text-base-content/60 mt-2">
+            Total : {{ mois_data.paiements|length }} jour(s) avec paiements
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+
+</body>
+
+</html>

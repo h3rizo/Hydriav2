@@ -1,0 +1,411 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Points de Contrôle - Administration - Hydria{% endblock %}
+
+{% block breadcrumb %}
+<div class="breadcrumbs text-sm container mx-auto px-4 pt-4">
+    <ul>
+        <li><a href="{% url 'core:home' %}">🏠 Accueil</a></li>
+        <li><a href="{% url 'inspections:dashboard' %}">🔧 Inspections</a></li>
+        <li>⚙️ Points de Contrôle</li>
+    </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto space-y-6">
+    <!-- En-tête -->
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content flex items-center gap-2">
+                ⚙️ Points de Contrôle
+                <span class="badge badge-info badge-sm">ADMIN</span>
+            </h1>
+            <p class="text-base-content/70 mt-1">
+                Gérer les points de contrôle utilisés dans les checklists d'inspection
+            </p>
+        </div>
+
+        <div class="flex gap-2">
+            <button onclick="showAddModal()" class="btn btn-accent">
+                <i class="fas fa-plus mr-2"></i>Nouveau Point de Contrôle
+            </button>
+        </div>
+    </div>
+
+    <!-- Statistiques -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="stat bg-base-100 shadow-sm border border-base-300 rounded-lg">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-list-check text-2xl"></i>
+            </div>
+            <div class="stat-title">Total Points</div>
+            <div class="stat-value text-primary" id="stat-total">
+                <span class="loading loading-spinner loading-md"></span>
+            </div>
+            <div class="stat-desc">Points de contrôle</div>
+        </div>
+
+        <div class="stat bg-base-100 shadow-sm border border-base-300 rounded-lg">
+            <div class="stat-figure text-success">
+                <i class="fas fa-toggle-on text-2xl"></i>
+            </div>
+            <div class="stat-title">Booléens</div>
+            <div class="stat-value text-success" id="stat-boolean">
+                <span class="loading loading-spinner loading-md"></span>
+            </div>
+            <div class="stat-desc">Bon / Pas Bon</div>
+        </div>
+
+        <div class="stat bg-base-100 shadow-sm border border-base-300 rounded-lg">
+            <div class="stat-figure text-info">
+                <i class="fas fa-calculator text-2xl"></i>
+            </div>
+            <div class="stat-title">Numériques</div>
+            <div class="stat-value text-info" id="stat-numeric">
+                <span class="loading loading-spinner loading-md"></span>
+            </div>
+            <div class="stat-desc">Avec valeurs min/max</div>
+        </div>
+    </div>
+
+    <!-- Tableau des points de contrôle -->
+    <div class="card bg-base-100 shadow-sm border border-base-300">
+        <div class="card-header p-6 border-b border-base-300">
+            <h2 class="text-xl font-semibold flex items-center gap-2">
+                <i class="fas fa-list text-primary"></i>
+                Points de Contrôle
+            </h2>
+        </div>
+        <div class="card-body p-0">
+            <div id="points-loader" class="flex justify-center items-center py-12">
+                <span class="loading loading-spinner loading-lg"></span>
+            </div>
+            <div id="points-content" class="hidden">
+                <div class="overflow-x-auto">
+                    <table class="table table-zebra" id="pointsTable">
+                        <thead>
+                            <tr>
+                                <th>Nom</th>
+                                <th>Type</th>
+                                <th>Contraintes</th>
+                                <th>Unité</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Contenu chargé dynamiquement -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="points-error" class="hidden p-6 text-center">
+                <div class="text-error">
+                    <i class="fas fa-exclamation-circle text-2xl mb-2"></i>
+                    <p>Erreur lors du chargement des points de contrôle</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Ajout/Modification -->
+<dialog id="addEditModal" class="modal">
+    <div class="modal-box w-11/12 max-w-2xl">
+        <h3 class="font-bold text-lg" id="modalTitle">Nouveau Point de Contrôle</h3>
+
+        <form id="addEditForm" class="space-y-4 mt-4">
+            {% csrf_token %}
+            <input type="hidden" id="formId" name="id">
+
+            <div class="form-control w-full">
+                <label class="label">
+                    <span class="label-text">Nom du point de contrôle *</span>
+                </label>
+                <input type="text" id="formNom" name="nom" class="input input-bordered w-full"
+                       placeholder="Ex: Vérification de la pression" required>
+            </div>
+
+            <div class="form-control w-full">
+                <label class="label">
+                    <span class="label-text">Description</span>
+                </label>
+                <textarea id="formDescription" name="description" class="textarea textarea-bordered w-full"
+                          placeholder="Explication détaillée de ce qu'il faut vérifier..."></textarea>
+            </div>
+
+            <div class="form-control w-full">
+                <label class="label">
+                    <span class="label-text">Type de résultat *</span>
+                </label>
+                <select id="formType" name="type_resultat" class="select select-bordered w-full"
+                        onchange="toggleNumericFields()" required>
+                    <option value="">Sélectionner le type</option>
+                    <option value="BOOL">Booléen (Bon / Pas Bon)</option>
+                    <option value="NUM">Numérique (avec valeurs min/max)</option>
+                </select>
+            </div>
+
+            <!-- Champs numériques (masqués par défaut) -->
+            <div id="numericFields" class="grid grid-cols-1 md:grid-cols-3 gap-4" style="display: none;">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Valeur minimum</span>
+                    </label>
+                    <input type="number" step="0.01" id="formValeurMin" name="valeur_min"
+                           class="input input-bordered w-full" placeholder="0.00">
+                </div>
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Valeur maximum</span>
+                    </label>
+                    <input type="number" step="0.01" id="formValeurMax" name="valeur_max"
+                           class="input input-bordered w-full" placeholder="100.00">
+                </div>
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Unité</span>
+                    </label>
+                    <input type="text" id="formUnite" name="unite" class="input input-bordered w-full"
+                           placeholder="Ex: bar, l/min, °C">
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button type="submit" class="btn btn-primary" id="submitBtn">
+                    Enregistrer
+                </button>
+                <button type="button" class="btn" onclick="document.getElementById('addEditModal').close()">
+                    Annuler
+                </button>
+            </div>
+        </form>
+    </div>
+</dialog>
+
+<!-- Modal Suppression -->
+<dialog id="deleteModal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">Confirmer la suppression</h3>
+        <p class="py-4" id="deleteMessage">Êtes-vous sûr de vouloir supprimer ce point de contrôle ?</p>
+        <div class="modal-action">
+            <button id="confirmDeleteBtn" class="btn btn-error">
+                Supprimer
+            </button>
+            <button type="button" class="btn" onclick="document.getElementById('deleteModal').close()">
+                Annuler
+            </button>
+        </div>
+    </div>
+</dialog>
+
+<script>
+// Variables globales
+let deleteItemId = null;
+
+// Charger les données au démarrage
+document.addEventListener('DOMContentLoaded', function() {
+    loadPointsControle();
+});
+
+// Fonction pour charger les points de contrôle
+function loadPointsControle() {
+    fetch('/inspections/api/points-controle/')
+        .then(response => response.json())
+        .then(data => {
+            const tbody = document.querySelector('#pointsTable tbody');
+            tbody.innerHTML = '';
+
+            let totalPoints = data.length;
+            let booleanCount = 0;
+            let numericCount = 0;
+
+            data.forEach(point => {
+                if (point.type_resultat_code === 'BOOL') booleanCount++;
+                if (point.type_resultat_code === 'NUM') numericCount++;
+
+                const row = `
+                    <tr class="hover">
+                        <td>
+                            <div class="font-semibold">${point.nom}</div>
+                            ${point.description ? `<div class="text-sm text-base-content/70">${point.description}</div>` : ''}
+                        </td>
+                        <td>
+                            <span class="badge ${point.type_resultat_code === 'BOOL' ? 'badge-success' : 'badge-info'}">
+                                ${point.type_resultat}
+                            </span>
+                        </td>
+                        <td class="text-sm">
+                            ${point.type_resultat_code === 'NUM' ?
+                                `${point.valeur_min || 'min: ∞'} - ${point.valeur_max || 'max: ∞'}` :
+                                'Bon / Pas Bon'
+                            }
+                        </td>
+                        <td class="text-sm">
+                            ${point.unite || '-'}
+                        </td>
+                        <td>
+                            <div class="flex gap-1">
+                                <button onclick="editPoint('${point.id}')" class="btn btn-ghost btn-xs" title="Modifier">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button onclick="deletePoint('${point.id}', '${point.nom}')" class="btn btn-ghost btn-xs text-error" title="Supprimer">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+                tbody.innerHTML += row;
+            });
+
+            // Mettre à jour les statistiques
+            document.getElementById('stat-total').textContent = totalPoints;
+            document.getElementById('stat-boolean').textContent = booleanCount;
+            document.getElementById('stat-numeric').textContent = numericCount;
+
+            // Afficher le contenu
+            document.getElementById('points-loader').classList.add('hidden');
+            document.getElementById('points-content').classList.remove('hidden');
+        })
+        .catch(error => {
+            console.error('Erreur lors du chargement:', error);
+            document.getElementById('points-loader').classList.add('hidden');
+            document.getElementById('points-error').classList.remove('hidden');
+        });
+}
+
+// Afficher le modal d'ajout
+function showAddModal() {
+    const modal = document.getElementById('addEditModal');
+    const title = document.getElementById('modalTitle');
+    const form = document.getElementById('addEditForm');
+
+    // Réinitialiser le formulaire
+    form.reset();
+    document.getElementById('formId').value = '';
+    title.textContent = 'Nouveau Point de Contrôle';
+    toggleNumericFields();
+
+    form.action = '/inspections/api/points-controle/create/';
+    modal.showModal();
+}
+
+// Éditer un point de contrôle
+function editPoint(pointId) {
+    // Récupérer les données du point depuis le tableau
+    fetch('/inspections/api/points-controle/')
+        .then(response => response.json())
+        .then(data => {
+            const point = data.find(p => p.id === pointId);
+            if (!point) return;
+
+            const modal = document.getElementById('addEditModal');
+            const title = document.getElementById('modalTitle');
+            const form = document.getElementById('addEditForm');
+
+            // Pré-remplir le formulaire
+            document.getElementById('formId').value = point.id;
+            document.getElementById('formNom').value = point.nom;
+            document.getElementById('formDescription').value = point.description;
+            document.getElementById('formType').value = point.type_resultat_code;
+            document.getElementById('formValeurMin').value = point.valeur_min;
+            document.getElementById('formValeurMax').value = point.valeur_max;
+            document.getElementById('formUnite').value = point.unite;
+
+            title.textContent = 'Modifier le Point de Contrôle';
+            toggleNumericFields();
+
+            form.action = '/inspections/api/points-controle/update/';
+            modal.showModal();
+        });
+}
+
+// Supprimer un point de contrôle
+function deletePoint(pointId, pointNom) {
+    deleteItemId = pointId;
+    const modal = document.getElementById('deleteModal');
+    const message = document.getElementById('deleteMessage');
+
+    message.textContent = `Êtes-vous sûr de vouloir supprimer le point de contrôle "${pointNom}" ?`;
+    modal.showModal();
+}
+
+// Confirmer la suppression
+document.getElementById('confirmDeleteBtn').addEventListener('click', function() {
+    if (deleteItemId) {
+        const formData = new FormData();
+        formData.append('id', deleteItemId);
+        formData.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
+
+        fetch('/inspections/api/points-controle/delete/', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            },
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                loadPointsControle();
+            } else {
+                alert('Erreur lors de la suppression: ' + (data.error || 'Erreur inconnue'));
+            }
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            alert('Erreur de connexion au serveur');
+        });
+
+        document.getElementById('deleteModal').close();
+        deleteItemId = null;
+    }
+});
+
+// Gestion du formulaire
+document.getElementById('addEditForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(this);
+
+    fetch(this.action, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        },
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            loadPointsControle();
+            document.getElementById('addEditModal').close();
+        } else {
+            alert('Erreur lors de l\'enregistrement: ' + (data.error || 'Erreur inconnue'));
+        }
+    })
+    .catch(error => {
+        console.error('Erreur:', error);
+        alert('Erreur de connexion au serveur');
+    });
+});
+
+// Afficher/masquer les champs numériques
+function toggleNumericFields() {
+    const typeSelect = document.getElementById('formType');
+    const numericFields = document.getElementById('numericFields');
+
+    if (typeSelect.value === 'NUM') {
+        numericFields.style.display = 'block';
+    } else {
+        numericFields.style.display = 'none';
+        // Réinitialiser les champs numériques
+        document.getElementById('formValeurMin').value = '';
+        document.getElementById('formValeurMax').value = '';
+        document.getElementById('formUnite').value = '';
+    }
+}
+</script>
+{% endblock %}

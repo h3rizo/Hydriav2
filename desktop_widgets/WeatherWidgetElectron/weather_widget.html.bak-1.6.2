@@ -1,0 +1,1155 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Météo</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%;
+    background: transparent;
+    font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    overflow: hidden;
+    user-select: none;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 10px;
+    overflow-y: auto;
+  }
+
+  /* ---------- Liquid Glass ---------- */
+  html, body { background: transparent; }
+
+  #widget {
+    width: 300px;
+    border-radius: 24px;
+    padding: 16px 20px 16px;
+    color: #fff;
+    position: relative;
+    cursor: grab;
+    overflow: hidden;
+    isolation: isolate;
+
+    /* Verre neutre translucide : le vrai flou du bureau vient du
+       backgroundMaterial 'acrylic' cote Electron (main.js). Cette
+       couche ne fait qu'ajouter la teinte de verre + le liseré. */
+    background: linear-gradient(
+      165deg,
+      rgba(255,255,255,0.22),
+      rgba(255,255,255,0.06) 40%,
+      rgba(255,255,255,0.10) 100%
+    );
+    -webkit-backdrop-filter: blur(28px) saturate(160%);
+    backdrop-filter: blur(28px) saturate(160%);
+
+    border: 1px solid rgba(255,255,255,0.35);
+    box-shadow:
+      0 12px 34px rgba(0,0,0,0.35),
+      inset 0 1px 0 rgba(255,255,255,0.5),
+      inset 0 0 0 1px rgba(255,255,255,0.06);
+
+    transition: box-shadow 0.3s ease, border-color 0.5s ease;
+  }
+  #widget.dragging { cursor: grabbing; }
+
+  /* Reflet diagonal type verre, purement decoratif */
+  #widget::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background: linear-gradient(
+      120deg,
+      rgba(255,255,255,0.35) 0%,
+      rgba(255,255,255,0.08) 22%,
+      rgba(255,255,255,0) 45%
+    );
+    mix-blend-mode: screen;
+  }
+
+  /* Halo bas, colore selon la meteo, discret — garde un indice visuel
+     sans repeindre tout le fond en couleur pleine. */
+  #widget::after {
+    content: '';
+    position: absolute;
+    left: -20%; right: -20%; bottom: -40%;
+    height: 60%;
+    z-index: -1;
+    filter: blur(30px);
+    opacity: 0.55;
+    background: radial-gradient(ellipse at center, var(--accent, #4facfe) 0%, transparent 70%);
+    transition: background 0.6s ease;
+  }
+
+  #widget.clear   { --accent: #4facfe; }
+  #widget.cloudy  { --accent: #9aa5b1; }
+  #widget.rain    { --accent: #4d7ea8; }
+  #widget.storm   { --accent: #6b5b95; }
+  #widget.snow    { --accent: #cfe8ff; }
+  #widget.night   { --accent: #3f5efb; }
+
+  #dragHandle {
+    position: absolute;
+    top: 0; left: 0; right: 0; height: 100%;
+    z-index: 1;
+  }
+
+  #controls {
+    position: absolute;
+    top: 10px; right: 12px;
+    z-index: 3;
+    display: flex;
+    gap: 6px;
+  }
+  #controls button {
+    background: rgba(255,255,255,0.16);
+    border: 1px solid rgba(255,255,255,0.25);
+    color: inherit;
+    width: 24px; height: 24px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 22px;
+    text-align: center;
+    padding: 0;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    -webkit-app-region: no-drag;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  #controls button:hover { background: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.4); }
+  #controls button.active { background: rgba(255,255,255,0.5); border-color: rgba(255,255,255,0.6); }
+
+  .content { position: relative; z-index: 2; pointer-events: none; }
+
+  /* --- Ville : bien visible, en haut --- */
+  .city-block {
+    padding-right: 60px;
+    margin-bottom: 12px;
+  }
+  .city-name {
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.15;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.35);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .city-region {
+    font-size: 12px;
+    opacity: 0.8;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .updated {
+    font-size: 10.5px;
+    opacity: 0.6;
+    margin-bottom: 2px;
+  }
+
+  .source-badge {
+    font-size: 10px;
+    opacity: 0.75;
+    margin-bottom: 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    pointer-events: all;
+    cursor: pointer;
+    -webkit-app-region: no-drag;
+  }
+  .source-badge.gps { color: #b9ffcb; }
+  .source-badge.ip { color: #ffe0a3; }
+  .source-badge u { text-decoration: underline dotted; }
+
+  .main-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .icon { font-size: 54px; line-height: 1; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.25)); }
+
+  .temp { font-size: 46px; font-weight: 300; line-height: 1; text-shadow: 0 1px 6px rgba(0,0,0,0.25); }
+  .temp sup { font-size: 20px; font-weight: 300; opacity: 0.9; }
+
+  .desc { font-size: 13.5px; opacity: 0.92; margin-top: 2px; text-transform: capitalize; }
+
+  .feels { font-size: 11.5px; opacity: 0.7; margin-top: 1px; }
+
+  .details {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255,255,255,0.2);
+    font-size: 12px;
+  }
+  .details .item { text-align: center; opacity: 0.9; }
+  .details .item .label { font-size: 9.5px; opacity: 0.65; text-transform: uppercase; letter-spacing: 0.5px; }
+  .details .item .value { font-weight: 600; margin-top: 2px; }
+
+  #status {
+    font-size: 13px;
+    opacity: 0.9;
+    padding: 40px 0;
+    text-align: center;
+  }
+
+  #errorBox {
+    display: none;
+    font-size: 11px;
+    background: rgba(0,0,0,0.25);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-top: 10px;
+    line-height: 1.4;
+  }
+  #errorBox button {
+    margin-top: 6px;
+    background: rgba(255,255,255,0.25);
+    border: none;
+    color: inherit;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 11px;
+    pointer-events: all;
+    -webkit-app-region: no-drag;
+  }
+
+  /* ---------- Carte stats Hydria (même verre, hors du widget météo
+     donc pas de conflit avec le drag custom) ---------- */
+  #hydriaCard {
+    width: 300px;
+    border-radius: 24px;
+    padding: 16px 18px 14px;
+    color: #fff;
+    position: relative;
+    overflow: hidden;
+    cursor: default;
+
+    background: linear-gradient(
+      165deg,
+      rgba(255,255,255,0.18),
+      rgba(255,255,255,0.05) 40%,
+      rgba(255,255,255,0.08) 100%
+    );
+    -webkit-backdrop-filter: blur(24px) saturate(150%);
+    backdrop-filter: blur(24px) saturate(150%);
+    border: 1px solid rgba(255,255,255,0.3);
+    box-shadow:
+      0 10px 28px rgba(0,0,0,0.3),
+      inset 0 1px 0 rgba(255,255,255,0.4);
+  }
+
+  #hydriaCard .hydria-title {
+    font-size: 13px;
+    font-weight: 700;
+    opacity: 0.9;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .stat-section { margin-top: 12px; }
+  .stat-section-title {
+    margin: 0 2px 6px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    opacity: 0.72;
+  }
+  .stat-tile {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 14px;
+    padding: 10px 12px;
+  }
+  .stat-tile .stat-value { font-size: 22px; font-weight: 700; line-height: 1.1; text-shadow: 0 1px 4px rgba(0,0,0,0.25); }
+  .stat-tile .stat-label { font-size: 10px; opacity: 0.75; margin-top: 3px; line-height: 1.25; }
+  .stat-tile.wide { grid-column: span 2; display: flex; align-items: center; justify-content: space-between; }
+  .stat-tile.wide .stat-value { font-size: 20px; }
+  .stat-tile.alert .stat-value { color: #ffd27a; }
+
+  #hydriaStatus { font-size: 12px; opacity: 0.85; padding: 8px 0; text-align: center; }
+
+  #loginForm { display: flex; flex-direction: column; gap: 8px; }
+  #loginForm input {
+    background: rgba(255,255,255,0.14);
+    border: 1px solid rgba(255,255,255,0.28);
+    border-radius: 10px;
+    padding: 8px 10px;
+    color: #fff;
+    font-size: 13px;
+    outline: none;
+  }
+  #loginForm input::placeholder { color: rgba(255,255,255,0.6); }
+  #loginForm button {
+    background: rgba(255,255,255,0.28);
+    border: none;
+    border-radius: 10px;
+    padding: 8px 10px;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  #loginForm button:hover { background: rgba(255,255,255,0.4); }
+  #loginError { font-size: 11px; color: #ffb4b4; min-height: 14px; }
+  #logoutLink {
+    font-size: 10.5px;
+    opacity: 0.6;
+    text-align: right;
+    margin-top: 10px;
+    cursor: pointer;
+    text-decoration: underline dotted;
+  }
+
+  .stat-tile {
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    color: inherit;
+    transition: background 0.15s ease, transform 0.1s ease;
+  }
+  .stat-tile:hover { background: rgba(255,255,255,0.15); }
+  .stat-tile:active { transform: scale(0.98); }
+
+  /* ---------- Filtres pliables ---------- */
+  #filtresToggle {
+    width: 100%;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 12px;
+    padding: 8px 12px;
+    color: inherit;
+    font-family: inherit;
+    font-size: 11.5px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  #filtresPanel {
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 10px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 12px;
+  }
+  #filtresPanel.open { display: flex; }
+  #filtresPanel select {
+    width: 100%;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 8px;
+    padding: 6px 8px;
+    color: #fff;
+    font-size: 12px;
+  }
+  #filtresPanel select option { color: #1b1b1b; }
+  #filtresPanel label { font-size: 10px; opacity: 0.7; margin-bottom: 2px; display: block; }
+
+  /* ---------- Modal détail ---------- */
+  #detailOverlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 50;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    -webkit-app-region: no-drag;
+  }
+  #detailOverlay.open { display: flex; }
+  #detailModal {
+    width: 100%;
+    max-height: 80vh;
+    overflow-y: auto;
+    border-radius: 18px;
+    padding: 14px 16px;
+    background: linear-gradient(165deg, rgba(40,60,90,0.94), rgba(20,35,55,0.97));
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255,255,255,0.25);
+    color: #fff;
+  }
+  #detailModal .detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  #detailModal .detail-title { font-size: 13px; font-weight: 700; }
+  #detailModal .detail-close {
+    background: rgba(255,255,255,0.15);
+    border: none;
+    color: #fff;
+    width: 24px; height: 24px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  #detailModal .detail-row {
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    font-size: 12px;
+  }
+  #detailModal .detail-row:last-child { border-bottom: none; }
+  #detailModal .detail-row .row-label { font-weight: 600; }
+  #detailModal .detail-row .row-sub { font-size: 10.5px; opacity: 0.7; margin-top: 2px; }
+  #detailModal .detail-empty { text-align: center; opacity: 0.7; font-size: 12px; padding: 16px 0; }
+  #detailModal .detail-footer { font-size: 10px; opacity: 0.6; text-align: center; margin-top: 8px; }
+  #detailModal .detail-total { font-size: 10.5px; opacity: 0.65; margin-bottom: 8px; }
+  #detailModal .detail-back { cursor: pointer; margin-right: 4px; opacity: 0.8; }
+
+  .geo-district { margin-bottom: 6px; }
+  .geo-district-toggle {
+    width: 100%;
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 10px;
+    padding: 7px 9px;
+    color: inherit;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .geo-district-toggle:hover { background: rgba(255,255,255,0.12); }
+  .geo-count { font-size: 10.5px; opacity: 0.75; display: inline-flex; align-items: center; gap: 4px; }
+  .geo-caret { transition: transform 0.15s ease; display: inline-block; }
+  .geo-district-toggle.open .geo-caret { transform: rotate(180deg); }
+  .geo-communes { display: none; flex-direction: column; padding: 4px 0 4px 10px; }
+  .geo-communes.open { display: flex; }
+  .geo-commune-row {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    padding: 6px 5px;
+    color: inherit;
+    font-family: inherit;
+    font-size: 11.5px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    text-align: left;
+  }
+  .geo-commune-row:hover { background: rgba(255,255,255,0.08); }
+  .geo-commune-row:last-child { border-bottom: none; }
+</style>
+</head>
+<body>
+
+<div id="widget">
+  <div id="dragHandle"></div>
+  <div id="controls">
+    <button type="button" id="pinBtn" title="Toujours au premier plan">📌</button>
+    <button type="button" id="refreshBtn" title="Actualiser">⟳</button>
+    <button type="button" id="closeBtn" title="Fermer">✕</button>
+  </div>
+
+  <div class="content" id="content">
+    <div id="status">Localisation en cours…</div>
+  </div>
+</div>
+
+<div id="hydriaCard">
+  <div class="hydria-title">💧 Hydria</div>
+
+  <button type="button" id="filtresToggle">
+    <span>🔎 Filtres</span>
+    <span id="filtresToggleIcon">▾</span>
+  </button>
+  <div id="filtresPanel">
+    <div>
+      <label for="filtreOrganisation">Organisation</label>
+      <select id="filtreOrganisation"></select>
+    </div>
+    <div>
+      <label for="filtreEmploye">Employé responsable</label>
+      <select id="filtreEmploye"><option value="all">Tous les agents de recouvrement</option></select>
+    </div>
+    <div>
+      <label for="filtreRegion">Région</label>
+      <select id="filtreRegion"><option value="all">Toutes</option></select>
+    </div>
+    <div>
+      <label for="filtreDistrict">District</label>
+      <select id="filtreDistrict"><option value="all">Tous</option></select>
+    </div>
+    <div>
+      <label for="filtreCommune">Commune</label>
+      <select id="filtreCommune"><option value="all">Toutes</option></select>
+    </div>
+  </div>
+
+  <div id="hydriaContent">
+    <div id="hydriaStatus">Chargement…</div>
+  </div>
+</div>
+
+<div id="detailOverlay">
+  <div id="detailModal">
+    <div class="detail-header">
+      <div class="detail-title" id="detailTitle">Détail</div>
+      <button type="button" class="detail-close" id="detailClose">✕</button>
+    </div>
+    <div id="detailBody"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const widget = document.getElementById('widget');
+  const content = document.getElementById('content');
+  const dragHandle = document.getElementById('dragHandle');
+  const hasNativeDrag = !!(window.widgetAPI && window.widgetAPI.drag);
+
+  // ---------- Ajustement automatique de la hauteur de fenêtre ----------
+  // Le contenu (météo + carte Hydria) varie selon l'état (chargement,
+  // formulaire de connexion, grille de stats), donc une hauteur fixe
+  // laisse soit du vide, soit tronque. On mesure et on redimensionne
+  // après chaque changement de contenu, avec un léger debounce.
+  if (hasNativeDrag) {
+    let resizeTimeout = null;
+    const syncWindowSize = () => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        // requestAnimationFrame x2 : laisse Chromium terminer le layout
+        // et le paint du DOM modifié avant de mesurer scrollHeight,
+        // sinon la mesure peut être prise sur un état intermédiaire.
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const h = document.body.scrollHeight;
+            window.widgetAPI.resize(h);
+          });
+        });
+      }, 150);
+    };
+    const observer = new MutationObserver(syncWindowSize);
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
+    window.addEventListener('load', syncWindowSize);
+    window.expose_syncWindowSize = syncWindowSize;
+  }
+
+  // ---------- Dragging (via Electron main process) ----------
+  let dragging = false;
+  let lastScreenX = 0, lastScreenY = 0;
+
+  dragHandle.addEventListener('mousedown', (e) => {
+    dragging = true;
+    widget.classList.add('dragging');
+    lastScreenX = e.screenX;
+    lastScreenY = e.screenY;
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const deltaX = e.screenX - lastScreenX;
+    const deltaY = e.screenY - lastScreenY;
+    lastScreenX = e.screenX;
+    lastScreenY = e.screenY;
+    if (hasNativeDrag) {
+      window.widgetAPI.drag(deltaX, deltaY);
+    }
+  });
+
+  window.addEventListener('mouseup', () => {
+    dragging = false;
+    widget.classList.remove('dragging');
+  });
+
+  document.getElementById('closeBtn').addEventListener('click', () => {
+    if (hasNativeDrag) window.widgetAPI.close();
+    else window.close();
+  });
+  document.getElementById('refreshBtn').addEventListener('click', () => init());
+
+  const pinBtn = document.getElementById('pinBtn');
+  pinBtn.addEventListener('click', () => {
+    if (hasNativeDrag) window.widgetAPI.toggleAlwaysOnTop();
+  });
+
+  if (hasNativeDrag) {
+    window.widgetAPI.onForceRefresh(() => init());
+    window.widgetAPI.onAlwaysOnTopState((enabled) => {
+      pinBtn.classList.toggle('active', enabled);
+      pinBtn.title = enabled
+        ? 'Toujours au premier plan (activé) — cliquer pour désactiver'
+        : 'Toujours au premier plan (désactivé) — cliquer pour activer';
+    });
+  } else {
+    pinBtn.style.display = 'none';
+  }
+
+  // ---------- Weather code mapping (Open-Meteo WMO codes) ----------
+  function mapWeather(code, isDay) {
+    const table = {
+      0:  { desc: 'Ciel dégagé',        icon: isDay ? '☀️' : '🌙', cls: isDay ? 'clear' : 'night' },
+      1:  { desc: 'Plutôt dégagé',      icon: isDay ? '🌤️' : '🌙', cls: isDay ? 'clear' : 'night' },
+      2:  { desc: 'Partiellement nuageux', icon: '⛅', cls: 'cloudy' },
+      3:  { desc: 'Couvert',            icon: '☁️', cls: 'cloudy' },
+      45: { desc: 'Brouillard',         icon: '🌫️', cls: 'cloudy' },
+      48: { desc: 'Brouillard givrant',  icon: '🌫️', cls: 'cloudy' },
+      51: { desc: 'Bruine légère',      icon: '🌦️', cls: 'rain' },
+      53: { desc: 'Bruine',             icon: '🌦️', cls: 'rain' },
+      55: { desc: 'Bruine dense',       icon: '🌧️', cls: 'rain' },
+      61: { desc: 'Pluie légère',       icon: '🌧️', cls: 'rain' },
+      63: { desc: 'Pluie',              icon: '🌧️', cls: 'rain' },
+      65: { desc: 'Forte pluie',        icon: '🌧️', cls: 'rain' },
+      66: { desc: 'Pluie verglaçante',  icon: '🌨️', cls: 'rain' },
+      67: { desc: 'Pluie verglaçante forte', icon: '🌨️', cls: 'rain' },
+      71: { desc: 'Neige légère',       icon: '🌨️', cls: 'snow' },
+      73: { desc: 'Neige',              icon: '🌨️', cls: 'snow' },
+      75: { desc: 'Forte neige',        icon: '❄️', cls: 'snow' },
+      77: { desc: 'Grains de neige',    icon: '❄️', cls: 'snow' },
+      80: { desc: 'Averses légères',    icon: '🌦️', cls: 'rain' },
+      81: { desc: 'Averses',            icon: '🌧️', cls: 'rain' },
+      82: { desc: 'Averses violentes',  icon: '⛈️', cls: 'storm' },
+      85: { desc: 'Averses de neige',   icon: '🌨️', cls: 'snow' },
+      86: { desc: 'Fortes averses de neige', icon: '❄️', cls: 'snow' },
+      95: { desc: 'Orage',              icon: '⛈️', cls: 'storm' },
+      96: { desc: 'Orage avec grêle',   icon: '⛈️', cls: 'storm' },
+      99: { desc: 'Orage violent',      icon: '⛈️', cls: 'storm' }
+    };
+    return table[code] || { desc: 'Inconnu', icon: '❓', cls: 'cloudy' };
+  }
+
+  function setThemeClass(cls) {
+    widget.classList.remove('clear', 'cloudy', 'rain', 'storm', 'snow', 'night');
+    widget.classList.add(cls);
+  }
+
+  function showStatus(msg) {
+    content.innerHTML = '<div id="status">' + msg + '</div>';
+  }
+
+  function showError(msg) {
+    content.innerHTML =
+      '<div id="status">Météo indisponible</div>' +
+      '<div id="errorBox" style="display:block;">' + msg +
+      '<br><button onclick="location.reload()">Réessayer</button></div>';
+  }
+
+  async function reverseGeocode(lat, lon) {
+    // Source principale : BigDataCloud (gratuit, sans clé)
+    try {
+      const r = await fetch(
+        `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=fr`
+      );
+      const d = await r.json();
+      const cityName = d.city || d.locality || d.principalSubdivision;
+      if (cityName) {
+        return {
+          city: cityName,
+          region: [d.principalSubdivision, d.countryName].filter(Boolean).join(', ')
+        };
+      }
+    } catch (e) {}
+
+    // Repli : Nominatim (OpenStreetMap)
+    try {
+      const r2 = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=fr`,
+        { headers: { 'Accept': 'application/json' } }
+      );
+      const d2 = await r2.json();
+      const addr = d2.address || {};
+      const cityName = addr.city || addr.town || addr.village || addr.suburb || addr.county;
+      if (cityName) {
+        return {
+          city: cityName,
+          region: [addr.state, addr.country].filter(Boolean).join(', ')
+        };
+      }
+    } catch (e) {}
+
+    return { city: `${lat.toFixed(2)}, ${lon.toFixed(2)}`, region: '' };
+  }
+
+  async function fetchWeather(lat, lon) {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,is_day` +
+      `&timezone=auto`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('Réponse API invalide');
+    return r.json();
+  }
+
+  function render(place, w, source) {
+    const cur = w.current;
+    const info = mapWeather(cur.weather_code, cur.is_day === 1);
+    setThemeClass(info.cls);
+
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+    const sourceLabel = source === 'gps'
+      ? '📡 Position GPS précise'
+      : '🌐 Position approximative (IP) — cliquer pour réessayer le GPS';
+    const sourceCls = source === 'gps' ? 'gps' : 'ip';
+
+    content.innerHTML = `
+      <div class="city-block">
+        <div class="city-name">📍 ${place.city}</div>
+        ${place.region ? `<div class="city-region">${place.region}</div>` : ''}
+      </div>
+      <div class="updated">Mis à jour à ${timeStr}</div>
+      <div class="source-badge ${sourceCls}" id="sourceBadge" title="${sourceLabel}"><u>${sourceLabel}</u></div>
+      <div class="main-row">
+        <div class="icon">${info.icon}</div>
+        <div>
+          <div class="temp">${Math.round(cur.temperature_2m)}<sup>°C</sup></div>
+          <div class="desc">${info.desc}</div>
+          <div class="feels">Ressenti ${Math.round(cur.apparent_temperature)}°C</div>
+        </div>
+      </div>
+      <div class="details">
+        <div class="item">
+          <div class="label">Humidité</div>
+          <div class="value">${cur.relative_humidity_2m}%</div>
+        </div>
+        <div class="item">
+          <div class="label">Vent</div>
+          <div class="value">${Math.round(cur.wind_speed_10m)} km/h</div>
+        </div>
+      </div>
+    `;
+  }
+
+  async function loadForCoords(lat, lon, source) {
+    showStatus('Chargement de la météo…');
+    const [place, weather] = await Promise.all([
+      reverseGeocode(lat, lon),
+      fetchWeather(lat, lon)
+    ]);
+    render(place, weather, source);
+    const badge = document.getElementById('sourceBadge');
+    if (badge) badge.addEventListener('click', () => init(true));
+    try {
+      localStorage.setItem('weather-widget-lastcoords', JSON.stringify({ lat, lon }));
+    } catch (e) {}
+  }
+
+  async function ipFallback(reason) {
+    if (reason) console.warn('[Widget Météo] GPS indisponible, repli sur IP. Raison:', reason);
+    showStatus('Localisation via IP…');
+    try {
+      const r = await fetch('https://ipapi.co/json/');
+      const d = await r.json();
+      if (d && d.latitude && d.longitude) {
+        await loadForCoords(d.latitude, d.longitude, 'ip');
+        return;
+      }
+      throw new Error('IP lookup vide');
+    } catch (e) {
+      try {
+        const cached = JSON.parse(localStorage.getItem('weather-widget-lastcoords'));
+        if (cached) { await loadForCoords(cached.lat, cached.lon, 'ip'); return; }
+      } catch (e2) {}
+      await loadForCoords(-18.8792, 47.5079, 'ip'); // Antananarivo (secours ultime)
+    }
+  }
+
+  function geoErrorReason(err) {
+    // err.code : 1 = PERMISSION_DENIED, 2 = POSITION_UNAVAILABLE, 3 = TIMEOUT
+    if (!err) return 'inconnue';
+    if (err.code === 1) return 'permission refusée (vérifier Windows > Confidentialité > Localisation, et autoriser l’app)';
+    if (err.code === 2) return 'position indisponible (service de localisation Windows désactivé, ou pas de matériel GPS/Wi-Fi de positionnement)';
+    if (err.code === 3) return 'délai dépassé';
+    return err.message || 'inconnue';
+  }
+
+  function init(forceGps) {
+    if (!navigator.geolocation) { ipFallback('API geolocation absente'); return; }
+
+    showStatus('Localisation GPS en cours…');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => loadForCoords(pos.coords.latitude, pos.coords.longitude, 'gps').catch((e) => ipFallback('échec chargement météo: ' + e)),
+      (err) => ipFallback(geoErrorReason(err)),
+      { timeout: 8000, maximumAge: forceGps ? 0 : 600000, enableHighAccuracy: !!forceGps }
+    );
+  }
+
+  init();
+
+  // Actualisation automatique toutes les 15 minutes
+  setInterval(() => init(), 15 * 60 * 1000);
+
+  // ---------- Stats Hydria (auth par token, widget desktop) ----------
+  const HYDRIA_BASE_URL = 'https://www.hydria.mg';
+  const hydriaContent = document.getElementById('hydriaContent');
+
+  function renderLoginForm(errorMsg) {
+    hydriaContent.innerHTML = `
+      <form id="loginForm">
+        <input type="text" id="loginUsername" placeholder="Nom d'utilisateur Hydria" autocomplete="username" required>
+        <input type="password" id="loginPassword" placeholder="Mot de passe" autocomplete="current-password" required>
+        <div id="loginError">${errorMsg || ''}</div>
+        <button type="submit">Se connecter</button>
+      </form>
+    `;
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const username = document.getElementById('loginUsername').value.trim();
+      const password = document.getElementById('loginPassword').value;
+      const submitBtn = e.target.querySelector('button');
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Connexion…';
+
+      try {
+        const body = new URLSearchParams({ username, password, device_label: 'Widget Desktop' });
+        const r = await fetch(`${HYDRIA_BASE_URL}/widget/api/login/`, { method: 'POST', body });
+        const data = await r.json();
+        if (data.success) {
+          if (hasNativeDrag) window.widgetAPI.saveHydriaToken(data.token);
+          loadHydriaStats(data.token);
+        } else {
+          renderLoginForm(data.error || 'Connexion échouée');
+        }
+      } catch (err) {
+        renderLoginForm('Erreur réseau — vérifier la connexion internet');
+      }
+    });
+  }
+
+  const GENERAL_STAT_DEFS = [
+    { key: 'ouvrages', icon: '🏗️', label: 'Ouvrages', detailType: 'ouvrages', wide: false },
+    { key: 'points_eau', icon: '🚰', label: "Points d'eau", detailType: 'points_eau', wide: false },
+  ];
+  const VOLUME_STAT_DEFS = [
+    { key: 'factures_volumetriques_mois_courant_non_pointees', icon: '💧', label: 'Volumes non pointés · mois en cours', detailType: 'factures_volumetriques_mois_courant_non_pointees', wide: false, alertIfPositive: true },
+    { key: 'factures_volumetriques_mois_passes_non_pointees', icon: '💧', label: 'Volumes non pointés · mois passés', detailType: 'factures_volumetriques_mois_passes_non_pointees', wide: false, alertIfPositive: true },
+    { key: 'diamex_707401_non_pointes', icon: '🧾', label: 'Paiements au volume DiameX non pointés', detailType: 'diamex_707401_non_pointes', wide: true, alertIfPositive: true },
+  ];
+  const FORFAIT_STAT_DEFS = [
+    { key: 'factures_forfaitaires_mois_courant_non_pointees', icon: '💰', label: 'Forfaits non pointés · mois en cours', detailType: 'factures_forfaitaires_mois_courant_non_pointees', wide: false, alertIfPositive: true },
+    { key: 'factures_forfaitaires_mois_passes_non_pointees', icon: '💰', label: 'Forfaits non pointés · mois passés', detailType: 'factures_forfaitaires_mois_passes_non_pointees', wide: false, alertIfPositive: true },
+    { key: 'diamex_748411_non_pointes', icon: '🧾', label: 'Paiements forfaitaires DiameX non pointés', detailType: 'diamex_748411_non_pointes', wide: false, alertIfPositive: true },
+    { key: 'factures_forfaitaires_a_collecter_aujourdhui', icon: '📅', label: 'Forfait à collecter aujourd\'hui', detailType: 'factures_forfaitaires_jour', wide: false, alertIfPositive: true },
+  ];
+  const OPERATIONS_STAT_DEFS = [
+    { key: 'reparations_non_terminees', icon: '🔧', label: 'Réparations non terminées', detailType: 'reparations_non_terminees', wide: true, alertIfPositive: true },
+    { key: 'reparations_a_faire_7_jours', icon: '📆', label: 'Réparations sous 7 jours', detailType: 'reparations_7_jours', wide: true, alertIfPositive: true },
+  ];
+
+  let currentHydriaToken = null;
+
+  function currentFiltreParams() {
+    const params = new URLSearchParams();
+    const org = document.getElementById('filtreOrganisation')?.value;
+    const employe = document.getElementById('filtreEmploye')?.value;
+    const region = document.getElementById('filtreRegion')?.value;
+    const district = document.getElementById('filtreDistrict')?.value;
+    const commune = document.getElementById('filtreCommune')?.value;
+    if (org && org !== 'all') params.set('organisation', org);
+    if (employe && employe !== 'all') params.set('employe_id', employe);
+    if (region && region !== 'all') params.set('region_id', region);
+    if (district && district !== 'all') params.set('district_id', district);
+    if (commune && commune !== 'all') params.set('commune_id', commune);
+    return params;
+  }
+
+  function renderHydriaStats(stats) {
+    const splitStatsAvailable = Object.prototype.hasOwnProperty.call(stats, 'factures_volumetriques_mois_courant_non_pointees')
+      && Object.prototype.hasOwnProperty.call(stats, 'factures_volumetriques_mois_passes_non_pointees')
+      && Object.prototype.hasOwnProperty.call(stats, 'factures_forfaitaires_mois_courant_non_pointees')
+      && Object.prototype.hasOwnProperty.call(stats, 'factures_forfaitaires_mois_passes_non_pointees');
+    const renderTiles = defs => `
+      <div class="stat-grid">
+        ${defs.map(def => `
+          <button type="button" class="stat-tile ${def.wide ? 'wide' : ''} ${def.alertIfPositive && stats[def.key] > 0 ? 'alert' : ''}" data-detail="${def.detailType}" data-label="${def.icon} ${def.label}">
+            <div class="stat-value">${Object.prototype.hasOwnProperty.call(stats, def.key) ? (stats[def.key] || 0).toLocaleString('fr-FR') : '—'}</div>
+            <div class="stat-label">${def.icon} ${def.label}</div>
+          </button>
+        `).join('')}
+      </div>
+    `;
+    hydriaContent.innerHTML = `
+      ${renderTiles(GENERAL_STAT_DEFS)}
+      <section class="stat-section"><div class="stat-section-title">Volumétrique</div>${renderTiles(VOLUME_STAT_DEFS)}</section>
+      <section class="stat-section"><div class="stat-section-title">Forfaitaire</div>${renderTiles(FORFAIT_STAT_DEFS)}</section>
+      <section class="stat-section"><div class="stat-section-title">Opérations</div>${renderTiles(OPERATIONS_STAT_DEFS)}</section>
+      ${splitStatsAvailable ? '' : '<div id="hydriaStatus">Mise à jour du serveur Hydria requise</div>'}
+      <div id="logoutLink">Se déconnecter</div>
+    `;
+    hydriaContent.querySelectorAll('.stat-tile').forEach(tile => {
+      tile.addEventListener('click', () => openDetail(tile.dataset.detail, tile.dataset.label));
+    });
+    document.getElementById('logoutLink').addEventListener('click', () => {
+      if (hasNativeDrag) window.widgetAPI.clearHydriaToken();
+      currentHydriaToken = null;
+      renderLoginForm();
+    });
+  }
+
+  async function loadHydriaStats(token) {
+    if (!token) {
+      hydriaContent.innerHTML = '<div id="hydriaStatus">Chargement…</div>';
+      return;
+    }
+    currentHydriaToken = token;
+    try {
+      const params = currentFiltreParams();
+      const r = await fetch(`${HYDRIA_BASE_URL}/widget/api/stats/?${params.toString()}`, {
+        headers: { 'Authorization': `Token ${token}` }
+      });
+      if (r.status === 401) {
+        if (hasNativeDrag) window.widgetAPI.clearHydriaToken();
+        renderLoginForm('Session expirée, reconnecte-toi');
+        return;
+      }
+      const data = await r.json();
+      if (data.success) {
+        renderHydriaStats(data.stats);
+        loadFiltres(token);
+      } else {
+        hydriaContent.innerHTML = '<div id="hydriaStatus">Données indisponibles</div>';
+      }
+    } catch (e) {
+      hydriaContent.innerHTML = '<div id="hydriaStatus">Hors ligne — données Hydria indisponibles</div>';
+    }
+  }
+
+  // ---------- Filtres pliables ----------
+  const filtresToggle = document.getElementById('filtresToggle');
+  const filtresPanel = document.getElementById('filtresPanel');
+  const filtresToggleIcon = document.getElementById('filtresToggleIcon');
+  let filtresLoaded = false;
+
+  filtresToggle.addEventListener('click', () => {
+    filtresPanel.classList.toggle('open');
+    filtresToggleIcon.textContent = filtresPanel.classList.contains('open') ? '▴' : '▾';
+  });
+
+  async function loadFiltres(token) {
+    if (filtresLoaded || !token) return;
+    try {
+      const r = await fetch(`${HYDRIA_BASE_URL}/widget/api/filtres/`, {
+        headers: { 'Authorization': `Token ${token}` }
+      });
+      const data = await r.json();
+      if (!data.success) return;
+      filtresLoaded = true;
+
+      const orgSelect = document.getElementById('filtreOrganisation');
+      orgSelect.innerHTML = data.organisations.map(o =>
+        `<option value="${o.id}" ${o.id === data.default_organisation_id ? 'selected' : ''}>${o.nom}</option>`
+      ).join('') || '<option value="all">Toutes</option>';
+
+      const employeSelect = document.getElementById('filtreEmploye');
+      employeSelect.innerHTML = '<option value="all">Tous les agents de recouvrement</option>' +
+        (data.employes || []).map(e => `<option value="${e.id}">${e.nom}${e.poste ? ` · ${e.poste}` : ''}</option>`).join('');
+
+      const regionSelect = document.getElementById('filtreRegion');
+      regionSelect.innerHTML = '<option value="all">Toutes les régions</option>' +
+        data.regions.map(r => `<option value="${r.id}">${r.nom}</option>`).join('');
+
+      const districtSelect = document.getElementById('filtreDistrict');
+      districtSelect.innerHTML = '<option value="all">Tous les districts</option>' +
+        data.districts.map(d => `<option value="${d.id}">${d.nom}</option>`).join('');
+
+      const communeSelect = document.getElementById('filtreCommune');
+      communeSelect.innerHTML = '<option value="all">Toutes les communes</option>' +
+        data.communes.map(c => `<option value="${c.id}">${c.nom}</option>`).join('');
+
+      [orgSelect, employeSelect, regionSelect, districtSelect, communeSelect].forEach(sel => {
+        sel.addEventListener('change', () => loadHydriaStats(currentHydriaToken));
+      });
+
+      regionSelect.addEventListener('change', () => {
+        const regionId = regionSelect.value;
+        const filtered = regionId === 'all' ? data.districts : data.districts.filter(d => d.region_id === regionId);
+        districtSelect.innerHTML = '<option value="all">Tous les districts</option>' +
+          filtered.map(d => `<option value="${d.id}">${d.nom}</option>`).join('');
+        communeSelect.innerHTML = '<option value="all">Toutes les communes</option>' +
+          data.communes.map(c => `<option value="${c.id}">${c.nom}</option>`).join('');
+      });
+
+      districtSelect.addEventListener('change', () => {
+        const districtId = districtSelect.value;
+        const filtered = districtId === 'all' ? data.communes : data.communes.filter(c => c.district_id === districtId);
+        communeSelect.innerHTML = '<option value="all">Toutes les communes</option>' +
+          filtered.map(c => `<option value="${c.id}">${c.nom}</option>`).join('');
+      });
+    } catch (e) {
+      console.warn('[Widget] Filtres Hydria indisponibles:', e);
+    }
+  }
+
+  // ---------- Modal détail ----------
+  const detailOverlay = document.getElementById('detailOverlay');
+  const detailTitle = document.getElementById('detailTitle');
+  const detailBody = document.getElementById('detailBody');
+
+  const GROUPABLE_TYPES = new Set([
+    'ouvrages', 'points_eau',
+    'factures_volumetriques_mois_courant_non_pointees',
+    'factures_volumetriques_mois_passes_non_pointees',
+    'factures_forfaitaires_mois_courant_non_pointees',
+    'factures_forfaitaires_mois_passes_non_pointees'
+  ]);
+
+  async function openDetail(detailType, label) {
+    const cleanLabel = label.replace(/^[^\s]+\s/, '');
+    detailTitle.textContent = cleanLabel;
+    detailBody.innerHTML = '<div class="detail-empty">Chargement…</div>';
+    detailOverlay.classList.add('open');
+
+    if (!currentHydriaToken) {
+      detailBody.innerHTML = '<div class="detail-empty">Non connecté</div>';
+      return;
+    }
+
+    if (GROUPABLE_TYPES.has(detailType)) {
+      showGroupeView(detailType, cleanLabel);
+    } else {
+      showDetailList(detailType, cleanLabel, {});
+    }
+  }
+
+  async function showGroupeView(detailType, label) {
+    detailTitle.textContent = label;
+    try {
+      const params = currentFiltreParams();
+      const r = await fetch(`${HYDRIA_BASE_URL}/widget/api/groupes/${detailType}/?${params.toString()}`, {
+        headers: { 'Authorization': `Token ${currentHydriaToken}` }
+      });
+      const data = await r.json();
+      if (!data.success || data.districts.length === 0) {
+        detailBody.innerHTML = '<div class="detail-empty">Aucun élément</div>';
+        return;
+      }
+      detailBody.innerHTML = `
+        <div class="detail-total">${data.total.toLocaleString('fr-FR')} au total</div>
+        ${data.districts.map((d, di) => `
+          <div class="geo-district">
+            <button type="button" class="geo-district-toggle" data-district-idx="${di}">
+              <span>📍 ${d.district}</span>
+              <span class="geo-count">${d.total.toLocaleString('fr-FR')} <span class="geo-caret">▾</span></span>
+            </button>
+            <div class="geo-communes" id="geoCommunes${di}">
+              ${d.communes.map(c => `
+                <button type="button" class="geo-commune-row" data-detail-type="${detailType}" data-commune-id="${c.commune_id}" data-commune-nom="${c.commune}">
+                  <span>${c.commune}</span>
+                  <span class="geo-count">${c.count.toLocaleString('fr-FR')}</span>
+                </button>
+              `).join('')}
+            </div>
+          </div>
+        `).join('')}
+      `;
+
+      detailBody.querySelectorAll('.geo-district-toggle').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const idx = btn.dataset.districtIdx;
+          const panel = document.getElementById(`geoCommunes${idx}`);
+          panel.classList.toggle('open');
+          btn.classList.toggle('open');
+        });
+      });
+      detailBody.querySelectorAll('.geo-commune-row').forEach(btn => {
+        btn.addEventListener('click', () => {
+          showDetailList(btn.dataset.detailType, `${label} — ${btn.dataset.communeNom}`, {
+            commune_id: btn.dataset.communeId,
+          });
+        });
+      });
+    } catch (e) {
+      detailBody.innerHTML = '<div class="detail-empty">Erreur de chargement</div>';
+    }
+  }
+
+  async function showDetailList(detailType, label, extraParams) {
+    detailTitle.innerHTML = `<span class="detail-back" id="detailBack">←</span> ${label}`;
+    detailBody.innerHTML = '<div class="detail-empty">Chargement…</div>';
+
+    const backBtn = document.getElementById('detailBack');
+    if (backBtn) {
+      if (GROUPABLE_TYPES.has(detailType) && extraParams.commune_id) {
+        backBtn.style.display = 'inline';
+        backBtn.addEventListener('click', () => showGroupeView(detailType, label.split(' — ')[0]));
+      } else {
+        backBtn.style.display = 'none';
+      }
+    }
+
+    try {
+      const params = currentFiltreParams();
+      Object.entries(extraParams || {}).forEach(([k, v]) => params.set(k, v));
+      const r = await fetch(`${HYDRIA_BASE_URL}/widget/api/details/${detailType}/?${params.toString()}`, {
+        headers: { 'Authorization': `Token ${currentHydriaToken}` }
+      });
+      const data = await r.json();
+      if (!data.success || data.rows.length === 0) {
+        detailBody.innerHTML = '<div class="detail-empty">Aucun élément</div>';
+        return;
+      }
+      detailBody.innerHTML = data.rows.map(row => `
+        <div class="detail-row">
+          <div class="row-label">${row.label}</div>
+          ${row.sub ? `<div class="row-sub">${row.sub}</div>` : ''}
+        </div>
+      `).join('') + (
+        data.total > data.shown
+          ? `<div class="detail-footer">${data.shown} sur ${data.total.toLocaleString('fr-FR')} — voir Hydria pour la liste complète</div>`
+          : ''
+      );
+    } catch (e) {
+      detailBody.innerHTML = '<div class="detail-empty">Erreur de chargement</div>';
+    }
+  }
+
+  document.getElementById('detailClose').addEventListener('click', () => {
+    detailOverlay.classList.remove('open');
+  });
+  detailOverlay.addEventListener('click', (e) => {
+    if (e.target === detailOverlay) detailOverlay.classList.remove('open');
+  });
+
+  async function initHydria() {
+    if (!hasNativeDrag) {
+      hydriaContent.innerHTML = '<div id="hydriaStatus">Disponible uniquement dans l\'appli desktop</div>';
+      return;
+    }
+    const token = await window.widgetAPI.getHydriaToken();
+    if (token) {
+      loadHydriaStats(token);
+    } else {
+      renderLoginForm();
+    }
+  }
+
+  initHydria();
+  setInterval(async () => {
+    if (!hasNativeDrag) return;
+    const token = await window.widgetAPI.getHydriaToken();
+    if (token) loadHydriaStats(token);
+  }, 10 * 60 * 1000);
+})();
+</script>
+
+</body>
+</html>

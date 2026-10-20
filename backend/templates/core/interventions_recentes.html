@@ -1,0 +1,679 @@
+{% extends "base.html" %}
+
+{% load humanize hydria_asset_icons debit_source_tags %}
+{% block title %}Dernières saisies de réparations{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-3 py-6 sm:px-4">
+    <div class="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div>
+            <h1 class="text-3xl font-bold"><i class="fas fa-clock-rotate-left mr-3 text-info"></i>Dernières saisies de réparations</h1>
+            {% if sort_mode == 'intervention_date' %}
+                <p class="mt-2 text-base-content/70">Classement selon la date de l'intervention, de la plus récente à la plus ancienne. Les dates futures et les actions requises restent clairement distinguées.</p>
+            {% else %}
+                <p class="mt-2 text-base-content/70">Classement selon la date d'enregistrement dans Hydria, indépendamment de la date prévue de l'intervention.</p>
+            {% endif %}
+        </div>
+        <a href="{% url 'core:recherche_ouvrages_rapide' %}" class="btn btn-outline btn-sm"><i class="fas fa-building"></i> Rechercher un ouvrage</a>
+    </div>
+
+    {% debits_critiques_banner debit_scope_ids %}
+
+    {% include "core/_intervention_statistics.html" %}
+
+    <form method="get" class="card mb-4 border border-base-300 bg-base-100 shadow-sm">
+        <div class="card-body p-4">
+            {% if include_other_bases %}<input type="hidden" name="all_bases" value="1">{% endif %}
+            {% if period_filter %}<input type="hidden" name="period" value="{{ period_filter }}">{% endif %}
+            {% if employee_filter %}<input type="hidden" name="employee" value="{{ employee_filter }}">{% endif %}
+            {% if ouvrage_filter %}<input type="hidden" name="ouvrage" value="{{ ouvrage_filter }}">{% endif %}
+            {% if sort_mode != 'created_at' %}<input type="hidden" name="sort" value="{{ sort_mode }}">{% endif %}
+            {% if status_filter_active %}
+                <input type="hidden" name="status_filter" value="1">
+                {% for status in selected_statuses %}<input type="hidden" name="status" value="{{ status }}">{% endfor %}
+            {% endif %}
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <label class="form-control">
+                    <span class="label-text mb-1 font-semibold">Région</span>
+                    <select name="region" class="select select-bordered" onchange="handleRecentRegionChange(this.form)">
+                        <option value="">Toutes les régions</option>
+                        {% for region in regions %}<option value="{{ region.id }}" {% if region_filter == region.id|stringformat:'s' %}selected{% endif %}>{{ region.nom_region }}</option>{% endfor %}
+                    </select>
+                </label>
+                <label class="form-control">
+                    <span class="label-text mb-1 font-semibold">District</span>
+                    <select name="district" class="select select-bordered" onchange="handleRecentDistrictChange(this.form)">
+                        <option value="">Tous les districts</option>
+                        {% for district in districts %}<option value="{{ district.id }}" data-region-id="{{ district.region_id }}" {% if district_filter == district.id|stringformat:'s' %}selected{% endif %}>{{ district.nom_district }}</option>{% endfor %}
+                    </select>
+                </label>
+                <label class="form-control">
+                    <span class="label-text mb-1 font-semibold">Commune</span>
+                    <select name="commune" class="select select-bordered" onchange="this.form.submit()">
+                        <option value="">Toutes les communes</option>
+                        {% for commune in communes %}<option value="{{ commune.id }}" data-district-id="{{ commune.district_id }}" data-region-id="{{ commune.filter_region_id }}" {% if commune_filter == commune.id|stringformat:'s' %}selected{% endif %}>{{ commune.nom_commune }}</option>{% endfor %}
+                    </select>
+                </label>
+                <label class="form-control">
+                    <span class="label-text mb-1 font-semibold">Employé responsable</span>
+                    <select name="responsible_employee" class="select select-bordered">
+                        <option value="">Tous les employés concernés</option>
+                        {% regroup responsible_employees by base_label as employee_base_groups %}
+                        {% for base_group in employee_base_groups %}
+                            <option disabled>── Base : {{ base_group.grouper }} ──</option>
+                            {% regroup base_group.list by poste_label as employee_poste_groups %}
+                            {% for poste_group in employee_poste_groups %}
+                                <optgroup label="Poste : {{ poste_group.grouper }}">
+                                    {% for employee in poste_group.list %}<option value="{{ employee.id }}" {% if responsible_employee_filter == employee.id %}selected{% endif %}>{{ employee.label }} — {{ employee.ouvrage_count }} ouvrage{{ employee.ouvrage_count|pluralize }}</option>{% endfor %}
+                                </optgroup>
+                            {% endfor %}
+                        {% endfor %}
+                    </select>
+                </label>
+            </div>
+            <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
+                <div class="flex flex-wrap gap-2 text-sm">
+                    {% if selected_region_label %}<span class="badge badge-outline">Région : {{ selected_region_label }}</span>{% endif %}
+                    {% if selected_district_label %}<span class="badge badge-outline">District : {{ selected_district_label }}</span>{% endif %}
+                    {% if selected_commune_label %}<span class="badge badge-outline">Commune : {{ selected_commune_label }}</span>{% endif %}
+                    {% if selected_responsible_label %}<span class="badge badge-primary badge-outline">Responsable : {{ selected_responsible_label }}</span>{% endif %}
+                </div>
+                <div class="flex gap-2">
+                    <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-filter"></i> Appliquer</button>
+                    <a href="{% url 'core:interventions_recentes' %}{% if include_other_bases %}?all_bases=1{% endif %}" class="btn btn-ghost btn-sm" title="Réinitialiser les filtres"><i class="fas fa-times"></i></a>
+                </div>
+            </div>
+        </div>
+    </form>
+
+    {% if has_statistics_filter %}
+        <div class="alert alert-success mb-4 items-start py-3">
+            <i class="fas fa-filter mt-1"></i>
+            <div class="flex-1">
+                <p class="font-bold">Détail du calcul statistique</p>
+                <div class="mt-2 flex flex-wrap gap-2">
+                    {% if filter_labels.period %}<span class="badge badge-success">{{ filter_labels.period }}</span>{% endif %}
+                    {% if filter_labels.employee %}<span class="badge badge-success"><i class="fas fa-user mr-1"></i>{{ filter_labels.employee }}</span>{% endif %}
+                    {% if filter_labels.ouvrage %}<span class="badge badge-success"><i class="fas fa-building mr-1"></i>{{ filter_labels.ouvrage }}</span>{% endif %}
+                    <span class="badge badge-outline">Avec photo uniquement</span>
+                </div>
+            </div>
+            <a href="{% url 'core:interventions_recentes' %}{% if include_other_bases %}?all_bases=1{% endif %}" class="btn btn-sm btn-ghost"><i class="fas fa-times"></i> Effacer</a>
+        </div>
+    {% endif %}
+
+    <div class="mb-4 flex flex-col gap-3 rounded-box border border-info/30 bg-info/5 p-3 xl:flex-row xl:items-center xl:justify-between">
+        <div>
+            <span class="font-semibold">{{ page_obj.paginator.count }} saisie{{ page_obj.paginator.count|pluralize }}</span>
+            {% if sort_mode == 'intervention_date' %}
+                <span class="badge badge-primary badge-outline ml-2">Dates d'intervention les plus récentes</span>
+            {% else %}
+                <span class="badge badge-info badge-outline ml-2">Dernières saisies en premier</span>
+            {% endif %}
+        </div>
+        <form method="get" class="flex flex-wrap items-center gap-x-4 gap-y-2">
+            {% if period_filter %}<input type="hidden" name="period" value="{{ period_filter }}">{% endif %}
+            {% if employee_filter %}<input type="hidden" name="employee" value="{{ employee_filter }}">{% endif %}
+            {% if ouvrage_filter %}<input type="hidden" name="ouvrage" value="{{ ouvrage_filter }}">{% endif %}
+            {% if region_filter %}<input type="hidden" name="region" value="{{ region_filter }}">{% endif %}
+            {% if district_filter %}<input type="hidden" name="district" value="{{ district_filter }}">{% endif %}
+            {% if commune_filter %}<input type="hidden" name="commune" value="{{ commune_filter }}">{% endif %}
+            {% if responsible_employee_filter %}<input type="hidden" name="responsible_employee" value="{{ responsible_employee_filter }}">{% endif %}
+            <input type="hidden" name="status_filter" value="1">
+            <label class="flex items-center gap-2">
+                <span class="text-sm font-semibold"><i class="fas fa-arrow-down-wide-short mr-1 text-primary"></i>Trier par</span>
+                <select name="sort" class="select select-bordered select-sm" onchange="this.form.submit()" aria-label="Trier les interventions">
+                    <option value="created_at" {% if sort_mode == 'created_at' %}selected{% endif %}>Date de saisie</option>
+                    <option value="intervention_date" {% if sort_mode == 'intervention_date' %}selected{% endif %}>Date d'intervention</option>
+                </select>
+            </label>
+            <span class="hidden h-6 w-px bg-base-300 sm:block"></span>
+            <label class="flex cursor-pointer items-center gap-2">
+                <span class="text-sm font-semibold">Toutes les bases</span>
+                <input type="checkbox" name="all_bases" value="1" class="toggle toggle-primary"
+                    aria-label="Afficher les activités des autres bases"
+                    onchange="this.form.submit()" {% if include_other_bases %}checked{% endif %}>
+            </label>
+            <span class="hidden h-6 w-px bg-base-300 sm:block"></span>
+            <span class="text-sm font-semibold"><i class="fas fa-filter mr-1 text-info"></i>Statuts :</span>
+            {% for status in status_choices %}
+                <label class="flex cursor-pointer items-center gap-1.5 text-sm">
+                    <input type="checkbox" name="status" value="{{ status.code }}" class="checkbox checkbox-sm {{ status.class }}"
+                        onchange="this.form.submit()"
+                        {% if not status_filter_active or status.code in selected_statuses %}checked{% endif %}>
+                    <span>{{ status.label }}</span>
+                </label>
+            {% endfor %}
+        </form>
+    </div>
+
+    {% if include_other_bases %}
+        <div class="alert alert-info mb-4 py-2 text-sm">
+            <i class="fas fa-building-circle-check"></i>
+            <span>La restriction par base est désactivée : les activités de toutes les bases accessibles de votre organisation sont affichées.</span>
+        </div>
+    {% endif %}
+
+    {% if page_obj.object_list %}
+        <div class="space-y-4">
+            {% for planning in page_obj %}
+                <article class="rounded-box border p-4 shadow-sm {% if planning.saisie_requires_action %}border-error/60 bg-error/5 ring-1 ring-error/20{% elif planning.saisie_is_upcoming %}border-info/50 bg-info/5{% elif planning.saisie_is_today %}border-warning/50 bg-warning/5{% else %}border-base-300 bg-base-100{% endif %}">
+                    <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                        <div class="min-w-0 flex-1">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="badge {{ planning.saisie_badge_class }}"><i class="fas fa-database mr-1"></i>{% if planning.saisie_created_relative %}Saisie {{ planning.saisie_created_relative }}{% else %}Date de saisie inconnue{% endif %}</span>
+                                {% if planning.statut == 'termine' %}<span class="badge badge-success">{{ planning.get_statut_display }}</span>{% elif planning.statut == 'en_cours' %}<span class="badge badge-warning">{{ planning.get_statut_display }}</span>{% else %}<span class="badge badge-ghost">{{ planning.get_statut_display|default:"Non défini" }}</span>{% endif %}
+                                {% if planning.saisie_requires_action %}<span class="badge badge-error"><i class="fas fa-triangle-exclamation mr-1"></i>Action requise</span>{% endif %}
+                                {% if planning.saisie_is_upcoming %}<span class="badge badge-info"><i class="fas fa-calendar-plus mr-1"></i>À venir</span>{% endif %}
+                                {% if planning.saisie_is_today %}<span class="badge badge-warning"><i class="fas fa-calendar-day mr-1"></i>Aujourd'hui</span>{% endif %}
+                            </div>
+                            <h2 class="mt-3 text-xl font-bold">{{ planning.activite_display }}</h2>
+                            {% if planning.saisie_doublons %}<div class="mt-2 flex flex-wrap items-center gap-2">{% include "core/_doublons_badge.html" with doublons=planning.saisie_doublons %}</div>{% endif %}
+                            <div class="mt-2 flex flex-wrap items-center gap-2">
+                                <a href="{% url 'core:search_detail' 'ouvrage' planning.ouvrage_id %}#section-reparations-ouvrage" class="inline-flex items-center gap-2 font-semibold text-primary hover:underline">
+                                    <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-base-300 bg-base-100" title="{{ planning.ouvrage.type_ouvrage.nom_type_ouvrage|default:'Type d’ouvrage non défini' }}">
+                                        <i class="fas {{ planning.ouvrage.type_ouvrage.nom_type_ouvrage|ouvrage_icon }} {{ planning.ouvrage.type_ouvrage.nom_type_ouvrage|ouvrage_icon_tone }} text-lg" aria-hidden="true"></i>
+                                    </span>
+                                    <span>{{ planning.ouvrage.nom_ouvrage }}</span>
+                                </a>
+                                <span class="badge badge-outline badge-sm">{{ planning.ouvrage.type_ouvrage.nom_type_ouvrage|default:"Type non défini" }}</span>
+                                {% debit_critique_badge planning.ouvrage_id %}
+                            </div>
+                            <div class="mt-2 flex flex-wrap gap-2 text-sm">
+                                <span><i class="fas fa-user mr-1 text-base-content/60"></i>{{ planning.employe.nom_affichage|default:"Non affecté" }}</span>
+                                {% if planning.employe.base %}<span class="badge badge-outline badge-sm"><i class="fas fa-building mr-1"></i>{{ planning.employe.base.nom_base }}</span>{% endif %}
+                                <span>
+                                    <i class="fas fa-calendar-day mr-1 text-base-content/60"></i>Intervention :
+                                    {{ planning.date|date:"d/m/Y"|default:"-" }}
+                                    {% if planning.saisie_date_relative %}<span class="ml-1 font-semibold text-info">({{ planning.saisie_date_relative }})</span>{% endif %}
+                                </span>
+                            </div>
+                            {% if planning.saisie_cibles %}<div class="mt-2 flex flex-wrap gap-2">{% for cible in planning.saisie_cibles %}<span class="badge badge-info badge-outline badge-sm">{{ cible }}</span>{% endfor %}</div>{% endif %}
+                            {% if planning.remarque %}<p class="mt-3 whitespace-pre-line rounded bg-base-200/60 p-3 text-sm">{{ planning.remarque }}</p>{% endif %}
+                        </div>
+                        <div class="flex shrink-0 flex-wrap gap-2">
+                            {% if planning.saisie_can_edit %}
+                                <button type="button" class="btn btn-primary btn-outline btn-sm"
+                                    data-recent-edit-update-url="{{ planning.saisie_update_url }}"
+                                    data-recent-edit-options-url="{{ planning.saisie_options_url }}"
+                                    data-recent-edit-date="{{ planning.saisie_date_iso }}"
+                                    data-recent-edit-status="{{ planning.statut|default:'en_cours' }}"
+                                    data-recent-edit-employee-id="{{ planning.employe_id|default:'' }}"
+                                    data-recent-edit-employee-label="{{ planning.employe.nom_affichage|default:'Non affecté' }}"
+                                    data-recent-edit-activity-id="{{ planning.fiche_poste_id|default:'' }}"
+                                    data-recent-edit-activity-label="{{ planning.activite_display }}"
+                                    data-recent-edit-target-type="{{ planning.saisie_target_type }}"
+                                    data-recent-edit-target-id="{{ planning.saisie_target_id }}"
+                                    data-recent-edit-title="{{ planning.activite_display }} — {{ planning.ouvrage.nom_ouvrage }}"
+                                    onclick="openRecentEdit(this)">
+                                    <i class="fas fa-pen"></i> Modifier
+                                </button>
+                            {% endif %}
+                            <a href="{% url 'core:search_detail' 'ouvrage' planning.ouvrage_id %}#section-reparations-ouvrage" class="btn btn-outline btn-sm"><i class="fas fa-eye"></i> Voir l'ouvrage</a>
+                        </div>
+                    </div>
+
+                    {% if planning.card_ouvrage %}
+                        {% include "core/_ouvrage_card_metrics.html" with ouvrage=planning.card_ouvrage %}
+                    {% endif %}
+
+                    {% if planning.saisie_requires_action and planning.saisie_can_edit %}
+                        <div class="mt-4 flex flex-col gap-3 rounded-box border border-error/30 bg-base-100 p-3 sm:flex-row sm:items-center sm:justify-between">
+                            <p class="text-sm font-semibold text-error"><i class="fas fa-clock mr-1"></i>La date est passée : choisissez une action de suivi.</p>
+                            <div class="flex flex-wrap gap-2">
+                                <button type="button" class="btn btn-info btn-sm" onclick="openRecentReschedule(this)"><i class="fas fa-calendar-plus"></i> Reporter la date</button>
+                                <button type="button" class="btn btn-success btn-sm" onclick="completeRecentIntervention(this)"><i class="fas fa-check"></i> Marquer terminée</button>
+                                {% if planning.saisie_can_delete %}<button type="button" class="btn btn-error btn-outline btn-sm" data-recent-delete-url="{{ planning.saisie_delete_url }}" onclick="deleteRecentIntervention(this)"><i class="fas fa-trash"></i> Supprimer</button>{% endif %}
+                            </div>
+                        </div>
+                    {% endif %}
+
+                    {% if planning.saisie_photos %}
+                        <div class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 md:grid-cols-6">
+                            {% for photo in planning.saisie_photos %}
+                                <button type="button" class="group relative overflow-hidden rounded-lg border border-base-300" data-recent-photo-url="{{ photo.url }}" data-recent-photo-name="{{ photo.name }}" data-recent-photo-type="{{ photo.type }}" data-recent-photo-title="{{ planning.activite_display }} — {{ planning.ouvrage.nom_ouvrage }}" onclick="openRecentPhoto(this)">
+                                    {% if photo.is_video %}<video src="{{ photo.url }}" class="h-28 w-full bg-black object-cover" muted playsinline preload="metadata"></video>{% else %}<img src="{{ photo.url }}" loading="lazy" alt="{{ photo.name }}" class="h-28 w-full object-cover transition group-hover:scale-105">{% endif %}
+                                    <span class="absolute inset-x-0 bottom-0 bg-black/70 py-1 text-xs text-white"><i class="fas {% if photo.is_video %}fa-play{% else %}fa-expand-alt{% endif %}"></i> {% if photo.is_video %}Lire{% else %}Agrandir{% endif %}</span>
+                                </button>
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                </article>
+            {% endfor %}
+        </div>
+
+        {% if page_obj.has_other_pages %}
+            <nav class="mt-6 flex justify-center"><div class="join">
+                {% if page_obj.has_previous %}<a class="join-item btn" href="?page={{ page_obj.previous_page_number }}{% if pagination_query %}&amp;{{ pagination_query }}{% endif %}">«</a>{% endif %}
+                <span class="join-item btn btn-active">Page {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+                {% if page_obj.has_next %}<a class="join-item btn" href="?page={{ page_obj.next_page_number }}{% if pagination_query %}&amp;{{ pagination_query }}{% endif %}">»</a>{% endif %}
+            </div></nav>
+        {% endif %}
+    {% else %}
+        <div class="alert alert-info"><i class="fas fa-info-circle"></i><span>Aucune saisie de réparation dans {% if include_other_bases %}les bases accessibles de votre organisation{% else %}votre périmètre{% endif %}.</span></div>
+    {% endif %}
+</div>
+
+{% include "core/_ouvrage_due_modal.html" %}
+{% include "core/_ouvrage_rbf_modal.html" %}
+
+{% if can_edit_interventions %}
+<dialog id="recentEditModal" class="modal">
+    <div class="modal-box w-11/12 max-w-3xl">
+        <form method="dialog"><button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button></form>
+        <h3 class="text-xl font-bold"><i class="fas fa-pen-to-square mr-2 text-primary"></i>Modifier l'intervention</h3>
+        <p id="recentEditTitle" class="mb-5 mt-1 text-sm text-base-content/70"></p>
+        <div id="recentEditLoading" class="hidden flex justify-center py-10"><span class="loading loading-spinner loading-lg text-primary"></span></div>
+        <form id="recentEditForm" class="space-y-4">
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <label class="form-control"><span class="label-text mb-1 font-semibold">Date *</span><input id="recentEditDate" type="date" class="input input-bordered" required></label>
+                <label class="form-control">
+                    <span class="label-text mb-1 flex items-center gap-2 font-semibold">Statut * <span id="recentEditStatusBadge" class="badge badge-warning badge-sm">En cours</span></span>
+                    <select id="recentEditStatus" class="select select-bordered" required onchange="updateRecentEditStatusBadge()"><option value="en_cours">En cours</option><option value="termine">Terminé</option><option value="annule">Annulé</option><option value="reporte">Reporté</option></select>
+                </label>
+            </div>
+            <label class="form-control"><span class="label-text mb-1 font-semibold">Employé</span><select id="recentEditEmployee" class="select select-bordered"><option value="">Non affecté</option></select></label>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <label class="form-control">
+                    <span class="label-text mb-1 font-semibold">Intervention sur *</span>
+                    <select id="recentEditTargetType" class="select select-bordered" required onchange="updateRecentEditTargets()">
+                        <option value="">Choisir</option>
+                        <option value="equipement">Un équipement</option>
+                        <option value="point_eau">Un point d'eau</option>
+                    </select>
+                </label>
+                <label class="form-control">
+                    <span class="label-text mb-1 font-semibold">Cible *</span>
+                    <select id="recentEditTarget" class="select select-bordered" required disabled onchange="updateRecentEditActivities()"><option value="">Choisissez d'abord un type</option></select>
+                </label>
+            </div>
+            <label class="form-control">
+                <span class="label-text mb-1 font-semibold">Activité *</span>
+                <select id="recentEditActivity" class="select select-bordered" required disabled><option value="">Choisissez d'abord une cible</option></select>
+            </label>
+            <div>
+                <div class="mb-2 flex items-center justify-between gap-2">
+                    <span class="font-semibold">Photos et vidéos existantes</span>
+                    <span id="recentEditCount" class="badge badge-outline"></span>
+                </div>
+                <div id="recentEditExisting" class="grid grid-cols-2 gap-2 sm:grid-cols-3"></div>
+            </div>
+            <div class="form-control">
+                <span class="label-text mb-2 font-semibold">Ajouter des photos ou vidéos</span>
+                <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <label for="recentEditCamera" class="btn btn-info btn-outline cursor-pointer"><i class="fas fa-camera"></i> Prendre une photo</label>
+                    <input id="recentEditCamera" type="file" accept="image/*" capture="environment" class="hidden">
+                    <label for="recentEditVideo" class="btn btn-info btn-outline cursor-pointer"><i class="fas fa-video"></i> Filmer une vidéo</label>
+                    <input id="recentEditVideo" type="file" accept="video/*" capture="environment" class="hidden">
+                    <label for="recentEditFiles" class="btn btn-outline cursor-pointer"><i class="fas fa-paperclip"></i> Choisir des fichiers</label>
+                    <input id="recentEditFiles" type="file" accept="image/*,video/*" multiple class="hidden">
+                </div>
+                <div id="recentEditNew" class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3"></div>
+            </div>
+            <div id="recentEditError" class="alert alert-error hidden"><i class="fas fa-exclamation-circle"></i><span></span></div>
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('recentEditModal').close()">Annuler</button>
+                <button id="recentEditSubmit" type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Enregistrer les modifications</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>Fermer</button></form>
+</dialog>
+{% endif %}
+
+<dialog id="recentPhotoLightbox" class="modal">
+    <div class="modal-box w-11/12 max-w-6xl p-3">
+        <div class="mb-3 flex justify-between gap-3"><div class="min-w-0"><h3 id="recentPhotoTitle" class="truncate font-bold">Pièce jointe</h3><p id="recentPhotoName" class="truncate text-xs text-base-content/60"></p></div><form method="dialog"><button class="btn btn-sm btn-circle btn-ghost">✕</button></form></div>
+        <div class="mb-3 flex items-center justify-between"><button class="btn btn-sm btn-outline" onclick="stepRecentPhoto(-1)">« Précédente</button><span id="recentPhotoCounter" class="badge badge-ghost"></span><button class="btn btn-sm btn-outline" onclick="stepRecentPhoto(1)">Suivante »</button></div>
+        <div class="flex min-h-64 justify-center rounded-box bg-black/90 p-2"><img id="recentPhotoImage" class="max-h-[76vh] max-w-full object-contain" alt=""><video id="recentPhotoVideo" class="hidden max-h-[76vh] max-w-full" controls playsinline></video></div>
+        <div class="mt-3 flex justify-end"><a id="recentPhotoOriginal" target="_blank" rel="noopener" class="btn btn-primary btn-sm"><i class="fas fa-expand"></i> Taille réelle</a></div>
+    </div><form method="dialog" class="modal-backdrop"><button>Fermer</button></form>
+</dialog>
+
+<script>
+function handleRecentRegionChange(form) {
+    form.elements.district.value = '';
+    form.elements.commune.value = '';
+    form.submit();
+}
+
+function handleRecentDistrictChange(form) {
+    form.elements.commune.value = '';
+    form.submit();
+}
+
+function escapeRecentHtml(value) {
+    const div = document.createElement('div');
+    div.textContent = value == null ? '' : String(value);
+    return div.innerHTML;
+}
+
+function escapeRecentAttr(value) {
+    return escapeRecentHtml(value).replace(/"/g, '&quot;');
+}
+
+function getRecentCsrfToken() {
+    const cookie = document.cookie.split('; ').find(item => item.startsWith('csrftoken='));
+    return cookie ? decodeURIComponent(cookie.split('=').slice(1).join('=')) : '{{ csrf_token }}';
+}
+
+let recentPhotos = [], recentPhotoIndex = 0;
+function openRecentPhoto(button) { const article=button.closest('article'); const buttons=Array.from(article.querySelectorAll('[data-recent-photo-url]')); recentPhotos=buttons.map(item=>({url:item.dataset.recentPhotoUrl,name:item.dataset.recentPhotoName,title:item.dataset.recentPhotoTitle,type:item.dataset.recentPhotoType})); recentPhotoIndex=Math.max(0,buttons.indexOf(button)); renderRecentPhoto(); document.getElementById('recentPhotoLightbox').showModal(); }
+function renderRecentPhoto(){const photo=recentPhotos[recentPhotoIndex];if(!photo)return;const image=document.getElementById('recentPhotoImage');const video=document.getElementById('recentPhotoVideo');const isVideo=(photo.type||'').startsWith('video/');video.pause();image.classList.toggle('hidden',isVideo);video.classList.toggle('hidden',!isVideo);if(isVideo){video.src=photo.url;image.removeAttribute('src')}else{image.src=photo.url;image.alt=photo.name;video.removeAttribute('src')}document.getElementById('recentPhotoTitle').textContent=photo.title;document.getElementById('recentPhotoName').textContent=photo.name;document.getElementById('recentPhotoCounter').textContent=`${recentPhotoIndex+1} / ${recentPhotos.length}`;document.getElementById('recentPhotoOriginal').href=photo.url;}
+function stepRecentPhoto(step){if(!recentPhotos.length)return;recentPhotoIndex=(recentPhotoIndex+step+recentPhotos.length)%recentPhotos.length;renderRecentPhoto();}
+document.addEventListener('keydown',event=>{if(!document.getElementById('recentPhotoLightbox').open)return;if(event.key==='ArrowLeft')stepRecentPhoto(-1);if(event.key==='ArrowRight')stepRecentPhoto(1);});
+
+{% if can_edit_interventions %}
+const recentEditState = {updateUrl: '', existingPhotos: [], newAttachments: [], points: [], equipements: [], activities: []};
+
+function updateRecentEditTargets(preferredTargetId = '') {
+    const type = document.getElementById('recentEditTargetType').value;
+    const select = document.getElementById('recentEditTarget');
+    const items = type === 'point_eau' ? recentEditState.points : type === 'equipement' ? recentEditState.equipements : [];
+    select.innerHTML = '<option value="">Choisir une cible</option>' + items.map(item => `<option value="${escapeRecentAttr(item.id)}">${escapeRecentHtml(item.label)}</option>`).join('');
+    select.disabled = !type;
+    if (preferredTargetId && items.some(item => item.id === preferredTargetId)) select.value = preferredTargetId;
+    updateRecentEditActivities();
+}
+
+function updateRecentEditActivities(preferredActivityId = '', preferredActivityLabel = '') {
+    const type = document.getElementById('recentEditTargetType').value;
+    const targetId = document.getElementById('recentEditTarget').value;
+    const select = document.getElementById('recentEditActivity');
+    if (!type || !targetId) {
+        select.innerHTML = '<option value="">Choisissez d\'abord une cible</option>';
+        select.disabled = true;
+        return;
+    }
+    const point = type === 'point_eau' ? recentEditState.points.find(item => item.id === targetId) : null;
+    const equipment = type === 'equipement' ? recentEditState.equipements.find(item => item.id === targetId) : null;
+    const activities = recentEditState.activities.filter(item => type === 'point_eau'
+        ? (point?.type_id ? (item.allowed_point_type_ids || []).includes(point.type_id) : Boolean(item.allowed_point_eau))
+        : (item.allowed_equipment_type_ids || []).includes(equipment?.type_id || '')
+    );
+    const groups = new Map();
+    activities.forEach(item => {
+        const group = item.type_label || 'Sans type';
+        if (!groups.has(group)) groups.set(group, []);
+        groups.get(group).push(item);
+    });
+    let options = Array.from(groups.entries())
+        .sort(([left], [right]) => left.localeCompare(right, 'fr', {sensitivity: 'base'}))
+        .map(([group, items]) => `<optgroup label="${escapeRecentAttr(group)}">${items
+            .sort((left, right) => (left.label || '').localeCompare(right.label || '', 'fr', {sensitivity: 'base'}))
+            .map(item => `<option value="${escapeRecentAttr(item.id)}">${escapeRecentHtml(item.label)}</option>`).join('')}</optgroup>`)
+        .join('');
+    if (preferredActivityId && !activities.some(item => item.id === preferredActivityId)) {
+        options += `<option value="${escapeRecentAttr(preferredActivityId)}">${escapeRecentHtml(preferredActivityLabel || 'Activité actuelle')} (activité actuelle)</option>`;
+    }
+    select.innerHTML = '<option value="">Choisir une activité</option>' + options;
+    select.disabled = false;
+    if (preferredActivityId) select.value = preferredActivityId;
+}
+
+function updateRecentEditStatusBadge() {
+    const status = document.getElementById('recentEditStatus').value;
+    const badge = document.getElementById('recentEditStatusBadge');
+    const styles = {
+        en_cours: {label: 'En cours', className: 'badge-warning'},
+        termine: {label: 'Terminé', className: 'badge-success'},
+        annule: {label: 'Annulé', className: 'badge-error'},
+        reporte: {label: 'Reporté', className: 'badge-info'},
+    };
+    const selected = styles[status] || {label: 'Non défini', className: 'badge-ghost'};
+    badge.textContent = selected.label;
+    badge.className = `badge badge-sm ${selected.className}`;
+}
+
+function renderRecentEditAttachments() {
+    document.getElementById('recentEditExisting').innerHTML = recentEditState.existingPhotos.map((photo, index) => {
+        const preview = photo.isVideo
+            ? `<video src="${escapeRecentAttr(photo.url)}" class="h-28 w-full bg-black object-cover" muted playsinline preload="metadata"></video>`
+            : `<img src="${escapeRecentAttr(photo.url)}" class="h-28 w-full object-cover" alt="${escapeRecentAttr(photo.name)}">`;
+        return `<div class="overflow-hidden rounded border ${photo.keep ? 'border-success' : 'border-error opacity-50'}">${preview}<button type="button" class="btn btn-xs w-full rounded-none ${photo.keep ? 'btn-error btn-outline' : 'btn-success'}" onclick="toggleRecentExistingPhoto(${index})"><i class="fas ${photo.keep ? 'fa-trash' : 'fa-rotate-left'}"></i> ${photo.keep ? 'Retirer' : 'Conserver'}</button></div>`;
+    }).join('') || '<p class="col-span-full text-sm text-base-content/60">Aucune pièce jointe existante.</p>';
+
+    document.getElementById('recentEditNew').innerHTML = recentEditState.newAttachments.map((attachment, index) => {
+        const preview = attachment.type.startsWith('video/')
+            ? `<video src="${attachment.data}" class="h-28 w-full bg-black object-cover" muted playsinline preload="metadata"></video>`
+            : `<img src="${attachment.data}" class="h-28 w-full object-cover" alt="${escapeRecentAttr(attachment.name)}">`;
+        return `<div class="overflow-hidden rounded border border-info">${preview}<button type="button" class="btn btn-error btn-outline btn-xs w-full rounded-none" onclick="removeRecentNewPhoto(${index})"><i class="fas fa-trash"></i> Retirer</button></div>`;
+    }).join('');
+    const keptCount = recentEditState.existingPhotos.filter(photo => photo.keep).length;
+    document.getElementById('recentEditCount').textContent = `${keptCount + recentEditState.newAttachments.length} / 6`;
+}
+
+function toggleRecentExistingPhoto(index) {
+    recentEditState.existingPhotos[index].keep = !recentEditState.existingPhotos[index].keep;
+    renderRecentEditAttachments();
+}
+
+function removeRecentNewPhoto(index) {
+    recentEditState.newAttachments.splice(index, 1);
+    renderRecentEditAttachments();
+}
+
+function showRecentEditError(message) {
+    const box = document.getElementById('recentEditError');
+    box.querySelector('span').textContent = message;
+    box.classList.remove('hidden');
+}
+
+function readRecentEditFile(file) {
+    if ((file.type || '').startsWith('video/')) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onerror = reject;
+            reader.onload = event => resolve({name: file.name, type: file.type, data: event.target.result});
+            reader.readAsDataURL(file);
+        });
+    }
+    if (!(file.type || '').startsWith('image/')) return Promise.reject(new Error('Type de fichier non pris en charge.'));
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = reject;
+        reader.onload = event => {
+            const image = new Image();
+            image.onerror = reject;
+            image.onload = () => {
+                const ratio = Math.min(1, 1600 / Math.max(image.width, image.height));
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.round(image.width * ratio);
+                canvas.height = Math.round(image.height * ratio);
+                canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+                resolve({name: file.name, type: 'image/jpeg', data: canvas.toDataURL('image/jpeg', .82)});
+            };
+            image.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
+async function addRecentEditFiles(files) {
+    const keptCount = recentEditState.existingPhotos.filter(photo => photo.keep).length;
+    const availableSlots = 6 - keptCount - recentEditState.newAttachments.length;
+    if (availableSlots <= 0) return showRecentEditError('Retirez une pièce jointe avant d’en ajouter une nouvelle.');
+    const selected = Array.from(files || []);
+    if (selected.length > availableSlots) showRecentEditError(`Seulement ${availableSlots} fichier(s) supplémentaire(s) autorisé(s).`);
+    try {
+        const attachments = await Promise.all(selected.slice(0, availableSlots).map(readRecentEditFile));
+        const totalPayload = attachments.reduce((total, item) => total + item.data.length, 0);
+        if (totalPayload > 45 * 1024 * 1024) throw new Error('Les nouvelles pièces jointes dépassent 45 Mo au total.');
+        recentEditState.newAttachments.push(...attachments);
+        renderRecentEditAttachments();
+    } catch (error) {
+        showRecentEditError(error.message || 'Impossible de lire le fichier.');
+    }
+}
+
+async function openRecentEdit(button) {
+    const article = button.closest('article');
+    const modal = document.getElementById('recentEditModal');
+    recentEditState.updateUrl = button.dataset.recentEditUpdateUrl;
+    recentEditState.newAttachments = [];
+    recentEditState.existingPhotos = Array.from(article.querySelectorAll('[data-recent-photo-url]')).map(photo => ({
+        url: photo.dataset.recentPhotoUrl,
+        name: photo.dataset.recentPhotoName,
+        type: photo.dataset.recentPhotoType || 'image/jpeg',
+        isVideo: (photo.dataset.recentPhotoType || '').startsWith('video/'),
+        keep: true,
+    }));
+    document.getElementById('recentEditTitle').textContent = button.dataset.recentEditTitle || '';
+    const dateInput = document.getElementById('recentEditDate');
+    dateInput.removeAttribute('min');
+    dateInput.value = button.dataset.recentEditDate || '';
+    document.getElementById('recentEditStatus').value = button.dataset.recentEditStatus || 'en_cours';
+    document.getElementById('recentEditError').classList.add('hidden');
+    document.getElementById('recentEditCamera').value = '';
+    document.getElementById('recentEditVideo').value = '';
+    document.getElementById('recentEditFiles').value = '';
+    updateRecentEditStatusBadge();
+    renderRecentEditAttachments();
+    document.getElementById('recentEditLoading').innerHTML = '<span class="loading loading-spinner loading-lg text-primary"></span>';
+    document.getElementById('recentEditLoading').classList.remove('hidden');
+    document.getElementById('recentEditForm').classList.add('hidden');
+    modal.showModal();
+
+    try {
+        const response = await fetch(button.dataset.recentEditOptionsUrl, {credentials: 'same-origin'});
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Chargement des options impossible.');
+        recentEditState.points = data.points || [];
+        recentEditState.equipements = data.equipements || [];
+        recentEditState.activities = data.activities || [];
+        const employees = data.employees || [];
+        const grouped = new Map();
+        employees.forEach(employee => {
+            const base = employee.base_label || 'Base non définie';
+            const poste = employee.poste_label || 'Sans poste';
+            if (!grouped.has(base)) grouped.set(base, new Map());
+            if (!grouped.get(base).has(poste)) grouped.get(base).set(poste, []);
+            grouped.get(base).get(poste).push(employee);
+        });
+        let options = '<option value="">Non affecté</option>';
+        grouped.forEach((postes, base) => {
+            options += `<option disabled>── Base : ${escapeRecentHtml(base)} ──</option>`;
+            postes.forEach((employeesForPoste, poste) => {
+                options += `<optgroup label="Poste : ${escapeRecentAttr(poste)}">${employeesForPoste.map(employee => `<option value="${escapeRecentAttr(employee.id)}">${escapeRecentHtml(employee.label)}</option>`).join('')}</optgroup>`;
+            });
+        });
+        const currentEmployeeId = button.dataset.recentEditEmployeeId || '';
+        if (currentEmployeeId && !employees.some(employee => employee.id === currentEmployeeId)) {
+            options += `<option value="${escapeRecentAttr(currentEmployeeId)}">${escapeRecentHtml(button.dataset.recentEditEmployeeLabel)} (affectation actuelle)</option>`;
+        }
+        document.getElementById('recentEditEmployee').innerHTML = options;
+        document.getElementById('recentEditEmployee').value = currentEmployeeId;
+        const targetType = button.dataset.recentEditTargetType || '';
+        const targetId = button.dataset.recentEditTargetId || '';
+        const activityId = button.dataset.recentEditActivityId || '';
+        document.getElementById('recentEditTargetType').value = targetType;
+        updateRecentEditTargets(targetId);
+        updateRecentEditActivities(activityId, button.dataset.recentEditActivityLabel || '');
+        document.getElementById('recentEditLoading').classList.add('hidden');
+        document.getElementById('recentEditForm').classList.remove('hidden');
+    } catch (error) {
+        document.getElementById('recentEditLoading').innerHTML = `<div class="alert alert-error">${escapeRecentHtml(error.message)}</div>`;
+    }
+}
+
+async function openRecentReschedule(button) {
+    const editButton = button.closest('article').querySelector('[data-recent-edit-update-url]');
+    if (!editButton) return;
+    await openRecentEdit(editButton);
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowIso = [
+        tomorrow.getFullYear(),
+        String(tomorrow.getMonth() + 1).padStart(2, '0'),
+        String(tomorrow.getDate()).padStart(2, '0'),
+    ].join('-');
+    const dateInput = document.getElementById('recentEditDate');
+    dateInput.min = tomorrowIso;
+    if (!dateInput.value || dateInput.value < tomorrowIso) dateInput.value = tomorrowIso;
+    document.getElementById('recentEditStatus').value = 'reporte';
+    updateRecentEditStatusBadge();
+}
+
+async function completeRecentIntervention(button) {
+    if (!window.confirm('Marquer cette intervention comme terminée ?')) return;
+    const article = button.closest('article');
+    const editButton = article.querySelector('[data-recent-edit-update-url]');
+    if (!editButton) return;
+    button.disabled = true;
+    try {
+        const attachmentCount = article.querySelectorAll('[data-recent-photo-url]').length;
+        const response = await fetch(editButton.dataset.recentEditUpdateUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {'Accept': 'application/json', 'Content-Type': 'application/json', 'X-CSRFToken': getRecentCsrfToken()},
+            body: JSON.stringify({
+                date: editButton.dataset.recentEditDate,
+                employee_id: editButton.dataset.recentEditEmployeeId || '',
+                status: 'termine',
+                existing_attachment_indexes: Array.from({length: attachmentCount}, (_, index) => index),
+                attachments: [],
+            }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Modification impossible.');
+        window.location.reload();
+    } catch (error) {
+        window.alert(error.message || 'Modification impossible.');
+        button.disabled = false;
+    }
+}
+
+async function deleteRecentIntervention(button) {
+    if (!window.confirm('Supprimer définitivement cette intervention ? Cette action est irréversible.')) return;
+    button.disabled = true;
+    try {
+        const response = await fetch(button.dataset.recentDeleteUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {'Accept': 'application/json', 'X-CSRFToken': getRecentCsrfToken()},
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Suppression impossible.');
+        window.location.reload();
+    } catch (error) {
+        window.alert(error.message || 'Suppression impossible.');
+        button.disabled = false;
+    }
+}
+
+document.getElementById('recentEditCamera').addEventListener('change', async event => { await addRecentEditFiles(event.target.files); event.target.value = ''; });
+document.getElementById('recentEditVideo').addEventListener('change', async event => { await addRecentEditFiles(event.target.files); event.target.value = ''; });
+document.getElementById('recentEditFiles').addEventListener('change', async event => { await addRecentEditFiles(event.target.files); event.target.value = ''; });
+document.getElementById('recentEditForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    const submitButton = document.getElementById('recentEditSubmit');
+    submitButton.disabled = true;
+    document.getElementById('recentEditError').classList.add('hidden');
+    try {
+        const response = await fetch(recentEditState.updateUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {'Accept': 'application/json', 'Content-Type': 'application/json', 'X-CSRFToken': getRecentCsrfToken()},
+            body: JSON.stringify({
+                date: document.getElementById('recentEditDate').value,
+                employee_id: document.getElementById('recentEditEmployee').value,
+                status: document.getElementById('recentEditStatus').value,
+                activity_id: document.getElementById('recentEditActivity').value,
+                target_type: document.getElementById('recentEditTargetType').value,
+                target_id: document.getElementById('recentEditTarget').value,
+                existing_attachment_indexes: recentEditState.existingPhotos.map((photo, index) => photo.keep ? index : null).filter(index => index !== null),
+                attachments: recentEditState.newAttachments,
+            }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Modification impossible.');
+        window.location.reload();
+    } catch (error) {
+        showRecentEditError(error.message || 'Modification impossible.');
+    } finally {
+        submitButton.disabled = false;
+    }
+});
+{% endif %}
+</script>
+{% endblock %}

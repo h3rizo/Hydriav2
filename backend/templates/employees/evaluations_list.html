@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% load static humanize %}
+{% load employee_grouping %}
+
+{% block title %}Évaluations{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">Évaluations des employés</h1>
+            <p class="text-base-content/70">Gérer les évaluations de performance</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <a href="{% url 'employees:evaluation_rapport' %}{% if organisation_options %}?organisation={{ organisation_selected }}{% endif %}" class="btn btn-outline btn-primary">
+                <i class="fas fa-file-alt mr-2"></i>Rapport
+            </a>
+            <a href="{% url 'employees:evaluation_creer' %}" class="btn btn-primary">
+                <i class="fas fa-plus mr-2"></i>Nouvelle évaluation
+            </a>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <div class="grid grid-cols-1 {% if organisation_options %}md:grid-cols-5{% else %}md:grid-cols-4{% endif %} gap-4">
+                {% if organisation_options %}
+                <select id="filterOrganisation" class="select select-bordered" title="Organisation"
+                        onchange="window.location.search = '?organisation=' + encodeURIComponent(this.value)">
+                    <option value="all" {% if organisation_selected == 'all' %}selected{% endif %}>Toutes les organisations</option>
+                    {% for org in organisation_options %}
+                        <option value="{{ org.id }}" {% if organisation_selected == org.id|stringformat:"s" %}selected{% endif %}>{{ org.nom_organisation }}</option>
+                    {% endfor %}
+                </select>
+                {% endif %}
+                <select id="filterBase" class="select select-bordered">
+                    <option value="">Toutes les bases</option>
+                    {% for base in bases %}
+                        <option value="{{ base.id }}">{{ base.nom_base }}</option>
+                    {% endfor %}
+                </select>
+                <select id="filterEmploye" class="select select-bordered">
+                    {% grouped_employee_options employes "" "Tous les employés" %}
+                </select>
+                <select id="filterStatut" class="select select-bordered">
+                    <option value="">Tous les statuts</option>
+                    <option value="brouillon">Brouillon</option>
+                    <option value="terminee">Terminée</option>
+                    <option value="validee">Validée</option>
+                </select>
+                <input type="number" id="filterAnnee" placeholder="Année" class="input input-bordered">
+            </div>
+            <button onclick="loadEvaluations()" class="btn btn-sm btn-info mt-2">Filtrer</button>
+        </div>
+    </div>
+
+    <!-- Liste -->
+    <div id="evaluationsList"></div>
+</div>
+
+<script>
+loadEvaluations();
+filterEmployesByBase();
+
+document.getElementById('filterBase').addEventListener('change', filterEmployesByBase);
+
+async function loadEvaluations() {
+    const params = new URLSearchParams({
+        base_id: document.getElementById('filterBase').value,
+        employe_id: document.getElementById('filterEmploye').value,
+        statut: document.getElementById('filterStatut').value,
+        annee: document.getElementById('filterAnnee').value,
+        organisation: '{{ organisation_selected }}'
+    });
+
+    try {
+        const response = await fetch(`/employes/api/evaluations/list/?${params}`);
+        const data = await response.json();
+
+        if (data.success) {
+            displayEvaluations(data.evaluations);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+    }
+}
+
+function displayEvaluations(evaluations) {
+    const container = document.getElementById('evaluationsList');
+
+    if (evaluations.length === 0) {
+        container.innerHTML = '<div class="alert">Aucune évaluation trouvée</div>';
+        return;
+    }
+
+    container.innerHTML = evaluations.map(e => {
+        const statutBadge = e.statut === 'terminee' ? 'badge-success' :
+                           e.statut === 'validee' ? 'badge-info' : 'badge-warning';
+        const noteColor = e.pourcentage >= 80 ? 'text-success' :
+                         e.pourcentage >= 60 ? 'text-warning' : 'text-error';
+
+        const canDelete = e.statut === 'brouillon';
+        const deleteButton = canDelete
+            ? `<button onclick="deleteEvaluation('${e.id}')" class="btn btn-sm btn-error">Supprimer</button>`
+            : '';
+
+        return `
+            <div class="card bg-base-200 mb-4" id="evaluation-${e.id}">
+                <div class="card-body">
+                    <div class="flex justify-between items-start">
+                        <div class="flex-1">
+                            <h3 class="card-title">${e.employe_nom}</h3>
+                            <p class="text-sm">${e.employe_poste}</p>
+                            <div class="flex gap-2 mt-2">
+                                <span class="badge ${statutBadge}">${e.statut}</span>
+                                ${e.est_auto_evaluation ? '<span class="badge badge-ghost">Auto</span>' : ''}
+                            </div>
+                            <div class="mt-2 text-sm">
+                                <div>Période: ${formatDate(e.periode_debut)} → ${formatDate(e.periode_fin)}</div>
+                                <div>Évaluateur: ${e.evaluateur_nom}</div>
+                                <div class="${noteColor} font-bold">Note: ${e.note_totale}/${e.note_maximale} (${e.pourcentage}%)</div>
+                            </div>
+                        </div>
+                        <div class="flex gap-2">
+                            <a href="/employes/evaluations/${e.id}/" class="btn btn-sm btn-primary">Voir</a>
+                            ${deleteButton}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function formatDate(dateStr) {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('fr-FR');
+}
+
+function filterEmployesByBase() {
+    const baseId = document.getElementById('filterBase').value;
+    const employeSelect = document.getElementById('filterEmploye');
+    let hasSelected = false;
+
+    Array.from(employeSelect.options).forEach(option => {
+        if (!option.value) {
+            option.hidden = false;
+            return;
+        }
+
+        const optionBaseId = option.dataset.baseId || '';
+        const isVisible = !baseId || optionBaseId === baseId;
+        option.hidden = !isVisible;
+        if (isVisible && option.selected) {
+            hasSelected = true;
+        }
+    });
+
+    if (!hasSelected) {
+        employeSelect.value = '';
+    }
+}
+
+async function deleteEvaluation(evaluationId) {
+    if (!confirm('Supprimer cette évaluation ? Cette action est définitive.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/employes/api/evaluations/${evaluationId}/delete/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            const card = document.getElementById(`evaluation-${evaluationId}`);
+            if (card) {
+                card.remove();
+            }
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors de la suppression.');
+    }
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+</script>
+{% endblock %}

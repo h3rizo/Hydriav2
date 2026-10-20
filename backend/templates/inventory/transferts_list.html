@@ -1,0 +1,795 @@
+{% extends logistics_shell_base_template|default:"base.html" %}
+{% load humanize %}
+
+{% block title %}Transferts de Stock{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">Transferts de Stock</h1>
+            <p class="text-base-content/70 mt-1">Gérer les transferts entre magasins</p>
+        </div>
+        <div class="flex gap-2">
+            <!-- Dropdown Export/Import -->
+            <div class="dropdown dropdown-end">
+                <label tabindex="0" class="btn btn-ghost btn-sm">
+                    <i class="fas fa-file-excel mr-1"></i>Excel<i class="fas fa-chevron-down ml-1 text-xs"></i>
+                </label>
+                <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-[1] w-52 p-2 shadow border border-base-300">
+                    <li class="menu-title"><span>Export</span></li>
+                    <li><a href="{% url 'inventory:export_transferts' %}"><i class="fas fa-download mr-2 text-success"></i>Exporter Transferts</a></li>
+                    <li><a href="{% url 'inventory:export_transferts_details' %}"><i class="fas fa-list mr-2 text-success"></i>Export avec Détails</a></li>
+                    <li class="menu-title mt-2"><span>Templates</span></li>
+                    <li><a href="{% url 'inventory:template_transferts' %}"><i class="fas fa-file-download mr-2 text-info"></i>Template Transferts</a></li>
+                    <li><a href="{% url 'inventory:template_transferts_items' %}"><i class="fas fa-boxes mr-2 text-info"></i>Template Items</a></li>
+                    <li class="menu-title mt-2"><span>Import</span></li>
+                    <li><a onclick="document.getElementById('import-transferts-file').click()"><i class="fas fa-upload mr-2 text-warning"></i>Importer Transferts</a></li>
+                    <li><a onclick="document.getElementById('import-items-file').click()"><i class="fas fa-upload mr-2 text-warning"></i>Importer Items</a></li>
+                </ul>
+            </div>
+            <button onclick="openCreateModal()" class="btn btn-primary">
+                <i class="fas fa-plus mr-2"></i>Nouveau Transfert
+            </button>
+        </div>
+    </div>
+
+    <!-- Input files cachés pour import -->
+    <input type="file" id="import-transferts-file" accept=".xlsx,.xls" style="display:none" onchange="importTransfertsExcel(this)">
+    <input type="file" id="import-items-file" accept=".xlsx,.xls" style="display:none" onchange="importItemsExcel(this)">
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                    <label class="label"><span class="label-text">Statut</span></label>
+                    <select id="filter-statut" class="select select-bordered w-full">
+                        <option value="all">Tous les statuts</option>
+                        <option value="en_attente">En attente</option>
+                        <option value="en_cours">En cours</option>
+                        <option value="recu">Reçu</option>
+                        <option value="annule">Annulé</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="label"><span class="label-text">Magasin origine</span></label>
+                    <select id="filter-magasin-origine" class="select select-bordered w-full">
+                        <option value="all">Tous les magasins</option>
+                        {% for magasin in magasins %}
+                        <option value="{{ magasin.id }}">{{ magasin.nom_magasin }} ({{ magasin.base.nom_base }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label class="label"><span class="label-text">Magasin destination</span></label>
+                    <select id="filter-magasin-destination" class="select select-bordered w-full">
+                        <option value="all">Tous les magasins</option>
+                        {% for magasin in magasins %}
+                        <option value="{{ magasin.id }}">{{ magasin.nom_magasin }} ({{ magasin.base.nom_base }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label class="label"><span class="label-text">Recherche</span></label>
+                    <input type="text" id="filter-recherche" class="input input-bordered w-full" placeholder="N° transfert, notes...">
+                </div>
+            </div>
+            <div class="flex justify-end gap-2 mt-4">
+                <button onclick="resetFilters()" class="btn btn-ghost">Réinitialiser</button>
+                <button onclick="loadTransferts()" class="btn btn-primary">Filtrer</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tableau des transferts -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra">
+                    <thead>
+                        <tr>
+                            <th>N° Transfert</th>
+                            <th>Date</th>
+                            <th>Origine → Destination</th>
+                            <th>Statut</th>
+                            <th>Articles</th>
+                            <th>Initié par</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="transferts-tbody">
+                        <tr>
+                            <td colspan="7" class="text-center py-8">
+                                <span class="loading loading-spinner loading-lg"></span>
+                                <p class="mt-2">Chargement...</p>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Créer/Modifier Transfert -->
+<dialog id="modal-transfert" class="modal">
+    <div class="modal-box max-w-4xl">
+        <h3 class="font-bold text-lg mb-4" id="modal-title">Nouveau Transfert</h3>
+
+        <form id="form-transfert">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Numéro de transfert -->
+                <div>
+                    <label class="label"><span class="label-text font-semibold">N° Transfert *</span></label>
+                    <input type="text" id="transfer-number" class="input input-bordered w-full" required>
+                </div>
+
+                <!-- Date de transfert -->
+                <div>
+                    <label class="label"><span class="label-text font-semibold">Date de transfert *</span></label>
+                    <input type="datetime-local" id="transfer-date" class="input input-bordered w-full" required>
+                </div>
+
+                <!-- Magasin origine -->
+                <div>
+                    <label class="label"><span class="label-text font-semibold">Magasin origine *</span></label>
+                    <select id="magasin-origine" class="select select-bordered w-full" required>
+                        <option value="">Sélectionner...</option>
+                        {% for magasin in magasins %}
+                        <option value="{{ magasin.id }}">{{ magasin.nom_magasin }} ({{ magasin.base.nom_base }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Magasin destination -->
+                <div>
+                    <label class="label"><span class="label-text font-semibold">Magasin destination *</span></label>
+                    <select id="magasin-destination" class="select select-bordered w-full" required>
+                        <option value="">Sélectionner...</option>
+                        {% for magasin in magasins %}
+                        <option value="{{ magasin.id }}">{{ magasin.nom_magasin }} ({{ magasin.base.nom_base }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Initié par -->
+                <div>
+                    <label class="label"><span class="label-text">Initié par</span></label>
+                    <select id="initiated-by" class="select select-bordered w-full">
+                        <option value="">Non spécifié</option>
+                        {% for employe in employes %}
+                        <option value="{{ employe.id }}">{{ employe.surnom }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Date d'arrivée prévue -->
+                <div>
+                    <label class="label"><span class="label-text">Date d'arrivée prévue</span></label>
+                    <input type="datetime-local" id="expected-arrival-date" class="input input-bordered w-full">
+                </div>
+            </div>
+
+            <!-- Notes -->
+            <div class="mt-4">
+                <label class="label"><span class="label-text">Notes</span></label>
+                <textarea id="notes" class="textarea textarea-bordered w-full" rows="2"></textarea>
+            </div>
+
+            <!-- Articles à transférer -->
+            <div class="mt-6">
+                <div class="flex justify-between items-center mb-3">
+                    <h4 class="font-bold">Articles à transférer</h4>
+                    <button type="button" onclick="addTransfertItem()" class="btn btn-sm btn-ghost">
+                        <i class="fas fa-plus mr-1"></i>Ajouter
+                    </button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Désignation</th>
+                                <th>Quantité</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="transfert-items">
+                            <!-- Items seront ajoutés dynamiquement -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" onclick="document.getElementById('modal-transfert').close()" class="btn btn-ghost">Annuler</button>
+                <button type="submit" class="btn btn-primary">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal Détails Transfert -->
+<dialog id="modal-details" class="modal">
+    <div class="modal-box max-w-3xl">
+        <h3 class="font-bold text-lg mb-4">Détails du Transfert</h3>
+
+        <div id="details-content">
+            <!-- Contenu chargé dynamiquement -->
+        </div>
+
+        <div class="modal-action">
+            <button type="button" onclick="document.getElementById('modal-details').close()" class="btn">Fermer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal Réception -->
+<dialog id="modal-reception" class="modal">
+    <div class="modal-box max-w-3xl">
+        <h3 class="font-bold text-lg mb-4">Réception du Transfert</h3>
+
+        <form id="form-reception">
+            <input type="hidden" id="reception-transfert-id">
+
+            <div class="mb-4">
+                <label class="label"><span class="label-text">Reçu par</span></label>
+                <select id="reception-received-by" class="select select-bordered w-full">
+                    <option value="">Non spécifié</option>
+                    {% for employe in employes %}
+                    <option value="{{ employe.id }}">{{ employe.surnom }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Désignation</th>
+                            <th>Qté envoyée</th>
+                            <th>Qté reçue</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reception-items">
+                        <!-- Items chargés dynamiquement -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" onclick="document.getElementById('modal-reception').close()" class="btn btn-ghost">Annuler</button>
+                <button type="submit" class="btn btn-success">
+                    <i class="fas fa-check mr-2"></i>Confirmer Réception
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+let currentItems = [];
+
+// Charger les transferts au démarrage
+document.addEventListener('DOMContentLoaded', () => {
+    loadTransferts();
+    // Définir la date/heure actuelle par défaut
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    document.getElementById('transfer-date').value = now.toISOString().slice(0, 16);
+});
+
+async function loadTransferts() {
+    const tbody = document.getElementById('transferts-tbody');
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8"><span class="loading loading-spinner loading-lg"></span></td></tr>';
+
+    const params = new URLSearchParams({
+        statut: document.getElementById('filter-statut').value,
+        magasin_origine_id: document.getElementById('filter-magasin-origine').value,
+        magasin_destination_id: document.getElementById('filter-magasin-destination').value,
+        recherche: document.getElementById('filter-recherche').value
+    });
+
+    try {
+        const response = await fetch(`/stocks/transferts/api/list/?${params}`);
+        const data = await response.json();
+
+        if (data.success) {
+            displayTransferts(data.transferts);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-error py-4">Erreur de chargement</td></tr>';
+    }
+}
+
+function displayTransferts(transferts) {
+    const tbody = document.getElementById('transferts-tbody');
+
+    if (transferts.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4">Aucun transfert trouvé</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = '';
+    transferts.forEach(transfert => {
+        const statusBadge = getStatusBadge(transfert.status, transfert.status_display);
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><strong>${transfert.transfer_number}</strong></td>
+            <td>${transfert.transfer_date}</td>
+            <td>
+                <div class="flex items-center gap-2">
+                    <span>${transfert.magasin_origine}</span>
+                    <i class="fas fa-arrow-right text-primary"></i>
+                    <span>${transfert.magasin_destination}</span>
+                </div>
+            </td>
+            <td>${statusBadge}</td>
+            <td>${transfert.nb_items} article(s)</td>
+            <td>${transfert.initiated_by || '<em>Non spécifié</em>'}</td>
+            <td>
+                <div class="dropdown dropdown-end">
+                    <label tabindex="0" class="btn btn-ghost btn-xs">
+                        <i class="fas fa-ellipsis-v"></i>
+                    </label>
+                    <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52">
+                        <li><a onclick="viewDetails('${transfert.id}')"><i class="fas fa-eye mr-2"></i>Détails</a></li>
+                        <li><a href="/stocks/transferts/${transfert.id}/bon-livraison/" target="_blank"><i class="fas fa-print mr-2 text-primary"></i>Bon de livraison</a></li>
+                        ${transfert.status === 'en_attente' ? `<li><a onclick="envoyerTransfert('${transfert.id}')"><i class="fas fa-shipping-fast mr-2 text-info"></i>Marquer en cours</a></li>` : ''}
+                        ${transfert.status === 'en_cours' ? `<li><a onclick="openReceptionModal('${transfert.id}')"><i class="fas fa-check mr-2 text-success"></i>Recevoir</a></li>` : ''}
+                        ${transfert.status !== 'recu' ? `<li><a onclick="annulerTransfert('${transfert.id}')"><i class="fas fa-ban mr-2 text-warning"></i>Annuler</a></li>` : ''}
+                        ${transfert.status !== 'recu' ? `<li><a onclick="deleteTransfert('${transfert.id}', '${transfert.transfer_number}')"><i class="fas fa-trash mr-2 text-error"></i>Supprimer</a></li>` : ''}
+                    </ul>
+                </div>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function getStatusBadge(status, display) {
+    const badges = {
+        'en_attente': 'badge-warning',
+        'en_cours': 'badge-info',
+        'recu': 'badge-success',
+        'annule': 'badge-error'
+    };
+    return `<span class="badge ${badges[status] || 'badge-ghost'}">${display}</span>`;
+}
+
+function resetFilters() {
+    document.getElementById('filter-statut').value = 'all';
+    document.getElementById('filter-magasin-origine').value = 'all';
+    document.getElementById('filter-magasin-destination').value = 'all';
+    document.getElementById('filter-recherche').value = '';
+    loadTransferts();
+}
+
+function openCreateModal() {
+    document.getElementById('modal-title').textContent = 'Nouveau Transfert';
+    document.getElementById('form-transfert').reset();
+    currentItems = [];
+    document.getElementById('transfert-items').innerHTML = '';
+
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    document.getElementById('transfer-date').value = now.toISOString().slice(0, 16);
+
+    document.getElementById('modal-transfert').showModal();
+}
+
+function addTransfertItem() {
+    const tbody = document.getElementById('transfert-items');
+    const row = document.createElement('tr');
+    const itemId = Date.now();
+
+    row.innerHTML = `
+        <td>
+            <select class="select select-bordered select-sm w-full" data-item-id="${itemId}" data-field="designation">
+                <option value="">Sélectionner une désignation...</option>
+                {% for designation in designations %}
+                <option value="{{ designation.id }}">{{ designation.nom }}{% if designation.unite %} ({{ designation.unite }}){% endif %}</option>
+                {% endfor %}
+            </select>
+        </td>
+        <td>
+            <input type="number" step="0.01" min="0" class="input input-bordered input-sm w-full"
+                   data-item-id="${itemId}" data-field="quantity" placeholder="0.00">
+        </td>
+        <td>
+            <button type="button" onclick="removeTransfertItem(${itemId})" class="btn btn-ghost btn-xs text-error">
+                <i class="fas fa-trash"></i>
+            </button>
+        </td>
+    `;
+    tbody.appendChild(row);
+}
+
+function removeTransfertItem(itemId) {
+    const row = document.querySelector(`[data-item-id="${itemId}"]`).closest('tr');
+    row.remove();
+}
+
+document.getElementById('form-transfert').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    // Collecter les items
+    const items = [];
+    const rows = document.querySelectorAll('#transfert-items tr');
+    rows.forEach(row => {
+        const designationSelect = row.querySelector('[data-field="designation"]');
+        const quantityInput = row.querySelector('[data-field="quantity"]');
+
+        if (designationSelect.value && quantityInput.value > 0) {
+            items.push({
+                designation_id: designationSelect.value,
+                quantity: parseFloat(quantityInput.value)
+            });
+        }
+    });
+
+    if (items.length === 0) {
+        alert('Veuillez ajouter au moins un article');
+        return;
+    }
+
+    const data = {
+        transfer_number: document.getElementById('transfer-number').value,
+        transfer_date: document.getElementById('transfer-date').value,
+        expected_arrival_date: document.getElementById('expected-arrival-date').value,
+        magasin_origine_id: document.getElementById('magasin-origine').value,
+        magasin_destination_id: document.getElementById('magasin-destination').value,
+        initiated_by_id: document.getElementById('initiated-by').value,
+        notes: document.getElementById('notes').value,
+        items: items
+    };
+
+    try {
+        const response = await fetch('/stocks/transferts/api/create/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            document.getElementById('modal-transfert').close();
+            loadTransferts();
+            alert('✓ Transfert créé avec succès !');
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+});
+
+async function viewDetails(transfertId) {
+    try {
+        const response = await fetch(`/stocks/transferts/api/${transfertId}/detail/`);
+        const data = await response.json();
+
+        if (data.success) {
+            const transfert = data.transfert;
+            const statusBadge = getStatusBadge(transfert.status, transfert.status_display);
+
+            let itemsHtml = '';
+            transfert.items.forEach(item => {
+                itemsHtml += `
+                    <tr>
+                        <td>${item.designation_nom}</td>
+                        <td>${item.quantity_sent} ${item.designation_unite}</td>
+                    </tr>
+                `;
+            });
+
+            document.getElementById('details-content').innerHTML = `
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <p class="text-sm text-base-content/70">N° Transfert</p>
+                        <p class="font-bold">${transfert.transfer_number}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Statut</p>
+                        <p>${statusBadge}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Magasin origine</p>
+                        <p class="font-semibold">${transfert.magasin_origine}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Magasin destination</p>
+                        <p class="font-semibold">${transfert.magasin_destination}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Date de transfert</p>
+                        <p>${new Date(transfert.transfer_date).toLocaleString('fr-FR')}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Initié par</p>
+                        <p>${transfert.initiated_by || '<em>Non spécifié</em>'}</p>
+                    </div>
+                    ${transfert.actual_arrival_date ? `
+                    <div>
+                        <p class="text-sm text-base-content/70">Date de réception</p>
+                        <p>${new Date(transfert.actual_arrival_date).toLocaleString('fr-FR')}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-base-content/70">Reçu par</p>
+                        <p>${transfert.received_by || '<em>Non spécifié</em>'}</p>
+                    </div>
+                    ` : ''}
+                </div>
+
+                ${transfert.notes ? `
+                <div class="mb-4">
+                    <p class="text-sm text-base-content/70">Notes</p>
+                    <p class="text-sm">${transfert.notes}</p>
+                </div>
+                ` : ''}
+
+                <div class="divider">Articles transférés</div>
+
+                <div class="overflow-x-auto">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Désignation</th>
+                                <th>Quantité</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${itemsHtml}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            document.getElementById('modal-details').showModal();
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur de chargement des détails');
+    }
+}
+
+async function envoyerTransfert(transfertId) {
+    if (!confirm('Marquer ce transfert comme "En cours" ?')) return;
+
+    try {
+        const response = await fetch(`/stocks/transferts/api/${transfertId}/update-status/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ action: 'envoyer' })
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            loadTransferts();
+            alert('✓ Transfert marqué en cours');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+    }
+}
+
+async function openReceptionModal(transfertId) {
+    try {
+        const response = await fetch(`/stocks/transferts/api/${transfertId}/detail/`);
+        const data = await response.json();
+
+        if (data.success) {
+            document.getElementById('reception-transfert-id').value = transfertId;
+
+            const tbody = document.getElementById('reception-items');
+            tbody.innerHTML = '';
+
+            data.transfert.items.forEach(item => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${item.designation_nom}</td>
+                    <td>${item.quantity_sent} ${item.designation_unite}</td>
+                    <td>
+                        <input type="number" step="0.01" min="0" max="${item.quantity_sent}"
+                               value="${item.quantity_sent}"
+                               class="input input-bordered input-sm w-24"
+                               data-item-id="${item.id}">
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+
+            document.getElementById('modal-reception').showModal();
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+    }
+}
+
+document.getElementById('form-reception').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const transfertId = document.getElementById('reception-transfert-id').value;
+    const receivedById = document.getElementById('reception-received-by').value;
+
+    const items = [];
+    document.querySelectorAll('#reception-items input[data-item-id]').forEach(input => {
+        items.push({
+            item_id: input.dataset.itemId,
+            quantity_received: parseFloat(input.value)
+        });
+    });
+
+    try {
+        const response = await fetch(`/stocks/transferts/api/${transfertId}/update-status/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                action: 'recevoir',
+                received_by_id: receivedById,
+                items: items
+            })
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            document.getElementById('modal-reception').close();
+            loadTransferts();
+            alert('✓ Transfert reçu avec succès !');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+    }
+});
+
+async function annulerTransfert(transfertId) {
+    if (!confirm('Annuler ce transfert ?')) return;
+
+    try {
+        const response = await fetch(`/stocks/transferts/api/${transfertId}/update-status/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ action: 'annuler' })
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            loadTransferts();
+            alert('✓ Transfert annulé');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+    }
+}
+
+async function deleteTransfert(transfertId, transfertNumber) {
+    if (!confirm(`Supprimer le transfert ${transfertNumber} ?\n\nCette action est irréversible.`)) return;
+
+    try {
+        const response = await fetch(`/stocks/transferts/api/${transfertId}/delete/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            loadTransferts();
+            alert('✓ ' + result.message);
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+    }
+}
+
+async function importTransfertsExcel(input) {
+    if (!input.files || input.files.length === 0) return;
+
+    const formData = new FormData();
+    formData.append('file', input.files[0]);
+
+    try {
+        const response = await fetch('{% url "inventory:import_transferts" %}', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            let message = `✓ ${result.nb_imported} transfert(s) importé(s) avec succès !`;
+            if (result.errors && result.errors.length > 0) {
+                message += `\n\nErreurs rencontrées:\n${result.errors.join('\n')}`;
+            }
+            alert(message);
+            loadTransferts();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+
+    // Réinitialiser l'input
+    input.value = '';
+}
+
+async function importItemsExcel(input) {
+    if (!input.files || input.files.length === 0) return;
+
+    const formData = new FormData();
+    formData.append('file', input.files[0]);
+
+    try {
+        const response = await fetch('{% url "inventory:import_transferts_items" %}', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            let message = `✓ ${result.nb_imported} item(s) importé(s) avec succès !`;
+            if (result.errors && result.errors.length > 0) {
+                message += `\n\nErreurs rencontrées:\n${result.errors.join('\n')}`;
+            }
+            alert(message);
+            loadTransferts();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+
+    // Réinitialiser l'input
+    input.value = '';
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+</script>
+{% endblock %}

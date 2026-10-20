@@ -1,0 +1,1638 @@
+﻿{% extends planning_shell_base_template %}
+{% load static %}
+
+{% block title %}Gestion des Gardiens{% endblock %}
+
+{% block extra_css %}
+<style>
+@media print {
+    /* Masquer les éléments non nécessaires Ã  l'impression */
+    .no-print,
+    .navbar,
+    .drawer,
+    .tabs,
+    .btn,
+    nav,
+    footer,
+    #filter-mensuel-mois,
+    #filter-mensuel-annee,
+    .card:has(#filter-mensuel-mois) {
+        display: none !important;
+    }
+
+    /* Forcer l'affichage du calendrier en mode paysage */
+    @page {
+        size: A4 landscape;
+        margin: 1cm;
+    }
+
+    /* Optimiser l'affichage du tableau */
+    body {
+        font-size: 10pt;
+    }
+
+    .card {
+        box-shadow: none !important;
+        border: none !important;
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    th, td {
+        border: 1px solid #000 !important;
+        padding: 4px !important;
+        font-size: 9pt;
+    }
+
+    th {
+        background-color: #e5e7eb !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    /* Préserver les couleurs des badges */
+    .badge {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    /* Préserver les couleurs de fond des cellules */
+    .bg-primary\/10,
+    .bg-secondary\/10,
+    .bg-accent\/10,
+    .bg-base-300,
+    .bg-warning\/5,
+    .bg-warning\/20 {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    /* En-tête du calendrier */
+    #calendrier-titre {
+        font-size: 14pt;
+        font-weight: bold;
+        display: block;
+        text-align: center;
+        margin-bottom: 10px;
+    }
+
+    /* Légende */
+    #calendrier-legende {
+        display: flex !important;
+        justify-content: center;
+        gap: 10px;
+        margin-bottom: 10px;
+        page-break-inside: avoid;
+    }
+
+    /* Eviter les coupures de page dans le tableau */
+    table {
+        page-break-inside: auto;
+    }
+
+    tr {
+        page-break-inside: avoid;
+        page-break-after: auto;
+    }
+
+    /* Colonne sticky en impression */
+    .sticky {
+        position: static !important;
+    }
+}
+
+.tab-content {
+    display: block !important;
+}
+
+.tab-content.hidden {
+    display: none !important;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- En-tête -->
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">Gestion des Gardiens</h1>
+            <p class="text-base-content/70 mt-1">Rotations, congés et heures supplémentaires</p>
+        </div>
+        <div class="flex gap-2">
+            <button onclick="openGenerateModal()" class="btn btn-primary">
+                <i class="fas fa-calendar-plus mr-2"></i>
+                Générer Rotations
+            </button>
+            <button onclick="openCongeModal()" class="btn btn-success">
+                <i class="fas fa-umbrella-beach mr-2"></i>
+                Créer Congé
+            </button>
+        </div>
+    </div>
+
+    <!-- Onglets -->
+    <div class="tabs tabs-boxed mb-6">
+        <a class="tab tab-active" onclick="showTab('rotations')">
+            <i class="fas fa-calendar-alt mr-2"></i>Rotations
+        </a>
+        <a class="tab" onclick="showTab('mensuel')">
+            <i class="fas fa-calendar mr-2"></i>Vue Mensuelle
+        </a>
+        <a class="tab" onclick="showTab('heures')">
+            <i class="fas fa-clock mr-2"></i>Heures Supplémentaires
+        </a>
+    </div>
+
+    <!-- Onglet Rotations -->
+    <div id="tab-rotations" class="tab-content block">
+        <!-- Filtres -->
+        <div class="card bg-base-100 shadow-md mb-4">
+            <div class="card-body">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">Gardien</span>
+                        </label>
+                        <select id="filter-gardien" class="select select-bordered">
+                            <option value="">Tous les gardiens</option>
+                            {% for gardien in gardiens %}
+                            <option value="{{ gardien.id }}">{{ gardien.nom }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">Mois</span>
+                        </label>
+                        <input type="month" id="filter-rotations-mois" class="input input-bordered" onchange="loadRotations()">
+                    </div>
+                    <div class="form-control">
+                        <div class="join">
+                            <button onclick="changeRotationsMonth(-1)" class="btn join-item" title="Mois precedent">
+                                <i class="fas fa-chevron-left"></i>
+                            </button>
+                            <button onclick="loadRotations()" class="btn join-item btn-primary">
+                                <i class="fas fa-search mr-2"></i>Charger
+                            </button>
+                            <button onclick="changeRotationsMonth(1)" class="btn join-item" title="Mois suivant">
+                                <i class="fas fa-chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistiques par gardien -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4" id="rotations-stats-cards"></div>
+
+        <!-- Calcul du salaire par gardien (simulation temps reel, meme moteur que les fiches de paie) -->
+        <div class="card bg-base-100 shadow-md mb-4">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-money-bill-wave mr-2"></i>
+                    Calcul du salaire (simulation)
+                </h2>
+                <div class="text-xs text-base-content/60 mb-2">
+                    Calcule a partir du salaire brut de base du contrat actif et des heures ci-dessus, avec le meme moteur que les fiches de paie.
+                    Ce n'est pas une fiche de paie enregistree.
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="rotations-salaire-cards"></div>
+            </div>
+        </div>
+
+        <!-- Tableau des rotations -->
+        <div class="card bg-base-100 shadow-md">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-list mr-2"></i>
+                    Rotations
+                    <span class="badge badge-primary ml-2" id="rotations-count">0</span>
+                </h2>
+                <div class="text-xs text-base-content/60 mb-2">
+                    Categorie : cascade exclusive (1er mai &gt; ferie &gt; chome/decret &gt; dimanche &gt; nuit &gt; ordinaire).
+                    Remplacement : heures au-dela de 240h/mois, prelevees en priorite sur les heures ordinaires (100% fixe, +30% si ordinaire).
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="table table-zebra">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Gardien</th>
+                                <th>Type de Shift</th>
+                                <th>Horaires</th>
+                                <th>Heures</th>
+                                <th>Categorie</th>
+                                <th>Remplacement</th>
+                                <th>Heures categorie</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rotations-tbody">
+                            <tr>
+                                <td colspan="8" class="text-center text-base-content/50">
+                                    <i class="fas fa-spinner fa-spin mr-2"></i>Chargement...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Onglet Vue Mensuelle -->
+    <div id="tab-mensuel" class="tab-content hidden">
+        <!-- Selecteur mois/annee -->
+        <div class="card bg-base-100 shadow-md mb-4">
+            <div class="card-body">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">Mois</span>
+                        </label>
+                        <input type="month" id="filter-mensuel-mois" class="input input-bordered">
+                    </div>
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">&nbsp;</span>
+                        </label>
+                        <button onclick="loadCalendrier()" class="btn btn-primary">
+                            <i class="fas fa-search mr-2"></i>Charger
+                        </button>
+                    </div>
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">&nbsp;</span>
+                        </label>
+                        <button onclick="imprimerCalendrier()" class="btn btn-outline">
+                            <i class="fas fa-print mr-2"></i>Imprimer
+                        </button>
+                    </div>
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">&nbsp;</span>
+                        </label>
+                        <button onclick="recalculerMois()" class="btn btn-warning">
+                            <i class="fas fa-arrows-rotate mr-2"></i>Recalculer mois
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <h3 id="calendrier-titre" class="text-lg font-semibold mb-3"></h3>
+
+        <!-- Legende -->
+        <div class="flex flex-wrap gap-2 mb-4 p-3 bg-base-200 rounded-lg" id="calendrier-legende">
+            <span class="flex items-center gap-1"><i class="fas fa-sun text-warning"></i> Jour</span>
+            <span class="flex items-center gap-1"><i class="fas fa-moon" style="color: #6b7280;"></i> Nuit</span>
+            <span class="badge badge-ghost">Conge</span>
+            <span class="badge badge-accent">Etendu 24h</span>
+            <span class="badge badge-warning"><span class="text-warning">&#9679;</span> Dimanche</span>
+            <span class="badge badge-error"><span class="text-error">&#9679;</span> Ferie officiel</span>
+            <span class="badge badge-info"><span class="text-info">&#9679;</span> Chome et paye (decret)</span>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="table table-xs table-pin-rows">
+                <thead>
+                    <tr>
+                        <th class="bg-base-200 sticky left-0 z-10 min-w-[100px]">Gardien</th>
+                        <th colspan="31" class="text-center bg-base-200">Jours du mois</th>
+                    </tr>
+                    <tr id="calendrier-header">
+                        <th class="bg-base-200 sticky left-0 z-10"></th>
+                        <!-- Jours generes dynamiquement -->
+                    </tr>
+                </thead>
+                <tbody id="calendrier-body">
+                    <tr>
+                        <td colspan="32" class="text-center text-base-content/50">
+                            <i class="fas fa-spinner fa-spin mr-2"></i>Chargement...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Statistiques mensuelles par gardien -->
+        <div class="mt-6" id="calendrier-stats">
+            <h3 class="text-lg font-semibold mb-3">
+                <i class="fas fa-chart-bar mr-2"></i>Statistiques du Mois
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="mensuel-stats-cards"></div>
+        </div>
+    <!-- Onglet Heures Supplémentaires -->
+    <div id="tab-heures" class="tab-content hidden">
+        <!-- Filtres -->
+        <div class="card bg-base-100 shadow-md mb-4">
+            <div class="card-body">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">Gardien</span>
+                        </label>
+                        <select id="filter-heures-gardien" class="select select-bordered">
+                            {% for gardien in gardiens %}
+                            <option value="{{ gardien.id }}">{{ gardien.nom }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">Mois</span>
+                        </label>
+                        <select id="filter-heures-mois" class="select select-bordered">
+                            <option value="1">Janvier</option>
+                            <option value="2">Février</option>
+                            <option value="3">Mars</option>
+                            <option value="4">Avril</option>
+                            <option value="5">Mai</option>
+                            <option value="6">Juin</option>
+                            <option value="7">Juillet</option>
+                            <option value="8">Aout</option>
+                            <option value="9">Septembre</option>
+                            <option value="10">Octobre</option>
+                            <option value="11">Novembre</option>
+                            <option value="12" selected>Décembre</option>
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">Année</span>
+                        </label>
+                        <input type="number" id="filter-heures-annee" class="input input-bordered" value="2025">
+                    </div>
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text">&nbsp;</span>
+                        </label>
+                        <button onclick="loadHeuresSupp()" class="btn btn-primary">
+                            <i class="fas fa-search mr-2"></i>Consulter
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistiques heures -->
+        <div id="heures-stats" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <!-- Cartes statistiques chargées dynamiquement -->
+        </div>
+
+        <!-- Détails heures -->
+        <div class="card bg-base-100 shadow-md">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-chart-bar mr-2"></i>Détail des Heures
+                </h2>
+                <div id="heures-details">
+                    <p class="text-base-content/50">Sélectionnez un gardien et un mois pour voir les détails</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Générer Rotations -->
+<dialog id="modal-generate" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-calendar-plus mr-2"></i>
+            Générer Rotations Standard
+        </h3>
+        <form id="form-generate">
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Date de début</span>
+                </label>
+                <input type="date" id="gen-date-debut" class="input input-bordered" required>
+            </div>
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Nombre de jours</span>
+                </label>
+                <input type="number" id="gen-nb-jours" class="input input-bordered" value="30" min="1" max="90" required>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Gardien debut jour</span>
+                    </label>
+                    <select id="gen-start-jour" class="select select-bordered" required>
+                        <option value="">Selectionnez</option>
+                        {% for gardien in gardiens %}
+                        <option value="{{ gardien.id }}">{{ gardien.nom }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Gardien debut nuit</span>
+                    </label>
+                    <select id="gen-start-nuit" class="select select-bordered" required>
+                        <option value="">Selectionnez</option>
+                        {% for gardien in gardiens %}
+                        <option value="{{ gardien.id }}">{{ gardien.nom }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle"></i>
+                <span>Génère le cycle Jour â†’ Nuit â†’ Congé pour les 3 gardiens</span>
+            </div>
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('modal-generate').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-check mr-2"></i>Générer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Modal Créer Congé -->
+<dialog id="modal-conge" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-umbrella-beach mr-2"></i>
+            Créer un Congé
+        </h3>
+        <form id="form-conge">
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Gardien</span>
+                </label>
+                <select id="conge-gardien" class="select select-bordered" required>
+                    <option value="">Sélectionnez un gardien</option>
+                    {% for gardien in gardiens %}
+                    <option value="{{ gardien.id }}">{{ gardien.nom }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Date début</span>
+                </label>
+                <input type="date" id="conge-date-debut" class="input input-bordered" required>
+            </div>
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Date fin</span>
+                </label>
+                <input type="date" id="conge-date-fin" class="input input-bordered" required>
+            </div>
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Motif</span>
+                </label>
+                <textarea id="conge-motif" class="textarea textarea-bordered" rows="3" placeholder="Ex: Congé annuel"></textarea>
+            </div>
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Gardien remplacement (debut 24h)</span>
+                </label>
+                <select id="conge-remplacement-start" class="select select-bordered" required>
+                    <option value="">Selectionnez un gardien</option>
+                    {% for gardien in gardiens %}
+                    <option value="{{ gardien.id }}">{{ gardien.nom }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="alert alert-warning">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span>Le remplacement 24h alterne entre les 2 autres gardiens</span>
+            </div>
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('modal-conge').close()">Annuler</button>
+                <button type="submit" class="btn btn-success">
+                    <i class="fas fa-check mr-2"></i>Créer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<script>
+// Nom des gardiens (cloisonnes cote backend)
+const GARDIENS = [
+{% for gardien in gardiens %}
+    { id: '{{ gardien.id }}', nom: '{{ gardien.nom|escapejs }}', contrat_id: {% if gardien.contrat_id %}'{{ gardien.contrat_id }}'{% else %}null{% endif %}, salaire_brut_base: parseFloat('{{ gardien.salaire_brut_base|default:0|stringformat:"f" }}'.replace(',', '.')), personnes_charge: {{ gardien.personnes_charge|default:0 }} },
+{% endfor %}
+];
+
+const GARDIENS_NOMS = {};
+const GARDIENS_CONTRATS = {};
+GARDIENS.forEach(g => {
+    GARDIENS_NOMS[g.id] = g.nom;
+    GARDIENS_CONTRATS[g.id] = { contrat_id: g.contrat_id, salaire_brut_base: g.salaire_brut_base, personnes_charge: g.personnes_charge };
+});
+const GARDIENS_IDS = GARDIENS.map(g => g.id);
+
+function updateRemplacementStartOptions() {
+    const congeSelect = document.getElementById('conge-gardien');
+    const remplacementSelect = document.getElementById('conge-remplacement-start');
+    if (!congeSelect || !remplacementSelect) return;
+
+    const selected = congeSelect.value;
+    let options = '<option value="">Selectionnez un gardien</option>';
+    GARDIENS_IDS.forEach(id => {
+        if (id !== selected) {
+            options += `<option value="${id}">${GARDIENS_NOMS[id]}</option>`;
+        }
+    });
+    remplacementSelect.innerHTML = options;
+}
+
+
+// Gestion des onglets
+function showTab(tabName) {
+    // Cacher tous les onglets
+    document.querySelectorAll('.tab-content').forEach(tab => {
+        tab.classList.add('hidden');
+    });
+
+    // Enlever la classe active de tous les onglets
+    document.querySelectorAll('.tab').forEach(tab => {
+        tab.classList.remove('tab-active');
+    });
+
+    // Afficher l'onglet sélectionné
+    document.getElementById('tab-' + tabName).classList.remove('hidden');
+
+    // Ajouter la classe active
+    event.target.classList.add('tab-active');
+
+    // Charger les données
+    if (tabName === 'rotations') {
+        loadRotations();
+    } else if (tabName === 'mensuel') {
+        loadCalendrier();
+    } else if (tabName === 'heures') {
+        loadHeuresSupp();
+    }
+}
+
+// Charger les rotations
+function changeRotationsMonth(delta) {
+    const monthInput = document.getElementById('filter-rotations-mois');
+    if (!monthInput || !monthInput.value) return;
+    const [annee, mois] = monthInput.value.split('-').map(Number);
+    const d = new Date(annee, mois - 1 + delta, 1);
+    monthInput.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    loadRotations();
+}
+
+async function loadRotations() {
+    const gardienId = document.getElementById('filter-gardien').value;
+    const monthInput = document.getElementById('filter-rotations-mois');
+    let monthValue = monthInput ? monthInput.value : '';
+
+    if (!monthValue) {
+        const today = new Date();
+        monthValue = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+        if (monthInput) monthInput.value = monthValue;
+    }
+
+    const [annee, mois] = monthValue.split('-').map(Number);
+    const dernierJour = new Date(annee, mois, 0).getDate();
+    const dateDebut = `${annee}-${String(mois).padStart(2, '0')}-01`;
+    const dateFin = `${annee}-${String(mois).padStart(2, '0')}-${String(dernierJour).padStart(2, '0')}`;
+
+    const tbody = document.getElementById('rotations-tbody');
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center"><i class="fas fa-spinner fa-spin mr-2"></i>Chargement...</td></tr>';
+
+    try {
+        let url = `/api/gardiens/rotations/?date_debut=${dateDebut}&date_fin=${dateFin}&`;
+        if (gardienId) url += `employe_id=${gardienId}&`;
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (data.success) {
+            displayRotations(data.rotations);
+            document.getElementById('rotations-count').textContent = data.count;
+        } else {
+            tbody.innerHTML = `<tr><td colspan="8" class="text-center text-error">${data.error}</td></tr>`;
+        }
+    } catch (error) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-error">Erreur de chargement: ' + error.message + '</td></tr>';
+    }
+}
+
+function formatGuardHours(value) {
+    const numericValue = Number(value || 0);
+    if (Number.isNaN(numericValue)) return '0';
+    const rounded = Math.round(numericValue * 100) / 100;
+    return Number.isInteger(rounded) ? rounded.toString() : rounded.toFixed(2);
+}
+
+function guardTimeToMinutes(value) {
+    const parts = String(value || '').split(':').map(Number);
+    if (parts.length < 2 || parts.some(Number.isNaN)) return null;
+    return (parts[0] * 60) + parts[1] + ((parts[2] || 0) / 60);
+}
+
+// Ventilation légale retenue : jour de 05h à 22h, nuit de 22h à 05h.
+function calculateGuardDayNightHours(rotation) {
+    if (!rotation || rotation.shift_type === 'conge') {
+        return { day: 0, night: 0, total: 0 };
+    }
+
+    let start = guardTimeToMinutes(rotation.heure_debut);
+    let end = guardTimeToMinutes(rotation.heure_fin);
+    if (start === null || end === null) {
+        const total = Number(rotation.heures_travaillees || 0);
+        if (rotation.shift_type === 'jour') return { day: total, night: 0, total };
+        if (rotation.shift_type === 'nuit') return { day: Math.max(total - 7, 0), night: Math.min(total, 7), total };
+        if (rotation.shift_type === 'etendu' || rotation.est_extension) return { day: Math.max(total - 7, 0), night: Math.min(total, 7), total };
+        return { day: total, night: 0, total };
+    }
+
+    // Une heure de fin égale ou antérieure à l'heure de début est le lendemain.
+    if (end <= start) end += 24 * 60;
+    const totalMinutes = Math.max(end - start, 0);
+    let dayMinutes = 0;
+
+    // Calcule le chevauchement avec chaque plage de jour [05h, 22h].
+    for (let dayOffset = -1; dayOffset <= 2; dayOffset++) {
+        const dayStart = (dayOffset * 24 * 60) + (5 * 60);
+        const dayEnd = (dayOffset * 24 * 60) + (22 * 60);
+        dayMinutes += Math.max(0, Math.min(end, dayEnd) - Math.max(start, dayStart));
+    }
+
+    const nightMinutes = Math.max(totalMinutes - dayMinutes, 0);
+    return {
+        day: dayMinutes / 60,
+        night: nightMinutes / 60,
+        total: totalMinutes / 60
+    };
+}
+
+const HEURES_NORMALES_MOIS_GARDIEN = 240;
+
+// Categorise les rotations d'UN gardien pour UN mois selon la cascade
+// exclusive (1er mai > ferie > chome/decret > dimanche > nuit > ordinaire),
+// puis calcule le remplacement comme les heures au-dela de 240h/mois,
+// prelevees en priorite sur les heures ordinaires. Reproduit exactement
+// la logique de GrilleSalaire._compute_gardien_rotation_hours (models.py).
+function categorizeGardienRotations(rotations) {
+    const parJour = {};
+    let heuresOrdinairesTotal = 0;
+    let heuresSpecialesTotal = 0;
+    const totals = {
+        heures_total: 0, heures_jour: 0, heures_nuit: 0,
+        heures_dimanche: 0, heures_feries: 0, heures_chome_paye: 0, heures_1er_mai: 0,
+        feries_count: 0, dimanches_count: 0, chomes_payes_count: 0,
+        jours: 0, nuits: 0, etendus: 0,
+    };
+
+    const sorted = rotations.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+    sorted.forEach(rot => {
+        const entry = { rotation: rot, categorie: null, heures: 0, estOrdinaire: false };
+        parJour[rot.date] = entry;
+
+        if (rot.shift_type === 'conge') {
+            entry.categorie = 'conge';
+            return;
+        }
+
+        if (rot.shift_type === 'etendu') totals.etendus++;
+        else if (rot.shift_type === 'jour') totals.jours++;
+        else if (rot.shift_type === 'nuit') totals.nuits++;
+
+        const hours = calculateGuardDayNightHours(rot);
+        const heuresShift = hours.total;
+        entry.heures = heuresShift;
+        totals.heures_total += heuresShift;
+        totals.heures_jour += hours.day;
+
+        const dateParts = String(rot.date || '').split('-').map(Number);
+        const estPremierMai = dateParts.length === 3 && dateParts[1] === 5 && dateParts[2] === 1;
+
+        if (estPremierMai) {
+            entry.categorie = 'premier_mai';
+            totals.heures_1er_mai += heuresShift;
+            heuresSpecialesTotal += heuresShift;
+        } else if (rot.est_jour_ferie && rot.type_jour_ferie === 'decret') {
+            entry.categorie = 'chome_paye';
+            totals.heures_chome_paye += heuresShift;
+            totals.chomes_payes_count++;
+            heuresSpecialesTotal += heuresShift;
+        } else if (rot.est_jour_ferie) {
+            entry.categorie = 'ferie';
+            totals.heures_feries += heuresShift;
+            totals.feries_count++;
+            heuresSpecialesTotal += heuresShift;
+        } else if (rot.est_dimanche) {
+            entry.categorie = 'dimanche';
+            totals.heures_dimanche += heuresShift;
+            totals.dimanches_count++;
+            heuresSpecialesTotal += heuresShift;
+        } else {
+            entry.estOrdinaire = true;
+            const nightHours = rot.shift_type === 'nuit' ? 7 : 0;
+            if (nightHours > 0) {
+                entry.categorie = 'nuit';
+                entry.heuresNuit = nightHours;
+            } else {
+                entry.categorie = 'ordinaire';
+            }
+            totals.heures_nuit += nightHours;
+            heuresOrdinairesTotal += heuresShift;
+        }
+    });
+
+    // Remplacement = heures au-dela de 240h/mois, prelevees en priorite
+    // sur les heures ordinaires avant de puiser dans les heures speciales.
+    const heuresTotal = heuresOrdinairesTotal + heuresSpecialesTotal;
+    const heuresDepassement = Math.max(heuresTotal - HEURES_NORMALES_MOIS_GARDIEN, 0);
+    const remplacementOrdinaire = Math.min(heuresDepassement, heuresOrdinairesTotal);
+    const remplacementSpecial = heuresDepassement - remplacementOrdinaire;
+    totals.remplacement = remplacementOrdinaire + remplacementSpecial;
+    totals.remplacement_ordinaire = remplacementOrdinaire;
+
+    // Marquer, dans l'ordre chronologique, quelles heures ordinaires/speciales
+    // entrent effectivement dans le depassement (pour affichage ligne par ligne).
+    let ordinaireRestant = remplacementOrdinaire;
+    let specialRestant = remplacementSpecial;
+    sorted.slice().reverse().forEach(rot => {
+        const entry = parJour[rot.date];
+        if (!entry || entry.heures <= 0) return;
+        if (entry.estOrdinaire && ordinaireRestant > 0) {
+            const pris = Math.min(entry.heures, ordinaireRestant);
+            entry.remplacement = pris;
+            entry.remplacementOrdinairePart = pris;
+            ordinaireRestant -= pris;
+        } else if (!entry.estOrdinaire && specialRestant > 0) {
+            const pris = Math.min(entry.heures, specialRestant);
+            entry.remplacement = pris;
+            entry.remplacementOrdinairePart = 0;
+            specialRestant -= pris;
+        } else {
+            entry.remplacement = 0;
+            entry.remplacementOrdinairePart = 0;
+        }
+    });
+
+    return { parJour, totals };
+}
+
+const CATEGORIE_BADGES = {
+    premier_mai: '<span class="badge badge-secondary badge-sm">1er mai 100%</span>',
+    ferie: '<span class="badge badge-error badge-sm">Ferie 50%</span>',
+    chome_paye: '<span class="badge badge-info badge-sm">Chome/decret 30%</span>',
+    dimanche: '<span class="badge badge-warning badge-sm">Dimanche 40%</span>',
+    nuit: '<span class="badge badge-sm" style="background-color:#6b7280;color:#fff;">Nuit 30%</span>',
+    ordinaire: '<span class="badge badge-ghost badge-sm">Ordinaire</span>',
+    conge: '<span class="badge badge-ghost badge-sm">Conge</span>',
+};
+
+// Cartes stats par gardien pour l'onglet Rotations (meme contenu que Vue
+// Mensuelle, mais calcule sur l'ensemble des rotations actuellement chargees).
+function renderRotationsStatsCards(statsParGardien) {
+    const container = document.getElementById('rotations-stats-cards');
+    if (!container) return;
+
+    const gardiensAvecDonnees = GARDIENS_IDS.filter(id => statsParGardien[id]);
+    if (gardiensAvecDonnees.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+
+    container.innerHTML = gardiensAvecDonnees.map(gardienId => {
+        const t = statsParGardien[gardienId];
+        const nom = GARDIENS_NOMS[gardienId] || gardienId;
+
+        const lignes = [
+            { valeur: t.heures_1er_mai, html: `<div class="flex justify-between"><span><i class="fas fa-star mr-1 text-secondary"></i>1er mai (100%) :</span><span class="font-bold">${formatGuardHours(t.heures_1er_mai)}h</span></div>` },
+            { valeur: t.heures_feries, html: `<div class="flex justify-between"><span><i class="fas fa-calendar-day mr-1 text-error"></i>Ferie officiel (50%) :</span><span class="font-bold">${formatGuardHours(t.heures_feries)}h</span></div>` },
+            { valeur: t.heures_chome_paye, html: `<div class="flex justify-between"><span><i class="fas fa-calendar-week mr-1 text-info"></i>Chome et paye - decret (30%) :</span><span class="font-bold">${formatGuardHours(t.heures_chome_paye)}h</span></div>` },
+            { valeur: t.heures_dimanche, html: `<div class="flex justify-between"><span><i class="fas fa-sun mr-1 text-warning"></i>Dimanche (40%) :</span><span class="font-bold">${formatGuardHours(t.heures_dimanche)}h</span></div>` },
+            { valeur: t.heures_nuit, html: `<div class="flex justify-between"><span><i class="fas fa-moon mr-1 text-secondary"></i>Nuit (30%) :</span><span class="font-bold">${formatGuardHours(t.heures_nuit)}h</span></div>` },
+        ].filter(l => Number(l.valeur || 0) > 0).map(l => l.html).join('');
+
+        const lignesRemplacement = [
+            { valeur: t.remplacement, html: `<div class="flex justify-between"><span><i class="fas fa-clock mr-1 text-accent"></i>Remplacement total (&gt;240h/mois, 100% fixe) :</span><span class="font-bold">${formatGuardHours(t.remplacement)}h</span></div>` },
+            { valeur: t.remplacement_ordinaire, html: `<div class="flex justify-between"><span><i class="fas fa-clock mr-1 text-accent"></i>...dont ordinaire (+30% suppl.) :</span><span class="font-bold">${formatGuardHours(t.remplacement_ordinaire)}h</span></div>` },
+        ].filter(l => Number(l.valeur || 0) > 0).map(l => l.html).join('');
+
+        return `
+            <div class="card bg-base-200">
+                <div class="card-body p-4">
+                    <h4 class="card-title text-base">${nom}</h4>
+                    <div class="space-y-1 text-sm">
+                        <div class="flex justify-between"><span><i class="fas fa-clock mr-1 text-info"></i>Heures totales :</span><span class="font-bold">${formatGuardHours(t.heures_total)}h</span></div>
+                        ${lignes}
+                        ${lignesRemplacement ? `<div class="divider my-1"></div>${lignesRemplacement}` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// Afficher les rotations : cartes stats par gardien + tableau detaille avec
+// colonnes de categorie de majoration, calculees sur le seuil de 240h/mois.
+function displayRotations(rotations) {
+    const tbody = document.getElementById('rotations-tbody');
+
+    if (rotations.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-base-content/50">Aucune rotation trouvée</td></tr>';
+        renderRotationsStatsCards({});
+        const salaireContainer = document.getElementById('rotations-salaire-cards');
+        if (salaireContainer) salaireContainer.innerHTML = '';
+        return;
+    }
+
+    // Regrouper par gardien pour appliquer le seuil de 240h/mois par gardien.
+    const rotationsParGardien = {};
+    rotations.forEach(rot => {
+        if (!rotationsParGardien[rot.employe_id]) rotationsParGardien[rot.employe_id] = [];
+        rotationsParGardien[rot.employe_id].push(rot);
+    });
+
+    const statsParGardien = {};
+    const categorieParCle = {};
+    Object.keys(rotationsParGardien).forEach(gardienId => {
+        const { parJour, totals } = categorizeGardienRotations(rotationsParGardien[gardienId]);
+        statsParGardien[gardienId] = totals;
+        Object.keys(parJour).forEach(dateStr => {
+            categorieParCle[`${gardienId}_${dateStr}`] = parJour[dateStr];
+        });
+    });
+
+    renderRotationsStatsCards(statsParGardien);
+    // Trier selon l'ordre stable GARDIENS_IDS (meme ordre que les cartes de
+    // stats ci-dessus) plutot que l'ordre d'insertion issu des rotations.
+    const gardienIdsTries = GARDIENS_IDS.filter(id => rotationsParGardien[id]);
+    loadSalaireGardiens(gardienIdsTries);
+
+    const sortedRotations = rotations.slice().sort((a, b) => {
+        const dateCompare = String(a.date).localeCompare(String(b.date));
+        return dateCompare !== 0 ? dateCompare : String(a.employe_nom).localeCompare(String(b.employe_nom));
+    });
+
+    tbody.innerHTML = sortedRotations.map(rot => {
+        const shiftBadge = getShiftBadge(rot.shift_type_display);
+        const hours = calculateGuardDayNightHours(rot);
+        const entry = categorieParCle[`${rot.employe_id}_${rot.date}`] || {};
+        const categorieBadge = entry.categorie === 'nuit'
+            ? `<span class="badge badge-sm" style="background-color:#6b7280;color:#fff;">Nuit 30% (${formatGuardHours(entry.heuresNuit || 7)}h)</span>`
+            : (CATEGORIE_BADGES[entry.categorie] || '');
+        const remplacementHeures = entry.remplacement || 0;
+        const remplacementBadge = remplacementHeures > 0
+            ? `<span class="badge badge-accent badge-sm">+100%${entry.remplacementOrdinairePart > 0 ? ' +30%' : ''} (${formatGuardHours(remplacementHeures)}h)</span>`
+            : '';
+
+        return `
+            <tr>
+                <td>${formatDate(rot.date)}</td>
+                <td><strong>${rot.employe_nom}</strong></td>
+                <td>${shiftBadge}</td>
+                <td>${rot.heure_debut} - ${rot.heure_fin}</td>
+                <td>
+                    <strong>${formatGuardHours(hours.total)}h</strong>
+                    <span class="block text-xs text-base-content/60">${formatGuardHours(hours.day)}h jour · ${formatGuardHours(hours.night)}h nuit</span>
+                </td>
+                <td>${categorieBadge}</td>
+                <td>${remplacementBadge}</td>
+                <td>${formatGuardHours((entry.heures || 0))}h</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Calcule et affiche le salaire simule pour chaque gardien ayant des
+// rotations sur le mois affiche. Utilise le meme moteur que les fiches de
+// paie (GrilleSalaire.calculer_tous_les_champs via l'API existante) : le
+// backend recalcule les heures majorees depuis les rotations en base pour
+// le mois du contrat, donc reste coherent avec le tableau ci-dessus.
+async function loadSalaireGardiens(gardienIds) {
+    const container = document.getElementById('rotations-salaire-cards');
+    if (!container) return;
+
+    const monthInput = document.getElementById('filter-rotations-mois');
+    const monthValue = monthInput ? monthInput.value : '';
+    if (!monthValue) {
+        container.innerHTML = '';
+        return;
+    }
+    const [annee, mois] = monthValue.split('-').map(Number);
+    const dernierJour = new Date(annee, mois, 0).getDate();
+    const dateSalaire = `${annee}-${String(mois).padStart(2, '0')}-${String(dernierJour).padStart(2, '0')}`;
+
+    const gardienIdsAvecContrat = gardienIds.filter(id => GARDIENS_CONTRATS[id] && GARDIENS_CONTRATS[id].contrat_id);
+
+    if (gardienIdsAvecContrat.length === 0) {
+        container.innerHTML = '<div class="col-span-full text-sm text-base-content/50">Aucun contrat actif trouve pour les gardiens de ce mois.</div>';
+        return;
+    }
+
+    container.innerHTML = gardienIdsAvecContrat.map(id => `
+        <div class="card bg-base-200" id="salaire-card-${id}">
+            <div class="card-body p-4">
+                <h4 class="card-title text-base">${GARDIENS_NOMS[id] || id}</h4>
+                <div class="text-sm text-base-content/60"><i class="fas fa-spinner fa-spin mr-2"></i>Calcul en cours...</div>
+            </div>
+        </div>
+    `).join('');
+
+    await Promise.all(gardienIdsAvecContrat.map(async (gardienId) => {
+        const infos = GARDIENS_CONTRATS[gardienId];
+        const card = document.getElementById(`salaire-card-${gardienId}`);
+        if (!card) return;
+
+        try {
+            const response = await fetch('{% url "employees:api_calculer_grille_preview" %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                body: JSON.stringify({
+                    contrat_id: infos.contrat_id,
+                    date_salaire: dateSalaire,
+                    salaire_brut_base: infos.salaire_brut_base,
+                    personnes_charge: infos.personnes_charge || 0,
+                    nb_jours_presence: 0,
+                    est_prorata: false
+                })
+            });
+            const data = await response.json();
+
+            if (!data.success) {
+                card.querySelector('.card-body').innerHTML = `
+                    <h4 class="card-title text-base">${GARDIENS_NOMS[gardienId] || gardienId}</h4>
+                    <div class="text-sm text-error">${data.error || 'Erreur de calcul'}</div>
+                `;
+                return;
+            }
+
+            const c = data.calculs;
+            card.querySelector('.card-body').innerHTML = `
+                <h4 class="card-title text-base">${GARDIENS_NOMS[gardienId] || gardienId}</h4>
+                <div class="space-y-1 text-sm">
+                    <div class="flex justify-between"><span>Salaire brut base :</span><span class="font-bold">${formatSalaryAmount(infos.salaire_brut_base)} Ar</span></div>
+                    <div class="flex justify-between"><span>Majorations totales :</span><span class="font-bold">${formatSalaryAmount((c.salaire_brut_total || 0) - infos.salaire_brut_base)} Ar</span></div>
+                    <div class="flex justify-between"><span>Salaire brut total :</span><span class="font-bold">${formatSalaryAmount(c.salaire_brut_total)} Ar</span></div>
+                    <div class="divider my-1"></div>
+                    ${(infos.personnes_charge || 0) > 0 ? `<div class="flex justify-between"><span>Personnes a charge :</span><span>${infos.personnes_charge}</span></div>` : ''}
+                    <div class="flex justify-between"><span>CNaPS employe (1%) :</span><span>${formatSalaryAmount(c.charge_cnaps_employe)} Ar</span></div>
+                    <div class="flex justify-between"><span>Mutuelle sante (1%) :</span><span>${formatSalaryAmount(c.mutuelle_sante)} Ar</span></div>
+                    <div class="flex justify-between"><span>Base imposable :</span><span>${formatSalaryAmount(c.base_imposable)} Ar</span></div>
+                    <div class="flex justify-between"><span>Deduction impots :</span><span>${formatSalaryAmount(c.deduction_impots)} Ar</span></div>
+                    <div class="flex justify-between"><span>IRSA :</span><span>${formatSalaryAmount(c.irsa)} Ar</span></div>
+                    <div class="divider my-1"></div>
+                    <div class="flex justify-between text-success"><span class="font-bold">Salaire NET :</span><span class="font-bold text-lg">${formatSalaryAmount(c.salaire_net)} Ar</span></div>
+                </div>
+            `;
+        } catch (error) {
+            card.querySelector('.card-body').innerHTML = `
+                <h4 class="card-title text-base">${GARDIENS_NOMS[gardienId] || gardienId}</h4>
+                <div class="text-sm text-error">Erreur reseau: ${error.message}</div>
+            `;
+        }
+    }));
+}
+
+function formatSalaryAmount(value) {
+    const numericValue = Number(value || 0);
+    return Math.round(numericValue).toLocaleString('fr-FR');
+}
+
+// Badge pour type de shift
+function getShiftBadge(shiftType) {
+    const badges = {
+        'Jour (8h-18h)': '<span class="badge badge-primary">Jour</span>',
+        'Nuit (18h-8h lendemain)': '<span class="badge badge-secondary">Nuit</span>',
+        'Congé': '<span class="badge badge-ghost">Congé</span>',
+        'Etendu (8h-8h lendemain)': '<span class="badge badge-accent">Etendu 24h</span>'
+    };
+    return badges[shiftType] || shiftType;
+}
+
+// Charger le calendrier mensuel
+async function loadCalendrier() {
+    const monthInput = document.getElementById('filter-mensuel-mois');
+    let monthValue = monthInput ? monthInput.value : ''; // Format: YYYY-MM
+
+    if (!monthValue) {
+        const today = new Date();
+        monthValue = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+        if (monthInput) {
+            monthInput.value = monthValue;
+        }
+    }
+
+    if (!monthValue || monthValue.indexOf('-') === -1) {
+        const tbodyFallback = document.getElementById('calendrier-body');
+        if (tbodyFallback) {
+            tbodyFallback.innerHTML = '<tr><td colspan="32" class="text-center text-error">Veuillez selectionner un mois valide.</td></tr>';
+        }
+        return;
+    }
+
+
+    // Parser le mois et l'année depuis le format YYYY-MM
+    const [annee, mois] = monthValue.split('-').map(Number);
+
+    const tbody = document.getElementById('calendrier-body');
+    tbody.innerHTML = '<tr><td colspan="32" class="text-center"><i class="fas fa-spinner fa-spin mr-2"></i>Chargement...</td></tr>';
+
+    // Calculer le premier et le dernier jour du mois
+    const premierJour = new Date(annee, mois - 1, 1);
+    const dernierJour = new Date(annee, mois, 0);
+    const nbJours = dernierJour.getDate();
+
+    // Formater les dates pour l'API
+    const dateDebut = `${annee}-${String(mois).padStart(2, '0')}-01`;
+    const dateFin = `${annee}-${String(mois).padStart(2, '0')}-${String(nbJours).padStart(2, '0')}`;
+
+    try {
+        const response = await fetch(`/api/gardiens/rotations/?date_debut=${dateDebut}&date_fin=${dateFin}`);
+        const data = await response.json();
+
+        if (data.success) {
+            displayCalendrier(data.rotations, mois, annee, nbJours);
+            document.getElementById('calendrier-titre').textContent = `${getMoisNom(mois)} ${annee}`;
+        } else {
+            tbody.innerHTML = `<tr><td colspan="32" class="text-center text-error">${data.error}</td></tr>`;
+        }
+    } catch (error) {
+        tbody.innerHTML = `<tr><td colspan="32" class="text-center text-error">Erreur de chargement: ${error.message}</td></tr>`;
+    }
+}
+
+// Recalculer les rotations du mois
+async function recalculerMois() {
+    const monthInput = document.getElementById('filter-mensuel-mois');
+    let monthValue = monthInput ? monthInput.value : ''; // Format: YYYY-MM
+
+    if (!monthValue) {
+        const today = new Date();
+        monthValue = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+        if (monthInput) {
+            monthInput.value = monthValue;
+        }
+    }
+
+    if (!monthValue || monthValue.indexOf('-') === -1) {
+        const tbodyFallback = document.getElementById('calendrier-body');
+        if (tbodyFallback) {
+            tbodyFallback.innerHTML = '<tr><td colspan="32" class="text-center text-error">Veuillez selectionner un mois valide.</td></tr>';
+        }
+        return;
+    }
+
+    const [annee, mois] = monthValue.split('-');
+    if (!confirm(`Recalculer tout le mois ${getMoisNom(mois)} ${annee} ?`)) {
+        return;
+    }
+
+    const resolveGardienId = (inputValue) => {
+        if (!inputValue) {
+            return null;
+        }
+        const trimmed = inputValue.trim();
+        if (!trimmed) {
+            return null;
+        }
+        if (GARDIENS_NOMS[trimmed]) {
+            return trimmed;
+        }
+        const upper = trimmed.toUpperCase();
+        for (const [id, nom] of Object.entries(GARDIENS_NOMS)) {
+            if (nom.toUpperCase() === upper) {
+                return id;
+            }
+        }
+        return null;
+    };
+
+    const options = Object.values(GARDIENS_NOMS).join(', ');
+    const startJourInput = prompt(`Gardien debut jour (${options}) :`);
+    if (startJourInput === null) {
+        return;
+    }
+    const startJourId = resolveGardienId(startJourInput);
+    if (!startJourId) {
+        alert('Gardien debut jour invalide.');
+        return;
+    }
+
+    const startNuitInput = prompt(`Gardien debut nuit (${options}) :`);
+    if (startNuitInput === null) {
+        return;
+    }
+    const startNuitId = resolveGardienId(startNuitInput);
+    if (!startNuitId) {
+        alert('Gardien debut nuit invalide.');
+        return;
+    }
+    if (startJourId === startNuitId) {
+        alert('Le gardien debut jour et debut nuit doivent etre differents.');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/gardiens/recalculer-mois/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                month: monthValue,
+                start_day_guard_id: startJourId,
+                start_night_guard_id: startNuitId
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            const startJour = GARDIENS_NOMS[data.start_day_guard_id] || data.start_day_guard_id;
+            const startNuit = GARDIENS_NOMS[data.start_night_guard_id] || data.start_night_guard_id;
+            const congesSupprimes = data.conges_supprimes ?? 0;
+            alert(`Mois recalculé.\n\nRotations créées: ${data.rotations_creees}\nSupprimées: ${data.rotations_supprimees}\nCongés supprimés: ${congesSupprimes}\nDébut jour: ${startJour}\nDébut nuit: ${startNuit}`);
+            loadCalendrier();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        alert('Erreur lors du recalcul: ' + error.message);
+    }
+}
+
+function renderMensuelStats(stats, formatHeures) {
+    const container = document.getElementById('mensuel-stats-cards');
+    if (!container) return;
+
+    container.innerHTML = GARDIENS_IDS.map(gardienId => {
+        const s = stats[gardienId] || { feries_count: 0, dimanches_count: 0, jours: 0, nuits: 0, heures_total: 0, remplacement: 0, remplacement_ordinaire: 0, heures_feries: 0, heures_jour: 0, heures_nuit: 0, heures_dimanche: 0, heures_chome_paye: 0, heures_1er_mai: 0 };
+        const nom = GARDIENS_NOMS[gardienId] || gardienId;
+
+        const lignesHaut = [
+            { valeur: s.feries_count, html: `<div class="flex justify-between text-sm"><span><i class="fas fa-calendar-day mr-1 text-error"></i>Jours feries travailles :</span><span class="font-bold">${s.feries_count}</span></div>` },
+            { valeur: s.dimanches_count, html: `<div class="flex justify-between text-sm"><span><i class="fas fa-sun mr-1 text-warning"></i>Dimanches travailles :</span><span class="font-bold">${s.dimanches_count}</span></div>` },
+        ].filter(l => Number(l.valeur || 0) > 0).map(l => l.html).join('');
+
+        const lignesMajoration = [
+            { valeur: s.heures_1er_mai, html: `<div class="flex justify-between text-sm"><span><i class="fas fa-star mr-1 text-secondary"></i>Heures 1er mai (100% majoration, exclusif):</span><span class="font-bold">${formatHeures(s.heures_1er_mai)}h</span></div>` },
+            { valeur: s.heures_feries, html: `<div class="flex justify-between text-sm"><span><i class="fas fa-calendar-day mr-1 text-error"></i>Heures jours fériés officiels (50% majoration, exclusif):</span><span class="font-bold">${formatHeures(s.heures_feries)}h</span></div>` },
+            { valeur: s.heures_dimanche, html: `<div class="flex justify-between text-sm"><span><i class="fas fa-sun mr-1 text-warning"></i>Heures dimanche (40% majoration, exclusif):</span><span class="font-bold">${formatHeures(s.heures_dimanche)}h</span></div>` },
+            { valeur: s.heures_chome_paye, html: `<div class="flex justify-between text-sm"><span><i class="fas fa-calendar-week mr-1 text-warning"></i>Heures chômé et payé - décret (30% majoration, exclusif):</span><span class="font-bold">${formatHeures(s.heures_chome_paye)}h</span></div>` },
+            { valeur: s.heures_nuit, html: `<div class="flex justify-between text-sm"><span><i class="fas fa-moon mr-1 text-secondary"></i>Heures de nuit (30% majoration, exclusif):</span><span class="font-bold">${formatHeures(s.heures_nuit)}h</span></div>` },
+        ].filter(l => Number(l.valeur || 0) > 0).map(l => l.html).join('');
+
+        const lignesRemplacement = [
+            { valeur: s.remplacement, html: `<div class="flex justify-between text-sm"><span><i class="fas fa-clock mr-1 text-accent"></i>Heures remplacement (100% majoration fixe, cumulable):</span><span class="font-bold">${formatHeures(s.remplacement)}h</span></div>` },
+            { valeur: s.remplacement_ordinaire, html: `<div class="flex justify-between text-sm"><span><i class="fas fa-clock mr-1 text-accent"></i>...dont jour ordinaire (+30% supplémentaire):</span><span class="font-bold">${formatHeures(s.remplacement_ordinaire)}h</span></div>` },
+        ].filter(l => Number(l.valeur || 0) > 0).map(l => l.html).join('');
+
+        return `
+            <div class="card bg-base-200">
+                <div class="card-body p-4">
+                    <h4 class="card-title text-base">${nom}</h4>
+                    <div class="space-y-2">
+                        ${lignesHaut}
+                        <div class="flex justify-between text-sm"><span><i class="fas fa-sun mr-1 text-warning"></i>Jours (jour) :</span><span class="font-bold">${s.jours}</span></div>
+                        <div class="flex justify-between text-sm"><span><i class="fas fa-moon mr-1" style="color: #6b7280;"></i>Jours (nuit) :</span><span class="font-bold">${s.nuits}</span></div>
+                        <div class="flex justify-between text-sm"><span><i class="fas fa-clock mr-1 text-info"></i>Heures totales :</span><span class="font-bold">${formatHeures(s.heures_total)}h</span></div>
+                        <div class="flex justify-between text-sm"><span><i class="fas fa-sun mr-1 text-warning"></i>Heures de jour :</span><span class="font-bold">${formatHeures(s.heures_jour)}h</span></div>
+                        <div class="divider my-1"></div>
+                        <div class="text-xs text-base-content/60">
+                            Une heure de shift appartient à une seule catégorie exclusive (priorité : 1er mai &gt; férié &gt; chômé/décret &gt; dimanche &gt; nuit &gt; ordinaire).
+                            Le remplacement est indépendant et cumulable en plus.
+                        </div>
+                        ${lignesMajoration}
+                        ${lignesRemplacement ? `<div class="divider my-1"></div>${lignesRemplacement}` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// Afficher le calendrier mensuel
+function displayCalendrier(rotations, mois, annee, nbJours) {
+    const headerRow = document.getElementById('calendrier-header');
+    const tbody = document.getElementById('calendrier-body');
+
+    let headerHtml = '<th class="bg-base-200 sticky left-0 z-10">Gardien</th>';
+    for (let jour = 1; jour <= nbJours; jour++) {
+        const date = new Date(annee, mois - 1, jour);
+        const isDimanche = date.getDay() === 0;
+        const classJour = isDimanche ? 'bg-warning/20 font-bold' : 'bg-base-200';
+        headerHtml += `<th class="${classJour} text-center text-xs">${jour}</th>`;
+    }
+    headerRow.innerHTML = headerHtml;
+
+    const rotationsParGardien = {};
+    const rotationsParGardienListe = {};
+    GARDIENS_IDS.forEach(id => {
+        rotationsParGardien[id] = {};
+        rotationsParGardienListe[id] = [];
+    });
+
+    rotations.forEach(rot => {
+        if (!GARDIENS_IDS.includes(rot.employe_id)) return;
+        const jour = new Date(rot.date).getDate();
+        rotationsParGardien[rot.employe_id][jour] = rot;
+        rotationsParGardienListe[rot.employe_id].push(rot);
+    });
+
+    // Categorisation par gardien via la meme logique que le moteur reel
+    // (cascade exclusive + remplacement calcule sur le seuil de 240h/mois).
+    const stats = {};
+    GARDIENS_IDS.forEach(id => {
+        const { totals } = categorizeGardienRotations(rotationsParGardienListe[id]);
+        stats[id] = totals;
+    });
+
+    const formatHeures = formatGuardHours;
+
+    let bodyHtml = '';
+    GARDIENS_IDS.forEach(gardienId => {
+        const gardienNom = GARDIENS_NOMS[gardienId] || gardienId;
+        bodyHtml += '<tr>';
+        bodyHtml += `<td class="font-bold bg-base-200 sticky left-0 z-10">${gardienNom}</td>`;
+
+        for (let jour = 1; jour <= nbJours; jour++) {
+            const rotation = rotationsParGardien[gardienId][jour];
+            const date = new Date(annee, mois - 1, jour);
+            const isDimanche = date.getDay() === 0;
+
+            if (!rotation) {
+                bodyHtml += `<td class="${isDimanche ? 'bg-warning/5' : ''}"></td>`;
+                continue;
+            }
+
+            let cellClass = '';
+            let badgeClass = '';
+            let badgeText = '';
+            switch (rotation.shift_type) {
+                case 'jour':
+                    badgeText = '<i class="fas fa-sun text-warning" style="font-size: 1.2rem;"></i>';
+                    break;
+                case 'nuit':
+                    badgeText = '<i class="fas fa-moon" style="font-size: 1.2rem; color: #6b7280;"></i>';
+                    break;
+                case 'conge':
+                    cellClass = 'bg-base-300';
+                    badgeClass = 'badge-ghost';
+                    badgeText = 'C';
+                    break;
+                case 'etendu':
+                    cellClass = 'bg-accent/10';
+                    badgeClass = 'badge-accent';
+                    badgeText = '24h';
+                    break;
+            }
+
+            let marqueurs = '';
+            if (rotation.est_dimanche) marqueurs += '<span class="text-warning text-xs" title="Dimanche">&#9679;</span>';
+            if (rotation.est_jour_ferie && rotation.type_jour_ferie === 'decret') marqueurs += '<span class="text-info text-xs" title="Chome et paye (decret)">&#9679;</span>';
+            else if (rotation.est_jour_ferie) marqueurs += '<span class="text-error text-xs" title="Ferie officiel">&#9679;</span>';
+            if (rotation.est_extension) marqueurs += '<span class="text-accent text-xs" title="Remplacement">&#9670;</span>';
+
+            bodyHtml += `
+                <td class="text-center ${cellClass} p-1" title="${rotation.shift_type_display} (${rotation.heure_debut} - ${rotation.heure_fin})">
+                    <div class="flex flex-col items-center gap-1">
+                        ${badgeClass ? `<span class="badge ${badgeClass} badge-xs">${badgeText}</span>` : badgeText}
+                        ${marqueurs ? `<div>${marqueurs}</div>` : ''}
+                    </div>
+                </td>
+            `;
+        }
+
+        bodyHtml += '</tr>';
+    });
+
+    tbody.innerHTML = bodyHtml;
+    renderMensuelStats(stats, formatHeures);
+}
+
+// Fonction pour imprimer le calendrier
+function imprimerCalendrier() {
+    // Récupérer le mois et l'année actuellement affichés depuis le sélecteur de mois
+    const monthInput = document.getElementById('filter-mensuel-mois');
+    let monthValue = monthInput ? monthInput.value : ''; // Format: YYYY-MM
+
+    if (!monthValue) {
+        const today = new Date();
+        monthValue = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+        if (monthInput) {
+            monthInput.value = monthValue;
+        }
+    }
+
+    if (!monthValue || monthValue.indexOf('-') === -1) {
+        const tbodyFallback = document.getElementById('calendrier-body');
+        if (tbodyFallback) {
+            tbodyFallback.innerHTML = '<tr><td colspan="32" class="text-center text-error">Veuillez selectionner un mois valide.</td></tr>';
+        }
+        return;
+    }
+
+
+    // Parser le mois et l'année depuis le format YYYY-MM
+    const [annee, mois] = monthValue.split('-');
+
+    // Rediriger vers la page d'impression dédiée
+    const url = `{% url 'employees:impression_calendrier_gardiens' %}?mois=${mois}&annee=${annee}`;
+    window.location.href = url;
+}
+
+// Helper pour obtenir le nom du mois
+function getMoisNom(mois) {
+    const moisNoms = [
+        'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+        'Juillet', 'Aout', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
+    ];
+    return moisNoms[parseInt(mois) - 1];
+}
+
+// Charger heures supplémentaires
+async function loadHeuresSupp() {
+    const gardienId = document.getElementById('filter-heures-gardien').value;
+    const mois = document.getElementById('filter-heures-mois').value;
+    const annee = document.getElementById('filter-heures-annee').value;
+
+    const statsDiv = document.getElementById('heures-stats');
+    const detailsDiv = document.getElementById('heures-details');
+
+    statsDiv.innerHTML = '<div class="col-span-3 text-center"><i class="fas fa-spinner fa-spin"></i> Chargement...</div>';
+
+    try {
+        const response = await fetch(`/api/gardiens/heures-supplementaires/?employe_id=${gardienId}&mois=${mois}&annee=${annee}`);
+        const data = await response.json();
+
+        if (data.success) {
+            displayHeuresSupp(data.heures_supplementaires);
+        } else {
+            statsDiv.innerHTML = `<div class="col-span-3 text-error">${data.error}</div>`;
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        statsDiv.innerHTML = '<div class="col-span-3 text-error">Erreur de chargement</div>';
+    }
+}
+
+// Afficher heures supplémentaires
+function displayHeuresSupp(heures) {
+    const statsDiv = document.getElementById('heures-stats');
+    const detailsDiv = document.getElementById('heures-details');
+
+    statsDiv.innerHTML = `
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-clock text-3xl"></i>
+            </div>
+            <div class="stat-title">Heures Normales</div>
+            <div class="stat-value text-primary">${heures.heures_normales}h</div>
+            <div class="stat-desc">Sur 240h max</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-secondary">
+                <i class="fas fa-plus-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Heures Supplémentaires</div>
+            <div class="stat-value text-secondary">${heures.heures_supplementaires}h</div>
+            <div class="stat-desc">Au-dela de 240h/mois</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-accent">
+                <i class="fas fa-calendar-day text-3xl"></i>
+            </div>
+            <div class="stat-title">Spéciales</div>
+            <div class="stat-value text-accent">${parseFloat(heures.heures_dimanche) + parseFloat(heures.heures_jours_feries)}h</div>
+            <div class="stat-desc">Dim + Fériés</div>
+        </div>
+    `;
+
+    detailsDiv.innerHTML = `
+        <div class="grid grid-cols-2 gap-4">
+            <div>
+                <div class="stat bg-base-100">
+                    <div class="stat-title">Gardien</div>
+                    <div class="stat-value text-lg">${heures.employe_nom}</div>
+                </div>
+            </div>
+            <div>
+                <div class="stat bg-base-100">
+                    <div class="stat-title">Période</div>
+                    <div class="stat-value text-lg">${getMoisNom(heures.mois)} ${heures.annee}</div>
+                </div>
+            </div>
+            <div>
+                <div class="stat bg-base-100">
+                    <div class="stat-title">Heures Dimanche</div>
+                    <div class="stat-value text-lg text-warning">${heures.heures_dimanche}h</div>
+                    <div class="stat-desc">Majoration 40%</div>
+                </div>
+            </div>
+            <div>
+                <div class="stat bg-base-100">
+                    <div class="stat-title">Heures Fériés</div>
+                    <div class="stat-value text-lg text-error">${heures.heures_jours_feries}h</div>
+                    <div class="stat-desc">Majoration 50% (officiel) / 30% (decret)</div>
+                </div>
+            </div>
+            <div>
+                <div class="stat bg-base-100">
+                    <div class="stat-title">Heures Extensions (remplacement)</div>
+                    <div class="stat-value text-lg text-info">${heures.heures_extensions}h</div>
+                    <div class="stat-desc">Majoration 100% fixe (+30% si jour ordinaire)</div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Modal Générer Rotations
+function openGenerateModal() {
+    // Définir la date par défaut Ã  aujourd'hui
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('gen-date-debut').value = today;
+    document.getElementById('gen-start-jour').value = '';
+    document.getElementById('gen-start-nuit').value = '';
+    document.getElementById('modal-generate').showModal();
+}
+
+// Modal Créer Congé
+function openCongeModal() {
+    updateRemplacementStartOptions();
+    document.getElementById('modal-conge').showModal();
+}
+
+// Soumettre formulaire génération
+document.getElementById('form-generate').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const dateDebut = document.getElementById('gen-date-debut').value;
+    const nbJours = document.getElementById('gen-nb-jours').value;
+    const startJour = document.getElementById('gen-start-jour').value;
+    const startNuit = document.getElementById('gen-start-nuit').value;
+
+    if (!startJour || !startNuit) {
+        alert('Veuillez selectionner le gardien de debut (jour et nuit)');
+        return;
+    }
+    if (startJour === startNuit) {
+        alert('Le gardien de jour et de nuit doivent etre differents');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/gardiens/generer-rotations/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                date_debut: dateDebut,
+                nb_jours: parseInt(nbJours),
+                start_day_guard_id: startJour,
+                start_night_guard_id: startNuit
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(`âœ“ ${data.message}\n\n${data.rotations_creees.length} rotation(s) créée(s)\n${data.total_genere} total générées`);
+            document.getElementById('modal-generate').close();
+            loadRotations();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors de la génération');
+    }
+});
+
+// Soumettre formulaire congé
+document.getElementById('form-conge').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const employeId = document.getElementById('conge-gardien').value;
+    const dateDebut = document.getElementById('conge-date-debut').value;
+    const dateFin = document.getElementById('conge-date-fin').value;
+    const motif = document.getElementById('conge-motif').value || 'Congé';
+    const remplacementStart = document.getElementById('conge-remplacement-start').value;
+
+    if (!employeId) {
+        alert('Veuillez selectionner un gardien');
+        return;
+    }
+    if (!remplacementStart) {
+        alert('Veuillez selectionner le gardien de remplacement');
+        return;
+    }
+    if (remplacementStart === employeId) {
+        alert('Le gardien de remplacement doit etre different');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/gardiens/creer-conge/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                employe_id: employeId,
+                date_debut: dateDebut,
+                date_fin: dateFin,
+                motif: motif,
+                remplacement_start_guard_id: remplacementStart
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            const gardienNom = GARDIENS_NOMS[employeId];
+            alert(`âœ“ Congé créé pour ${gardienNom}\n\n${data.message}\n\nJours traités: ${data.jours_traites.length}\nShifts étendus: ${data.shifts_etendus.length}`);
+            document.getElementById('modal-conge').close();
+            document.getElementById('form-conge').reset();
+            loadRotations();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors de la création du congé');
+    }
+});
+
+// Helpers
+function formatDate(dateStr) {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('fr-FR');
+}
+
+function getMoisNom(mois) {
+    const mois_noms = ['', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Aout', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+    return mois_noms[parseInt(mois)];
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Charger les rotations au chargement de la page
+document.addEventListener('DOMContentLoaded', function() {
+    const rotationsMonthInput = document.getElementById('filter-rotations-mois');
+    if (rotationsMonthInput && !rotationsMonthInput.value) {
+        const today = new Date();
+        rotationsMonthInput.value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+    }
+    loadRotations();
+    const monthInput = document.getElementById('filter-mensuel-mois');
+    if (monthInput && !monthInput.value) {
+        const today = new Date();
+        monthInput.value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+    }
+    const congeSelect = document.getElementById('conge-gardien');
+    if (congeSelect) {
+        congeSelect.addEventListener('change', updateRemplacementStartOptions);
+        updateRemplacementStartOptions();
+    }
+});
+</script>
+{% endblock %}
+
+
+
+

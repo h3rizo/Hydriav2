@@ -1,0 +1,1402 @@
+{% extends planning_shell_base_template %}
+{% load humanize %}
+{% load l10n %}
+{% load planning_extras %}
+
+{% block extra_css %}
+<style>
+    .clickable-month-cell {
+        transition: background-color 0.15s ease, transform 0.12s ease;
+    }
+
+    .clickable-month-cell:hover {
+        background-color: hsl(var(--b3, 220 18% 20%) / 0.35);
+    }
+
+    .clickable-month-cell:active {
+        transform: scale(0.985);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- En-tête -->
+    <div class="flex justify-between items-center">
+        <h1 class="text-3xl font-bold">{{ title }}</h1>
+        <div class="flex gap-2">
+            <a href="{% url 'planning:gestion_volumetrique' %}" class="btn btn-ghost btn-sm">
+                <i class="fas fa-table mr-2"></i>Vue détaillée par point d'eau
+            </a>
+        </div>
+    </div>
+
+    <!-- Stats globales -->
+    <div class="stats shadow w-full grid" style="grid-template-columns:repeat(auto-fit,minmax(12rem,1fr));">
+        {% if employee_points_score.visible %}
+        <button type="button"
+            class="stat min-w-0 overflow-hidden bg-secondary/10 text-left transition-all {% if employee_points_score.points_ecart %}cursor-pointer hover:bg-secondary/15{% else %}cursor-default{% endif %} {% if show_only_score_gap %}ring-2 ring-inset ring-secondary{% endif %}"
+            {% if employee_points_score.points_ecart %}onclick="toggleScoreGapFilter()"{% else %}disabled{% endif %}
+            aria-pressed="{% if show_only_score_gap %}true{% else %}false{% endif %}"
+            title="{% if employee_points_score.points_ecart %}Filtrer les tableaux sur les {{ employee_points_score.points_ecart }} points d'eau responsables de l'écart{% else %}Tous les points d'eau ont obtenu leur point{% endif %}">
+            <div class="stat-figure text-secondary">
+                <div class="radial-progress text-secondary" style="--value:{{ employee_points_score.pourcentage|unlocalize }}; --size:3.5rem; --thickness:4px;" role="progressbar">
+                    {{ employee_points_score.pourcentage|floatformat:0 }}%
+                </div>
+            </div>
+            <div class="stat-title text-secondary">{{ employee_points_score.scope_label }}</div>
+            <div class="stat-value text-secondary text-2xl whitespace-nowrap">{{ employee_points_score.points_acquis }} / {{ employee_points_score.points_max }}</div>
+            <div class="stat-desc whitespace-normal">
+                <span class="block font-semibold">{{ employee_points_score.scope_name }}</span>
+                <span class="block">1 point par point d'eau payé à 100% · mois clôturés uniquement</span>
+                {% if employee_points_score.points_ecart %}
+                <span class="mt-1 block font-semibold">
+                    <i class="fas fa-filter mr-1" aria-hidden="true"></i>
+                    {{ employee_points_score.points_ecart }} point{{ employee_points_score.points_ecart|pluralize }} responsable{{ employee_points_score.points_ecart|pluralize }} de l'écart
+                    {% if show_only_score_gap %}<span class="badge badge-secondary badge-xs ml-1">Filtre actif</span>{% endif %}
+                </span>
+                {% endif %}
+            </div>
+        </button>
+        {% endif %}
+        <div class="stat">
+            <div class="stat-figure text-info"><i class="fas fa-tint text-3xl"></i></div>
+            <div class="stat-title">Points d'eau</div>
+            <div class="stat-value text-info">{{ stats.total_points_eau|intcomma }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-figure text-primary"><i class="fas fa-file-invoice text-3xl"></i></div>
+            <div class="stat-title">Total Factures</div>
+            <div class="stat-value text-primary">{{ stats.total_factures|intcomma }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-figure text-success"><i class="fas fa-check-circle text-3xl"></i></div>
+            <div class="stat-title">Payées</div>
+            <div class="stat-value text-success">{{ stats.factures_payees|intcomma }}</div>
+            <div class="stat-desc">{{ stats.taux_paiement }}% du total</div>
+        </div>
+        <div class="stat">
+            <div class="stat-figure text-error"><i class="fas fa-times-circle text-3xl"></i></div>
+            <div class="stat-title">Impayées</div>
+            <div class="stat-value text-error">{{ stats.factures_impayees|intcomma }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-figure text-warning"><i class="fas fa-chart-pie text-3xl"></i></div>
+            <div class="stat-title">Taux global</div>
+            <div class="stat-value text-warning">{{ stats.taux_paiement }}%</div>
+        </div>
+        <div class="stat">
+            <div class="stat-figure text-error"><i class="fas fa-cut text-3xl"></i></div>
+            <div class="stat-title">Points d'eau coupés</div>
+            <div class="stat-value text-error">{{ stats.points_eau_coupes|intcomma }}</div>
+            <div class="stat-desc">Branchements arrêtés</div>
+        </div>
+    </div>
+
+    <!-- Répartition par statut de paiement (Ouvrage-Type) -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <h2 class="card-title mb-4">
+                <i class="fas fa-chart-bar mr-2 text-primary"></i>
+                Répartition des Ouvrages-Types par Statut de Paiement
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- Tout Payé -->
+                <div class="stat bg-base-200 rounded-lg">
+                    <div class="stat-figure">
+                        <div class="radial-progress text-success" style="--value:{% widthratio stats.nb_tout_paye stats.nb_tout_paye|add:stats.nb_partiellement_paye|add:stats.nb_non_paye 100 %}; --size:4rem; --thickness:4px;" role="progressbar">
+                            {% if stats.nb_tout_paye|add:stats.nb_partiellement_paye|add:stats.nb_non_paye > 0 %}
+                                {% widthratio stats.nb_tout_paye stats.nb_tout_paye|add:stats.nb_partiellement_paye|add:stats.nb_non_paye 100 %}%
+                            {% else %}
+                                0%
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="stat-title">Tout Payé</div>
+                    <div class="stat-value text-success text-2xl">{{ stats.nb_tout_paye|intcomma }}</div>
+                    <div class="stat-desc">
+                        {% if stats.nb_tout_paye|add:stats.nb_partiellement_paye|add:stats.nb_non_paye > 0 %}
+                            {% widthratio stats.nb_tout_paye stats.nb_tout_paye|add:stats.nb_partiellement_paye|add:stats.nb_non_paye 100 %}% du total
+                        {% else %}
+                            0% du total
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Partiellement Payé -->
+                <div class="stat bg-base-200 rounded-lg">
+                    <div class="stat-figure">
+                        <div class="radial-progress text-warning" style="--value:{% widthratio stats.nb_partiellement_paye stats.nb_tout_paye|add:stats.nb_partiellement_paye|add:stats.nb_non_paye 100 %}; --size:4rem; --thickness:4px;" role="progressbar">
+                            {% if stats.nb_tout_paye|add:stats.nb_partiellement_paye|add:stats.nb_non_paye > 0 %}
+                                {% widthratio stats.nb_partiellement_paye stats.nb_tout_paye|add:stats.nb_partiellement_paye|add:stats.nb_non_paye 100 %}%
+                            {% else %}
+                                0%
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="stat-title">Partiellement Payé</div>
+                    <div class="stat-value text-warning text-2xl">{{ stats.nb_partiellement_paye|intcomma }}</div>
+                    <div class="stat-desc">
+                        {% if stats.nb_tout_paye|add:stats.nb_partiellement_paye|add:stats.nb_non_paye > 0 %}
+                            {% widthratio stats.nb_partiellement_paye stats.nb_tout_paye|add:stats.nb_partiellement_paye|add:stats.nb_non_paye 100 %}% du total
+                        {% else %}
+                            0% du total
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Non Payé -->
+                <div class="stat bg-base-200 rounded-lg">
+                    <div class="stat-figure">
+                        <div class="radial-progress text-error" style="--value:{% widthratio stats.nb_non_paye stats.nb_tout_paye|add:stats.nb_partiellement_paye|add:stats.nb_non_paye 100 %}; --size:4rem; --thickness:4px;" role="progressbar">
+                            {% if stats.nb_tout_paye|add:stats.nb_partiellement_paye|add:stats.nb_non_paye > 0 %}
+                                {% widthratio stats.nb_non_paye stats.nb_tout_paye|add:stats.nb_partiellement_paye|add:stats.nb_non_paye 100 %}%
+                            {% else %}
+                                0%
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="stat-title">Non Payé</div>
+                    <div class="stat-value text-error text-2xl">{{ stats.nb_non_paye|intcomma }}</div>
+                    <div class="stat-desc">
+                        {% if stats.nb_tout_paye|add:stats.nb_partiellement_paye|add:stats.nb_non_paye > 0 %}
+                            {% widthratio stats.nb_non_paye stats.nb_tout_paye|add:stats.nb_partiellement_paye|add:stats.nb_non_paye 100 %}% du total
+                        {% else %}
+                            0% du total
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Barre de progression globale -->
+            <div class="mt-4">
+                <div class="flex justify-between mb-2 text-sm">
+                    <span><i class="fas fa-check-circle text-success mr-1"></i> Tout payé: {{ stats.nb_tout_paye }}</span>
+                    <span><i class="fas fa-exclamation-circle text-warning mr-1"></i> Partiellement: {{ stats.nb_partiellement_paye }}</span>
+                    <span><i class="fas fa-times-circle text-error mr-1"></i> Non payé: {{ stats.nb_non_paye }}</span>
+                </div>
+                {% with total=stats.nb_tout_paye|add:stats.nb_partiellement_paye|add:stats.nb_non_paye %}
+                    {% if total > 0 %}
+                        <div class="flex w-full h-6 rounded-lg overflow-hidden">
+                            <div class="bg-success flex items-center justify-center text-white text-xs font-bold" style="width: {% widthratio stats.nb_tout_paye total 100 %}%">
+                                {% widthratio stats.nb_tout_paye total 100 %}%
+                            </div>
+                            <div class="bg-warning flex items-center justify-center text-white text-xs font-bold" style="width: {% widthratio stats.nb_partiellement_paye total 100 %}%">
+                                {% widthratio stats.nb_partiellement_paye total 100 %}%
+                            </div>
+                            <div class="bg-error flex items-center justify-center text-white text-xs font-bold" style="width: {% widthratio stats.nb_non_paye total 100 %}%">
+                                {% widthratio stats.nb_non_paye total 100 %}%
+                            </div>
+                        </div>
+                    {% else %}
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle"></i>
+                            <span>Aucune donnée disponible pour cette période</span>
+                        </div>
+                    {% endif %}
+                {% endwith %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <form method="GET" id="filterForm" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {% if show_only_score_gap %}
+                <input type="hidden" name="score_ecart" value="1">
+                {% endif %}
+                <!-- Année -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Année</span></label>
+                    <select name="annee" class="select select-bordered" onchange="this.form.submit()">
+                        <option value="2023" {% if annee_filter == "2023" %}selected{% endif %}>2023</option>
+                        <option value="2024" {% if annee_filter == "2024" %}selected{% endif %}>2024</option>
+                        <option value="2025" {% if annee_filter == "2025" %}selected{% endif %}>2025</option>
+                        <option value="2026" {% if annee_filter == "2026" %}selected{% endif %}>2026</option>
+                    </select>
+                </div>
+
+                <div class="form-control md:col-span-3 md:max-w-md">
+                    <label class="label"><span class="label-text">Employé responsable</span></label>
+                    <select name="employe" id="volumeGlobalEmployeSelect" class="select select-bordered">
+                        <option value="">Tous les responsables</option>
+                        {% for employe in employes_responsables %}
+                        <option value="{{ employe.id }}" {% if employe.id == employe_filter %}selected{% endif %}>
+                            {{ employe.label }} — {{ employe.poste }} ({{ employe.ouvrage_count }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Régions (multi-sélection) -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Régions</span></label>
+                    <select name="regions" id="regionsSelect" class="select select-bordered" multiple size="3">
+                        {% for region in regions %}
+                        <option value="{{ region.id }}" data-employe-ids="{{ region.filter_employe_ids|default:'' }}"
+                                {% if region.id|stringformat:"s" in regions_ids %}selected{% endif %}>
+                            {{ region.nom_region }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <label class="label">
+                        <span class="label-text-alt">Ctrl/Cmd pour sélectionner plusieurs</span>
+                    </label>
+                </div>
+
+                <!-- Districts (multi-sélection) -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Districts</span></label>
+                    <select name="districts" id="districtsSelect" class="select select-bordered" multiple size="3">
+                        {% for district in districts %}
+                        <option value="{{ district.id }}" data-region-id="{{ district.region_id }}"
+                                data-employe-ids="{{ district.filter_employe_ids|default:'' }}"
+                                {% if district.id|stringformat:"s" in districts_ids %}selected{% endif %}>
+                            {{ district.nom_district }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <label class="label">
+                        <span class="label-text-alt">Ctrl/Cmd pour sélectionner plusieurs</span>
+                    </label>
+                </div>
+
+                <!-- Communes (multi-sélection) -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Communes</span></label>
+                    <select name="communes" id="communesSelect" class="select select-bordered" multiple size="3">
+                        {% for commune in communes %}
+                        <option value="{{ commune.id }}" data-region-id="{{ commune.district.region_id }}"
+                                data-district-id="{{ commune.district_id }}"
+                                data-employe-ids="{{ commune.filter_employe_ids|default:'' }}"
+                                {% if commune.id|stringformat:"s" in communes_ids %}selected{% endif %}>
+                            {{ commune.nom_commune }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <label class="label">
+                        <span class="label-text-alt">Ctrl/Cmd pour sélectionner plusieurs</span>
+                    </label>
+                </div>
+
+                <!-- Ouvrages (multi-sélection) -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Ouvrages</span></label>
+                    <select name="ouvrages" id="ouvragesSelect" class="select select-bordered" multiple size="3">
+                        {% for ouvrage in ouvrages %}
+                        <option value="{{ ouvrage.id }}" data-region-id="{{ ouvrage.filter_region_id|default:'' }}"
+                                data-district-id="{{ ouvrage.filter_district_id|default:'' }}"
+                                data-commune-id="{{ ouvrage.filter_commune_id|default:'' }}"
+                                data-employe-ids="{{ ouvrage.filter_employe_ids|default:'' }}"
+                                {% if ouvrage.id|stringformat:"s" in ouvrages_ids %}selected{% endif %}>
+                            {{ ouvrage.nom_ouvrage }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <label class="label">
+                        <span class="label-text-alt">Ctrl/Cmd pour sélectionner plusieurs</span>
+                    </label>
+                </div>
+
+                <!-- Boutons -->
+                <div class="form-control flex flex-row gap-2 items-end">
+                    <button type="submit" class="btn btn-primary flex-1">
+                        <i class="fas fa-filter mr-2"></i>Filtrer
+                    </button>
+                    <button type="button" onclick="resetFilters()" class="btn btn-ghost flex-1">
+                        <i class="fas fa-redo mr-2"></i>Réinitialiser
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Nouveau tableau: Taux de recouvrement mensuels par ouvrage -->
+    <div class="card bg-base-100 shadow-xl mb-8">
+        <div class="card-body">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <h2 class="card-title">
+                    <i class="fas fa-calendar-alt text-info mr-2"></i>
+                    Taux de Recouvrement Mensuels par Ouvrage ({{ annee_filter }})
+                    <span class="badge badge-info badge-sm ml-2">Calcul depuis Table Relevés</span>
+                </h2>
+                <label class="label cursor-pointer gap-3 bg-base-200 px-3 py-2 rounded-lg border border-base-300">
+                    <span class="label-text font-semibold text-sm">
+                        <i class="fas fa-list-ul mr-1"></i>Afficher infos
+                    </span>
+                    <input type="checkbox" id="toggle-monthly-infos" class="toggle toggle-primary toggle-sm" onchange="toggleMonthlyInfos(this.checked)">
+                </label>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="table table-sm table-zebra">
+                    <thead class="sticky top-0 bg-base-200">
+                        <tr>
+                            <th class="sticky left-0 bg-base-200 z-10">Ouvrage</th>
+                            {% for month in taux_mensuels_visible_months %}
+                            <th class="text-center">{{ month.label }}</th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if taux_mensuels_visible_months %}
+                        {% for district_nom, ouvrages in taux_mensuels_par_district.items %}
+                            <!-- En-tête du district -->
+                            <tr class="bg-primary text-primary-content font-bold">
+                                <td colspan="{{ taux_mensuels_visible_months|length|add:'1' }}" class="py-2">
+                                    <i class="fas fa-map-marker-alt mr-2"></i>
+                                    {{ district_nom }} ({{ ouvrages|length }} ouvrage{{ ouvrages|length|pluralize }})
+                                </td>
+                            </tr>
+                            <!-- Ouvrages du district avec taux mensuels -->
+                            {% for ouvrage_data in ouvrages %}
+                            <tr class="hover">
+                                <td class="pl-8 sticky left-0 bg-base-100 z-10 font-medium">{{ ouvrage_data.ouvrage_nom }}</td>
+                                {% for month_item in ouvrage_data.visible_months %}
+                                    <td class="text-center px-2 align-top">
+                                        {% if month_item.data is not None %}
+                                            <button
+                                                type="button"
+                                                class="clickable-month-cell w-full rounded-md px-1 py-1"
+                                                title="Voir les details du mois"
+                                                onclick="openReleveDetailsModal('{{ ouvrage_data.ouvrage_id }}', '{{ ouvrage_data.ouvrage_nom|escapejs }}', '{{ annee_filter }}', {{ month_item.number }})">
+                                                <div class="flex flex-col items-center gap-1">
+                                                    <!-- Barre de progression horizontale -->
+                                                    <div class="w-full bg-base-200 rounded-full h-2 overflow-hidden">
+                                                        <div class="h-full rounded-full transition-all
+                                                            {% if month_item.data.taux >= 95 %}bg-success
+                                                            {% elif month_item.data.taux >= 80 %}bg-warning
+                                                            {% elif month_item.data.taux > 0 %}bg-error
+                                                            {% else %}bg-base-300{% endif %}"
+                                                            style="width: {{ month_item.data.taux }}%;">
+                                                        </div>
+                                                    </div>
+                                                    <!-- Pourcentage en petit texte -->
+                                                    <span class="text-xs font-semibold
+                                                        {% if month_item.data.taux >= 95 %}text-success
+                                                        {% elif month_item.data.taux >= 80 %}text-warning
+                                                        {% elif month_item.data.taux > 0 %}text-error
+                                                        {% else %}text-base-content/50{% endif %}">
+                                                        {{ month_item.data.taux }}%
+                                                    </span>
+                                                    <div class="monthly-info-details hidden text-[10px] leading-none opacity-70 mt-1">
+                                                        <div title="Montant total des relevés">Relevés: {{ month_item.data.total_releves|floatformat:0|intcomma }}</div>
+                                                        <div title="Montant total payé (DiameX)" class="text-primary font-semibold">Payé: {{ month_item.data.total_diamex|floatformat:0|intcomma }}</div>
+                                                        <div title="Ecart entre relevés et payé" class="{% if month_item.data.ecart != 0 %}text-warning font-semibold{% endif %}">Écart: {{ month_item.data.ecart|floatformat:0|intcomma }}</div>
+                                                        <div title="Montant pointé côté relevés">Pointé relevé: {{ month_item.data.pointe_releve|floatformat:0|intcomma }}</div>
+                                                        <div title="Montant pointé côté DiameX" class="text-success font-semibold">Pointé DiameX: {{ month_item.data.pointe_diamex|floatformat:0|intcomma }}</div>
+                                                        {% if month_item.data.nb_non_recouvrable %}
+                                                        <div title="Exclu du prévu, mais toujours pointable" class="font-semibold text-base-content/60">
+                                                            Hors rec.: {{ month_item.data.montant_non_recouvrable|floatformat:0|intcomma }} ({{ month_item.data.nb_non_recouvrable }})
+                                                        </div>
+                                                        {% endif %}
+                                                    </div>
+                                                </div>
+                                            </button>
+                                        {% else %}
+                                            <span class="text-base-content/30">-</span>
+                                        {% endif %}
+                                    </td>
+                                {% endfor %}
+                            </tr>
+                            {% endfor %}
+                        {% empty %}
+                        <tr>
+                            <td colspan="{{ taux_mensuels_visible_months|length|add:'1' }}" class="text-center text-base-content/50 py-8">
+                                Aucune donnée disponible pour les filtres sélectionnés
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% else %}
+                        <tr>
+                            <td colspan="1" class="text-center text-base-content/50 py-8">
+                                Aucune donnée mensuelle disponible pour les filtres sélectionnés
+                            </td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="mt-4 text-sm text-base-content/70">
+                <i class="fas fa-info-circle mr-2"></i>
+                Les barres de progression colorées indiquent le taux de recouvrement :
+                <span class="inline-flex items-center gap-1 ml-2">
+                    <div class="w-8 h-2 bg-success rounded-full"></div>
+                    <span>≥ 95%</span>
+                </span>
+                <span class="inline-flex items-center gap-1 ml-2">
+                    <div class="w-8 h-2 bg-warning rounded-full"></div>
+                    <span>80-94%</span>
+                </span>
+                <span class="inline-flex items-center gap-1 ml-2">
+                    <div class="w-8 h-2 bg-error rounded-full"></div>
+                    <span>&lt; 80%</span>
+                </span>
+                <span class="inline-flex items-center gap-1 ml-2">
+                    <span class="text-base-content/30">-</span>
+                    <span>Pas de données</span>
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tableau global -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <h2 class="card-title mb-4">
+                <i class="fas fa-table text-primary mr-2"></i>
+                Suivi Global des Paiements Volumétriques
+                <span class="badge badge-primary badge-sm ml-2">Calcul depuis Comptabilité</span>
+            </h2>
+            <div class="overflow-x-auto">
+                <table id="tableau-global-paiements" class="table table-xs table-pin-rows">
+                    <thead>
+                        <tr>
+                            <th class="bg-base-200">Ouvrage</th>
+                            <th class="bg-base-200 text-center">Type</th>
+                            <th class="bg-base-200 text-center">Nb PE</th>
+                            <th class="bg-base-200 text-center" title="Points d'eau coupés (datearretbranchement renseigné)">
+                                <i class="fas fa-cut text-error mr-1"></i>Coupés
+                            </th>
+                            {% for mois_nom in mois_noms %}
+                            <th class="text-center bg-base-200">{{ mois_nom }}</th>
+                            {% endfor %}
+                            <th class="bg-base-200 text-center">Total</th>
+                            <th class="bg-base-200 text-center">Payés</th>
+                            <th class="bg-base-200 text-center">Impayés</th>
+                            <th class="bg-base-200 text-center">Taux</th>
+                            <th class="bg-base-200">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for data in tableau_data %}
+                        <!-- Ligne de sous-total si changement d'ouvrage (sauf pour le premier) -->
+                        {% if data.nouveau_groupe_ouvrage and not forloop.first %}
+                        <!-- Fin du groupe précédent - afficher ligne de séparation -->
+                        <tr class="border-t-4 border-primary/30">
+                            <td colspan="{{ mois_liste|length|add:'9' }}" class="p-0 h-1"></td>
+                        </tr>
+                        {% endif %}
+
+                        <!-- Ligne de sous-total au début de chaque nouveau groupe d'ouvrage -->
+                        {% if data.nouveau_groupe_ouvrage and data.sous_total_ouvrage %}
+                        <tr class="bg-primary/10 font-bold border-b-2 border-primary">
+                            <td colspan="4" class="text-sm">
+                                <i class="fas fa-building mr-2 text-primary"></i>
+                                SOUS-TOTAL : {{ data.sous_total_ouvrage.ouvrage.nom_ouvrage }}
+                            </td>
+
+                            <!-- Colonnes mois avec totaux par mois -->
+                            {% for mois in mois_liste %}
+                            <td class="text-center p-1 text-xs">
+                                {% with mois_st=data.sous_total_ouvrage.mois|lookup:mois %}
+                                    {% if mois_st.total > 0 %}
+                                        <div class="badge badge-ghost badge-sm w-full" title="{{ mois_st.payes }}/{{ mois_st.total }} payés">
+                                            {{ mois_st.total }}
+                                        </div>
+                                        {% if mois_st.non_recouvrables > 0 %}
+                                        <div class="mt-1 text-[10px] text-base-content/60">+{{ mois_st.non_recouvrables }} hors rec.</div>
+                                        {% endif %}
+                                    {% elif mois_st.non_recouvrables > 0 %}
+                                        <div class="badge badge-neutral badge-sm w-full" title="Hors recouvrement, pointage toujours possible">
+                                            {{ mois_st.non_recouvrables }} HR
+                                        </div>
+                                    {% else %}
+                                        <span class="text-base-content/20">-</span>
+                                    {% endif %}
+                                {% endwith %}
+                            </td>
+                            {% endfor %}
+
+                            <!-- Stats totales ouvrage -->
+                            <td class="text-center">
+                                <span class="badge badge-info" title="{{ data.sous_total_ouvrage.total_non_recouvrables }} facture(s) hors recouvrement">{{ data.sous_total_ouvrage.total_releves }}</span>
+                            </td>
+                            <td class="text-center">
+                                <span class="badge badge-success">{{ data.sous_total_ouvrage.total_payes }}</span>
+                            </td>
+                            <td class="text-center">
+                                <span class="badge badge-error">{{ data.sous_total_ouvrage.total_impayes }}</span>
+                            </td>
+                            <td class="text-center">
+                                <span class="font-bold {% if data.sous_total_ouvrage.taux >= 80 %}text-success{% elif data.sous_total_ouvrage.taux >= 50 %}text-warning{% else %}text-error{% endif %}">
+                                    {{ data.sous_total_ouvrage.taux }}%
+                                </span>
+                            </td>
+                            <td class="text-center text-xs text-base-content/70">
+                                {{ data.sous_total_ouvrage.nb_points_eau }} PE
+                            </td>
+                        </tr>
+                        {% endif %}
+
+                        <tr class="hover {% if data.nouveau_groupe_ouvrage %}bg-base-200/30{% endif %}">
+                            <td class="text-sm">{{ data.ouvrage.nom_ouvrage }}</td>
+                            <td class="text-center">
+                                {% with type_nom=data.type_point_eau.nom_type|upper %}
+                                    {% if 'KIOSQUE' in type_nom %}
+                                        <i class="fas fa-store text-info text-lg" title="{{ data.type_point_eau.nom_type }}"></i>
+                                    {% elif 'BI' in type_nom or 'BORNE' in type_nom %}
+                                        <i class="fas fa-faucet text-primary text-lg" title="{{ data.type_point_eau.nom_type }}"></i>
+                                    {% elif 'BP' in type_nom or 'BRANCHEMENT' in type_nom or 'PRIVÉ' in type_nom or 'PRIVE' in type_nom %}
+                                        <i class="fas fa-home text-success text-lg" title="{{ data.type_point_eau.nom_type }}"></i>
+                                    {% else %}
+                                        <i class="fas fa-tint text-base-content/50 text-lg" title="{{ data.type_point_eau.nom_type }}"></i>
+                                    {% endif %}
+                                {% endwith %}
+                            </td>
+                            <td class="text-center">
+                                <span class="badge badge-ghost badge-sm">{{ data.nb_points_eau }}</span>
+                            </td>
+                            <td class="text-center">
+                                {% if data.nb_coupes > 0 %}
+                                    <span class="badge badge-error badge-sm" title="{{ data.nb_coupes }} point(s) d'eau coupé(s)">
+                                        <i class="fas fa-cut mr-1"></i>{{ data.nb_coupes }}
+                                    </span>
+                                {% else %}
+                                    <span class="text-base-content/20">-</span>
+                                {% endif %}
+                            </td>
+
+                            <!-- Colonnes mois avec indicateurs -->
+                            {% for mois in mois_liste %}
+                            <td class="text-center p-1">
+                                {% with mois_data=data.mois|lookup:mois %}
+                                    {% if mois_data.total > 0 %}
+                                        {% if mois_data.impayes == 0 %}
+                                            <!-- Tout payé -->
+                                            <div class="badge badge-success badge-sm w-full" title="{{ mois_data.payes }}/{{ mois_data.total }} payés">
+                                                <i class="fas fa-check"></i>
+                                            </div>
+                                        {% elif mois_data.payes == 0 %}
+                                            <!-- Rien payé -->
+                                            <div class="badge badge-error badge-sm w-full" title="0/{{ mois_data.total }} payés - {{ mois_data.impayes }} impayé(s)">
+                                                <i class="fas fa-times"></i>
+                                            </div>
+                                        {% else %}
+                                            <!-- Partiellement payé - AFFICHER LE NOMBRE D'IMPAYÉS -->
+                                            <div class="badge badge-warning badge-sm w-full font-bold" title="{{ mois_data.payes }}/{{ mois_data.total }} payés - {{ mois_data.impayes }} impayé(s)">
+                                                {{ mois_data.impayes }}
+                                            </div>
+                                        {% endif %}
+                                        {% if mois_data.non_recouvrables > 0 %}
+                                        <div class="mt-1 text-[10px] text-base-content/60">+{{ mois_data.non_recouvrables }} HR</div>
+                                        {% endif %}
+                                    {% elif mois_data.non_recouvrables > 0 %}
+                                        <div class="badge badge-neutral badge-sm w-full" title="Hors recouvrement, pointage toujours possible">
+                                            {{ mois_data.non_recouvrables }} HR
+                                        </div>
+                                    {% else %}
+                                        <span class="text-base-content/20">-</span>
+                                    {% endif %}
+                                {% endwith %}
+                            </td>
+                            {% endfor %}
+
+                            <!-- Stats -->
+                            <td class="text-center">
+                                <span class="badge badge-info badge-sm" title="{{ data.total_non_recouvrables }} facture(s) hors recouvrement">{{ data.total_releves }}</span>
+                            </td>
+                            <td class="text-center">
+                                <span class="badge badge-success badge-sm">{{ data.total_payes }}</span>
+                            </td>
+                            <td class="text-center">
+                                <span class="badge badge-error badge-sm">{{ data.total_impayes }}</span>
+                            </td>
+                            <td class="text-center">
+                                <span class="font-semibold {% if data.taux >= 80 %}text-success{% elif data.taux >= 50 %}text-warning{% else %}text-error{% endif %}">
+                                    {{ data.taux }}%
+                                </span>
+                            </td>
+
+                            <!-- Action -->
+                            <td>
+                                <a href="{% url 'planning:gestion_volumetrique' %}?ouvrage={{ data.ouvrage.id }}&type_point_eau={{ data.type_point_eau.id }}&annee={{ annee_filter }}"
+                                   class="btn btn-ghost btn-xs text-primary"
+                                   title="Voir détails par point d'eau">
+                                    <i class="fas fa-eye"></i>
+                                </a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="{{ mois_liste|length|add:'9' }}" class="text-center py-8 text-base-content/50">
+                                <i class="fas fa-inbox text-4xl mb-2"></i>
+                                <p>Aucune donnée trouvée pour les filtres sélectionnés</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Légende -->
+    <div class="alert">
+        <i class="fas fa-info-circle"></i>
+        <div class="w-full">
+            <p class="font-semibold mb-2">Légende</p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                <div>
+                    <p class="font-medium mb-1">Types de points d'eau :</p>
+                    <div class="flex flex-col gap-1 ml-2">
+                        <span><i class="fas fa-store text-info mr-2"></i> Kiosque</span>
+                        <span><i class="fas fa-faucet text-primary mr-2"></i> Borne Individuelle (BI)</span>
+                        <span><i class="fas fa-home text-success mr-2"></i> Branchement Privé (BP)</span>
+                        <span><i class="fas fa-tint text-base-content/50 mr-2"></i> Autre type</span>
+                    </div>
+                </div>
+                <div>
+                    <p class="font-medium mb-1">Indicateurs de paiement :</p>
+                    <div class="flex flex-col gap-1 ml-2">
+                        <span><span class="badge badge-success badge-sm mr-2"><i class="fas fa-check"></i></span> Tout payé</span>
+                        <span><span class="badge badge-warning badge-sm mr-2"><i class="fas fa-minus"></i></span> Partiellement payé</span>
+                        <span><span class="badge badge-error badge-sm mr-2"><i class="fas fa-times"></i></span> Non payé</span>
+                        <span class="text-base-content/40 mr-2">- Pas de relevé</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal details mensuels (API compta volume) -->
+<input type="checkbox" id="modal-releve-details" class="modal-toggle" />
+<div class="modal">
+    <div class="modal-box w-11/12 max-w-none" style="width:95vw; max-width:95vw;">
+        <label for="modal-releve-details" class="btn btn-sm btn-circle absolute right-2 top-2">x</label>
+        <div id="modal-releve-title-container">
+            <h3 class="font-bold text-lg mb-4" id="modal-releve-title">Details de l'ouvrage</h3>
+        </div>
+
+        <div id="modal-releve-loading" class="flex justify-center items-center py-8">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+        </div>
+
+        <div id="modal-releve-content" class="hidden">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div class="bg-base-200 p-3 rounded-lg text-center shadow-inner">
+                    <div class="text-xs uppercase tracking-wider opacity-60 mb-1">Total releves (prevu)</div>
+                    <div class="text-xl font-bold font-mono" id="modal-releve-total-prevu">0 Ar</div>
+                    <div class="text-xs opacity-70" id="modal-releve-count">0 releve(s)</div>
+                </div>
+                <div class="bg-primary/10 p-3 rounded-lg text-center shadow-inner border border-primary/20">
+                    <div class="text-xs uppercase tracking-wider text-primary opacity-60 mb-1">Total DiameX (paye)</div>
+                    <div class="text-xl font-bold text-primary font-mono" id="modal-releve-total-paye">0 Ar</div>
+                    <div class="text-xs text-primary opacity-70" id="modal-releve-diamex-count">0 transaction(s)</div>
+                </div>
+                <div id="modal-releve-statut-card" class="p-3 rounded-lg text-center shadow-inner border border-base-content/10">
+                    <div class="text-xs uppercase tracking-wider opacity-60 mb-1">Taux de recouvrement</div>
+                    <div class="text-xl font-bold font-mono" id="modal-releve-taux">0%</div>
+                    <div class="text-xs font-mono" id="modal-releve-ecart">ecart: 0 Ar</div>
+                </div>
+            </div>
+
+            <div id="modal-pointage-panel" class="mb-6 border border-info/30 bg-info/10 rounded-lg p-3">
+                <div class="flex flex-wrap items-center gap-3">
+                    <div class="badge badge-outline">Selection releves: <span id="modal-pointage-count" class="ml-1 font-bold">0</span></div>
+                    <div class="badge badge-outline">Total releves: <span id="modal-pointage-total" class="ml-1 font-bold">0 Ar</span></div>
+                    <div class="badge badge-outline">Montant DiameX: <span id="modal-pointage-diamex" class="ml-1 font-bold">0 Ar</span></div>
+                    <div class="badge badge-outline">Ecart: <span id="modal-pointage-ecart" class="ml-1 font-bold">0 Ar</span></div>
+                    <button id="modal-pointage-apply-btn" class="btn btn-xs btn-info" onclick="applyPointageFromModal()" disabled>
+                        <i class="fas fa-link mr-1"></i>Pointer
+                    </button>
+                    <button class="btn btn-xs btn-ghost" onclick="resetPointageSelection()">Reinitialiser</button>
+                </div>
+            </div>
+
+            <div id="modal-matching-couples" class="mb-6 border border-success/30 bg-success/10 rounded-lg p-3 text-xs">
+                <div class="font-semibold mb-2">
+                    <i class="fas fa-link mr-1"></i>Correspondances N DiameX / Base entre les deux tableaux
+                </div>
+                <div id="modal-matching-couples-list" class="flex flex-wrap gap-2 opacity-80">
+                    <span class="italic opacity-60">Aucune correspondance</span>
+                </div>
+                <div id="modal-matching-couples-totals-wrap" class="mt-3 hidden">
+                    <div class="overflow-x-auto border border-success/20 rounded-lg bg-base-100/60">
+                        <table class="table table-xs w-full">
+                            <thead>
+                                <tr>
+                                    <th>Numero / Base</th>
+                                    <th class="text-right">Total releve (global)</th>
+                                    <th class="text-right">Total compta (global)</th>
+                                    <th class="text-right">Ecart</th>
+                                </tr>
+                            </thead>
+                            <tbody id="modal-matching-couples-totals-body">
+                                <tr>
+                                    <td colspan="4" class="text-center py-2 opacity-60 italic">Aucune donnee</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 gap-8">
+                <div>
+                    <h4 class="font-bold mb-3 flex items-center gap-2 text-success">
+                        <i class="fas fa-file-invoice-dollar"></i>
+                        Details des releves (factures)
+                    </h4>
+                    <div class="overflow-x-auto max-h-[400px] border rounded-xl shadow-sm">
+                        <table class="table table-xs table-zebra w-full">
+                            <thead class="sticky top-0 bg-base-300 z-10">
+                                <tr>
+                                    <th class="w-10 text-center">Sel.</th>
+                                    <th class="w-16">ID XLS</th>
+                                    <th>Abonne</th>
+                                    <th>Type PE</th>
+                                    <th class="text-right">Index ancien</th>
+                                    <th class="text-right">Index nouv.</th>
+                                    <th class="text-right">Conso</th>
+                                    <th class="text-right">Montant (Ar)</th>
+                                    <th class="text-center">N DiameX</th>
+                                    <th class="text-center">Base DiameX</th>
+                                    <th class="text-center">Statut</th>
+                                    <th class="text-center w-28">Couper eau</th>
+                                    <th id="modal-releve-delete-col-head" class="text-center w-14 hidden">Suppr.</th>
+                                </tr>
+                            </thead>
+                            <tbody id="modal-releve-table-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div>
+                    <h4 class="font-bold mb-3 flex items-center gap-2 text-primary">
+                        <i class="fas fa-book"></i>
+                        Lignes en comptabilite (DiameX - Compte 707401)
+                    </h4>
+                    <div class="overflow-x-auto max-h-[400px] border rounded-xl shadow-sm">
+                        <table class="table table-xs table-zebra w-full">
+                            <thead class="sticky top-0 bg-base-300 z-10">
+                                <tr>
+                                    <th class="w-12 text-center">Sel.</th>
+                                    <th class="w-24">Date Rec.</th>
+                                    <th>Description</th>
+                                    <th class="text-right w-32">Montant (Ar)</th>
+                                    <th class="w-24 text-center">N DiameX</th>
+                                    <th class="w-32">Base / Prog</th>
+                                    <th class="w-24 text-center">Statut</th>
+                                    <th>Piece / Scan</th>
+                                    <th class="text-center w-16">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="modal-diamex-table-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="modal-releve-error" class="hidden">
+            <div class="alert alert-error">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span id="modal-releve-error-text">Une erreur s'est produite</span>
+            </div>
+        </div>
+    </div>
+    <label class="modal-backdrop" for="modal-releve-details">Fermer</label>
+</div>
+<!-- Custom filter pour accéder aux dictionnaires -->
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function resetFilters() {
+    document.getElementById('volumeGlobalEmployeSelect').value = '';
+    document.getElementById('regionsSelect').selectedIndex = -1;
+    document.getElementById('districtsSelect').selectedIndex = -1;
+    document.getElementById('communesSelect').selectedIndex = -1;
+    document.getElementById('ouvragesSelect').selectedIndex = -1;
+    const form = document.getElementById('filterForm');
+    const scoreFilter = form.querySelector('input[name="score_ecart"]');
+    if (scoreFilter) scoreFilter.remove();
+    form.submit();
+}
+
+function toggleScoreGapFilter() {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('score_ecart') === '1') {
+        url.searchParams.delete('score_ecart');
+    } else {
+        url.searchParams.set('score_ecart', '1');
+    }
+    window.location.href = url.toString();
+}
+
+(function initVolumeGlobalEmployeeCascade() {
+    const employe = document.getElementById('volumeGlobalEmployeSelect');
+    const regions = document.getElementById('regionsSelect');
+    const districts = document.getElementById('districtsSelect');
+    const communes = document.getElementById('communesSelect');
+    const ouvrages = document.getElementById('ouvragesSelect');
+    if (!employe || !regions || !districts || !communes || !ouvrages) return;
+
+    const selectedValues = (select) => new Set(
+        Array.from(select.selectedOptions || []).map((option) => option.value)
+    );
+    const matchesEmployee = (option) => !employe.value
+        || (option.dataset.employeIds || '').split(',').filter(Boolean).includes(employe.value);
+
+    function filterOptions(select, predicate) {
+        Array.from(select.options || []).forEach((option) => {
+            const visible = predicate(option);
+            option.hidden = !visible;
+            option.disabled = !visible;
+            if (!visible) option.selected = false;
+        });
+    }
+
+    function applyCascade() {
+        filterOptions(regions, matchesEmployee);
+        const regionIds = selectedValues(regions);
+        filterOptions(districts, (option) =>
+            (regionIds.size === 0 || regionIds.has(option.dataset.regionId)) && matchesEmployee(option));
+        const districtIds = selectedValues(districts);
+        filterOptions(communes, (option) => {
+            const geographyMatches = districtIds.size > 0
+                ? districtIds.has(option.dataset.districtId)
+                : (regionIds.size === 0 || regionIds.has(option.dataset.regionId));
+            return geographyMatches && matchesEmployee(option);
+        });
+        const communeIds = selectedValues(communes);
+        filterOptions(ouvrages, (option) => {
+            let geographyMatches = true;
+            if (communeIds.size > 0) geographyMatches = communeIds.has(option.dataset.communeId);
+            else if (districtIds.size > 0) geographyMatches = districtIds.has(option.dataset.districtId);
+            else if (regionIds.size > 0) geographyMatches = regionIds.has(option.dataset.regionId);
+            return geographyMatches && matchesEmployee(option);
+        });
+    }
+
+    employe.addEventListener('change', () => {
+        [regions, districts, communes, ouvrages].forEach((select) => { select.selectedIndex = -1; });
+        applyCascade();
+    });
+    regions.addEventListener('change', () => {
+        [districts, communes, ouvrages].forEach((select) => { select.selectedIndex = -1; });
+        applyCascade();
+    });
+    districts.addEventListener('change', () => {
+        [communes, ouvrages].forEach((select) => { select.selectedIndex = -1; });
+        applyCascade();
+    });
+    communes.addEventListener('change', () => {
+        ouvrages.selectedIndex = -1;
+        applyCascade();
+    });
+    applyCascade();
+})();
+
+const isDirecteurPoste = {% if is_directeur_poste %}true{% else %}false{% endif %};
+let currentReleveModalContext = null;
+let selectedReleveIds = new Set();
+let selectedDiamexEntry = null;
+
+function getCsrfToken() {
+    const cookieValue = document.cookie
+        .split('; ')
+        .find(row => row.startsWith('csrftoken='));
+    return cookieValue ? cookieValue.split('=')[1] : '';
+}
+
+function fmtNumber(value, allowZero = false) {
+    if (value === null || value === undefined) return '-';
+    if (!allowZero && Number(value) === 0) return '-';
+    return new Intl.NumberFormat('fr-FR').format(value);
+}
+
+function resetPointageSelection() {
+    selectedReleveIds = new Set();
+    selectedDiamexEntry = null;
+    document.querySelectorAll('.releve-pointage-checkbox').forEach(cb => { cb.checked = false; });
+    document.querySelectorAll('.diamex-pointage-radio').forEach(rb => { rb.checked = false; });
+    updatePointageSummary();
+}
+
+function toggleRelevePointageSelection(releveId, checked) {
+    const releves = (currentReleveModalContext && currentReleveModalContext.releves) || [];
+    const releve = releves.find(r => String(r.id) === String(releveId));
+    if (releve && releve.already_pointed) {
+        return;
+    }
+
+    if (checked) {
+        selectedReleveIds.add(String(releveId));
+    } else {
+        selectedReleveIds.delete(String(releveId));
+    }
+    updatePointageSummary();
+}
+
+function selectDiamexPointage(entryId) {
+    if (!currentReleveModalContext || !currentReleveModalContext.diamexMap) {
+        selectedDiamexEntry = null;
+        updatePointageSummary();
+        return;
+    }
+    selectedDiamexEntry = currentReleveModalContext.diamexMap[String(entryId)] || null;
+    updatePointageSummary();
+}
+
+function updatePointageSummary() {
+    const releves = (currentReleveModalContext && currentReleveModalContext.releves) || [];
+    const selectedReleves = releves.filter(
+        rel => !rel.already_pointed && selectedReleveIds.has(String(rel.id))
+    );
+    const totalReleves = selectedReleves.reduce((sum, rel) => sum + Number(rel.montant || 0), 0);
+    const montantDiamex = Number(selectedDiamexEntry ? selectedDiamexEntry.montant_in : 0);
+    const ecart = totalReleves - montantDiamex;
+
+    document.getElementById('modal-pointage-count').textContent = String(selectedReleves.length);
+    document.getElementById('modal-pointage-total').textContent = fmtNumber(totalReleves, true) + ' Ar';
+    document.getElementById('modal-pointage-diamex').textContent = fmtNumber(montantDiamex, true) + ' Ar';
+    document.getElementById('modal-pointage-ecart').textContent = fmtNumber(ecart, true) + ' Ar';
+
+    const applyBtn = document.getElementById('modal-pointage-apply-btn');
+    const canApply = selectedReleves.length > 0 && !!selectedDiamexEntry && Math.abs(ecart) <= 0.01;
+    applyBtn.disabled = !canApply;
+    applyBtn.classList.toggle('btn-success', canApply);
+    applyBtn.classList.toggle('btn-info', !canApply);
+}
+
+async function applyPointageFromModal() {
+    if (!selectedDiamexEntry || selectedReleveIds.size === 0) {
+        alert('Selectionnez des releves et une ligne DiameX.');
+        return;
+    }
+
+    const payload = {
+        releve_ids: Array.from(selectedReleveIds),
+        diamex_entry_id: selectedDiamexEntry.entry_id || selectedDiamexEntry.id,
+        montant_diamex_selection: Number(selectedDiamexEntry.montant_in || 0)
+    };
+
+    try {
+        const response = await fetch('{% url "accounting:api_pointage_releves_diamex" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrfToken()
+            },
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Pointage impossible');
+        }
+
+        alert(data.message || 'Pointage effectue');
+        await openReleveDetailsModal(
+            currentReleveModalContext.ouvrageId,
+            currentReleveModalContext.ouvrageNom,
+            currentReleveModalContext.annee,
+            currentReleveModalContext.mois
+        );
+    } catch (error) {
+        alert(error.message || 'Erreur de pointage');
+    }
+}
+
+async function deleteReleveFromModal(releveId) {
+    if (!isDirecteurPoste) {
+        alert('Acces refuse.');
+        return;
+    }
+    if (!confirm('Supprimer cette ligne de releve ?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('{% url "accounting:api_delete_releve_pointage" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrfToken()
+            },
+            body: JSON.stringify({ releve_id: releveId })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Suppression impossible');
+        }
+
+        await openReleveDetailsModal(
+            currentReleveModalContext.ouvrageId,
+            currentReleveModalContext.ouvrageNom,
+            currentReleveModalContext.annee,
+            currentReleveModalContext.mois
+        );
+    } catch (error) {
+        alert(error.message || 'Erreur de suppression');
+    }
+}
+
+async function cutWaterFromModal(pointEauId) {
+    if (!pointEauId) {
+        alert('Point d\'eau introuvable pour ce releve.');
+        return;
+    }
+
+    if (!confirm('Confirmer la coupure d\'eau pour cet abonne ?')) {
+        return;
+    }
+
+    const dateCoupure = new Date().toISOString().split('T')[0];
+
+    try {
+        const response = await fetch('{% url "billing:api_couper_point_eau" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrfToken()
+            },
+            body: JSON.stringify({
+                point_eau_id: pointEauId,
+                date_coupure: dateCoupure,
+                motif: 'Coupure depuis modal details recouvrement'
+            })
+        });
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Coupure impossible');
+        }
+
+        alert(data.message || 'Point d\'eau coupe avec succes.');
+        await openReleveDetailsModal(
+            currentReleveModalContext.ouvrageId,
+            currentReleveModalContext.ouvrageNom,
+            currentReleveModalContext.annee,
+            currentReleveModalContext.mois
+        );
+    } catch (error) {
+        alert(error.message || 'Erreur lors de la coupure');
+    }
+}
+
+async function openReleveDetailsModal(ouvrageId, ouvrageNom, annee, mois) {
+    const monthNames = ['Janvier', 'Fevrier', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Aout', 'Septembre', 'Octobre', 'Novembre', 'Decembre'];
+    const moisLabel = monthNames[parseInt(mois, 10) - 1] || String(mois);
+
+    currentReleveModalContext = {
+        ouvrageId: String(ouvrageId),
+        ouvrageNom,
+        annee: parseInt(annee, 10),
+        mois: parseInt(mois, 10),
+        releves: [],
+        diamexMap: {}
+    };
+    selectedReleveIds = new Set();
+    selectedDiamexEntry = null;
+
+    document.getElementById('modal-releve-details').checked = true;
+    document.getElementById('modal-releve-title').innerHTML = `
+        <div class="flex items-center justify-between w-full pr-8">
+            <span>Details : ${ouvrageNom}</span>
+            <span class="badge badge-lg badge-outline border-base-content/30">${moisLabel} ${annee}</span>
+        </div>
+    `;
+
+    const loading = document.getElementById('modal-releve-loading');
+    const content = document.getElementById('modal-releve-content');
+    const error = document.getElementById('modal-releve-error');
+
+    loading.classList.remove('hidden');
+    content.classList.add('hidden');
+    error.classList.add('hidden');
+
+    try {
+        const apiMois = parseInt(mois, 10);
+        const apiAnnee = parseInt(annee, 10);
+
+        const response = await fetch(`{% url "accounting:api_details_recoupement_3e" %}?ouvrage_id=${ouvrageId}&annee=${apiAnnee}&mois=${apiMois}`);
+        const data = await response.json();
+
+        if (!data.success) throw new Error(data.error || 'Erreur lors de la recuperation des donnees');
+
+        const stats = data.stats || {};
+        document.getElementById('modal-releve-total-prevu').textContent = fmtNumber(stats.total_releves || 0, true) + ' Ar';
+        document.getElementById('modal-releve-total-paye').textContent = fmtNumber(stats.total_diamex || 0, true) + ' Ar';
+        document.getElementById('modal-releve-count').textContent = (stats.nb_releves || 0) + ' releve(s)';
+        document.getElementById('modal-releve-diamex-count').textContent = (stats.nb_transactions_diamex || 0) + ' transaction(s) DiameX';
+
+        const tauxStats = stats.taux_recouvrement !== undefined
+            ? stats.taux_recouvrement
+            : ((stats.total_releves > 0) ? Math.round((stats.total_diamex || 0) / stats.total_releves * 100) : 0);
+
+        document.getElementById('modal-releve-taux').textContent = tauxStats + '%';
+        document.getElementById('modal-releve-ecart').textContent = 'ecart: ' + fmtNumber(stats.ecart || 0, true) + ' Ar';
+
+        const statusCard = document.getElementById('modal-releve-statut-card');
+        statusCard.className = 'p-3 rounded-lg text-center shadow-inner border ' +
+            (tauxStats >= 95 ? 'bg-success/10 border-success/20 text-success' :
+            (tauxStats >= 80 ? 'bg-warning/10 border-warning/20 text-warning' : 'bg-error/10 border-error/20 text-error'));
+
+        const normalizeValue = (v) => String(v || '').trim().toLowerCase();
+        const makePairKey = (num, base) => `${normalizeValue(num)}||${normalizeValue(base)}`;
+
+        const relPairs = new Set();
+        (data.releves || []).forEach(rel => {
+            const num = rel.numeroDiameX || '';
+            const base = rel.baseDiameX || '';
+            if (normalizeValue(num) && normalizeValue(base)) {
+                relPairs.add(makePairKey(num, base));
+            }
+        });
+
+        const diamexPairs = new Set();
+        (data.transactions_diamex || []).forEach(tx => {
+            const num = tx.id_access || '';
+            const base = tx.prog || '';
+            if (normalizeValue(num) && normalizeValue(base)) {
+                diamexPairs.add(makePairKey(num, base));
+            }
+        });
+
+        const commonPairs = [];
+        relPairs.forEach(key => {
+            if (diamexPairs.has(key)) commonPairs.push(key);
+        });
+        const commonPairSet = new Set(commonPairs);
+
+        const releveBody = document.getElementById('modal-releve-table-body');
+        releveBody.innerHTML = '';
+        document.getElementById('modal-releve-delete-col-head').classList.toggle('hidden', !isDirecteurPoste);
+
+        (data.releves || []).forEach(rel => {
+            const numeroDiamex = rel.numeroDiameX || '';
+            const baseDiamex = rel.baseDiameX || '';
+            const isMatchedPair = commonPairSet.has(makePairKey(numeroDiamex, baseDiamex));
+            const isAlreadyPointed = !!rel.already_pointed;
+            const isNonRecouvrable = !!rel.non_recouvrable;
+
+            const tr = document.createElement('tr');
+            if (isMatchedPair) tr.classList.add('bg-success/10');
+            if (isNonRecouvrable) tr.classList.add('bg-base-200/70');
+            if (isAlreadyPointed) tr.classList.add('opacity-70');
+
+            tr.innerHTML = `
+                <td class="text-center">
+                    <input type="checkbox" class="checkbox checkbox-xs releve-pointage-checkbox"
+                        ${isAlreadyPointed ? 'disabled' : ''}
+                        onchange="toggleRelevePointageSelection('${rel.id}', this.checked)">
+                </td>
+                <td class="font-mono text-[10px]">${rel.idxls || '-'}</td>
+                <td><div class="font-bold">${rel.nom_abonne || '-'}</div></td>
+                <td>${rel.type_point_eau || '-'}</td>
+                <td class="text-right font-mono">${fmtNumber(rel.index_ancien, true)}</td>
+                <td class="text-right font-mono">${fmtNumber(rel.nouvelindex, true)}</td>
+                <td class="text-right font-mono font-bold">${fmtNumber(rel.consommation, true)}</td>
+                <td class="text-right font-mono font-bold text-success">${fmtNumber(rel.montant, true)}</td>
+                <td class="text-center font-mono text-[10px]">${numeroDiamex || '-'}</td>
+                <td class="text-center text-[10px]">${baseDiamex || '-'}</td>
+                <td class="text-center">
+                    ${isAlreadyPointed
+                        ? `<span class="badge badge-success badge-xs gap-1"><i class="fas fa-lock"></i> Deja pointe</span>${isMatchedPair ? '<span class="badge badge-outline badge-xs ml-1">Existe en compta</span>' : ''}`
+                        : (isNonRecouvrable
+                            ? '<span class="badge badge-neutral badge-xs" title="Exclue du prévu, sélection toujours autorisée">Hors recouvrement — pointable</span>'
+                            : '<span class="badge badge-ghost badge-xs opacity-50">Non pointe</span>')}
+                </td>
+                <td class="text-center">
+                    ${rel.est_coupe
+                        ? '<span class="badge badge-warning badge-xs">Deja coupe</span>'
+                        : (rel.point_eau_id
+                            ? `<button class="btn btn-xs btn-warning btn-outline" onclick="cutWaterFromModal('${rel.point_eau_id}')"><i class="fas fa-tint-slash"></i></button>`
+                            : '<span class="opacity-40">-</span>')}
+                </td>
+                <td class="text-center ${isDirecteurPoste ? '' : 'hidden'}">
+                    ${isDirecteurPoste
+                        ? `<button class="btn btn-xs btn-error btn-outline" onclick="deleteReleveFromModal('${rel.id}')"><i class="fas fa-trash"></i></button>`
+                        : ''}
+                </td>
+            `;
+            releveBody.appendChild(tr);
+        });
+
+        const diamexBody = document.getElementById('modal-diamex-table-body');
+        diamexBody.innerHTML = '';
+
+        (data.transactions_diamex || []).forEach(trData => {
+            const isAlreadyPointed = !!trData.already_pointed;
+            const rowId = String(trData.entry_id || trData.id);
+            const isMatchedPair = commonPairSet.has(makePairKey(trData.id_access || '', trData.prog || ''));
+            currentReleveModalContext.diamexMap[rowId] = trData;
+
+            const tr = document.createElement('tr');
+            if (isMatchedPair) tr.classList.add('bg-success/10');
+
+            tr.innerHTML = `
+                <td class="text-center">
+                    <input type="radio" name="diamex_pointage_select" class="radio radio-xs diamex-pointage-radio"
+                        value="${rowId}" ${isAlreadyPointed ? 'disabled' : ''}
+                        onchange="selectDiamexPointage('${rowId}')">
+                </td>
+                <td class="font-mono text-[10px]">${trData.date_rec || '-'}</td>
+                <td class="text-[10px] max-w-xs break-words">${trData.description || '-'}</td>
+                <td class="text-right font-mono font-bold text-primary">${fmtNumber(trData.montant_in, true)}</td>
+                <td class="text-center font-mono text-[10px]">${trData.id_access || '-'}</td>
+                <td><div class="text-[10px] opacity-70">${trData.prog || '-'}</div></td>
+                <td class="text-center">
+                    ${isAlreadyPointed
+                        ? '<span class="badge badge-success badge-xs">Deja pointe</span>'
+                        : '<span class="badge badge-ghost badge-xs">A pointer</span>'}
+                    ${isMatchedPair ? '<span class="badge badge-outline badge-xs ml-1">Existe en releves</span>' : ''}
+                </td>
+                <td><div class="text-[10px] truncate max-w-[100px]" title="${trData.scan || ''}">${trData.scan || '-'}</div></td>
+                <td class="text-center">
+                    ${trData.scan
+                        ? `<button onclick="viewScan('${rowId}', '${(trData.scan_path || trData.scan || '').replace(/'/g, "\\\\'")}')" class="btn btn-xs btn-ghost btn-circle" title="Voir le scan"><i class="fas fa-file-pdf text-error"></i></button>`
+                        : '-'}
+                </td>
+            `;
+            diamexBody.appendChild(tr);
+        });
+
+        currentReleveModalContext.releves = data.releves || [];
+        updatePointageSummary();
+
+        const matchingList = document.getElementById('modal-matching-couples-list');
+        const matchingTotalsWrap = document.getElementById('modal-matching-couples-totals-wrap');
+        const matchingTotalsBody = document.getElementById('modal-matching-couples-totals-body');
+
+        if (commonPairs.length > 0) {
+            matchingList.innerHTML = commonPairs.map(pair => {
+                const [num, base] = pair.split('||');
+                return `<span class="badge badge-success badge-sm">${num.toUpperCase()} / ${base.toUpperCase()}</span>`;
+            }).join('');
+        } else {
+            matchingList.innerHTML = '<span class="italic opacity-60">Aucune correspondance</span>';
+        }
+
+        const couplesStats = Array.isArray(data.matching_couples_stats) ? data.matching_couples_stats : [];
+        if (couplesStats.length > 0) {
+            matchingTotalsWrap.classList.remove('hidden');
+            matchingTotalsBody.innerHTML = couplesStats.map(item => {
+                const ecart = Number(item.ecart_global || 0);
+                const ecartClass = ecart > 0 ? 'text-warning' : (ecart < 0 ? 'text-error' : 'text-success');
+                return `
+                    <tr>
+                        <td class="font-mono">${item.numero_diamex || '-'} / ${item.base_diamex || '-'}</td>
+                        <td class="text-right font-mono">${fmtNumber(item.total_releves_global, true)} Ar</td>
+                        <td class="text-right font-mono">${fmtNumber(item.total_diamex_global, true)} Ar</td>
+                        <td class="text-right font-mono font-bold ${ecartClass}">${fmtNumber(ecart, true)} Ar</td>
+                    </tr>
+                `;
+            }).join('');
+        } else {
+            matchingTotalsWrap.classList.add('hidden');
+            matchingTotalsBody.innerHTML = '<tr><td colspan="4" class="text-center py-2 opacity-60 italic">Aucune donnee</td></tr>';
+        }
+
+        if ((data.releves || []).length === 0) {
+            releveBody.innerHTML = '<tr><td colspan="13" class="text-center py-4 opacity-50 italic">Aucun releve pour cette periode</td></tr>';
+        }
+        if ((data.transactions_diamex || []).length === 0) {
+            diamexBody.innerHTML = '<tr><td colspan="9" class="text-center py-4 opacity-50 italic">Aucune transaction DiameX trouvee</td></tr>';
+        }
+
+        loading.classList.add('hidden');
+        content.classList.remove('hidden');
+    } catch (err) {
+        loading.classList.add('hidden');
+        error.classList.remove('hidden');
+        document.getElementById('modal-releve-error-text').textContent = err.message;
+    }
+}
+
+function isLikelyLocalPath(filePath) {
+    if (!filePath) return false;
+    return /^[a-zA-Z]:[\\/]/.test(filePath) || filePath.startsWith('\\\\') || filePath.startsWith('/');
+}
+
+function openFileViaLocalAgent(filePath) {
+    return fetch('http://127.0.0.1:8765/open-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_path: filePath })
+    }).then(r => r.json());
+}
+
+function viewScan(entryId, filePath) {
+    if (filePath && isLikelyLocalPath(filePath)) {
+        openFileViaLocalAgent(filePath)
+            .then(data => {
+                if (!data.ok || !data.success) {
+                    alert('Impossible d\'ouvrir le scan localement. Detail: ' + (data.error || 'Erreur inconnue'));
+                }
+            })
+            .catch(error => {
+                alert('Agent local injoignable. Detail: ' + error.message);
+            });
+        return;
+    }
+
+    if (entryId) {
+        window.open('/comptabilite/scan/' + entryId + '/', '_blank');
+        return;
+    }
+
+    alert('Aucun scan disponible.');
+}
+
+function initGlobalMonthlyCellClicks() {
+    const table = document.getElementById('tableau-global-paiements');
+    if (!table) return;
+    const visibleMonths = [
+        {% for month in visible_mois_colonnes_globales %}
+        {{ month.number }}{% if not forloop.last %}, {% endif %}
+        {% endfor %}
+    ];
+
+    const rows = Array.from(table.querySelectorAll('tbody tr'));
+    rows.forEach((row) => {
+        const actionLink = row.querySelector('a[href*="ouvrage="]');
+        if (!actionLink) return;
+
+        let ouvrageId = '';
+        try {
+            const parsed = new URL(actionLink.href, window.location.origin);
+            ouvrageId = parsed.searchParams.get('ouvrage') || '';
+        } catch (e) {
+            ouvrageId = '';
+        }
+        if (!ouvrageId) return;
+
+        const firstCell = row.querySelector('td');
+        const ouvrageNom = firstCell ? (firstCell.textContent || '').trim() : '';
+        const cells = row.querySelectorAll('td');
+
+        visibleMonths.forEach((monthNumber, index) => {
+            const cell = cells[4 + index];
+            if (!cell) continue;
+
+            const normalized = (cell.textContent || '').replace(/\s+/g, '').trim();
+            if (!normalized || normalized === '-') continue;
+
+            cell.classList.add('cursor-pointer', 'clickable-month-cell');
+            cell.title = 'Voir les details et pointer';
+            cell.addEventListener('click', () => {
+                openReleveDetailsModal(ouvrageId, ouvrageNom, '{{ annee_filter }}', monthNumber);
+            });
+        });
+    });
+}
+
+function toggleMonthlyInfos(show) {
+    document.querySelectorAll('.monthly-info-details').forEach((el) => {
+        el.classList.toggle('hidden', !show);
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    initGlobalMonthlyCellClicks();
+    const toggle = document.getElementById('toggle-monthly-infos');
+    if (toggle) {
+        toggleMonthlyInfos(!!toggle.checked);
+    }
+});
+</script>
+{% endblock %}

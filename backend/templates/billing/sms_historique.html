@@ -1,0 +1,196 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">
+                <i class="fas fa-comment-sms text-primary mr-2"></i>{{ title }}
+            </h1>
+            <p class="text-sm text-base-content/70 mt-1">
+                Rappels envoyés {{ jours_rappel }} jour(s) avant la date limite, uniquement pour les factures non pointées
+                (5 du mois : kiosques ; 15 du mois : BP et BI volume).
+            </p>
+            <div class="flex flex-wrap gap-2 mt-2">
+                {% if dry_run %}
+                <span class="badge badge-warning"><i class="fas fa-flask mr-1"></i>Mode simulation : aucun SMS réel</span>
+                {% else %}
+                <span class="badge badge-success"><i class="fas fa-paper-plane mr-1"></i>Mode réel</span>
+                {% endif %}
+                {% if not numero_mvola_configure %}
+                <span class="badge badge-error">SMS_NUMERO_MVOLA non configuré</span>
+                {% endif %}
+            </div>
+        </div>
+        <form method="post" action="{% url 'billing:sms_lancer' %}"
+              onsubmit="return confirm('{% if dry_run %}Lancer une simulation des rappels maintenant ?{% else %}Envoyer maintenant les rappels SMS RÉELS ?{% endif %}');">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-primary">
+                <i class="fas fa-play mr-2"></i>Lancer les rappels maintenant
+            </button>
+        </form>
+    </div>
+
+    <div class="card bg-base-100 shadow">
+        <div class="card-body overflow-x-auto">
+            <h2 class="card-title">
+                <i class="fas fa-file-invoice-dollar text-warning mr-2"></i>Factures non pointées à rappeler
+                <span class="badge badge-warning">{{ a_rappeler|length }} abonné{{ a_rappeler|length|pluralize }}</span>
+                <span class="badge badge-ghost">{{ nb_factures_a_rappeler }} facture{{ nb_factures_a_rappeler|pluralize }} · {{ montant_a_rappeler|floatformat:0 }} Ar</span>
+            </h2>
+            <p class="text-xs text-base-content/60">
+                Abonnés avec téléphone dont une facture n'est pas pointée (couple DiameX incomplet). Aucun SMS n'est parti
+                tant que la date de rappel (J-{{ jours_rappel }}) n'est pas atteinte et que les rappels n'ont pas été lancés.
+            </p>
+            {% if erreur_apercu %}
+            <div class="alert alert-error text-sm">Impossible de calculer l'aperçu : {{ erreur_apercu }}</div>
+            {% endif %}
+            <details {% if a_rappeler %}open{% endif %}>
+                <summary class="cursor-pointer text-sm font-semibold mb-2">Afficher / masquer la liste</summary>
+                <table class="table table-sm table-zebra">
+                    <thead>
+                        <tr>
+                            <th>Abonné</th>
+                            <th>Facture(s) non pointée(s)</th>
+                            <th class="text-right">Montant</th>
+                            <th>Date limite</th>
+                            <th>Prochain rappel</th>
+                            <th>Téléphone</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for l in a_rappeler %}
+                        <tr>
+                            <td>
+                                <div class="font-semibold">{{ l.abonne.nom }}</div>
+                                <div class="text-xs opacity-60">{{ l.abonne.type_nom }} {{ l.abonne.idxls }}</div>
+                            </td>
+                            <td>
+                                {% for f in l.factures %}
+                                <div class="text-xs">{{ f.reference }} <span class="opacity-60">({{ f.montant|floatformat:0 }} Ar)</span></div>
+                                {% endfor %}
+                            </td>
+                            <td class="text-right whitespace-nowrap">{{ l.montant|floatformat:0 }} Ar</td>
+                            <td class="whitespace-nowrap">
+                                {{ l.limite|date:"d/m/Y" }}
+                                {% if l.en_retard %}<span class="badge badge-error badge-sm ml-1">Dépassée</span>{% endif %}
+                            </td>
+                            <td class="whitespace-nowrap">
+                                {% if l.prochain_rappel %}{{ l.prochain_rappel|date:"d/m/Y" }}{% else %}<span class="opacity-50">—</span>{% endif %}
+                            </td>
+                            <td class="whitespace-nowrap">
+                                {{ l.abonne.telephone_brut }}
+                                {% if not l.telephone_valide %}<span class="badge badge-error badge-sm ml-1">Numéro invalide</span>{% endif %}
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="6" class="text-center py-6 opacity-60">Aucune facture non pointée à rappeler.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </details>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <form method="get"class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                <label class="form-control">
+                    <div class="label"><span class="label-text">Statut</span></div>
+                    <select name="statut" class="select select-bordered">
+                        <option value="">Tous</option>
+                        {% for code, libelle in statuts %}
+                        <option value="{{ code }}" {% if statut == code %}selected{% endif %}>{{ libelle }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="form-control">
+                    <div class="label"><span class="label-text">Du</span></div>
+                    <input type="date" name="du" value="{{ du }}" class="input input-bordered">
+                </label>
+                <label class="form-control">
+                    <div class="label"><span class="label-text">Au</span></div>
+                    <input type="date" name="au" value="{{ au }}" class="input input-bordered">
+                </label>
+                <div class="flex gap-2">
+                    <button type="submit" class="btn btn-primary"><i class="fas fa-filter mr-2"></i>Filtrer</button>
+                    <a href="{% url 'billing:sms_historique' %}" class="btn btn-ghost">Réinitialiser</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow">
+        <div class="card-body overflow-x-auto">
+            <table class="table table-sm table-zebra">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Abonné</th>
+                        <th>Facture(s)</th>
+                        <th>Téléphone</th>
+                        <th>Rappel</th>
+                        <th>Statut</th>
+                        <th>Erreur</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in page %}
+                    <tr>
+                        <td class="whitespace-nowrap">{{ log.created_at|date:"d/m/Y H:i" }}</td>
+                        <td>
+                            <div class="font-semibold">{{ log.point_eau.nomabonne }}</div>
+                            <div class="text-xs opacity-60">{{ log.point_eau.type_point_eau.nom_type|default:"" }} {{ log.point_eau.idxls|default:"" }}</div>
+                        </td>
+                        <td>
+                            {% for f in log.factures %}
+                            <div class="text-xs">{{ f.reference }} <span class="opacity-60">({{ f.montant }} Ar{% if not f.courante %}, antérieure{% endif %})</span></div>
+                            {% endfor %}
+                        </td>
+                        <td class="whitespace-nowrap">{{ log.telephone }}</td>
+                        <td class="whitespace-nowrap">
+                            {{ log.type_rappel }} <span class="opacity-60">· SMS {{ log.partie }}</span>
+                            <div class="text-xs opacity-60">avant le {{ log.date_echeance|date:"d/m/Y" }}</div>
+                        </td>
+                        <td>
+                            {% if log.statut == 'envoye' %}<span class="badge badge-success badge-sm">Envoyé</span>
+                            {% elif log.statut == 'echec' %}<span class="badge badge-error badge-sm">Échec</span>
+                            {% elif log.statut == 'simule' %}<span class="badge badge-warning badge-sm">Simulé</span>
+                            {% else %}<span class="badge badge-ghost badge-sm">En attente</span>{% endif %}
+                        </td>
+                        <td class="text-xs text-error max-w-xs truncate" title="{{ log.erreur }}">{{ log.erreur }}</td>
+                        <td>
+                            {% if log.statut == 'echec' or log.statut == 'en_attente' %}
+                            <form method="post" action="{% url 'billing:sms_relancer' log.pk %}"
+                                  onsubmit="return confirm('Relancer ce rappel ?');">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-xs btn-outline btn-warning">
+                                    <i class="fas fa-rotate-right mr-1"></i>Relancer
+                                </button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr class="text-xs opacity-70"><td colspan="8" class="pt-0 pb-3 font-mono">{{ log.message }}</td></tr>
+                    {% empty %}
+                    <tr><td colspan="8" class="text-center py-8 opacity-60">Aucun envoi pour ces critères.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            {% if page.paginator.num_pages > 1 %}
+            <div class="join mt-4 justify-center">
+                {% if page.has_previous %}
+                <a class="join-item btn btn-sm" href="?{% if filtres_qs %}{{ filtres_qs }}&{% endif %}page={{ page.previous_page_number }}">«</a>
+                {% endif %}
+                <span class="join-item btn btn-sm btn-disabled">Page {{ page.number }} / {{ page.paginator.num_pages }}</span>
+                {% if page.has_next %}
+                <a class="join-item btn btn-sm" href="?{% if filtres_qs %}{{ filtres_qs }}&{% endif %}page={{ page.next_page_number }}">»</a>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

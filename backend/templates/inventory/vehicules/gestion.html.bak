@@ -1,0 +1,786 @@
+﻿{% extends 'base.html' %}
+{% load humanize %}
+
+{% block title %}Gestion des Véhicules - HydrIA{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- Header avec actions -->
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">🏍️ Gestion du Parc de Véhicules</h1>
+            <p class="text-base-content/70 mt-1">Motos, voitures, affectations, relevés et réparations</p>
+        </div>
+        <div class="flex gap-2">
+            <button onclick="openCreateVehiculeModal()" class="btn btn-primary">
+                <i class="fas fa-motorcycle mr-2"></i>Nouveau Véhicule
+            </button>
+            <a href="{% url 'inventory:recap_mensuel_carburant' %}" class="btn btn-accent">
+                <i class="fas fa-chart-line mr-2"></i>Récap Mensuel
+            </a>
+        </div>
+    </div>
+
+    <!-- Statistiques rapides -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div class="stat bg-primary text-primary-content rounded-lg shadow">
+            <div class="stat-figure text-secondary">
+                <i class="fas fa-motorcycle text-4xl opacity-70"></i>
+            </div>
+            <div class="stat-title text-primary-content/70">Total véhicules</div>
+            <div class="stat-value">{{ total_vehicules }}</div>
+        </div>
+
+        <div class="stat bg-success text-success-content rounded-lg shadow">
+            <div class="stat-figure text-secondary">
+                <i class="fas fa-check-circle text-4xl opacity-70"></i>
+            </div>
+            <div class="stat-title text-success-content/70">Actifs</div>
+            <div class="stat-value">{{ vehicules_actifs }}</div>
+        </div>
+
+        <div class="stat bg-info text-info-content rounded-lg shadow">
+            <div class="stat-figure text-secondary">
+                <i class="fas fa-user-tie text-4xl opacity-70"></i>
+            </div>
+            <div class="stat-title text-info-content/70">Affectés</div>
+            <div class="stat-value" id="stat-affectes">{{ vehicules_affectes }}</div>
+        </div>
+
+        <div class="stat bg-warning text-warning-content rounded-lg shadow">
+            <div class="stat-figure text-secondary">
+                <i class="fas fa-tools text-4xl opacity-70"></i>
+            </div>
+            <div class="stat-title text-warning-content/70">Disponibles</div>
+            <div class="stat-value" id="stat-disponibles">{{ vehicules_disponibles }}</div>
+        </div>
+    </div>
+
+    <!-- Tabs pour différentes vues -->
+    <div role="tablist" class="tabs tabs-boxed mb-4">
+        <a role="tab" class="tab tab-active" onclick="switchTab('vehicules')">
+            <i class="fas fa-motorcycle mr-2"></i>Véhicules
+        </a>
+        <a role="tab" class="tab" onclick="switchTab('affectations')">
+            <i class="fas fa-users mr-2"></i>Affectations
+        </a>
+        <a role="tab" class="tab" onclick="switchTab('releves')">
+            <i class="fas fa-tachometer-alt mr-2"></i>Relevés Compteur
+        </a>
+        <a role="tab" class="tab" onclick="switchTab('reparations')">
+            <i class="fas fa-wrench mr-2"></i>Réparations
+        </a>
+    </div>
+
+    <!-- Tab Content: Véhicules -->
+    <div id="tab-vehicules">
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-motorcycle text-primary mr-2"></i>
+                    Liste des Véhicules
+                </h2>
+
+                <div class="overflow-x-auto mt-4">
+                    <table class="table table-zebra w-full">
+                        <thead>
+                            <tr>
+                                <th>Type</th>
+                                <th>Immatriculation</th>
+                                <th>Marque / Modèle</th>
+                                <th>Mise en circulation</th>
+                                <th>Affecté à</th>
+                                <th>Index actuel</th>
+                                <th>Statut</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for vehicule in vehicules %}
+                            <tr>
+                                <td>
+                                    <span class="badge badge-sm">{{ vehicule.get_type_vehicule_display }}</span>
+                                </td>
+                                <td class="font-bold">{{ vehicule.immatriculation }}</td>
+                                <td>{{ vehicule.marque }} {{ vehicule.modele }}</td>
+                                <td>{{ vehicule.date_mise_circulation|date:"d/m/Y" }}</td>
+                                <td>
+                                    {% with employe=vehicule.employe_actuel %}
+                                        {% if employe %}
+                                            <span class="badge badge-info">{{ employe.nom_complet }}</span>
+                                        {% else %}
+                                            <span class="text-base-content/50">-</span>
+                                        {% endif %}
+                                    {% endwith %}
+                                </td>
+                                <td class="font-mono">
+                                    {{ vehicule.index_compteur_actuel|floatformat:0|intcomma }} km
+                                    {% if not vehicule.compteur_fonctionnel %}
+                                        <span class="badge badge-warning badge-xs">⚠️ HS</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if vehicule.actif %}
+                                        <span class="badge badge-success">Actif</span>
+                                    {% else %}
+                                        <span class="badge badge-error">Inactif</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="flex gap-1">
+                                        <a href="{% url 'inventory:details_vehicule' vehicule.id %}"
+                                           class="btn btn-ghost btn-xs"
+                                           title="Détails">
+                                            <i class="fas fa-eye"></i>
+                                        </a>
+                                        <button onclick="openAffectationModal('{{ vehicule.id }}', '{{ vehicule.immatriculation|escapejs }}')"
+                                                class="btn btn-ghost btn-xs text-info"
+                                                title="Affecter">
+                                            <i class="fas fa-user-plus"></i>
+                                        </button>
+                                        <button onclick="openReleveModal('{{ vehicule.id }}', '{{ vehicule.immatriculation|escapejs }}')"
+                                                class="btn btn-ghost btn-xs text-success"
+                                                title="Nouveau relevé">
+                                            <i class="fas fa-tachometer-alt"></i>
+                                        </button>
+                                        <button onclick="openReparationModal('{{ vehicule.id }}', '{{ vehicule.immatriculation|escapejs }}')"
+                                                class="btn btn-ghost btn-xs text-warning"
+                                                title="Nouvelle réparation">
+                                            <i class="fas fa-wrench"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="8" class="text-center text-base-content/50 py-8">
+                                    Aucun véhicule enregistré
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab Content: Affectations (chargé dynamiquement) -->
+    <div id="tab-affectations" class="tab-content hidden">
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-users text-info mr-2"></i>
+                    Affectations des Véhicules
+                </h2>
+                <div id="affectations-content" class="mt-4">
+                    <div class="text-center py-8">
+                        <span class="loading loading-spinner loading-lg"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab Content: Relevés (chargé dynamiquement) -->
+    <div id="tab-releves" class="tab-content hidden">
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-tachometer-alt text-success mr-2"></i>
+                    Relevés de Compteur
+                </h2>
+                <div id="releves-content" class="mt-4">
+                    <div class="text-center py-8">
+                        <span class="loading loading-spinner loading-lg"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab Content: Réparations (chargé dynamiquement) -->
+    <div id="tab-reparations" class="tab-content hidden">
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-wrench text-warning mr-2"></i>
+                    Réparations et Entretiens
+                </h2>
+                <div id="reparations-content" class="mt-4">
+                    <div class="text-center py-8">
+                        <span class="loading loading-spinner loading-lg"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Créer Véhicule -->
+<dialog id="createVehiculeModal" class="modal">
+    <div class="modal-box w-11/12 max-w-3xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-motorcycle text-primary mr-2"></i>Nouveau Véhicule
+        </h3>
+
+        <form id="formCreateVehicule" class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Type -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Type de véhicule *</span></label>
+                    <select name="type_vehicule" class="select select-bordered" required>
+                        <option value="">-- Sélectionner --</option>
+                        <option value="voiture">Voiture</option>
+                        <option value="moto">Moto</option>
+                    </select>
+                </div>
+
+                <!-- Immatriculation -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Immatriculation *</span></label>
+                    <input type="text" name="immatriculation" class="input input-bordered" required
+                           placeholder="Ex: 1234 TAA">
+                </div>
+
+                <!-- Marque -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Marque *</span></label>
+                    <input type="text" name="marque" class="input input-bordered" required
+                           placeholder="Ex: Honda">
+                </div>
+
+                <!-- Modèle -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Modèle *</span></label>
+                    <input type="text" name="modele" class="input input-bordered" required
+                           placeholder="Ex: XL125">
+                </div>
+
+                <!-- Date mise en circulation -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Date de mise en circulation *</span></label>
+                    <input type="date" name="date_mise_circulation" class="input input-bordered" required>
+                </div>
+
+                <!-- Année fabrication -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Année de fabrication</span></label>
+                    <input type="number" name="annee_fabrication" class="input input-bordered"
+                           placeholder="Ex: 2020" min="1950" max="2099">
+                </div>
+
+                <!-- Numéro châssis -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Numéro de châssis</span></label>
+                    <input type="text" name="numero_chassis" class="input input-bordered"
+                           placeholder="Ex: JTDXXX...">
+                </div>
+
+                <!-- Couleur -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Couleur</span></label>
+                    <input type="text" name="couleur" class="input input-bordered"
+                           placeholder="Ex: Blanc">
+                </div>
+            </div>
+
+            <!-- Compteur fonctionnel -->
+            <div class="form-control">
+                <label class="label cursor-pointer justify-start gap-4">
+                    <input type="checkbox" name="compteur_fonctionnel" class="checkbox checkbox-primary" checked>
+                    <span class="label-text">Compteur kilométrique fonctionnel</span>
+                </label>
+            </div>
+
+            <!-- Notes -->
+            <div class="form-control">
+                <label class="label"><span class="label-text">Notes</span></label>
+                <textarea name="notes" class="textarea textarea-bordered h-20"
+                          placeholder="Notes ou observations..."></textarea>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('createVehiculeModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal: Affecter Véhicule -->
+<dialog id="affectationModal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-user-plus text-info mr-2"></i>Affecter un véhicule
+        </h3>
+        <p class="text-sm text-base-content/70 mb-4">Véhicule: <span id="affectation-vehicule-nom" class="font-bold"></span></p>
+
+        <form id="formAffectation" class="space-y-4">
+            <input type="hidden" id="affectation-vehicule-id" name="vehicule_id">
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Employé *</span></label>
+                <select name="employe_id" class="select select-bordered" required>
+                    <option value="">-- Sélectionner --</option>
+                    {% for employe in employes %}
+                        <option value="{{ employe.id }}">{{ employe.nom_complet }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Date de début *</span></label>
+                <input type="date" name="date_debut" class="input input-bordered" required>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Notes</span></label>
+                <textarea name="notes" class="textarea textarea-bordered h-16"
+                          placeholder="Notes..."></textarea>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('affectationModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-info">
+                    <i class="fas fa-save mr-2"></i>Affecter
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal: Relevé Compteur -->
+<dialog id="releveModal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-tachometer-alt text-success mr-2"></i>Nouveau Relevé
+        </h3>
+        <p class="text-sm text-base-content/70 mb-4">Véhicule: <span id="releve-vehicule-nom" class="font-bold"></span></p>
+
+        <form id="formReleve" class="space-y-4">
+            <input type="hidden" id="releve-vehicule-id" name="vehicule_id">
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Date du relevé *</span></label>
+                <input type="date" name="date_releve" class="input input-bordered" required>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Employé</span></label>
+                <select name="employe_id" class="select select-bordered">
+                    <option value="">-- Sélectionner --</option>
+                    {% for employe in employes %}
+                        <option value="{{ employe.id }}">{{ employe.nom_complet }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-control">
+                <label class="label cursor-pointer justify-start gap-4">
+                    <input type="checkbox" id="saisie_manuelle" name="saisie_manuelle" class="checkbox checkbox-warning"
+                           onchange="toggleSaisieManuelle()">
+                    <span class="label-text">Compteur en panne (saisie manuelle)</span>
+                </label>
+            </div>
+
+            <div id="index-field" class="form-control">
+                <label class="label"><span class="label-text">Index compteur (km)</span></label>
+                <input type="number" name="index_compteur" class="input input-bordered"
+                       step="0.01" min="0" placeholder="Ex: 125000">
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Distance parcourue (km) *</span></label>
+                <input type="number" name="distance_parcourue" class="input input-bordered" required
+                       step="0.01" min="0" placeholder="Ex: 150">
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Lieu de départ</span></label>
+                    <input type="text" name="lieu_depart" class="input input-bordered"
+                           placeholder="Ex: Antananarivo">
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Lieu d'arrivée</span></label>
+                    <input type="text" name="lieu_arrivee" class="input input-bordered"
+                           placeholder="Ex: Ambanja">
+                </div>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Notes</span></label>
+                <textarea name="notes" class="textarea textarea-bordered h-16"></textarea>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('releveModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-success">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal: Réparation -->
+<dialog id="reparationModal" class="modal">
+    <div class="modal-box w-11/12 max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-wrench text-warning mr-2"></i>Nouvelle Réparation
+        </h3>
+        <p class="text-sm text-base-content/70 mb-4">Véhicule: <span id="reparation-vehicule-nom" class="font-bold"></span></p>
+
+        <form id="formReparation" class="space-y-4">
+            <input type="hidden" id="reparation-vehicule-id" name="vehicule_id">
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Date *</span></label>
+                    <input type="date" name="date_reparation" class="input input-bordered" required>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Type *</span></label>
+                    <select name="type_reparation" class="select select-bordered" required>
+                        <option value="entretien">Entretien</option>
+                        <option value="reparation">Réparation</option>
+                        <option value="revision">Révision</option>
+                        <option value="depannage">Dépannage</option>
+                        <option value="autre">Autre</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Libellé *</span></label>
+                <input type="text" name="libelle" class="input input-bordered" required
+                       placeholder="Ex: Vidange + Filtre">
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Description détaillée</span></label>
+                <textarea name="description" class="textarea textarea-bordered h-20"></textarea>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mécanicien</span></label>
+                    <input type="text" name="nom_mecanicien" class="input input-bordered"
+                           placeholder="Nom du mécanicien">
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Garage</span></label>
+                    <input type="text" name="garage" class="input input-bordered"
+                           placeholder="Nom du garage">
+                </div>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Pièces utilisées</span></label>
+                <textarea name="pieces_utilisees" class="textarea textarea-bordered h-16"
+                          placeholder="Liste des pièces..."></textarea>
+            </div>
+
+            <div class="grid grid-cols-3 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Coût pièces (Ar)</span></label>
+                    <input type="number" name="cout_pieces" class="input input-bordered"
+                           step="0.01" min="0" placeholder="0">
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Main d'œuvre (Ar)</span></label>
+                    <input type="number" name="cout_main_oeuvre" class="input input-bordered"
+                           step="0.01" min="0" placeholder="0">
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Index compteur (km)</span></label>
+                    <input type="number" name="index_compteur" class="input input-bordered"
+                           step="0.01" min="0">
+                </div>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Notes</span></label>
+                <textarea name="notes" class="textarea textarea-bordered h-16"></textarea>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('reparationModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-warning">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+// Gestion des tabs
+function switchTab(tab) {
+    // Masquer tous les contenus de tabs
+    document.getElementById('tab-vehicules').style.display = 'none';
+    document.getElementById('tab-affectations').style.display = 'none';
+    document.getElementById('tab-releves').style.display = 'none';
+    document.getElementById('tab-reparations').style.display = 'none';
+
+    // Désactiver tous les tabs
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('tab-active'));
+
+    // Activer le tab sélectionné par son nom
+    const tabs = document.querySelectorAll('.tab');
+    tabs.forEach((t, index) => {
+        const tabName = ['vehicules', 'affectations', 'releves', 'reparations'][index];
+        if (tabName === tab) {
+            t.classList.add('tab-active');
+        }
+    });
+
+    // Afficher le contenu du tab sélectionné
+    const tabContent = document.getElementById('tab-' + tab);
+    if (tabContent) {
+        tabContent.style.display = 'block';
+    }
+
+    // Charger le contenu si nécessaire
+    if (tab !== 'vehicules') {
+        // TODO: Charger dynamiquement le contenu via AJAX
+        console.log('Chargement du tab:', tab);
+    }
+}
+
+// Ouvrir modal création véhicule
+function openCreateVehiculeModal() {
+    document.getElementById('formCreateVehicule').reset();
+    document.getElementById('createVehiculeModal').showModal();
+}
+
+// Ouvrir modal affectation
+function openAffectationModal(vehiculeId, immatriculation) {
+    document.getElementById('affectation-vehicule-id').value = vehiculeId;
+    document.getElementById('affectation-vehicule-nom').textContent = immatriculation;
+    document.getElementById('formAffectation').reset();
+
+    // Date par défaut: aujourd'hui
+    const today = new Date().toISOString().split('T')[0];
+    document.querySelector('#formAffectation input[name="date_debut"]').value = today;
+
+    document.getElementById('affectationModal').showModal();
+}
+
+// Ouvrir modal relevé
+function openReleveModal(vehiculeId, immatriculation) {
+    document.getElementById('releve-vehicule-id').value = vehiculeId;
+    document.getElementById('releve-vehicule-nom').textContent = immatriculation;
+    document.getElementById('formReleve').reset();
+
+    // Date par défaut: aujourd'hui
+    const today = new Date().toISOString().split('T')[0];
+    document.querySelector('#formReleve input[name="date_releve"]').value = today;
+
+    document.getElementById('releveModal').showModal();
+}
+
+// Ouvrir modal réparation
+function openReparationModal(vehiculeId, immatriculation) {
+    document.getElementById('reparation-vehicule-id').value = vehiculeId;
+    document.getElementById('reparation-vehicule-nom').textContent = immatriculation;
+    document.getElementById('formReparation').reset();
+
+    // Date par défaut: aujourd'hui
+    const today = new Date().toISOString().split('T')[0];
+    document.querySelector('#formReparation input[name="date_reparation"]').value = today;
+
+    document.getElementById('reparationModal').showModal();
+}
+
+// Toggle saisie manuelle
+function toggleSaisieManuelle() {
+    const isManuel = document.getElementById('saisie_manuelle').checked;
+    const indexField = document.querySelector('#formReleve input[name="index_compteur"]');
+
+    if (isManuel) {
+        indexField.disabled = true;
+        indexField.value = '';
+        indexField.required = false;
+    } else {
+        indexField.disabled = false;
+        indexField.required = false;
+    }
+}
+
+// Soumission formulaire création véhicule
+document.getElementById('formCreateVehicule').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(this);
+    const data = {};
+    formData.forEach((value, key) => {
+        if (key === 'compteur_fonctionnel') {
+            data[key] = formData.get(key) === 'on';
+        } else {
+            data[key] = value;
+        }
+    });
+
+    try {
+        const response = await fetch('{% url "inventory:api_vehicule_create" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert('✓ ' + result.message);
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+});
+
+// Soumission formulaire affectation
+document.getElementById('formAffectation').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(this);
+    const data = {};
+    formData.forEach((value, key) => data[key] = value);
+
+    // Ajouter l'ID du véhicule
+    data.vehicule_id = document.getElementById('affectation-vehicule-id').value;
+
+    try {
+        const response = await fetch('{% url "inventory:api_affectation_create" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert('✓ ' + result.message);
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+});
+
+// Soumission formulaire relevé
+document.getElementById('formReleve').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(this);
+    const data = {};
+    formData.forEach((value, key) => {
+        if (key === 'saisie_manuelle') {
+            data[key] = formData.get(key) === 'on';
+        } else {
+            data[key] = value;
+        }
+    });
+
+    data.vehicule_id = document.getElementById('releve-vehicule-id').value;
+
+    try {
+        const response = await fetch('{% url "inventory:api_releve_create" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert('✓ ' + result.message);
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+});
+
+// Soumission formulaire réparation
+document.getElementById('formReparation').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(this);
+    const data = {};
+    formData.forEach((value, key) => data[key] = value);
+
+    data.vehicule_id = document.getElementById('reparation-vehicule-id').value;
+
+    try {
+        const response = await fetch('{% url "inventory:api_reparation_create" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert('✓ ' + result.message);
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+});
+
+// Helper pour récupérer le CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+</script>
+{% endblock %}

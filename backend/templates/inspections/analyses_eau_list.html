@@ -1,0 +1,573 @@
+{% extends admin_shell_base_template %}
+{% load static %}
+
+{% block title %}Analyses d'eau{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+        <div>
+            <h1 class="text-3xl font-bold">
+                <i class="fas fa-flask text-info mr-2"></i>
+                Analyses d'eau
+            </h1>
+            <p class="text-sm text-gray-600 mt-1">Gestion des analyses de qualité de l'eau</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <button id="btn-import" class="btn btn-info btn-sm">
+                <i class="fas fa-upload mr-2"></i>Importer Excel
+            </button>
+            <a href="{% url 'inspections:template_import_analyses_eau' %}" class="btn btn-secondary btn-sm">
+                <i class="fas fa-download mr-2"></i>Template
+            </a>
+            <button id="btn-export" class="btn btn-success btn-sm">
+                <i class="fas fa-file-excel mr-2"></i>Exporter
+            </button>
+            <a href="{% url 'inspections:analyses_eau_dashboard' %}" class="btn btn-primary btn-sm">
+                <i class="fas fa-chart-bar mr-2"></i>Dashboard
+            </a>
+            <button id="btn-delete-all" class="btn btn-error btn-sm">
+                <i class="fas fa-trash-alt mr-2"></i>Effacer tout
+            </button>
+            <button id="btn-create" class="btn btn-primary btn-sm">
+                <i class="fas fa-plus mr-2"></i>Nouvelle
+            </button>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow mb-4">
+        <div class="card-body p-4">
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Année</span></label>
+                    <select id="filter-annee" class="select select-bordered select-sm">
+                        {% for annee in annees %}
+                        <option value="{{ annee }}" {% if annee == annee_actuelle %}selected{% endif %}>{{ annee }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Commune</span></label>
+                    <select id="filter-commune" class="select select-bordered select-sm">
+                        <option value="all">Toutes</option>
+                        {% for commune in communes %}
+                        <option value="{{ commune.id }}">{{ commune.nom_commune }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Type</span></label>
+                    <select id="filter-type" class="select select-bordered select-sm">
+                        <option value="">Tous</option>
+                        <option value="equipement">Équipement</option>
+                        <option value="point_eau">Point d'eau</option>
+                        <option value="point_eau_traditionnel">Traditionnel</option>
+                        <option value="bouteille">Bouteille</option>
+                        <option value="autre">Autre</option>
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Résultat</span></label>
+                    <select id="filter-resultat" class="select select-bordered select-sm">
+                        <option value="">Tous</option>
+                        <option value="positif">Positif</option>
+                        <option value="negatif">Négatif</option>
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Recherche</span></label>
+                    <input id="filter-search" type="text" placeholder="Lieu, observation..." class="input input-bordered input-sm">
+                </div>
+            </div>
+            <div class="flex gap-2 mt-3">
+                <button id="btn-filter" class="btn btn-primary btn-sm">
+                    <i class="fas fa-filter mr-2"></i>Filtrer
+                </button>
+                <button id="btn-reset" class="btn btn-ghost btn-sm">Réinitialiser</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistiques par Packs -->
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+        <div class="stat bg-base-200 rounded-lg shadow p-4">
+            <div class="stat-title text-xs">Total Packs</div>
+            <div class="stat-value text-primary text-2xl" id="stat-total-packs">0</div>
+            <div class="stat-desc text-xs" id="stat-total-analyses-desc">0 analyses</div>
+        </div>
+        <div class="stat bg-base-200 rounded-lg shadow p-4">
+            <div class="stat-title text-xs">✅ Validés</div>
+            <div class="stat-value text-success text-2xl" id="stat-packs-valides">0</div>
+            <div class="stat-desc text-xs">Témoin positif</div>
+        </div>
+        <div class="stat bg-base-200 rounded-lg shadow p-4">
+            <div class="stat-title text-xs">⚠️ Problématiques</div>
+            <div class="stat-value text-warning text-2xl" id="stat-packs-problematiques">0</div>
+            <div class="stat-desc text-xs">Coliformes anormaux</div>
+        </div>
+        <div class="stat bg-base-200 rounded-lg shadow p-4">
+            <div class="stat-title text-xs">❌ Contaminés</div>
+            <div class="stat-value text-error text-2xl" id="stat-packs-contamines">0</div>
+            <div class="stat-desc text-xs">Bouteille positive</div>
+        </div>
+        <div class="stat bg-base-200 rounded-lg shadow p-4">
+            <div class="stat-title text-xs">Total Analyses</div>
+            <div class="stat-value text-info text-2xl" id="stat-total-analyses">0</div>
+            <div class="stat-desc text-xs">Tous prélèvements</div>
+        </div>
+    </div>
+
+    <!-- Tableau -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body p-4">
+            <div class="overflow-x-auto">
+                <table class="table table-sm table-zebra">
+                    <thead>
+                        <tr class="bg-base-200">
+                            <th class="text-xs">Statut Pack</th>
+                            <th class="text-xs">Type</th>
+                            <th class="text-xs">Lieu</th>
+                            <th class="text-xs">Commune</th>
+                            <th class="text-xs">Village</th>
+                            <th class="text-xs">Date Analyse</th>
+                            <th class="text-xs">Date Résultat</th>
+                            <th class="text-xs">Vol (mL)</th>
+                            <th class="text-xs">Coliformes</th>
+                            <th class="text-xs">100mL</th>
+                            <th class="text-xs">pH</th>
+                            <th class="text-xs">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="analyses-tbody"></tbody>
+                </table>
+            </div>
+            <div id="no-data" class="text-center py-8 hidden">
+                <i class="fas fa-flask text-6xl text-gray-300 mb-3"></i>
+                <p class="text-gray-500">Aucune analyse trouvée</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Création/Modification -->
+<dialog id="modal-form" class="modal">
+    <div class="modal-box max-w-3xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-flask mr-2"></i>
+            <span id="modal-title">Nouvelle analyse</span>
+        </h3>
+        <form id="form-analyse" class="space-y-3">
+            <input type="hidden" id="analyse-id">
+
+            <!-- Type de prélèvement -->
+            <div class="form-control">
+                <label class="label py-1"><span class="label-text text-xs">Type de prélèvement *</span></label>
+                <select id="type-prelevement" class="select select-bordered select-sm" required>
+                    <option value="">Sélectionner...</option>
+                    <option value="equipement">Équipement</option>
+                    <option value="point_eau">Point d'eau</option>
+                    <option value="point_eau_traditionnel">Point d'eau traditionnel</option>
+                    <option value="bouteille">Bouteille cachetée</option>
+                    <option value="autre">Autre</option>
+                </select>
+            </div>
+
+            <!-- Champs Équipement (visible si type = equipement) -->
+            <div id="field-equipement" style="display: none;">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div class="form-control">
+                        <label class="label py-1"><span class="label-text text-xs">Commune</span></label>
+                        <select id="equipement-commune" class="select select-bordered select-sm">
+                            <option value="">Toutes les communes</option>
+                            {% for commune in communes %}
+                            <option value="{{ commune.id }}">{{ commune.nom_commune }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label py-1"><span class="label-text text-xs">Ouvrage</span></label>
+                        <select id="equipement-ouvrage" class="select select-bordered select-sm">
+                            <option value="">Tous les ouvrages</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-control mt-3">
+                    <label class="label py-1"><span class="label-text text-xs">Équipement *</span></label>
+                    <select id="equipement-id" class="select select-bordered select-sm">
+                        <option value="">Sélectionner un équipement...</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Champs Point d'eau (visible si type = point_eau) -->
+            <div id="field-point-eau" style="display: none;">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div class="form-control">
+                        <label class="label py-1"><span class="label-text text-xs">Commune</span></label>
+                        <select id="pointeau-commune" class="select select-bordered select-sm">
+                            <option value="">Toutes les communes</option>
+                            {% for commune in communes %}
+                            <option value="{{ commune.id }}">{{ commune.nom_commune }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label py-1"><span class="label-text text-xs">Ouvrage</span></label>
+                        <select id="pointeau-ouvrage" class="select select-bordered select-sm">
+                            <option value="">Tous les ouvrages</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-control mt-3">
+                    <label class="label py-1"><span class="label-text text-xs">Point d'eau *</span></label>
+                    <select id="point-eau-id" class="select select-bordered select-sm">
+                        <option value="">Sélectionner un point d'eau...</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Champ Description (visible si autre type) -->
+            <div class="form-control" id="field-description" style="display: none;">
+                <label class="label py-1"><span class="label-text text-xs">Description lieu</span></label>
+                <input id="description-lieu" type="text" class="input input-bordered input-sm" placeholder="Pour traditionnels, bouteilles...">
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Date prélèvement *</span></label>
+                    <input id="date-prelevement" type="datetime-local" class="input input-bordered input-sm" required>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Date analyse *</span></label>
+                    <input id="date-analyse" type="datetime-local" class="input input-bordered input-sm" required>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Date résultat *</span></label>
+                    <input id="date-resultat" type="datetime-local" class="input input-bordered input-sm" required>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Volume (mL) *</span></label>
+                    <select id="volume-analyse" class="select select-bordered select-sm" required>
+                        <option value="">Sélectionner...</option>
+                        <option value="10">10 mL</option>
+                        <option value="20">20 mL</option>
+                        <option value="25">25 mL</option>
+                        <option value="50">50 mL</option>
+                        <option value="60">60 mL</option>
+                        <option value="100">100 mL</option>
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Nb coliformes</span></label>
+                    <input id="nombre-coliformes" type="number" min="0" class="input input-bordered input-sm" placeholder="Si pas TNC">
+                </div>
+                <div class="form-control">
+                    <label class="label cursor-pointer py-1">
+                        <span class="label-text text-xs">TNC</span>
+                        <input id="tnc" type="checkbox" class="checkbox checkbox-sm">
+                    </label>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">pH (0-14)</span></label>
+                    <input id="ph" type="number" step="0.1" min="0" max="14" class="input input-bordered input-sm" placeholder="Ex: 7.2">
+                </div>
+            </div>
+
+            <div class="form-control">
+                <label class="label py-1"><span class="label-text text-xs">Observation</span></label>
+                <textarea id="observation" class="textarea textarea-bordered textarea-sm" rows="2" placeholder="Remarques..."></textarea>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" id="btn-cancel-modal" class="btn btn-ghost btn-sm">Annuler</button>
+                <button type="submit" class="btn btn-primary btn-sm">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal Import -->
+<dialog id="modal-import" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-upload mr-2"></i>Importer Excel
+        </h3>
+        <form id="form-import">
+            <div class="form-control">
+                <label class="label"><span class="label-text">Fichier Excel</span></label>
+                <input type="file" id="file-import" accept=".xlsx,.xls" class="file-input file-input-bordered" required>
+            </div>
+            <div id="import-progress" class="hidden mt-4">
+                <progress class="progress progress-info w-full"></progress>
+            </div>
+            <div id="import-result" class="hidden mt-4"></div>
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost btn-sm" onclick="closeImportModal()">Annuler</button>
+                <button type="submit" class="btn btn-primary btn-sm">
+                    <i class="fas fa-upload mr-2"></i>Importer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+{% endblock %}
+
+{% block extra_js %}
+<!-- Charger JavaScript externe avec cache-busting -->
+<script src="{% static 'js/analyses_eau_v4.js' %}?v={{ cache_bust }}"></script>
+
+<script>
+// Parse JSON data from backend for cascade filtering
+let equipementsData = [];
+let pointsEauData = [];
+
+try {
+    equipementsData = JSON.parse('{{ equipements_json|safe }}');
+    console.log('[OK] equipementsData chargé:', equipementsData.length, 'éléments');
+} catch (error) {
+    console.error('[ERROR] Erreur parsing equipements_json:', error);
+}
+
+try {
+    pointsEauData = JSON.parse('{{ points_eau_json|safe }}');
+    console.log('[OK] pointsEauData chargé:', pointsEauData.length, 'éléments');
+} catch (error) {
+    console.error('[ERROR] Erreur parsing points_eau_json:', error);
+}
+
+// ===== CASCADE FILTERING FOR EQUIPMENT =====
+function filterOuvragesEquipement() {
+    const communeId = document.getElementById('equipement-commune').value;
+    const ouvrageSelect = document.getElementById('equipement-ouvrage');
+
+    console.log('[DEBUG] filterOuvragesEquipement() - communeId:', communeId);
+    console.log('[DEBUG] Total equipementsData:', equipementsData.length);
+
+    // Get unique ouvrages for selected commune
+    const ouvrages = new Map();
+    const filteredEquipements = equipementsData.filter(eq => !communeId || eq.commune_id === communeId);
+
+    console.log('[DEBUG] Équipements filtrés:', filteredEquipements.length);
+
+    filteredEquipements.forEach(eq => {
+        if (eq.ouvrage_id) {
+            ouvrages.set(eq.ouvrage_id, eq.ouvrage_nom);
+            console.log('[DEBUG] Ouvrage ajouté:', eq.ouvrage_id, '-', eq.ouvrage_nom);
+        }
+    });
+
+    console.log('[DEBUG] Total ouvrages uniques:', ouvrages.size);
+
+    // Populate ouvrage select
+    ouvrageSelect.innerHTML = '<option value="">Tous les ouvrages</option>';
+    ouvrages.forEach((nom, id) => {
+        ouvrageSelect.innerHTML += `<option value="${id}">${nom}</option>`;
+    });
+
+    console.log('[OK] Liste ouvrages peuplée avec', ouvrages.size, 'options');
+
+    // Reset and update equipment list
+    filterEquipements();
+}
+
+function filterEquipements() {
+    const communeId = document.getElementById('equipement-commune').value;
+    const ouvrageId = document.getElementById('equipement-ouvrage').value;
+    const equipementSelect = document.getElementById('equipement-id');
+
+    // Filter equipment
+    const filtered = equipementsData.filter(eq => {
+        if (communeId && eq.commune_id !== communeId) return false;
+        if (ouvrageId && eq.ouvrage_id !== ouvrageId) return false;
+        return true;
+    });
+
+    // Populate equipment select
+    equipementSelect.innerHTML = '<option value="">Sélectionner un équipement...</option>';
+    filtered.forEach(eq => {
+        equipementSelect.innerHTML += `<option value="${eq.id}">${eq.nom}${eq.ouvrage_nom ? ' - ' + eq.ouvrage_nom : ''}</option>`;
+    });
+}
+
+// ===== CASCADE FILTERING FOR POINT D'EAU =====
+function filterOuvragesPointEau() {
+    const communeId = document.getElementById('pointeau-commune').value;
+    const ouvrageSelect = document.getElementById('pointeau-ouvrage');
+
+    console.log('[DEBUG] filterOuvragesPointEau() - communeId:', communeId);
+    console.log('[DEBUG] Total pointsEauData:', pointsEauData.length);
+
+    // Get unique ouvrages for selected commune
+    const ouvrages = new Map();
+    const filteredPointsEau = pointsEauData.filter(pe => !communeId || pe.commune_id === communeId);
+
+    console.log('[DEBUG] Points d\'eau filtrés:', filteredPointsEau.length);
+
+    filteredPointsEau.forEach(pe => {
+        if (pe.ouvrage_id) {
+            ouvrages.set(pe.ouvrage_id, pe.ouvrage_nom);
+            console.log('[DEBUG] Ouvrage ajouté (PE):', pe.ouvrage_id, '-', pe.ouvrage_nom);
+        }
+    });
+
+    console.log('[DEBUG] Total ouvrages uniques (PE):', ouvrages.size);
+
+    // Populate ouvrage select
+    ouvrageSelect.innerHTML = '<option value="">Tous les ouvrages</option>';
+    ouvrages.forEach((nom, id) => {
+        ouvrageSelect.innerHTML += `<option value="${id}">${nom}</option>`;
+    });
+
+    console.log('[OK] Liste ouvrages (PE) peuplée avec', ouvrages.size, 'options');
+
+    // Reset and update point d'eau list
+    filterPointsEau();
+}
+
+function filterPointsEau() {
+    const communeId = document.getElementById('pointeau-commune').value;
+    const ouvrageId = document.getElementById('pointeau-ouvrage').value;
+    const pointEauSelect = document.getElementById('point-eau-id');
+
+    // Filter points d'eau
+    const filtered = pointsEauData.filter(pe => {
+        if (communeId && pe.commune_id !== communeId) return false;
+        if (ouvrageId && pe.ouvrage_id !== ouvrageId) return false;
+        return true;
+    });
+
+    // Populate point d'eau select
+    pointEauSelect.innerHTML = '<option value="">Sélectionner un point d\'eau...</option>';
+    filtered.forEach(pe => {
+        pointEauSelect.innerHTML += `<option value="${pe.id}">${pe.code}${pe.ouvrage_nom ? ' - ' + pe.ouvrage_nom : ''}</option>`;
+    });
+}
+
+// ===== TEMPLATE-SPECIFIC FUNCTIONS =====
+// Note: Les fonctions CRUD principales (openCreateModal, editAnalyse, deleteAnalyse, etc.)
+// et la fonction getCookie() sont dans analyses_eau_v4.js
+
+// ===== TEMPLATE-SPECIFIC EVENT LISTENERS =====
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('[INFO] Template DOMContentLoaded - Initialisation filtres cascade et form handler');
+
+    // Initialize cascade filters (template-specific)
+    filterEquipements();
+    filterPointsEau();
+
+    // Function to attach cascade event listeners (called when modal opens)
+    window.attachCascadeListeners = function() {
+        console.log('[INFO] attachCascadeListeners() appelée');
+
+        const typePrelevementSelect = document.getElementById('type-prelevement');
+        if (typePrelevementSelect && !typePrelevementSelect.dataset.listenerAttached) {
+            typePrelevementSelect.addEventListener('change', toggleLieuFields);
+            typePrelevementSelect.dataset.listenerAttached = 'true';
+            console.log('[OK] Event listener attaché à type-prelevement');
+        }
+
+        const equipementCommuneSelect = document.getElementById('equipement-commune');
+        if (equipementCommuneSelect && !equipementCommuneSelect.dataset.listenerAttached) {
+            equipementCommuneSelect.addEventListener('change', filterOuvragesEquipement);
+            equipementCommuneSelect.dataset.listenerAttached = 'true';
+            console.log('[OK] Event listener attaché à equipement-commune');
+        }
+
+        const equipementOuvrageSelect = document.getElementById('equipement-ouvrage');
+        if (equipementOuvrageSelect && !equipementOuvrageSelect.dataset.listenerAttached) {
+            equipementOuvrageSelect.addEventListener('change', filterEquipements);
+            equipementOuvrageSelect.dataset.listenerAttached = 'true';
+            console.log('[OK] Event listener attaché à equipement-ouvrage');
+        }
+
+        const pointeauCommuneSelect = document.getElementById('pointeau-commune');
+        if (pointeauCommuneSelect && !pointeauCommuneSelect.dataset.listenerAttached) {
+            pointeauCommuneSelect.addEventListener('change', filterOuvragesPointEau);
+            pointeauCommuneSelect.dataset.listenerAttached = 'true';
+            console.log('[OK] Event listener attaché à pointeau-commune');
+        }
+
+        const pointeauOuvrageSelect = document.getElementById('pointeau-ouvrage');
+        if (pointeauOuvrageSelect && !pointeauOuvrageSelect.dataset.listenerAttached) {
+            pointeauOuvrageSelect.addEventListener('change', filterPointsEau);
+            pointeauOuvrageSelect.dataset.listenerAttached = 'true';
+            console.log('[OK] Event listener attaché à pointeau-ouvrage');
+        }
+    };
+
+    // Form submission handler (template-specific, needs Django URL tag)
+    const formAnalyse = document.getElementById('form-analyse');
+    if (formAnalyse) {
+        formAnalyse.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            console.log('[INFO] Form submission handler appelé');
+
+            const analyseId = document.getElementById('analyse-id').value;
+            const type = document.getElementById('type-prelevement').value;
+
+            // Build form data
+            const formData = {
+                type_prelevement: type,
+                date_prelevement: document.getElementById('date-prelevement').value,
+                date_analyse: document.getElementById('date-analyse').value,
+                date_resultat: document.getElementById('date-resultat').value,
+                volume_analyse: document.getElementById('volume-analyse').value,
+                nombre_coliformes: document.getElementById('nombre-coliformes').value || null,
+                tnc: document.getElementById('tnc').checked,
+                ph: document.getElementById('ph').value || null,
+                observation: document.getElementById('observation').value
+            };
+
+            // Add conditional fields
+            if (type === 'equipement') {
+                formData.equipement_constitutif_id = document.getElementById('equipement-id').value;
+            } else if (type === 'point_eau') {
+                formData.point_eau_id = document.getElementById('point-eau-id').value;
+            } else {
+                formData.description_lieu = document.getElementById('description-lieu').value;
+            }
+
+            try {
+                const url = analyseId
+                    ? `/inspections/analyses-eau/api/${analyseId}/update/`
+                    : '/inspections/analyses-eau/api/create/';
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': getCookie('csrftoken')
+                    },
+                    body: JSON.stringify(formData)
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    alert(analyseId ? 'Analyse modifiée avec succès' : 'Analyse créée avec succès');
+                    closeModal();  // closeModal() est dans analyses_eau_v4.js
+                    loadAnalyses(); // loadAnalyses() est dans analyses_eau_v4.js
+                } else {
+                    alert('Erreur: ' + (data.error || 'Erreur inconnue'));
+                }
+            } catch (error) {
+                console.error('[ERROR] Erreur sauvegarde:', error);
+                alert('Erreur lors de la sauvegarde');
+            }
+        });
+        console.log('[OK] Form submission handler attaché');
+    } else {
+        console.error('[ERROR] Formulaire form-analyse non trouvé');
+    }
+});
+</script>
+{% endblock %}

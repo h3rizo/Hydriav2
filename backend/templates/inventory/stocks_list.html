@@ -1,0 +1,1211 @@
+﻿{% extends logistics_shell_base_template|default:"base.html" %}
+{% load humanize l10n %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex justify-between items-center gap-3">
+        <h1 class="text-3xl font-bold text-base-content">{{ title }}</h1>
+
+        <div class="flex flex-wrap justify-end gap-2">
+            <button type="button" id="printLatestStockBtn" class="btn btn-info btn-sm">
+                <i class="fas fa-print mr-2"></i>Imprimer dernier stock
+            </button>
+            <div class="dropdown dropdown-end">
+                <label tabindex="0" class="btn btn-success btn-sm">
+                    <i class="fas fa-download mr-2"></i>Exporter
+                    <i class="fas fa-chevron-down ml-1"></i>
+                </label>
+                <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52 z-50">
+                    <li><a href="{% url 'inventory:export_stocks' %}"><i class="fas fa-file-excel text-success"></i> Export Stocks Excel</a></li>
+                </ul>
+            </div>
+
+            <div class="dropdown dropdown-end">
+                <label tabindex="0" class="btn btn-warning btn-sm">
+                    <i class="fas fa-upload mr-2"></i>Importer
+                    <i class="fas fa-chevron-down ml-1"></i>
+                </label>
+                <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52 z-50">
+                    <li><a href="{% url 'inventory:template_stocks' %}"><i class="fas fa-download text-primary"></i> Télécharger Template</a></li>
+                    <li><a onclick="document.getElementById('importStocksFile').click()"><i class="fas fa-upload text-warning"></i> Importer Fichier Excel</a></li>
+                </ul>
+            </div>
+
+            <button onclick="if (window.openAdjustModal) { window.openAdjustModal(); } else { document.getElementById('adjustModal').showModal(); }" class="btn btn-accent btn-sm">
+                <i class="fas fa-plus mr-2"></i>Ajuster Stock
+            </button>
+        </div>
+    </div>
+
+    <input type="file" id="importStocksFile" accept=".xlsx,.xls" style="display:none" onchange="importStocksExcel(this)">
+
+    <!-- Filtres et Recherche -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body p-4">
+            <form method="GET" class="grid grid-cols-1 md:grid-cols-5 gap-3">
+                <input type="search" name="search" value="{{ filters.search }}" placeholder="Rechercher une désignation..." class="input input-bordered input-sm">
+                <select name="base" id="filter-base" class="select select-bordered select-sm">
+                    <option value="">Toutes les bases</option>
+                    {% for base in bases %}
+                    <option value="{{ base.id }}" {% if filters.base == base.id|stringformat:'s' %}selected{% endif %}>{{ base.nom_base }}</option>
+                    {% endfor %}
+                </select>
+                <select name="magasin" id="filter-magasin" class="select select-bordered select-sm">
+                    <option value="">Tous les magasins</option>
+                    {% for magasin in magasins %}
+                    <option value="{{ magasin.id }}" data-base-id="{{ magasin.base.id }}" {% if filters.magasin == magasin.id|stringformat:'s' %}selected{% endif %}>{{ magasin.nom_magasin }} ({{ magasin.base.nom_base }})</option>
+                    {% endfor %}
+                </select>
+                <select name="type_designation" class="select select-bordered select-sm">
+                    <option value="">Tous les types</option>
+                    {% for type in types_designation %}
+                    <option value="{{ type.id }}" {% if filters.type_designation == type.id|stringformat:'s' %}selected{% endif %}>{{ type.nom }}</option>
+                    {% endfor %}
+                </select>
+                <div class="flex gap-2">
+                    <button type="submit" class="btn btn-primary btn-sm flex-1"><i class="fas fa-search"></i> Filtrer</button>
+                    <a href="{% url 'inventory:stocks' %}" class="btn btn-ghost btn-sm"><i class="fas fa-redo"></i></a>
+                </div>
+                <input type="hidden" name="view" id="filter-view" value="{{ filters.view|default:'table' }}">
+            </form>
+            <div class="mt-4 text-sm text-warning">
+                <i class="fas fa-tools mr-1"></i>Mode diagnostic actif : vue tableau uniquement.
+            </div>
+            <div class="alert alert-info mt-3">
+                <i class="fas fa-info-circle"></i>
+                <span>Sélectionnez un magasin puis cliquez sur <strong>Imprimer dernier stock</strong> pour imprimer l'état du dernier stock affiché pour ce magasin.</span>
+            </div>
+        </div>
+    </div>
+
+    {% if page_obj %}
+    <div class="flex flex-col gap-3 rounded-xl border border-base-300 bg-base-100 p-4 shadow-sm md:flex-row md:items-center md:justify-between">
+        <div class="text-sm text-base-content/70">
+            Page {{ page_obj.number }} / {{ paginator.num_pages }} - {{ paginator.count }} article(s)
+        </div>
+        <div class="join">
+            {% if page_obj.has_previous %}
+            <a href="?{{ pagination_query }}&page=1" class="join-item btn btn-sm">«</a>
+            <a href="?{{ pagination_query }}&page={{ page_obj.previous_page_number }}" class="join-item btn btn-sm">Précédent</a>
+            {% else %}
+            <button class="join-item btn btn-sm btn-disabled">«</button>
+            <button class="join-item btn btn-sm btn-disabled">Précédent</button>
+            {% endif %}
+
+            <button class="join-item btn btn-sm btn-active">Page {{ page_obj.number }}</button>
+
+            {% if page_obj.has_next %}
+            <a href="?{{ pagination_query }}&page={{ page_obj.next_page_number }}" class="join-item btn btn-sm">Suivant</a>
+            <a href="?{{ pagination_query }}&page={{ paginator.num_pages }}" class="join-item btn btn-sm">»</a>
+            {% else %}
+            <button class="join-item btn btn-sm btn-disabled">Suivant</button>
+            <button class="join-item btn btn-sm btn-disabled">»</button>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if not filters.magasin %}
+    <div class="alert alert-warning">
+        <i class="fas fa-info-circle"></i>
+        <span>Affichage ventilé par magasin. Les lignes "Non ventilé (base)" correspondent aux mouvements non attribués à un magasin précis.</span>
+    </div>
+    {% endif %}
+
+    <!-- Stocks groupés -->
+    {% for base_group in stocks_grouped %}
+    <div class="card bg-base-100 shadow stock-base-group">
+        <div class="card-body p-0">
+            <div class="bg-primary text-primary-content p-4 cursor-pointer hover:bg-primary-focus transition-colors" onclick="toggleBase('{{ forloop.counter }}')">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-xl font-bold flex items-center gap-2">
+                        <i class="fas fa-building"></i> {{ base_group.base }}
+                        <span class="badge badge-sm bg-base-100 text-primary">{{ base_group.total_count }} article(s)</span>
+                    </h2>
+                    <i class="fas fa-chevron-down transition-transform" id="icon-base-{{ forloop.counter }}"></i>
+                </div>
+            </div>
+
+            <div id="content-base-{{ forloop.counter }}" class="p-4 space-y-4">
+                {% for magasin_group in base_group.magasins %}
+                <div class="border border-base-300 rounded-lg stock-magasin-group"
+                     data-magasin-id="{% if filters.magasin %}{{ filters.magasin }}{% else %}{{ magasin_group.id|default:'' }}{% endif %}"
+                     data-magasin-name="{{ magasin_group.nom|escape }}"
+                     data-base-name="{{ base_group.base|escape }}">
+                    <div class="{% if magasin_group.nom == 'Non ventilé (base)' %}bg-error/15 border border-error/30{% else %}bg-base-200{% endif %} p-3 cursor-pointer hover:bg-base-300 transition-colors rounded-t-lg" onclick="toggleMagasin('{{ forloop.parentloop.counter }}-{{ forloop.counter }}')">
+                        <div class="flex justify-between items-center">
+                            <h3 class="font-bold flex items-center gap-2 stock-magasin-title">
+                                <i class="fas fa-warehouse {% if magasin_group.nom == 'Non ventilé (base)' %}text-error{% else %}text-info{% endif %}"></i> {{ magasin_group.nom }}
+                                <span class="badge {% if magasin_group.nom == 'Non ventilé (base)' %}badge-error{% else %}badge-info{% endif %} badge-sm">{{ magasin_group.total_count }}</span>
+                            </h3>
+                            <i class="fas fa-chevron-down transition-transform" id="icon-magasin-{{ forloop.parentloop.counter }}-{{ forloop.counter }}"></i>
+                        </div>
+                    </div>
+
+                    <div id="content-magasin-{{ forloop.parentloop.counter }}-{{ forloop.counter }}" class="space-y-4 p-3">
+                        {% for type_group in magasin_group.types %}
+                        <div class="border border-base-300 rounded-lg">
+                            <div class="bg-base-100 p-3 cursor-pointer hover:bg-base-200 transition-colors rounded-t-lg" onclick="toggleType('{{ forloop.parentloop.parentloop.counter }}-{{ forloop.parentloop.counter }}-{{ forloop.counter }}')">
+                                <div class="flex justify-between items-center">
+                                    <h4 class="font-bold flex items-center gap-2">
+                                        <i class="fas fa-tags text-info"></i> {{ type_group.nom }}
+                                        <span class="badge badge-info badge-sm">{{ type_group.count }}</span>
+                                    </h4>
+                                    <i class="fas fa-chevron-down transition-transform" id="icon-type-{{ forloop.parentloop.parentloop.counter }}-{{ forloop.parentloop.counter }}-{{ forloop.counter }}"></i>
+                                </div>
+                            </div>
+
+                            <div id="content-type-{{ forloop.parentloop.parentloop.counter }}-{{ forloop.parentloop.counter }}-{{ forloop.counter }}" class="space-y-4">
+                                <div class="overflow-x-auto">
+                                <table class="table table-zebra table-sm w-full">
+                                    <thead>
+                                        <tr class="bg-base-200">
+                                            <th>Désignation</th>
+                                             <th>Code matériel</th>
+                                             <th>Photo</th>
+                                             <th>Date Inventaire</th>
+                                             <th>État</th>
+                                             <th>Rapproché</th>
+                                             <th>Nature</th>
+                                             <th>Utilisateur</th>
+                                            <th class="text-right">Stock Actuel</th>
+                                            <th class="text-right">Stock Réservé</th>
+                                            <th class="text-right">Stock Disponible</th>
+                                            <th>Unité</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for stock in type_group.stocks %}
+                                        <tr class="hover"
+                                            data-stock-id="{{ stock.id }}"
+                                            data-magasin-id="{{ stock.magasin_id|default:'' }}"
+                                            data-reserved-quantity="{{ stock.reserved_quantity|default_if_none:0|unlocalize }}">
+                                            <td class="font-semibold">{{ stock.designation.nom }}</td>
+                                             <td>
+                                                 {% if stock.designation.code_materiel %}
+                                                 <span class="badge badge-outline badge-sm">{{ stock.designation.code_materiel }}</span>
+                                                 {% else %}
+                                                 <span class="text-base-content/50">-</span>
+                                                 {% endif %}
+                                             </td>
+                                             <td class="w-24 text-center" data-field="photo">
+                                                  {% if stock.photo %}
+                                                  <a href="{{ stock.photo.url }}" target="_blank" rel="noopener" class="inline-flex rounded-xl border border-base-300 bg-base-200 p-1 shadow-sm">
+                                                      <img src="{{ stock.photo.url }}" alt="Photo stock {{ stock.designation.nom }}" class="h-14 w-14 rounded-lg object-cover">
+                                                  </a>
+                                                  {% else %}
+                                                  <span class="inline-flex h-14 w-14 items-center justify-center rounded-xl border border-dashed border-base-300 bg-base-200 text-base-content/40">
+                                                      <i class="fas fa-image"></i>
+                                                  </span>
+                                                  {% endif %}
+                                             </td>
+                                             <td data-field="inventory_date">{% if stock.inventory_date %}<span class="text-sm">{{ stock.inventory_date|date:"d/m/Y" }}</span>{% else %}<span class="text-base-content/50">-</span>{% endif %}</td>
+                                             <td data-field="etat">
+                                                 <span class="badge badge-outline badge-sm">
+                                                     {% if stock.etat == 'bon' %}Bon{% elif stock.etat == 'moyen' %}Moyen{% elif stock.etat == 'mauvais' %}Mauvais{% elif stock.etat == 'hs' %}HS{% else %}-{% endif %}
+                                                 </span>
+                                             </td>
+                                             <td data-field="rapproche">{% if stock.rapproche %}<span class="badge badge-success badge-sm">Oui</span>{% else %}<span class="badge badge-ghost badge-sm">Non</span>{% endif %}</td>
+                                             <td data-field="nature">
+                                                {% if stock.nature_stock == 'non_consommable' %}
+                                                <span class="badge badge-secondary badge-sm">Non consommable</span>
+                                                {% else %}
+                                                <span class="badge badge-primary badge-sm">Consommable</span>
+                                                {% endif %}
+                                             </td>
+                                             <td data-field="utilisateur">{% if stock.utilisateur %}<span class="text-sm">{{ stock.utilisateur.surnom }}</span>{% else %}<span class="text-base-content/50">-</span>{% endif %}</td>
+                                            <td class="text-right font-bold" data-field="current_quantity">{% if stock.current_quantity == 0 %}-{% else %}{{ stock.current_quantity|floatformat:"-2"|intcomma }}{% endif %}</td>
+                                            <td class="text-right">{% if stock.reserved_quantity == 0 %}-{% else %}{{ stock.reserved_quantity|floatformat:"-2"|intcomma }}{% endif %}</td>
+                                             <td class="text-right font-bold {% if stock.available_quantity < 0 %}text-error{% else %}text-success{% endif %}" data-field="available_quantity">{% if stock.available_quantity == 0 %}-{% else %}{{ stock.available_quantity|floatformat:"-2"|intcomma }}{% endif %}</td>
+                                            <td>{% if stock.designation.unite %}<span class="badge badge-ghost badge-sm">{{ stock.designation.unite }}</span>{% else %}<span class="text-base-content/50">-</span>{% endif %}</td>
+                                            <td class="whitespace-nowrap">
+                                                {% if stock.id %}
+                                                <button onclick="window.adjustStock('{{ stock.id }}', '{{ stock.designation.nom|escapejs }}', '{{ stock.designation.code_materiel|default:''|escapejs }}', '{{ stock.base.nom_base|escapejs }}', '{{ stock.current_quantity|default_if_none:0|unlocalize }}', {% if stock.rapproche %}true{% else %}false{% endif %}, '{% if stock.utilisateur %}{{ stock.utilisateur.id }}{% endif %}', '{% if stock.inventory_date %}{{ stock.inventory_date|date:"Y-m-d" }}{% endif %}', '{{ stock.magasin_id|default:''|escapejs }}', '{{ stock.magasin_nom|default:''|escapejs }}', '{{ stock.etat|default:"bon"|escapejs }}', '{% if stock.photo %}{{ stock.photo.url|escapejs }}{% endif %}')" class="btn btn-ghost btn-xs" title="Ajuster stock">
+                                                    <i class="fas fa-edit"></i>
+                                                </button>
+                                                {% endif %}
+                                                <button type="button" class="btn btn-ghost btn-xs" title="Historique des inventaires" onclick="openInventoryHistoryModal('{{ stock.designation.id }}', '{{ stock.base_id }}', '{{ stock.magasin_id|default:'' }}', '{{ stock.designation.nom|escapejs }}', '{{ stock.base.nom_base|escapejs }}', '{{ stock.magasin_nom|default:''|escapejs }}')">
+                                                    <i class="fas fa-history"></i>
+                                                </button>
+                                                <a href="{% url 'inventory:fiche_stock_list' %}?designation_id={{ stock.designation.id }}&base_id={{ stock.base_id }}{% if stock.magasin_id %}&magasin_id={{ stock.magasin_id }}{% endif %}" class="btn btn-ghost btn-xs" title="Ouvrir la fiche de stock">
+                                                    <i class="fas fa-clipboard-list"></i>
+                                                </a>
+                                                {% if can_delete_fiche_rows and stock.fiche_id %}
+                                                <button onclick="window.deleteInventaire('{{ stock.fiche_id }}', '{{ stock.designation.nom|escapejs }}', '{{ stock.magasin_nom|default:''|escapejs }}')" class="btn btn-ghost btn-xs text-error" title="Supprimer cet inventaire">
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
+                                                {% endif %}
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% empty %}
+    <div class="alert alert-info"><i class="fas fa-info-circle"></i><span>Aucun stock trouvé avec ces filtres</span></div>
+    {% endfor %}
+
+    {% if page_obj and paginator.num_pages > 1 %}
+    <div class="flex justify-center">
+        <div class="join">
+            {% if page_obj.has_previous %}
+            <a href="?{{ pagination_query }}&page={{ page_obj.previous_page_number }}" class="join-item btn btn-sm">Précédent</a>
+            {% endif %}
+            {% if page_obj.has_next %}
+            <a href="?{{ pagination_query }}&page={{ page_obj.next_page_number }}" class="join-item btn btn-sm">Suivant</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Modal Ajustement -->
+<dialog id="adjustModal" class="modal">
+    <div class="modal-box w-11/12 max-w-2xl">
+        <h3 class="font-bold text-lg mb-4"><i class="fas fa-edit mr-2 text-accent"></i>Ajuster le Stock</h3>
+        <form id="formAdjust" class="space-y-4">
+            <input type="hidden" id="stock_id" name="stock_id">
+            <input type="hidden" id="original_magasin_id" value="">
+            <input type="hidden" id="original_nature_stock" value="">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Désignation *</span></label>
+                    <input type="text" id="designation_name" class="input input-bordered" list="designation_list" placeholder="Rechercher une désignation...">
+                    <input type="hidden" id="designation_id" name="designation_id">
+                    <datalist id="designation_list">
+                        {% for d in designations %}
+                        <option value="{{ d.nom|escape }}">{{ d.nom }}</option>
+                        {% endfor %}
+                    </datalist>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Code matériel</span></label>
+                    <input type="text" id="designation_code" class="input input-bordered" readonly>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Nature</span></label>
+                    <select id="designation_nature" name="nature_stock" class="select select-bordered">
+                        <option value="consommable">Consommable</option>
+                        <option value="non_consommable">Non consommable</option>
+                    </select>
+                    <div class="mt-2">
+                        <span id="designation_nature_badge"></span>
+                    </div>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Base *</span></label>
+                    <input type="text" id="base_name" class="input input-bordered" list="base_list" placeholder="Rechercher une base...">
+                    <input type="hidden" id="base_id" name="base_id">
+                    <datalist id="base_list">
+                        {% for b in bases %}
+                        <option value="{{ b.nom_base|escape }}">{{ b.nom_base }}</option>
+                        {% endfor %}
+                    </datalist>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Magasin</span></label>
+                    <input type="text" id="magasin_name" class="input input-bordered" list="magasin_list" placeholder="Rechercher un magasin...">
+                    <input type="hidden" id="magasin_id" name="magasin_id">
+                    <datalist id="magasin_list">
+                        {% for m in magasins %}
+                        <option value="{{ m.nom_magasin|escape }} ({{ m.base.nom_base|escape }})">{{ m.nom_magasin }}</option>
+                        {% endfor %}
+                    </datalist>
+                </div>
+                <div class="form-control"><label class="label"><span class="label-text">Stock Actuel</span></label><input type="number" step="0.01" id="current_quantity" class="input input-bordered" readonly></div>
+                <div class="form-control"><label class="label"><span class="label-text">Nouvelle Quantité*</span></label><input type="number" step="0.01" id="new_quantity" name="new_quantity" class="input input-bordered" required></div>
+                <div class="form-control"><label class="label"><span class="label-text">Date Inventaire*</span></label><input type="date" id="inventory_date" name="inventory_date" class="input input-bordered" required></div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">État</span></label>
+                    <select id="etat" name="etat" class="select select-bordered">
+                        <option value="bon">Bon</option>
+                        <option value="moyen">Moyen</option>
+                        <option value="mauvais">Mauvais</option>
+                        <option value="hs">HS</option>
+                    </select>
+                </div>
+                <div class="form-control"><label class="label"><span class="label-text">Rapproché</span></label><input type="checkbox" id="rapproche" name="rapproche" class="checkbox"></div>
+                <div class="form-control md:col-span-2">
+                    <label class="label"><span class="label-text">Utilisateur</span></label>
+                    <select id="utilisateur" name="utilisateur" class="select select-bordered">
+                        <option value="">-- Aucun --</option>
+                        {% for employe in employes %}<option value="{{ employe.id }}">{{ employe.surnom }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="form-control md:col-span-2">
+                    <label class="label"><span class="label-text">Photo</span></label>
+                    <input type="file" id="photo" name="photo" class="file-input file-input-bordered w-full" accept="image/*">
+                    <input type="file" id="photo_camera" class="hidden" accept="image/*" capture="environment">
+                    <div class="mt-2 flex flex-wrap gap-2">
+                        <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('photo').click()">
+                            <i class="fas fa-image mr-2"></i>Choisir une photo
+                        </button>
+                        <button type="button" class="btn btn-outline btn-sm" onclick="openCameraForStockPhoto()">
+                            <i class="fas fa-camera mr-2"></i>Prendre une photo
+                        </button>
+                    </div>
+                    <div id="photo_preview_wrapper" class="mt-3 hidden">
+                        <img id="photo_preview" src="" alt="Aperçu photo stock" class="h-32 w-full max-w-xs rounded-lg object-cover border border-base-300">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-action">
+                <button type="button" onclick="document.getElementById('adjustModal').close()" class="btn btn-ghost">Annuler</button>
+                <button type="submit" class="btn btn-accent">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<dialog id="inventoryHistoryModal" class="modal">
+    <div class="modal-box w-11/12 max-w-5xl">
+        <div class="flex items-start justify-between gap-4">
+            <div>
+                <h3 class="font-bold text-lg">
+                    <i class="fas fa-history mr-2 text-info"></i>Historique des inventaires
+                </h3>
+                <p id="inventoryHistorySubtitle" class="mt-1 text-sm text-base-content/70"></p>
+            </div>
+            <form method="dialog">
+                <button class="btn btn-sm btn-circle btn-ghost">✕</button>
+            </form>
+        </div>
+
+        <div id="inventoryHistoryLoading" class="py-10 text-center text-base-content/60 hidden">
+            <span class="loading loading-spinner loading-md"></span>
+            <div class="mt-2">Chargement de l'historique...</div>
+        </div>
+
+        <div id="inventoryHistoryError" class="alert alert-error mt-4 hidden">
+            <i class="fas fa-exclamation-triangle"></i>
+            <span></span>
+        </div>
+
+        <div class="mt-4 overflow-x-auto">
+            <table class="table table-zebra table-sm w-full">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Quantité</th>
+                        <th>Magasin</th>
+                        <th>Utilisateur</th>
+                        <th>Référence</th>
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody id="inventoryHistoryBody">
+                    <tr>
+                        <td colspan="6" class="text-center text-base-content/60">Aucune donnée chargée.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+function hideGlobalPreloader() {
+    const preloader = document.getElementById('preloader');
+    if (!preloader) {
+        return;
+    }
+    preloader.classList.add('preloader-hidden');
+    preloader.setAttribute('aria-hidden', 'true');
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', hideGlobalPreloader, { once: true });
+} else {
+    hideGlobalPreloader();
+}
+window.addEventListener('load', hideGlobalPreloader, { once: true });
+
+function normalizeLookupValue(value) {
+    return String(value || '').trim().toLowerCase();
+}
+
+const currentStocksPage = Number("{{ page_obj.number|default:1 }}") || 1;
+
+function reloadCurrentStocksPage() {
+    const url = new URL(window.location.href);
+    url.searchParams.set('page', String(currentStocksPage));
+    window.location.assign(url.toString());
+}
+
+function formatStockNumber(value) {
+    const numericValue = Number(value || 0);
+    return numericValue.toLocaleString('fr-FR', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2
+    });
+}
+
+function formatEtatLabel(value) {
+    const labels = {
+        bon: 'Bon',
+        moyen: 'Moyen',
+        mauvais: 'Mauvais',
+        hs: 'HS'
+    };
+    return labels[String(value || '').toLowerCase()] || '-';
+}
+
+async function parseJsonResponse(response) {
+    const rawText = await response.text();
+    try {
+        return rawText ? JSON.parse(rawText) : {};
+    } catch (error) {
+        const preview = rawText.slice(0, 180);
+        throw new Error(
+            rawText.trim().startsWith('<')
+                ? `Réponse HTML reçue au lieu de JSON. URL: ${response.url}. Début: ${preview}`
+                : `Réponse invalide: ${preview}`
+        );
+    }
+}
+
+function setPhotoPreview(photoUrl) {
+    const wrapper = document.getElementById('photo_preview_wrapper');
+    const image = document.getElementById('photo_preview');
+    if (!wrapper || !image) return;
+
+    if (photoUrl) {
+        image.src = photoUrl;
+        wrapper.classList.remove('hidden');
+        return;
+    }
+
+    image.src = '';
+    wrapper.classList.add('hidden');
+}
+
+function syncSelectedPhotoFile(input) {
+    if (!input || !input.files || !input.files.length) {
+        return;
+    }
+
+    const photoInput = document.getElementById('photo');
+    const file = input.files[0];
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    photoInput.files = transfer.files;
+    setPhotoPreview(URL.createObjectURL(file));
+}
+
+window.openCameraForStockPhoto = function openCameraForStockPhoto() {
+    document.getElementById('photo_camera').click();
+}
+
+const designationMap = new Map();
+const designationCodeMap = new Map();
+const designationNatureMap = new Map();
+{% for d in designations %}
+designationMap.set(normalizeLookupValue("{{ d.nom|escapejs }}"), "{{ d.id }}");
+designationCodeMap.set(normalizeLookupValue("{{ d.nom|escapejs }}"), "{{ d.code_materiel|default:''|escapejs }}");
+designationNatureMap.set(normalizeLookupValue("{{ d.nom|escapejs }}"), "{% if d.nature_stock == 'non_consommable' %}non_consommable{% else %}consommable{% endif %}");
+{% endfor %}
+
+function renderNatureBadge(natureValue) {
+    if (String(natureValue || '') === 'non_consommable') {
+        return '<span class="badge badge-secondary badge-sm">Non consommable</span>';
+    }
+    return '<span class="badge badge-primary badge-sm">Consommable</span>';
+}
+
+function syncNatureBadgeInModal() {
+    const natureSelect = document.getElementById('designation_nature');
+    const natureBadge = document.getElementById('designation_nature_badge');
+    if (!natureSelect || !natureBadge) {
+        return;
+    }
+    natureBadge.innerHTML = renderNatureBadge(natureSelect.value || 'consommable');
+}
+
+function syncQuantityRulesByNature() {
+    const natureValue = document.getElementById('designation_nature')?.value || 'consommable';
+    const currentQuantityInput = document.getElementById('current_quantity');
+    const newQuantityInput = document.getElementById('new_quantity');
+    if (!newQuantityInput) {
+        return;
+    }
+
+    syncNatureBadgeInModal();
+
+    if (natureValue === 'non_consommable') {
+        if (currentQuantityInput) {
+            currentQuantityInput.value = '1';
+        }
+        newQuantityInput.value = '1';
+        newQuantityInput.readOnly = true;
+        newQuantityInput.step = '1';
+        return;
+    }
+
+    newQuantityInput.readOnly = false;
+    newQuantityInput.step = '0.01';
+}
+
+const baseMap = new Map();
+{% for b in bases %}
+baseMap.set(normalizeLookupValue("{{ b.nom_base|escapejs }}"), "{{ b.id }}");
+{% endfor %}
+
+const magasinToBaseMap = new Map();
+const magasinLabelToIdMap = new Map();
+const magasinEntries = [];
+const magasinCountByBaseId = new Map();
+{% for m in magasins %}
+magasinToBaseMap.set("{{ m.nom_magasin|escapejs }} ({{ m.base.nom_base|escapejs }})", "{{ m.base.nom_base|escapejs }}");
+magasinLabelToIdMap.set("{{ m.nom_magasin|escapejs }} ({{ m.base.nom_base|escapejs }})", "{{ m.id }}");
+magasinEntries.push({
+    label: "{{ m.nom_magasin|escapejs }} ({{ m.base.nom_base|escapejs }})",
+    id: "{{ m.id }}",
+    baseName: "{{ m.base.nom_base|escapejs }}",
+    baseId: "{{ m.base.id }}"
+});
+magasinCountByBaseId.set("{{ m.base.id }}", (magasinCountByBaseId.get("{{ m.base.id }}") || 0) + 1);
+{% endfor %}
+
+function buildStockLookupKey(designationId, baseId, magasinId = '') {
+    return `${designationId || ''}_${baseId || ''}_${magasinId || ''}`;
+}
+
+const stockIndex = new Map();
+{% for stock in stocks_index_source %}
+{% if stock.designation and stock.base %}
+stockIndex.set(buildStockLookupKey("{{ stock.designation.id }}", "{{ stock.base.id }}", "{{ stock.magasin_id|default:''|escapejs }}"), {
+    id: "{{ stock.id }}",
+    qty: Number("{{ stock.current_quantity|default_if_none:0|unlocalize }}")
+});
+{% endif %}
+{% endfor %}
+
+function updateStockFromSelection() {
+    const designationName = document.getElementById('designation_name').value.trim();
+    const baseName = document.getElementById('base_name').value.trim();
+    const magasinId = document.getElementById('magasin_id').value.trim();
+    const designationId = designationMap.get(normalizeLookupValue(designationName)) || '';
+    const designationCode = designationCodeMap.get(normalizeLookupValue(designationName)) || '';
+    const designationNature = designationNatureMap.get(normalizeLookupValue(designationName)) || '';
+    const baseId = baseMap.get(normalizeLookupValue(baseName)) || '';
+    const currentNewQuantity = document.getElementById('new_quantity').value;
+
+    document.getElementById('designation_id').value = designationId;
+    document.getElementById('designation_code').value = designationCode;
+    document.getElementById('designation_nature').value = designationNature || 'consommable';
+    document.getElementById('base_id').value = baseId;
+    syncQuantityRulesByNature();
+
+    if (designationId && baseId) {
+        const exactKey = buildStockLookupKey(designationId, baseId, magasinId);
+        const fallbackKey = buildStockLookupKey(designationId, baseId, '');
+        const stock = stockIndex.get(exactKey) || (!magasinId ? stockIndex.get(fallbackKey) : null);
+        if (stock) {
+            document.getElementById('stock_id').value = stock.id;
+            document.getElementById('current_quantity').value = stock.qty;
+            if (!currentNewQuantity) {
+                document.getElementById('new_quantity').value = stock.qty;
+            }
+            return;
+        }
+    }
+
+    document.getElementById('stock_id').value = '';
+    document.getElementById('current_quantity').value = '';
+    syncQuantityRulesByNature();
+}
+window.updateStockFromSelection = updateStockFromSelection;
+
+function syncBaseFromMagasin() {
+    const magasinValue = document.getElementById('magasin_name').value.trim();
+    const mappedBase = magasinToBaseMap.get(magasinValue);
+    const magasinId = magasinLabelToIdMap.get(magasinValue) || '';
+    document.getElementById('magasin_id').value = magasinId;
+    if (mappedBase) {
+        document.getElementById('base_name').value = mappedBase;
+        updateStockFromSelection();
+        updateModalMagasinOptionsByBase();
+    }
+}
+
+function updateModalMagasinOptionsByBase() {
+    const selectedBaseName = document.getElementById('base_name').value.trim();
+    const datalist = document.getElementById('magasin_list');
+    const currentMagasin = document.getElementById('magasin_name').value.trim();
+    datalist.innerHTML = '';
+
+    magasinEntries
+        .filter(entry => !selectedBaseName || entry.baseName === selectedBaseName)
+        .forEach(entry => {
+            const option = document.createElement('option');
+            option.value = entry.label;
+            datalist.appendChild(option);
+        });
+
+    if (currentMagasin) {
+        const stillValid = magasinEntries.some(entry =>
+            entry.label === currentMagasin && (!selectedBaseName || entry.baseName === selectedBaseName)
+        );
+        if (!stillValid) {
+            document.getElementById('magasin_name').value = '';
+            document.getElementById('magasin_id').value = '';
+        }
+    }
+}
+
+function cascadeFilterBaseMagasin() {
+    const baseSelect = document.getElementById('filter-base');
+    const magasinSelect = document.getElementById('filter-magasin');
+    if (!baseSelect || !magasinSelect) return;
+
+    const selectedBase = baseSelect.value;
+    const options = Array.from(magasinSelect.options);
+    options.forEach((opt, index) => {
+        if (index === 0) return;
+        const matches = !selectedBase || opt.dataset.baseId === selectedBase;
+        opt.hidden = !matches;
+    });
+
+    if (magasinSelect.value) {
+        const selectedOption = magasinSelect.options[magasinSelect.selectedIndex];
+        if (selectedOption && selectedOption.dataset.baseId && selectedBase && selectedOption.dataset.baseId !== selectedBase) {
+            magasinSelect.value = '';
+        }
+    }
+}
+
+function syncFilterBaseFromMagasin() {
+    const baseSelect = document.getElementById('filter-base');
+    const magasinSelect = document.getElementById('filter-magasin');
+    if (!baseSelect || !magasinSelect || !magasinSelect.value) return;
+    const selectedOption = magasinSelect.options[magasinSelect.selectedIndex];
+    if (selectedOption && selectedOption.dataset.baseId) {
+        baseSelect.value = selectedOption.dataset.baseId;
+        cascadeFilterBaseMagasin();
+    }
+}
+
+function getActiveFilterDefaults() {
+    const baseSelect = document.getElementById('filter-base');
+    const magasinSelect = document.getElementById('filter-magasin');
+    const defaults = {
+        baseId: '',
+        baseName: '',
+        magasinId: '',
+        magasinLabel: ''
+    };
+
+    if (baseSelect && baseSelect.value) {
+        defaults.baseId = baseSelect.value;
+        defaults.baseName = baseSelect.options[baseSelect.selectedIndex]?.text?.trim() || '';
+    }
+
+    if (magasinSelect && magasinSelect.value) {
+        defaults.magasinId = magasinSelect.value;
+        defaults.magasinLabel = magasinSelect.options[magasinSelect.selectedIndex]?.text?.trim() || '';
+
+        if (!defaults.baseId) {
+            defaults.baseId = magasinSelect.options[magasinSelect.selectedIndex]?.dataset?.baseId || '';
+            if (baseSelect && defaults.baseId) {
+                const matchingBaseOption = Array.from(baseSelect.options).find(option => option.value === defaults.baseId);
+                defaults.baseName = matchingBaseOption?.text?.trim() || defaults.baseName;
+            }
+        }
+    }
+
+    return defaults;
+}
+
+function baseRequiresMagasinSelection(baseId) {
+    if (!baseId) return false;
+    return (magasinCountByBaseId.get(baseId) || 0) > 1;
+}
+
+function toggleBase(id) {
+    const content = document.getElementById(`content-base-${id}`);
+    const icon = document.getElementById(`icon-base-${id}`);
+    if (content.style.display === 'none') { content.style.display = 'block'; icon.style.transform = 'rotate(0deg)'; }
+    else { content.style.display = 'none'; icon.style.transform = 'rotate(-90deg)'; }
+}
+
+function toggleMagasin(id) {
+    const content = document.getElementById(`content-magasin-${id}`);
+    const icon = document.getElementById(`icon-magasin-${id}`);
+    if (content.style.display === 'none') { content.style.display = 'block'; icon.style.transform = 'rotate(0deg)'; }
+    else { content.style.display = 'none'; icon.style.transform = 'rotate(-90deg)'; }
+}
+
+function toggleType(id) {
+    const content = document.getElementById(`content-type-${id}`);
+    const icon = document.getElementById(`icon-type-${id}`);
+    if (content.style.display === 'none') { content.style.display = 'block'; icon.style.transform = 'rotate(0deg)'; }
+    else { content.style.display = 'none'; icon.style.transform = 'rotate(-90deg)'; }
+}
+
+window.openAdjustModal = function openAdjustModal() {
+    document.getElementById('formAdjust').reset();
+    document.getElementById('stock_id').value = '';
+    document.getElementById('original_magasin_id').value = '';
+    document.getElementById('original_nature_stock').value = 'consommable';
+    document.getElementById('designation_id').value = '';
+    document.getElementById('designation_code').value = '';
+    document.getElementById('designation_nature').value = 'consommable';
+    document.getElementById('base_id').value = '';
+    document.getElementById('magasin_id').value = '';
+    document.getElementById('etat').value = 'bon';
+    document.getElementById('utilisateur').value = '';
+    setPhotoPreview('');
+    const activeDefaults = getActiveFilterDefaults();
+    if (activeDefaults.baseId && activeDefaults.baseName) {
+        document.getElementById('base_id').value = activeDefaults.baseId;
+        document.getElementById('base_name').value = activeDefaults.baseName;
+    }
+    if (activeDefaults.magasinId && activeDefaults.magasinLabel) {
+        document.getElementById('magasin_id').value = activeDefaults.magasinId;
+        document.getElementById('magasin_name').value = activeDefaults.magasinLabel;
+    }
+    syncQuantityRulesByNature();
+    updateModalMagasinOptionsByBase();
+    updateStockFromSelection();
+    document.getElementById('adjustModal').showModal();
+    document.getElementById('designation_name').focus();
+}
+
+window.adjustStock = function adjustStock(stockId, productName, productCode, baseName, currentQty, rapproche, utilisateurId, inventoryDate, magasinId, magasinName, etat, photoUrl) {
+    const parsedQty = Number(String(currentQty ?? '').replace(',', '.'));
+    const normalizedQty = Number.isFinite(parsedQty) ? parsedQty : 0;
+    document.getElementById('stock_id').value = stockId;
+    document.getElementById('original_magasin_id').value = magasinId || '';
+    document.getElementById('designation_name').value = productName;
+    document.getElementById('designation_code').value = productCode || '';
+    document.getElementById('designation_nature').value = designationNatureMap.get(normalizeLookupValue(productName)) || 'consommable';
+    document.getElementById('original_nature_stock').value = document.getElementById('designation_nature').value;
+    document.getElementById('base_name').value = baseName;
+    document.getElementById('designation_id').value = designationMap.get(normalizeLookupValue(productName)) || '';
+    document.getElementById('base_id').value = baseMap.get(normalizeLookupValue(baseName)) || '';
+    document.getElementById('magasin_id').value = magasinId || '';
+    document.getElementById('magasin_name').value = (magasinId && magasinName) ? `${magasinName} (${baseName})` : '';
+    updateModalMagasinOptionsByBase();
+    document.getElementById('current_quantity').value = normalizedQty;
+    document.getElementById('new_quantity').value = normalizedQty;
+    syncQuantityRulesByNature();
+    document.getElementById('rapproche').checked = rapproche;
+    document.getElementById('etat').value = etat || 'bon';
+    document.getElementById('inventory_date').value = inventoryDate || new Date().toISOString().split('T')[0];
+    document.getElementById('utilisateur').value = utilisateurId || '';
+    document.getElementById('photo').value = '';
+    document.getElementById('photo_camera').value = '';
+    setPhotoPreview(photoUrl || '');
+    document.getElementById('adjustModal').showModal();
+    document.getElementById('new_quantity').focus();
+    document.getElementById('new_quantity').select();
+}
+
+const designationNameInput = document.getElementById('designation_name');
+const designationNatureInput = document.getElementById('designation_nature');
+const baseNameInput = document.getElementById('base_name');
+const magasinNameInput = document.getElementById('magasin_name');
+const photoInput = document.getElementById('photo');
+const photoCameraInput = document.getElementById('photo_camera');
+
+if (designationNameInput) {
+    designationNameInput.addEventListener('change', updateStockFromSelection);
+}
+if (designationNatureInput) {
+    designationNatureInput.addEventListener('change', syncQuantityRulesByNature);
+}
+if (baseNameInput) {
+    baseNameInput.addEventListener('change', () => {
+        updateStockFromSelection();
+        updateModalMagasinOptionsByBase();
+    });
+}
+if (magasinNameInput) {
+    magasinNameInput.addEventListener('change', syncBaseFromMagasin);
+}
+if (photoInput) {
+    photoInput.addEventListener('change', function() {
+        syncSelectedPhotoFile(this);
+    });
+}
+if (photoCameraInput) {
+    photoCameraInput.addEventListener('change', function() {
+        syncSelectedPhotoFile(this);
+    });
+}
+
+const filterBaseSelect = document.getElementById('filter-base');
+const filterMagasinSelect = document.getElementById('filter-magasin');
+if (filterBaseSelect && filterMagasinSelect) {
+    filterBaseSelect.addEventListener('change', cascadeFilterBaseMagasin);
+    filterMagasinSelect.addEventListener('change', syncFilterBaseFromMagasin);
+    cascadeFilterBaseMagasin();
+}
+
+const formAdjust = document.getElementById('formAdjust');
+if (formAdjust) {
+    formAdjust.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const stockId = document.getElementById('stock_id').value;
+        const designationId = document.getElementById('designation_id').value;
+        const baseId = document.getElementById('base_id').value;
+        const magasinId = document.getElementById('magasin_id').value;
+        const originalMagasinId = document.getElementById('original_magasin_id').value || '';
+        const selectedNatureStock = document.getElementById('designation_nature').value || 'consommable';
+        if (!designationId || !baseId) {
+            alert('Veuillez sélectionner une désignation et une base existantes.');
+            return;
+        }
+        if (baseRequiresMagasinSelection(baseId) && !magasinId) {
+            alert('Cette base a plusieurs magasins. Sélectionnez un magasin précis avant d’enregistrer l’ajustement.');
+            return;
+        }
+
+        const shouldUseInventaireEndpoint = !stockId || !!magasinId;
+        if (shouldUseInventaireEndpoint) {
+            const createFormData = new FormData(this);
+            createFormData.set('designation_id', designationId);
+            createFormData.set('base_id', baseId);
+            createFormData.set('quantity', (parseFloat(document.getElementById('new_quantity').value) || 0).toString());
+            if (magasinId) {
+                createFormData.set('magasin_id', magasinId);
+            } else {
+                createFormData.delete('magasin_id');
+            }
+
+            const utilisateurId = document.getElementById('utilisateur').value;
+            if (utilisateurId) {
+                createFormData.set('utilisateur_id', utilisateurId);
+            } else {
+                createFormData.set('utilisateur_id', '');
+            }
+
+            try {
+                const createResponse = await fetch(`{% url 'inventory:api_fiche_stock_inventaire' %}`, {
+                    method: 'POST',
+                    headers: {'X-CSRFToken': getCookie('csrftoken')},
+                    body: createFormData
+                });
+                const createData = await parseJsonResponse(createResponse);
+                if (createData.success) {
+                    alert(createData.message || 'Inventaire enregistré');
+                    reloadCurrentStocksPage();
+                } else {
+                    alert('Erreur: ' + createData.error);
+                }
+            } catch (error) {
+                alert('Erreur: ' + error.message);
+            }
+            return;
+        }
+
+        const currentQty = parseFloat(document.getElementById('current_quantity').value) || 0;
+        const newQty = parseFloat(document.getElementById('new_quantity').value) || 0;
+        const formData = new FormData(this);
+
+        formData.append('adjust_type', 'set');
+        formData.append('quantity', newQty.toString());
+
+        const utilisateurId = document.getElementById('utilisateur').value;
+        if (utilisateurId) {
+            formData.set('utilisateur_id', utilisateurId);
+        } else {
+            formData.set('utilisateur_id', '');
+        }
+
+        try {
+            const response = await fetch(`{% url 'inventory:api_adjust_stock' stock_id='00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', stockId), {
+                method: 'POST', headers: {'X-CSRFToken': getCookie('csrftoken')}, body: formData
+            });
+            const data = await parseJsonResponse(response);
+            if (data.success) {
+                const shouldReloadForMove = selectedNatureStock === 'non_consommable' && originalMagasinId !== (magasinId || '');
+                if (shouldReloadForMove) {
+                    alert(data.message);
+                    reloadCurrentStocksPage();
+                    return;
+                }
+                const updatedQuantity = Number(data.new_quantity ?? newQty);
+                const currentQtyInput = document.getElementById('current_quantity');
+                currentQtyInput.value = updatedQuantity;
+                const currentMagasinId = document.getElementById('magasin_id').value || '';
+
+                const designationIdForIndex = document.getElementById('designation_id').value;
+                if (designationIdForIndex && baseId) {
+                    stockIndex.set(buildStockLookupKey(designationIdForIndex, baseId, currentMagasinId), {
+                        id: stockId,
+                        qty: updatedQuantity
+                    });
+                }
+
+                document.querySelectorAll(`[data-stock-id="${stockId}"]`).forEach(entry => {
+                    if ((entry.dataset.magasinId || '') !== currentMagasinId) {
+                        return;
+                    }
+                    const reservedQty = Number(entry.dataset.reservedQuantity || 0);
+                    const availableQty = updatedQuantity - reservedQty;
+                    const currentCell = entry.querySelector('[data-field="current_quantity"]');
+                    const availableCell = entry.querySelector('[data-field="available_quantity"]');
+                    const etatCell = entry.querySelector('[data-field="etat"]');
+                    const inventoryDateCell = entry.querySelector('[data-field="inventory_date"]');
+                    const rapprocheCell = entry.querySelector('[data-field="rapproche"]');
+                    const natureCell = entry.querySelector('[data-field="nature"]');
+                    const utilisateurCell = entry.querySelector('[data-field="utilisateur"]');
+                    const photoCell = entry.querySelector('[data-field="photo"]');
+                    if (currentCell) currentCell.textContent = formatStockNumber(updatedQuantity);
+                    if (availableCell) {
+                        availableCell.textContent = formatStockNumber(availableQty);
+                        availableCell.classList.remove('text-success', 'text-error');
+                        availableCell.classList.add(availableQty < 0 ? 'text-error' : 'text-success');
+                    }
+                    if (etatCell) {
+                        etatCell.innerHTML = `<span class="badge badge-outline badge-sm">${formatEtatLabel(data.etat)}</span>`;
+                    }
+                    if (inventoryDateCell) {
+                        inventoryDateCell.innerHTML = data.inventory_date
+                            ? `<span class="text-sm">${data.inventory_date}</span>`
+                            : '<span class="text-base-content/50">-</span>';
+                    }
+                    if (rapprocheCell) {
+                        rapprocheCell.innerHTML = data.rapproche
+                            ? '<span class="badge badge-success badge-sm">Oui</span>'
+                            : '<span class="badge badge-ghost badge-sm">Non</span>';
+                    }
+                    if (natureCell) {
+                        natureCell.innerHTML = renderNatureBadge(data.nature_stock);
+                    }
+                    if (utilisateurCell) {
+                        utilisateurCell.innerHTML = data.utilisateur_label
+                            ? `<span class="text-sm">${data.utilisateur_label}</span>`
+                            : '<span class="text-base-content/50">-</span>';
+                    }
+                    if (photoCell) {
+                        if (data.photo_url) {
+                            photoCell.innerHTML = `<a href="${data.photo_url}" target="_blank" rel="noopener" class="inline-flex rounded-xl border border-base-300 bg-base-200 p-1 shadow-sm"><img src="${data.photo_url}" alt="Photo stock" class="h-14 w-14 rounded-lg object-cover"></a>`;
+                        } else {
+                            photoCell.innerHTML = '<span class="inline-flex h-14 w-14 items-center justify-center rounded-xl border border-dashed border-base-300 bg-base-200 text-base-content/40"><i class="fas fa-image"></i></span>';
+                        }
+                    }
+                });
+
+                alert(data.message);
+                document.getElementById('adjustModal').close();
+            } else { alert('Erreur: ' + data.error); }
+        } catch (error) { alert('Erreur: ' + error.message); }
+    });
+}
+
+async function importStocksExcel(input) {
+    const file = input.files[0]; if (!file) return;
+    const formData = new FormData();
+    formData.append('fichier', file);
+    try {
+        const response = await fetch('{% url "inventory:import_stocks" %}', {
+            method: 'POST', headers: {'X-CSRFToken': getCookie('csrftoken')}, body: formData
+        });
+        const data = await response.json();
+        if (data.success) {
+            let message = data.message || `${data.nb_imported || 0} stock(s) importé(s) avec succès`;
+            if (data.errors && data.errors.length) {
+                message += `\n\n${data.errors.length} erreur(s):\n` + data.errors.join('\n');
+            }
+            alert(message);
+            location.reload();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) { alert('Erreur: ' + error.message); }
+    input.value = '';
+}
+
+function printLatestStockForSelectedMagasin() {
+    const select = document.getElementById('filter-magasin');
+    const searchInput = document.querySelector('input[name="search"]');
+    const baseSelect = document.getElementById('filter-base');
+    const typeSelect = document.querySelector('select[name="type_designation"]');
+    const viewInput = document.getElementById('filter-view');
+    if (!select) {
+        window.print();
+        return;
+    }
+
+    if (!select.value) {
+        alert("Veuillez sélectionner un magasin avant d'imprimer le dernier stock.");
+        select.focus();
+        return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set('search', searchInput ? searchInput.value : '');
+    url.searchParams.set('base', baseSelect ? baseSelect.value : '');
+    url.searchParams.set('magasin', select.value);
+    url.searchParams.set('type_designation', typeSelect ? typeSelect.value : '');
+    url.searchParams.set('view', viewInput ? viewInput.value : 'table');
+    url.searchParams.set('print', '1');
+    url.searchParams.set('page', '1');
+    const printWindow = window.open(url.toString(), '_blank', 'width=1200,height=900');
+    if (!printWindow) {
+        alert("Le navigateur a bloqué la fenêtre d'impression.");
+        return;
+    }
+    printWindow.addEventListener('load', () => {
+        setTimeout(() => {
+            printWindow.print();
+        }, 150);
+    }, { once: true });
+}
+
+const printLatestStockBtn = document.getElementById('printLatestStockBtn');
+if (printLatestStockBtn) {
+    printLatestStockBtn.addEventListener('click', printLatestStockForSelectedMagasin);
+}
+
+const inventoryHistoryModal = document.getElementById('inventoryHistoryModal');
+const inventoryHistoryBody = document.getElementById('inventoryHistoryBody');
+const inventoryHistorySubtitle = document.getElementById('inventoryHistorySubtitle');
+const inventoryHistoryLoading = document.getElementById('inventoryHistoryLoading');
+const inventoryHistoryError = document.getElementById('inventoryHistoryError');
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+function setInventoryHistoryState(state) {
+    state = state || {};
+    const loading = !!state.loading;
+    const error = state.error || '';
+    const rows = state.rows || [];
+
+    if (inventoryHistoryLoading) {
+        inventoryHistoryLoading.classList.toggle('hidden', !loading);
+    }
+    if (inventoryHistoryError) {
+        inventoryHistoryError.classList.toggle('hidden', !error);
+        const errorText = inventoryHistoryError.querySelector('span');
+        if (errorText) {
+            errorText.textContent = error;
+        }
+    }
+    if (!inventoryHistoryBody) {
+        return;
+    }
+    if (loading) {
+        inventoryHistoryBody.innerHTML = '';
+        return;
+    }
+    if (error) {
+        inventoryHistoryBody.innerHTML = "<tr><td colspan=\"6\" class=\"text-center text-error\">Impossible de charger l'historique.</td></tr>";
+        return;
+    }
+    if (!rows.length) {
+        inventoryHistoryBody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/60">Aucun inventaire trouvé.</td></tr>';
+        return;
+    }
+
+    inventoryHistoryBody.innerHTML = rows.map((row) => `
+        <tr>
+            <td>${escapeHtml(row.date || '-')}</td>
+            <td class="font-semibold">${escapeHtml(row.quantity_display || '-')}</td>
+            <td>${escapeHtml(row.magasin || '-')}</td>
+            <td>${escapeHtml(row.employee || '-')}</td>
+            <td>${escapeHtml(row.reference || '-')}</td>
+            <td class="max-w-md whitespace-normal break-words">${escapeHtml(row.notes || '-')}</td>
+        </tr>
+    `).join('');
+}
+
+window.openInventoryHistoryModal = async function openInventoryHistoryModal(designationId, baseId, magasinId, designationName, baseName, magasinName) {
+    if (!inventoryHistoryModal) {
+        return;
+    }
+
+    const subtitleParts = [designationName, baseName];
+    if (magasinName) {
+        subtitleParts.push(magasinName);
+    }
+    if (inventoryHistorySubtitle) {
+        inventoryHistorySubtitle.textContent = subtitleParts.filter(Boolean).join(' | ');
+    }
+
+    setInventoryHistoryState({ loading: true, error: '', rows: [] });
+    inventoryHistoryModal.showModal();
+
+    try {
+        const params = new URLSearchParams({
+            designation_id: designationId,
+            base_id: baseId,
+        });
+        if (magasinId) {
+            params.set('magasin_id', magasinId);
+        }
+
+        const response = await fetch(`{% url 'inventory:api_stock_inventory_history' %}?${params.toString()}`);
+        const data = await parseJsonResponse(response);
+
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Erreur lors du chargement.');
+        }
+
+        setInventoryHistoryState({ loading: false, error: '', rows: data.inventaires || [] });
+    } catch (error) {
+        setInventoryHistoryState({ loading: false, error: error.message || 'Erreur réseau.', rows: [] });
+    }
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1)); break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+window.deleteInventaire = async function deleteInventaire(ficheId, designationName, magasinName) {
+    const articleLabel = designationName || 'cet article';
+    const magasinLabel = magasinName || 'ce magasin';
+    const confirmed = window.confirm(`Supprimer le dernier inventaire affiché pour ${articleLabel} dans ${magasinLabel} ?`);
+    if (!confirmed) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`{% url 'inventory:fiche_stock_delete' fiche_id='00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', ficheId), {
+            method: 'POST',
+            headers: {'X-CSRFToken': getCookie('csrftoken')}
+        });
+        const data = await parseJsonResponse(response);
+        if (data.success) {
+            alert(data.message || 'Inventaire supprimé');
+            location.reload();
+            return;
+        }
+        alert('Erreur: ' + (data.error || 'Suppression impossible'));
+    } catch (error) {
+        alert('Erreur: ' + error.message);
+    }
+}
+</script>
+{% endblock %}

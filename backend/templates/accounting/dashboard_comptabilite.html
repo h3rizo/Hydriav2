@@ -1,0 +1,1203 @@
+{% extends base_template %}
+{% load humanize %}
+{% load accounting_filters %}
+
+{% block title %}Tableau de bord Comptabilité{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <style>
+        .dashboard-section summary {
+            list-style: none;
+        }
+
+        .dashboard-section summary::-webkit-details-marker {
+            display: none;
+        }
+    </style>
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+        <h1 class="text-2xl md:text-3xl font-bold flex items-center">
+            <i class="fas fa-chart-line mr-3 text-primary"></i>
+            <span>Tableau de bord Comptabilité</span>
+        </h1>
+        <div class="flex flex-wrap gap-2 w-full md:w-auto">
+            <a href="{% url 'accounting:entries_list' %}" class="btn btn-ghost btn-sm flex-1 md:flex-none justify-center">
+                <i class="fas fa-list mr-2"></i>Liste complète
+            </a>
+            <a href="{% url 'accounting:analyse_categorie_salaires' %}" class="btn btn-info btn-sm flex-1 md:flex-none justify-center">
+                <i class="fas fa-users mr-2"></i>Analyse salaires
+            </a>
+            <a href="{% url 'accounting:diagnostic_soldes' %}" class="btn btn-success btn-sm flex-1 md:flex-none justify-center">
+                <i class="fas fa-search-dollar mr-2"></i>Diagnostic Soldes
+            </a>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <details class="dashboard-section card bg-base-200 shadow-md mb-6" open>
+        <summary class="card-body cursor-pointer">
+            <div class="flex items-center justify-between gap-4">
+                <h3 class="card-title text-sm"><i class="fas fa-filter mr-2"></i>Filtres</h3>
+                <span class="text-xs text-base-content/60">Cliquer pour replier</span>
+            </div>
+        </summary>
+        <div class="card-body pt-0">
+            <form method="GET" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                {% for fin_value in selected_fin_filters %}
+                <input type="hidden" name="fin_category" value="{{ fin_value }}">
+                {% endfor %}
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Année</span></label>
+                    <select name="annee" class="select select-bordered select-sm w-full">
+                        <option value="">Toutes les années</option>
+                        {% for year in annees %}
+                        <option value="{{ year }}" {% if annee|stringformat:"s" == year|stringformat:"s" %}selected{% endif %}>{{ year }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mois</span></label>
+                    <input type="month" name="mois" value="{{ mois }}" class="input input-bordered input-sm w-full" />
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Fichier source</span></label>
+                    <select name="fichier_source" class="select select-bordered select-sm w-full">
+                        <option value="">Tous les fichiers</option>
+                        {% for source in fichiers_sources %}
+                        <option value="{{ source }}" {% if fichier_source == source %}selected{% endif %}>{{ source }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Prog DiameX</span></label>
+                    <select name="prog" class="select select-bordered select-sm w-full">
+                        <option value="">Tous les progs</option>
+                        {% for prog in progs_codes %}
+                        <option value="{{ prog }}" {% if prog_code == prog %}selected{% endif %}>{{ prog }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control flex flex-row gap-2 items-end mt-2 sm:mt-0">
+                    <button type="submit" class="btn btn-primary btn-sm flex-1">
+                        <i class="fas fa-search mr-2"></i>Filtrer
+                    </button>
+                    <a href="{% url 'accounting:dashboard_comptabilite' %}" class="btn btn-ghost btn-sm">
+                        <i class="fas fa-times"></i>
+                    </a>
+                </div>
+            </form>
+        </div>
+    </details>
+
+    <!-- Statistiques globales -->
+    <details class="dashboard-section card bg-base-100 shadow-md mb-6" open>
+        <summary class="card-body cursor-pointer">
+            <div class="flex items-center justify-between gap-4">
+                <h2 class="card-title text-lg"><i class="fas fa-chart-pie mr-2 text-primary"></i>Statistiques globales</h2>
+                <span class="text-xs text-base-content/60">Cliquer pour replier</span>
+            </div>
+        </summary>
+        <div class="card-body pt-0">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-success">
+                <i class="fas fa-arrow-down text-3xl"></i>
+            </div>
+            <div class="stat-title">Total Recettes</div>
+            <div class="stat-value text-success text-2xl">{{ total_recettes|frenchformat:2 }} Ar</div>
+            <div class="stat-desc">Hors transferts et avances</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure text-error">
+                <i class="fas fa-arrow-up text-3xl"></i>
+            </div>
+            <div class="stat-title">Total Dépenses</div>
+            <div class="stat-value text-error text-2xl">{{ total_depenses|frenchformat:2 }} Ar</div>
+            <div class="stat-desc">Hors transferts et avances</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-lg shadow">
+            <div class="stat-figure {% if solde_global >= 0 %}text-success{% else %}text-error{% endif %}">
+                <i class="fas fa-balance-scale text-3xl"></i>
+            </div>
+            <div class="stat-title">Solde Global</div>
+            <div class="stat-value {% if solde_global >= 0 %}text-success{% else %}text-error{% endif %} text-2xl">
+                {{ solde_global|frenchformat:2 }} Ar
+            </div>
+            <div class="stat-desc">Recettes - Dépenses</div>
+        </div>
+            </div>
+        </div>
+    </details>
+
+    <!-- Soldes Fin et Activ détaillés -->
+    <details class="dashboard-section card bg-base-100 shadow-md mb-6" open>
+        <summary class="card-body cursor-pointer">
+            <div class="flex items-center justify-between gap-4">
+                <h2 class="card-title text-lg"><i class="fas fa-table-columns mr-2 text-info"></i>Soldes Fin et Activ détaillés</h2>
+                <span class="text-xs text-base-content/60">Cliquer pour replier</span>
+            </div>
+        </summary>
+        <div class="card-body pt-0">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="card bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20 shadow-lg">
+            <div class="card-body p-4">
+                <h2 class="card-title text-base">
+                    <i class="fas fa-university mr-2 text-blue-600"></i>
+                    Détails Fin (Comptes 00xxx)
+                </h2>
+                <div class="divider my-1"></div>
+
+                <!-- Tableau détails Fin -->
+                <div class="overflow-x-auto">
+                    <table class="table table-xs">
+                        <thead class="bg-blue-100 dark:bg-blue-900/30">
+                            <tr>
+                                <th class="text-xs">Catégorie</th>
+                                <th class="text-right text-xs">Recettes</th>
+                                <th class="text-right text-xs">EDF</th>
+                                <th class="text-right text-xs">Sorties</th>
+                                <th class="text-right text-xs">Solde</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for detail in fin_details %}
+                            <tr class="hover cursor-pointer" onclick="window.location.href='{% url 'accounting:entries_list' %}?fin={{ detail.nom|urlencode }}{% if annee %}&annee={{ annee }}{% endif %}{% if mois %}&mois={{ mois }}{% endif %}{% if fichier_source %}&fichier_source={{ fichier_source|urlencode }}{% endif %}{% if prog_code %}&prog={{ prog_code|urlencode }}{% endif %}'">
+                                <td><span class="badge badge-xs badge-ghost">{{ detail.nom }}</span></td>
+                                <td class="text-right text-success text-xs">{{ detail.in|frenchformat:2 }}</td>
+                                <td class="text-right text-info text-xs">{{ detail.edf|frenchformat:2 }}</td>
+                                <td class="text-right text-error text-xs">{{ detail.out|frenchformat:2 }}</td>
+                                <td class="text-right font-semibold text-xs {% if detail.solde >= 0 %}text-success{% else %}text-error{% endif %}">
+                                    {{ detail.solde|frenchformat:2 }}
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="5" class="text-center text-xs">Aucune donnée</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                        <tfoot class="bg-blue-100 dark:bg-blue-900/30 font-bold">
+                            <tr>
+                                <td class="text-xs">TOTAL</td>
+                                <td class="text-right text-success text-xs">{{ solde_fin_in|frenchformat:2 }}</td>
+                                <td class="text-right text-info text-xs">{{ solde_fin_edf|frenchformat:2 }}</td>
+                                <td class="text-right text-error text-xs">{{ solde_fin_out|frenchformat:2 }}</td>
+                                <td class="text-right text-xs {% if solde_fin >= 0 %}text-success{% else %}text-error{% endif %}">
+                                    {{ solde_fin|frenchformat:2 }}
+                                </td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20 shadow-lg">
+            <div class="card-body p-4">
+                <h2 class="card-title text-base">
+                    <i class="fas fa-cogs mr-2 text-green-600"></i>
+                    Détails Activ (Autres comptes)
+                </h2>
+                <div class="divider my-1"></div>
+
+                <!-- Tableau détails Activ -->
+                <div class="overflow-x-auto">
+                    <table class="table table-xs">
+                        <thead class="bg-green-100 dark:bg-green-900/30">
+                            <tr>
+                                <th class="text-xs">Catégorie</th>
+                                <th class="text-right text-xs">Entrées</th>
+                                <th class="text-right text-xs">Sorties</th>
+                                <th class="text-right text-xs">Solde</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for detail in activ_details %}
+                            <tr class="hover cursor-pointer" onclick="window.location.href='{% url 'accounting:entries_list' %}?activ={{ detail.nom|urlencode }}{% if annee %}&annee={{ annee }}{% endif %}{% if mois %}&mois={{ mois }}{% endif %}{% if fichier_source %}&fichier_source={{ fichier_source|urlencode }}{% endif %}{% if prog_code %}&prog={{ prog_code|urlencode }}{% endif %}'">
+                                <td><span class="badge badge-xs badge-ghost">{{ detail.nom }}</span></td>
+                                <td class="text-right text-success text-xs">{{ detail.in|frenchformat:2 }}</td>
+                                <td class="text-right text-error text-xs">{{ detail.out|frenchformat:2 }}</td>
+                                <td class="text-right font-semibold text-xs {% if detail.solde >= 0 %}text-success{% else %}text-error{% endif %}">
+                                    {{ detail.solde|frenchformat:2 }}
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="4" class="text-center text-xs">Aucune donnée</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                        <tfoot class="bg-green-100 dark:bg-green-900/30 font-bold">
+                            <tr>
+                                <td class="text-xs">TOTAL</td>
+                                <td class="text-right text-success text-xs">{{ solde_activ_in|frenchformat:2 }}</td>
+                                <td class="text-right text-error text-xs">{{ solde_activ_out|frenchformat:2 }}</td>
+                                <td class="text-right text-xs {% if solde_activ >= 0 %}text-success{% else %}text-error{% endif %}">
+                                    {{ solde_activ|frenchformat:2 }}
+                                </td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+            </div>
+        </div>
+    </details>
+
+    <!-- Soldes des Journaux -->
+    {% if soldes_journaux %}
+    <details class="dashboard-section card bg-base-100 shadow-md mb-6" open>
+        <summary class="card-body cursor-pointer">
+            <div class="flex items-center justify-between gap-4">
+                <h2 class="card-title text-lg">
+                    <i class="fas fa-book mr-2 text-info"></i>
+                    Soldes des Journaux
+                </h2>
+                <span class="text-xs text-base-content/60">Cliquer pour replier</span>
+            </div>
+        </summary>
+        <div class="card-body pt-0">
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead class="bg-base-200">
+                        <tr>
+                            <th>Journal</th>
+                            <th class="text-right">Solde Début</th>
+                            <th class="text-right">Mouvement</th>
+                            <th class="text-right">Solde Fin</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for journal_code, data in soldes_journaux.items %}
+                        <tr class="hover cursor-pointer"
+                            onclick="window.location.href='{% url 'accounting:entries_list' %}?journal_code={{ journal_code }}{% if annee %}&annee={{ annee }}{% endif %}{% if fichier_source %}&fichier_source={{ fichier_source|urlencode }}{% endif %}{% if mois %}&mois={{ mois }}{% endif %}{% if prog_code %}&prog={{ prog_code|urlencode }}{% endif %}'">
+                            <td>
+                                <span class="badge badge-sm badge-ghost">{{ journal_code }}</span>
+                            </td>
+                            <td class="text-right font-mono {% if data.solde_debut >= 0 %}text-success{% else %}text-error{% endif %}">
+                                {{ data.solde_debut|frenchformat:2 }}
+                            </td>
+                            <td class="text-right font-mono {% if data.mouvement >= 0 %}text-success{% else %}text-error{% endif %}">
+                                {{ data.mouvement|frenchformat:2 }}
+                            </td>
+                            <td class="text-right font-mono font-bold {% if data.solde_fin >= 0 %}text-success{% else %}text-error{% endif %}">
+                                {{ data.solde_fin|frenchformat:2 }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </details>
+    {% endif %}
+
+    <!-- Soldes des Comptes de Tiers -->
+    {% if soldes_tiers %}
+    <details class="dashboard-section card bg-base-100 shadow-md mb-6" open>
+        <summary class="card-body cursor-pointer">
+            <div class="flex items-center justify-between gap-4">
+                <h2 class="card-title text-lg">
+                    <i class="fas fa-users mr-2 text-purple-600"></i>
+                    Soldes des Comptes de Tiers (00PERS)
+                </h2>
+                <span class="text-xs text-base-content/60">Cliquer pour replier</span>
+            </div>
+        </summary>
+        <div class="card-body pt-0">
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead class="bg-base-200">
+                        <tr>
+                            <th>Tiers</th>
+                            <th class="text-center">Type</th>
+                            <th class="text-right">Org Doit</th>
+                            <th class="text-right">Tiers Doit</th>
+                            <th class="text-right">Solde</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for tiers in soldes_tiers %}
+                        <tr class="hover cursor-pointer"
+                            onclick="window.location.href='{% url 'accounting:entries_list' %}?pers={{ tiers.nom|urlencode }}{% if annee %}&annee={{ annee }}{% endif %}{% if fichier_source %}&fichier_source={{ fichier_source|urlencode }}{% endif %}{% if mois %}&mois={{ mois }}{% endif %}{% if prog_code %}&prog={{ prog_code|urlencode }}{% endif %}'">
+                            <td>
+                                <span class="font-semibold">{{ tiers.nom }}</span>
+                            </td>
+                            <td class="text-center">
+                                {% if tiers.type == 'fournisseur' %}
+                                    <span class="badge badge-sm badge-warning">Fournisseur</span>
+                                {% elif tiers.type == 'employe' %}
+                                    <span class="badge badge-sm badge-info">Employé</span>
+                                {% else %}
+                                    <span class="badge badge-sm badge-ghost">Inconnu</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-right font-mono text-error">
+                                {% if tiers.org_doit > 0 %}
+                                    {{ tiers.org_doit|frenchformat:2 }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td class="text-right font-mono text-success">
+                                {% if tiers.tiers_doit > 0 %}
+                                    {{ tiers.tiers_doit|frenchformat:2 }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td class="text-right font-mono font-bold {% if tiers.solde >= 0 %}text-success{% else %}text-error{% endif %}">
+                                {{ tiers.solde|frenchformat:2 }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot class="bg-base-200">
+                        <tr>
+                            <td colspan="2" class="font-bold">TOTAL</td>
+                            <td class="text-right font-mono font-bold text-error">
+                                {{ soldes_tiers|sum_attr:'org_doit'|frenchformat:2 }}
+                            </td>
+                            <td class="text-right font-mono font-bold text-success">
+                                {{ soldes_tiers|sum_attr:'tiers_doit'|frenchformat:2 }}
+                            </td>
+                            <td class="text-right font-mono font-bold {% if soldes_tiers|sum_attr:'solde' >= 0 %}text-success{% else %}text-error{% endif %}">
+                                {{ soldes_tiers|sum_attr:'solde'|frenchformat:2 }}
+                            </td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+    </details>
+    {% endif %}
+
+    <!-- Statistiques par catégorie -->
+    <details class="dashboard-section card bg-base-100 shadow-md mb-6" open>
+        <summary class="card-body cursor-pointer">
+            <div class="flex items-center justify-between gap-4">
+                <h2 class="card-title text-lg">
+                    <i class="fas fa-layer-group mr-2 text-warning"></i>
+                    Statistiques par categorie
+                </h2>
+                <span class="text-xs text-base-content/60">Cliquer pour replier</span>
+            </div>
+        </summary>
+        <div class="card-body pt-0">
+            <form method="GET" class="mb-5 rounded-xl border border-base-300 bg-base-200/60 p-4">
+                {% if annee %}<input type="hidden" name="annee" value="{{ annee }}">{% endif %}
+                {% if mois %}<input type="hidden" name="mois" value="{{ mois }}">{% endif %}
+                {% if fichier_source %}<input type="hidden" name="fichier_source" value="{{ fichier_source }}">{% endif %}
+                {% if prog_code %}<input type="hidden" name="prog" value="{{ prog_code }}">{% endif %}
+                <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h3 class="font-semibold"><i class="fas fa-filter mr-2 text-primary"></i>Filtrer le tableau par Fin</h3>
+                        <p class="text-xs text-base-content/60">Sans sélection, tous les financements sont affichés.</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button type="submit" class="btn btn-primary btn-sm">Appliquer</button>
+                        <button type="button" class="btn btn-ghost btn-sm" onclick="clearCategoryFinFilters(this.form)">Tous les Fin</button>
+                    </div>
+                </div>
+                <div class="flex max-h-40 flex-wrap gap-2 overflow-y-auto" role="group" aria-label="Filtres Fin">
+                    {% for option in fin_filter_options %}
+                    <label class="flex cursor-pointer items-center gap-2 rounded-lg border border-base-300 bg-base-100 px-3 py-2 text-sm hover:border-primary">
+                        <input type="checkbox" name="fin_category" value="{{ option.value }}" class="checkbox checkbox-primary checkbox-sm" {% if option.selected %}checked{% endif %}>
+                        <span>{{ option.label }}</span>
+                    </label>
+                    {% empty %}
+                    <span class="text-sm text-base-content/60">Aucun financement disponible pour la période.</span>
+                    {% endfor %}
+                </div>
+            </form>
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead class="bg-base-200">
+                        <tr>
+                            <th>Catégorie</th>
+                            <th class="text-right">Recettes</th>
+                            <th class="text-right">Dépenses</th>
+                            <th class="text-right">Solde</th>
+                            <th class="text-center">Nb entrées</th>
+                            <th class="text-center">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for cat in categories_data %}
+                        <tr class="hover">
+                            <td>
+                                <span class="badge badge-sm badge-ghost">{{ cat.nom }}</span>
+                            </td>
+                            <td class="text-right font-semibold text-success">
+                                {% if cat.recettes > 0 %}
+                                    <div>{{ cat.recettes|frenchformat:2 }}</div>
+                                    <div class="mt-1 flex items-center justify-end gap-2">
+                                        <progress class="progress progress-success w-24" value="{{ cat.progression_recettes }}" max="100"></progress>
+                                        <span class="text-[11px] font-semibold opacity-70">{{ cat.progression_recettes }}%</span>
+                                    </div>
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td class="text-right font-semibold text-error">
+                                {% if cat.depenses > 0 %}
+                                    <div>{{ cat.depenses|frenchformat:2 }}</div>
+                                    <div class="mt-1 flex items-center justify-end gap-2">
+                                        <progress class="progress progress-error w-24" value="{{ cat.progression_depenses }}" max="100"></progress>
+                                        <span class="text-[11px] font-semibold opacity-70">{{ cat.progression_depenses }}%</span>
+                                    </div>
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td class="text-right font-bold {% if cat.solde >= 0 %}text-success{% else %}text-error{% endif %}">
+                                {{ cat.solde|frenchformat:2 }}
+                            </td>
+                            <td class="text-center">
+                                <span class="badge badge-sm badge-info">{{ cat.count|intcomma }}</span>
+                            </td>
+                            <td class="text-center">
+                                <button onclick="toggleCategorySummary('{{ cat.filter_name|default:cat.nom|escapejs }}', '{{ cat.compte_categorie|default:''|escapejs }}')" class="btn btn-xs btn-primary">
+                                    <i class="fas fa-chevron-down mr-1" id="icon-{{ cat.nom|escapejs|cut:' ' }}"></i>
+                                    <span id="text-{{ cat.nom|escapejs|cut:' ' }}">Voir</span>
+                                </button>
+                            </td>
+                        </tr>
+                        <!-- Ligne de détails cachée -->
+                        <tr id="details-{{ cat.nom|escapejs|cut:' ' }}" class="hidden bg-base-200">
+                            <td colspan="6">
+                                <div class="p-4">
+                                    <div class="flex justify-between items-center mb-3">
+                                        <h3 class="font-bold text-sm">
+                                            <i class="fas fa-list mr-2"></i>Détail par Cat : {{ cat.nom }}
+                                        </h3>
+                                    </div>
+                                    <span class="loading loading-spinner loading-sm hidden" id="loading-{{ cat.nom|escapejs|cut:' ' }}"></span>
+                                    <div id="content-{{ cat.nom|escapejs|cut:' ' }}" class="overflow-x-auto">
+                                        <!-- Contenu chargé dynamiquement -->
+                                    </div>
+                                    <div id="entries-wrapper-{{ cat.nom|escapejs|cut:' ' }}" class="hidden mt-4">
+                                        <div id="entries-content-{{ cat.nom|escapejs|cut:' ' }}" class="overflow-x-auto">
+                                            <!-- Lignes compta chargées dynamiquement -->
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="6" class="text-center py-8 text-gray-500">
+                                <i class="fas fa-inbox text-4xl mb-2"></i>
+                                <p>Aucune donnée disponible</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot class="bg-base-200 font-bold">
+                        <tr>
+                            <td>TOTAL</td>
+                            <td class="text-right text-success">{{ category_total_recettes|frenchformat:2 }}</td>
+                            <td class="text-right text-error">{{ category_total_depenses|frenchformat:2 }}</td>
+                            <td class="text-right {% if category_solde_global >= 0 %}text-success{% else %}text-error{% endif %}">
+                                {{ category_solde_global|frenchformat:2 }}
+                            </td>
+                            <td class="text-center">
+                                <span class="badge badge-sm badge-primary">{{ categories_data|length }} cat.</span>
+                            </td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+    </details>
+
+    <!-- Légende -->
+    <details class="dashboard-section card bg-base-200 shadow-md mt-6" open>
+        <summary class="card-body cursor-pointer">
+            <div class="flex items-center justify-between gap-4">
+                <h3 class="card-title text-sm"><i class="fas fa-info-circle mr-2"></i>Informations</h3>
+                <span class="text-xs text-base-content/60">Cliquer pour replier</span>
+            </div>
+        </summary>
+        <div class="card-body pt-0">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                <div>
+                    <p class="font-semibold mb-2">Solde Fin (comptes 00xxx) :</p>
+                    <ul class="list-disc list-inside space-y-1 text-base-content/70">
+                        <li>Comptes financiers et de tiers</li>
+                        <li>Inclut : 00BOOK, 00FND1, 00FND2, 00PERS</li>
+                        <li>Transferts, EDF, avances, etc.</li>
+                    </ul>
+                </div>
+                <div>
+                    <p class="font-semibold mb-2">Solde Activ (autres comptes) :</p>
+                    <ul class="list-disc list-inside space-y-1 text-base-content/70">
+                        <li>Comptes d'activité et d'exploitation</li>
+                        <li>Inclut : 2xx, 6xx, 7xx, etc.</li>
+                        <li>Acquisitions, dépenses, recettes</li>
+                    </ul>
+                </div>
+                <div class="md:col-span-2">
+                    <p class="font-semibold mb-2">Recettes/Dépenses par catégorie :</p>
+                    <ul class="list-disc list-inside space-y-1 text-base-content/70">
+                        <li>Excluent les transferts (00BOOK, 00FND1 sans EDF)</li>
+                        <li>Excluent les avances (00PERS)</li>
+                        <li>Regroupées par catégorie parente selon le compte</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </details>
+</div>
+
+<!-- Modal d'édition -->
+<dialog id="edit_modal" class="modal">
+    <div class="modal-box w-11/12 max-w-4xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-edit mr-2 text-primary"></i>Modifier l'entrée
+        </h3>
+
+        <form id="edit_form" class="space-y-3">
+            {% csrf_token %}
+            <input type="hidden" id="entry_id" name="entry_id" />
+
+            <div class="grid grid-cols-2 gap-3">
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Cat (Compte)</span></label>
+                    <input type="text" id="edit_compte" name="compte_code" class="input input-bordered input-sm" />
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Description</span></label>
+                    <input type="text" id="edit_description" name="description" class="input input-bordered input-sm" />
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">In (Entrée)</span></label>
+                    <input type="number" step="0.01" id="edit_in" name="montant_in" class="input input-bordered input-sm font-mono" />
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Out (Sortie)</span></label>
+                    <input type="number" step="0.01" id="edit_out" name="montant_out" class="input input-bordered input-sm font-mono" />
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Fin</span></label>
+                    <input type="text" id="edit_fin" name="fin" class="input input-bordered input-sm" />
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-semibold">Detail</span></label>
+                    <input type="text" id="edit_detail" name="detail" class="input input-bordered input-sm" />
+                </div>
+
+                <div class="form-control col-span-2">
+                    <label class="label"><span class="label-text font-semibold">Activ</span></label>
+                    <input type="text" id="edit_activ" name="activ" class="input input-bordered input-sm" />
+                </div>
+            </div>
+
+            <div id="edit_messages" class="hidden"></div>
+
+            <div class="modal-action">
+                <button type="button" onclick="document.getElementById('edit_modal').close()" class="btn btn-ghost">
+                    <i class="fas fa-times mr-2"></i>Annuler
+                </button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+{{ category_fin_raw_values|json_script:"category-fin-raw-values-data" }}
+<script>
+// Cache pour éviter de recharger les données
+const categoryCache = {};
+const categoryGroupCache = {};
+const selectedCategoryFinRawValues = new Set(
+    JSON.parse(document.getElementById('category-fin-raw-values-data').textContent)
+        .map(value => String(value ?? '').trim())
+);
+
+function clearCategoryFinFilters(form) {
+    form.querySelectorAll('input[name="fin_category"]').forEach(input => {
+        input.checked = false;
+    });
+    form.submit();
+}
+
+function toggleCategorySummary(categoryName, compteCategorie = '') {
+    const cleanName = categoryName.replace(/ /g, '');
+    const detailsRow = document.getElementById('details-' + cleanName);
+    const icon = document.getElementById('icon-' + cleanName);
+    const text = document.getElementById('text-' + cleanName);
+    const loading = document.getElementById('loading-' + cleanName);
+    const content = document.getElementById('content-' + cleanName);
+
+    if (detailsRow.classList.contains('hidden')) {
+        detailsRow.classList.remove('hidden');
+        icon.classList.remove('fa-chevron-down');
+        icon.classList.add('fa-chevron-up');
+        text.textContent = 'Masquer';
+
+        const cacheKey = `${categoryName}::${compteCategorie}`;
+        if (!categoryCache[cacheKey]) {
+            loading.classList.remove('hidden');
+            loadCategoryDetails(categoryName, compteCategorie, content, loading);
+        } else {
+            renderCategorySummary(categoryName, compteCategorie, categoryCache[cacheKey], content);
+        }
+    } else {
+        detailsRow.classList.add('hidden');
+        icon.classList.remove('fa-chevron-up');
+        icon.classList.add('fa-chevron-down');
+        text.textContent = 'Voir';
+
+        const entriesWrapper = document.getElementById('entries-wrapper-' + cleanName);
+        const entriesContent = document.getElementById('entries-content-' + cleanName);
+        if (entriesWrapper) {
+            entriesWrapper.classList.add('hidden');
+        }
+        if (entriesContent) {
+            entriesContent.innerHTML = '';
+        }
+    }
+}
+
+function toggleCategoryEntries(categoryName, compteCategorie = '', catCode = '', catLabel = '') {
+    const cleanName = categoryName.replace(/ /g, '');
+    const catKey = `${cleanName}-${String(catCode || '').replace(/[^a-zA-Z0-9_-]/g, '')}`;
+    const detailsRow = document.getElementById('cat-details-row-' + catKey);
+    const content = document.getElementById('cat-details-content-' + catKey);
+    const cacheKey = `${categoryName}::${compteCategorie}`;
+    const entries = categoryCache[cacheKey] || [];
+    const filteredEntries = entries.filter((entry) => (entry.compte_code || '') === catCode);
+
+    if (!filteredEntries.length) {
+        content.innerHTML = '<div class="alert alert-warning"><span>Aucune ligne compta pour cette Cat.</span></div>';
+        detailsRow.classList.remove('hidden');
+        return;
+    }
+
+    if (!detailsRow.classList.contains('hidden')) {
+        detailsRow.classList.add('hidden');
+        content.innerHTML = '';
+        return;
+    }
+
+    detailsRow.classList.remove('hidden');
+    renderCategoryDetailGroups(filteredEntries, content, catKey, catLabel || catCode);
+}
+
+async function loadCategoryDetails(categoryName, compteCategorie, contentEl, loadingEl) {
+    try {
+        const params = new URLSearchParams(window.location.search);
+        params.append('categorie', categoryName);
+        if (compteCategorie) {
+            params.append('compte_categorie', compteCategorie);
+        }
+        params.append('format', 'json');
+
+        const response = await fetch('{% url "accounting:entries_list" %}?' + params.toString(), {
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        });
+
+        if (!response.ok) throw new Error('Erreur réseau');
+
+        const data = await response.json();
+        const cacheKey = `${categoryName}::${compteCategorie}`;
+        const filteredEntries = selectedCategoryFinRawValues.size
+            ? data.entries.filter(entry => selectedCategoryFinRawValues.has(String(entry.fin ?? '').trim()))
+            : data.entries;
+        categoryCache[cacheKey] = filteredEntries;
+        renderCategorySummary(categoryName, compteCategorie, filteredEntries, contentEl);
+    } catch (error) {
+        contentEl.innerHTML = `
+            <div class="alert alert-error">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span>Erreur lors du chargement des données</span>
+            </div>
+        `;
+    } finally {
+        loadingEl.classList.add('hidden');
+    }
+}
+
+function renderCategorySummary(categoryName, compteCategorie, entries, contentEl) {
+    if (!entries || entries.length === 0) {
+        contentEl.innerHTML = '<p class="text-center text-gray-500">Aucune entrée</p>';
+        return;
+    }
+
+    const groupKey = `${categoryName}::${compteCategorie}`;
+    const grouped = new Map();
+
+    entries.forEach((entry) => {
+        const code = entry.compte_code || '-';
+        const compteNom = (entry.compte_nom || '').trim();
+        const label = compteNom ? `${code} - ${compteNom}` : code;
+        if (!grouped.has(code)) {
+            grouped.set(code, {
+                code,
+                label,
+                recettes: 0,
+                depenses: 0,
+                solde: 0,
+                count: 0,
+            });
+        }
+        const item = grouped.get(code);
+        item.recettes += Number(entry.montant_in || 0);
+        item.depenses += Number(entry.montant_out || 0);
+        item.solde += Number(entry.montant_in || 0) - Number(entry.montant_out || 0);
+        item.count += 1;
+    });
+
+    const groups = Array.from(grouped.values()).sort((a, b) => {
+        if (b.depenses !== a.depenses) return b.depenses - a.depenses;
+        return a.code.localeCompare(b.code, 'fr');
+    });
+    categoryGroupCache[groupKey] = groups;
+    const totalRecettesParent = groups.reduce((sum, group) => sum + group.recettes, 0);
+    const totalDepensesParent = groups.reduce((sum, group) => sum + group.depenses, 0);
+
+    let html = `
+        <table class="table table-sm">
+            <thead class="bg-base-100">
+                <tr>
+                    <th>Cat</th>
+                    <th class="text-right">Entrées</th>
+                    <th class="text-right">Sorties</th>
+                    <th class="text-right">Solde</th>
+                    <th class="text-center">Nb lignes</th>
+                    <th class="text-center">Voir</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    groups.forEach((group) => {
+        const catKey = `${String(categoryName || '').replace(/ /g, '')}-${String(group.code || '').replace(/[^a-zA-Z0-9_-]/g, '')}`;
+        const progressionRecettes = totalRecettesParent > 0 ? Math.round((group.recettes / totalRecettesParent) * 100) : 0;
+        const progressionDepenses = totalDepensesParent > 0 ? Math.round((group.depenses / totalDepensesParent) * 100) : 0;
+        html += `
+            <tr>
+                <td><span class="badge badge-sm badge-ghost">${escapeHtml(group.label)}</span></td>
+                <td class="text-right text-success font-mono">
+                    ${group.recettes > 0 ? `
+                        <div>${formatAmount(group.recettes)}</div>
+                        <div class="mt-1 flex items-center justify-end gap-2">
+                            <progress class="progress progress-success w-24" value="${progressionRecettes}" max="100"></progress>
+                            <span class="text-[11px] font-semibold opacity-70">${progressionRecettes}%</span>
+                        </div>
+                    ` : '-'}
+                </td>
+                <td class="text-right text-error font-mono">
+                    ${group.depenses > 0 ? `
+                        <div>${formatAmount(group.depenses)}</div>
+                        <div class="mt-1 flex items-center justify-end gap-2">
+                            <progress class="progress progress-error w-24" value="${progressionDepenses}" max="100"></progress>
+                            <span class="text-[11px] font-semibold opacity-70">${progressionDepenses}%</span>
+                        </div>
+                    ` : '-'}
+                </td>
+                <td class="text-right font-bold ${group.solde >= 0 ? 'text-success' : 'text-error'}">${group.solde === 0 ? '-' : formatAmount(group.solde)}</td>
+                <td class="text-center"><span class="badge badge-sm badge-info">${group.count}</span></td>
+                <td class="text-center">
+                    <button type="button" onclick="toggleCategoryEntries('${escapeJs(categoryName)}', '${escapeJs(compteCategorie)}', '${escapeJs(group.code)}', '${escapeJs(group.label)}')" class="btn btn-xs btn-outline btn-primary">
+                        Voir
+                    </button>
+                </td>
+            </tr>
+            <tr id="cat-details-row-${catKey}" class="hidden bg-base-200">
+                <td colspan="6" class="p-0">
+                    <div id="cat-details-content-${catKey}" class="px-4 py-3"></div>
+                </td>
+            </tr>
+        `;
+    });
+
+    html += '</tbody></table>';
+    contentEl.innerHTML = html;
+}
+
+function renderCategoryDetailGroups(entries, contentEl, catKey, catLabel) {
+    if (!entries || entries.length === 0) {
+        contentEl.innerHTML = '<p class="text-center text-gray-500">Aucune entrée</p>';
+        return;
+    }
+
+    const grouped = new Map();
+    entries.forEach((entry) => {
+        const detailValue = (entry.detail || '').trim() || '(Vide)';
+        if (!grouped.has(detailValue)) {
+            grouped.set(detailValue, {
+                detail: detailValue,
+                recettes: 0,
+                depenses: 0,
+                solde: 0,
+                count: 0,
+                entries: [],
+            });
+        }
+        const item = grouped.get(detailValue);
+        item.recettes += Number(entry.montant_in || 0);
+        item.depenses += Number(entry.montant_out || 0);
+        item.solde += Number(entry.montant_in || 0) - Number(entry.montant_out || 0);
+        item.count += 1;
+        item.entries.push(entry);
+    });
+
+    const groups = Array.from(grouped.values()).sort((a, b) => {
+        if (b.depenses !== a.depenses) return b.depenses - a.depenses;
+        return a.detail.localeCompare(b.detail, 'fr');
+    });
+
+    const totalRecettes = groups.reduce((sum, group) => sum + group.recettes, 0);
+    const totalDepenses = groups.reduce((sum, group) => sum + group.depenses, 0);
+
+    let html = `
+        <div class="flex items-center justify-between mb-3">
+            <h4 class="font-semibold text-sm">Regroupement par DETAIL: ${escapeHtml(catLabel)}</h4>
+            <span class="badge badge-sm badge-primary">${entries.length} ligne(s)</span>
+        </div>
+        <table class="table table-sm">
+            <thead class="bg-base-100">
+                <tr>
+                    <th>DETAIL</th>
+                    <th class="text-right">Entrées</th>
+                    <th class="text-right">Sorties</th>
+                    <th class="text-right">Solde</th>
+                    <th class="text-center">Nb lignes</th>
+                    <th class="text-center">Voir</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    groups.forEach((group, index) => {
+        const detailKey = `${catKey}-detail-${index}`;
+        const progressionRecettes = totalRecettes > 0 ? Math.round((group.recettes / totalRecettes) * 100) : 0;
+        const progressionDepenses = totalDepenses > 0 ? Math.round((group.depenses / totalDepenses) * 100) : 0;
+        html += `
+            <tr>
+                <td><span class="badge badge-sm badge-ghost">${escapeHtml(group.detail)}</span></td>
+                <td class="text-right text-success font-mono">
+                    ${group.recettes > 0 ? `
+                        <div>${formatAmount(group.recettes)}</div>
+                        <div class="mt-1 flex items-center justify-end gap-2">
+                            <progress class="progress progress-success w-24" value="${progressionRecettes}" max="100"></progress>
+                            <span class="text-[11px] font-semibold opacity-70">${progressionRecettes}%</span>
+                        </div>
+                    ` : '-'}
+                </td>
+                <td class="text-right text-error font-mono">
+                    ${group.depenses > 0 ? `
+                        <div>${formatAmount(group.depenses)}</div>
+                        <div class="mt-1 flex items-center justify-end gap-2">
+                            <progress class="progress progress-error w-24" value="${progressionDepenses}" max="100"></progress>
+                            <span class="text-[11px] font-semibold opacity-70">${progressionDepenses}%</span>
+                        </div>
+                    ` : '-'}
+                </td>
+                <td class="text-right font-bold ${group.solde >= 0 ? 'text-success' : 'text-error'}">${group.solde === 0 ? '-' : formatAmount(group.solde)}</td>
+                <td class="text-center"><span class="badge badge-sm badge-info">${group.count}</span></td>
+                <td class="text-center">
+                    <button type="button" onclick="toggleDetailEntries('${detailKey}')" class="btn btn-xs btn-outline btn-primary">
+                        Voir
+                    </button>
+                </td>
+            </tr>
+            <tr id="detail-entries-row-${detailKey}" class="hidden bg-base-300/40">
+                <td colspan="6" class="p-0">
+                    <div id="detail-entries-content-${detailKey}" class="px-4 py-3"></div>
+                </td>
+            </tr>
+        `;
+    });
+
+    html += '</tbody></table>';
+    contentEl.innerHTML = html;
+
+    groups.forEach((group, index) => {
+        window[`detailEntries_${catKey}_${index}`] = group.entries;
+    });
+}
+
+function toggleDetailEntries(detailKey) {
+    const row = document.getElementById('detail-entries-row-' + detailKey);
+    const content = document.getElementById('detail-entries-content-' + detailKey);
+    if (!row || !content) {
+        return;
+    }
+    if (!row.classList.contains('hidden')) {
+        row.classList.add('hidden');
+        content.innerHTML = '';
+        return;
+    }
+
+    const match = detailKey.match(/^(.*)-detail-(\d+)$/);
+    if (!match) {
+        return;
+    }
+    const catKey = match[1];
+    const index = match[2];
+    const entries = window[`detailEntries_${catKey}_${index}`] || [];
+    row.classList.remove('hidden');
+    renderCategoryEntryLines(entries, content, '');
+}
+
+function renderCategoryEntryLines(entries, contentEl, catLabel) {
+    if (!entries || entries.length === 0) {
+        contentEl.innerHTML = '<p class="text-center text-gray-500">Aucune entrée</p>';
+        return;
+    }
+
+    let html = `
+        ${catLabel ? `<div class="flex items-center justify-between mb-3">
+            <h4 class="font-semibold text-sm">Lignes compta: ${escapeHtml(catLabel)}</h4>
+            <span class="badge badge-sm badge-primary">${entries.length} ligne(s)</span>
+        </div>` : ''}
+        <table class="table table-xs">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Rec</th>
+                    <th>Cat</th>
+                    <th>Description</th>
+                    <th class="text-right">In</th>
+                    <th class="text-right">Out</th>
+                    <th>Fin</th>
+                    <th>Detail</th>
+                    <th>Activ</th>
+                    <th>Scan</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    entries.forEach(entry => {
+        html += `
+            <tr>
+                <td class="whitespace-nowrap text-xs">${entry.date_rec || '-'}</td>
+                <td class="whitespace-nowrap text-xs">${entry.rec || '-'}</td>
+                <td><span class="badge badge-xs badge-ghost">${entry.compte_code || '-'}</span></td>
+                <td class="max-w-xs truncate text-xs" title="${entry.description || ''}">${entry.description || '-'}</td>
+                <td class="text-right text-success font-mono text-xs">${entry.montant_in > 0 ? Number(entry.montant_in).toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '-'}</td>
+                <td class="text-right text-error font-mono text-xs">${entry.montant_out > 0 ? Number(entry.montant_out).toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '-'}</td>
+                <td class="text-xs">${entry.fin || '-'}</td>
+                <td class="text-xs truncate max-w-xs" title="${entry.detail || ''}">${entry.detail || '-'}</td>
+                <td class="text-xs">${entry.activ || '-'}</td>
+                <td>${renderScanCell(entry)}</td>
+                <td>
+                    <button onclick="openEditModal(${entry.id}, '${escapeHtml(entry.compte_code)}', '${escapeHtml(entry.description)}', ${entry.montant_in || 0}, ${entry.montant_out || 0}, '${escapeHtml(entry.fin)}', '${escapeHtml(entry.detail)}', '${escapeHtml(entry.activ)}')"
+                            class="btn btn-xs btn-primary">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+    });
+
+    html += `
+            </tbody>
+        </table>
+    `;
+
+    contentEl.innerHTML = html;
+}
+
+function formatAmount(value) {
+    return Number(value || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, m => map[m]);
+}
+
+function escapeJs(text) {
+    return String(text || '')
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '\\"');
+}
+
+function renderScanCell(entry) {
+    if (!entry.a_besoin_scan) {
+        return '<span class="text-base-content/30 text-xs">—</span>';
+    }
+    if (entry.scan_importe_disponible) {
+        return `<button type="button" onclick="openScan(${entry.id}, '${escapeHtml(entry.scan_absolu || '')}', true)" class="btn btn-xs btn-primary" title="Ouvrir la copie serveur du scan"><i class="fas fa-cloud"></i></button>`;
+    }
+    if (entry.scan_absolu) {
+        const btnClass = entry.scan_statut === 'valide'
+            ? 'btn-success'
+            : (entry.scan_statut === 'lien_mort' ? 'btn-warning' : 'btn-info');
+        return `<button type="button" onclick="openScan(${entry.id}, '${escapeHtml(entry.scan_absolu || '')}', false)" class="btn btn-xs ${btnClass}" title="Ouvrir le scan"><i class="fas fa-file-pdf"></i></button>`;
+    }
+    return '<span class="badge badge-xs badge-error">Sans scan</span>';
+}
+
+function openEditModal(id, compte, description, montantIn, montantOut, fin, detail, activ) {
+    document.getElementById('entry_id').value = id;
+    document.getElementById('edit_compte').value = compte || '';
+    document.getElementById('edit_description').value = description || '';
+    document.getElementById('edit_in').value = montantIn || '';
+    document.getElementById('edit_out').value = montantOut || '';
+    document.getElementById('edit_fin').value = fin || '';
+    document.getElementById('edit_detail').value = detail || '';
+    document.getElementById('edit_activ').value = activ || '';
+    document.getElementById('edit_messages').classList.add('hidden');
+    document.getElementById('edit_modal').showModal();
+}
+
+function isLikelyLocalPath(filePath) {
+    if (!filePath) return false;
+    return /^[a-zA-Z]:[\\/]/.test(filePath) || filePath.startsWith('\\\\') || filePath.startsWith('/');
+}
+
+function openFileViaLocalAgent(filePath) {
+    fetch('http://127.0.0.1:8765/open-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_path: filePath })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.ok && !data.success) {
+            alert('Impossible d ouvrir le scan localement.\n\nLancez LANCER_AGENT_DIAMEX.bat puis reessayez.\n\nDetail: ' + (data.error || 'Erreur inconnue'));
+        }
+    })
+    .catch(error => {
+        alert('Agent local injoignable.\n\nLancez LANCER_AGENT_DIAMEX.bat puis reessayez.\n\nDetail: ' + error.message);
+    });
+}
+
+function openScan(entryId, scanPath, hasImportedScan) {
+    if (entryId) {
+        window.open('/comptabilite/scan/' + entryId + '/', '_blank');
+        return;
+    }
+    if (isLikelyLocalPath(scanPath)) {
+        openFileViaLocalAgent(scanPath);
+    }
+}
+
+// Soumission du formulaire
+async function tryLocalAccessUpdateFallback(data) {
+    if (!data || !data.success || data.access_updated || !data.access_payload) {
+        return data;
+    }
+    try {
+        const response = await fetch('http://127.0.0.1:8765/update-entry-access', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data.access_payload)
+        });
+        const result = await response.json();
+        if (response.ok && result.success) {
+            data.access_updated = true;
+            data.message = 'Modification enregistree dans Django et Access (local)';
+            data.access_error = null;
+        } else {
+            data.access_error = result.error || data.access_error || 'Echec mise a jour Access locale';
+        }
+    } catch (e) {
+        data.access_error = data.access_error || ('Erreur agent local: ' + e.message);
+    }
+    return data;
+}
+
+document.getElementById('edit_form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const entryId = document.getElementById('entry_id').value;
+    const formData = new FormData(this);
+    const messagesDiv = document.getElementById('edit_messages');
+
+    try {
+        const response = await fetch('{% url "accounting:update_entry" entry_id=0 %}'.replace('0', entryId), {
+            method: 'POST',
+            body: formData
+        });
+
+        let data = await response.json();
+        data = await tryLocalAccessUpdateFallback(data);
+
+        if (data.success) {
+            messagesDiv.innerHTML = `
+                <div class="alert alert-success">
+                    <i class="fas fa-check"></i>
+                    <span>${data.message || 'Entrée mise à jour avec succès'}</span>
+                </div>
+            `;
+            messagesDiv.classList.remove('hidden');
+
+            // Vider le cache pour forcer le rechargement
+            Object.keys(categoryCache).forEach(key => delete categoryCache[key]);
+
+            setTimeout(() => {
+                document.getElementById('edit_modal').close();
+                location.reload();
+            }, 1500);
+        } else {
+            messagesDiv.innerHTML = `
+                <div class="alert alert-error">
+                    <i class="fas fa-times"></i>
+                    <span>${data.error || 'Erreur lors de la mise à jour'}</span>
+                </div>
+            `;
+            messagesDiv.classList.remove('hidden');
+        }
+    } catch (error) {
+        messagesDiv.innerHTML = `
+            <div class="alert alert-error">
+                <i class="fas fa-times"></i>
+                <span>Erreur réseau: ${error.message}</span>
+            </div>
+        `;
+        messagesDiv.classList.remove('hidden');
+    }
+});
+
+// Fonction pour récupérer le cookie CSRF
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+</script>
+{% endblock %}

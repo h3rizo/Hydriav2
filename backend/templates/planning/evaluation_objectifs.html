@@ -1,0 +1,349 @@
+{% extends planning_shell_base_template %}
+{% load static %}
+
+{% block title %}Évaluation Objectifs Planning{% endblock %}
+
+{% block extra_css %}
+<style>
+    .cellule-conforme {
+        background-color: #d1fae5;
+        color: #065f46;
+    }
+
+    .cellule-non-conforme {
+        background-color: #fee2e2;
+        color: #991b1b;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- En-tête -->
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">
+                <i class="fas fa-chart-line mr-2 text-primary"></i>
+                Évaluation des Objectifs du Planning
+            </h1>
+            <p class="text-base-content/70 mt-2">
+                Évaluez si les objectifs par poste sont atteints (ex: 1 visite d'inspection par ouvrage par an)
+            </p>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <h2 class="card-title mb-4">
+                <i class="fas fa-filter mr-2"></i>Critères d'évaluation
+            </h2>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 {% if organisation_options %}lg:grid-cols-5{% else %}lg:grid-cols-4{% endif %} gap-4">
+                {% if organisation_options %}
+                <!-- Organisation (superusers et partenaires) -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Organisation</span>
+                    </label>
+                    <select id="filter-organisation" class="select select-bordered select-sm"
+                            onchange="window.location.search = '?organisation=' + encodeURIComponent(this.value)">
+                        <option value="all" {% if organisation_selected == 'all' %}selected{% endif %}>Toutes les organisations</option>
+                        {% for org in organisation_options %}
+                        <option value="{{ org.id }}" {% if organisation_selected == org.id|stringformat:"s" %}selected{% endif %}>{{ org.nom_organisation }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+
+                <!-- Poste -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Poste <span class="text-error">*</span></span>
+                    </label>
+                    <select id="filter-poste" class="select select-bordered select-sm" onchange="chargerEmployes()">
+                        <option value="">Sélectionner un poste</option>
+                        {% for poste in postes %}
+                        <option value="{{ poste.id }}">{{ poste.nom_poste }} ({{ poste.organisation.nom_organisation }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Employé -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Employé <span class="text-error">*</span></span>
+                    </label>
+                    <select id="filter-employe" class="select select-bordered select-sm" disabled>
+                        <option value="">Sélectionner un employé</option>
+                    </select>
+                </div>
+
+                <!-- Année -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Année</span>
+                    </label>
+                    <select id="filter-annee" class="select select-bordered select-sm">
+                        <option value="2025">2025</option>
+                        <option value="2024">2024</option>
+                        <option value="2023">2023</option>
+                    </select>
+                </div>
+
+                <!-- Objectif minimum -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Objectif minimum par ouvrage</span>
+                    </label>
+                    <input type="number" id="filter-objectif" class="input input-bordered input-sm" value="1" min="1">
+                </div>
+            </div>
+
+            <div class="flex gap-4 mt-4">
+                <button onclick="chargerEvaluation()" class="btn btn-primary btn-sm">
+                    <i class="fas fa-search mr-2"></i>Évaluer
+                </button>
+                <button onclick="exporterExcel()" class="btn btn-success btn-sm" id="btn-export" style="display:none;">
+                    <i class="fas fa-file-excel mr-2"></i>Exporter Excel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistiques globales -->
+    <div id="stats-container" class="stats stats-vertical lg:stats-horizontal shadow mb-6" style="display:none;">
+        <div class="stat">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-building text-3xl"></i>
+            </div>
+            <div class="stat-title">Total ouvrages</div>
+            <div class="stat-value text-primary" id="stat-total-employes">0</div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-figure text-success">
+                <i class="fas fa-check-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Ouvrages conformes</div>
+            <div class="stat-value text-success" id="stat-conformes">0</div>
+            <div class="stat-desc" id="stat-conformes-desc">0% du total</div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-figure text-error">
+                <i class="fas fa-times-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Ouvrages non conformes</div>
+            <div class="stat-value text-error" id="stat-non-conformes">0</div>
+            <div class="stat-desc" id="stat-non-conformes-desc">0% du total</div>
+        </div>
+    </div>
+
+    <!-- Grille d'évaluation -->
+    <div id="grille-container" class="card bg-base-100 shadow" style="display:none;">
+        <div class="card-body">
+            <h2 class="card-title mb-4">
+                <i class="fas fa-table mr-2"></i>Grille d'évaluation
+                <span class="badge badge-info badge-sm ml-2" id="periode-badge"></span>
+            </h2>
+
+            <div class="overflow-x-auto">
+                <table class="table table-zebra">
+                    <thead>
+                        <tr>
+                            <th>Ouvrage</th>
+                            <th class="text-center">Code</th>
+                            <th class="text-center">Objectif</th>
+                            <th class="text-center">Réalisé</th>
+                            <th class="text-center">Écart</th>
+                            <th class="text-center">Taux</th>
+                            <th class="text-center">Statut</th>
+                        </tr>
+                    </thead>
+                    <tbody id="grille-body">
+                        <!-- Rempli dynamiquement -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Message vide -->
+    <div id="empty-message" class="alert alert-info">
+        <i class="fas fa-info-circle"></i>
+        <span>Sélectionnez un poste et un employé pour évaluer les objectifs du planning</span>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let evaluationData = null;
+
+// Charger les employés du poste sélectionné
+function chargerEmployes() {
+    const posteId = document.getElementById('filter-poste').value;
+    const employeSelect = document.getElementById('filter-employe');
+
+    // Réinitialiser
+    employeSelect.innerHTML = '<option value="">Sélectionner un employé</option>';
+    employeSelect.disabled = true;
+
+    if (!posteId) {
+        return;
+    }
+
+    // Charger les employés du poste
+    fetch(`/api/employes/?poste_id=${posteId}&actifs_only=true&per_page=1000&organisation={{ organisation_selected|default:'' }}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.employes && data.employes.length > 0) {
+                populateEvaluationEmployeeFilter(employeSelect, data.employes);
+                employeSelect.disabled = false;
+            }
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+        });
+}
+
+function populateEvaluationEmployeeFilter(select, employees) {
+    select.innerHTML = '<option value="">Sélectionner un employé</option>';
+    const groups = new Map();
+
+    employees.forEach(employee => {
+        const baseName = employee.base_nom || 'Sans base';
+        const posteName = employee.poste_nom || 'Sans poste';
+        if (!groups.has(baseName)) groups.set(baseName, new Map());
+        const postes = groups.get(baseName);
+        if (!postes.has(posteName)) postes.set(posteName, []);
+        postes.get(posteName).push(employee);
+    });
+
+    groups.forEach((postes, baseName) => {
+        const baseGroup = document.createElement('optgroup');
+        baseGroup.label = `Base : ${baseName}`;
+        postes.forEach((posteEmployees, posteName) => {
+            const posteHeader = document.createElement('option');
+            posteHeader.value = '';
+            posteHeader.disabled = true;
+            posteHeader.textContent = `-- ${posteName} --`;
+            baseGroup.appendChild(posteHeader);
+
+            posteEmployees.forEach(employee => {
+                const option = document.createElement('option');
+                option.value = employee.id;
+                option.textContent = `  ${employee.prenom || ''} ${employee.nom || ''}`.trim();
+                baseGroup.appendChild(option);
+            });
+        });
+        select.appendChild(baseGroup);
+    });
+}
+
+function chargerEvaluation() {
+    const posteId = document.getElementById('filter-poste').value;
+    const employeId = document.getElementById('filter-employe').value;
+    const annee = document.getElementById('filter-annee').value;
+    const objectifMin = document.getElementById('filter-objectif').value;
+
+    if (!posteId || !employeId) {
+        alert('Veuillez sélectionner un poste et un employé');
+        return;
+    }
+
+    // Afficher loading
+    document.getElementById('grille-container').style.display = 'none';
+    document.getElementById('stats-container').style.display = 'none';
+    document.getElementById('empty-message').style.display = 'none';
+
+    const params = new URLSearchParams({
+        employe_id: employeId,
+        annee: annee,
+        objectif_min: objectifMin
+    });
+
+    fetch(`/plannings/evaluation-objectifs/api/?${params.toString()}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                evaluationData = data;
+                afficherEvaluation(data);
+            } else {
+                alert('Erreur: ' + data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            alert('Erreur lors du chargement de l\'évaluation');
+        });
+}
+
+function afficherEvaluation(data) {
+    // Afficher les statistiques (maintenant basées sur les ouvrages, pas les employés)
+    document.getElementById('stats-container').style.display = 'grid';
+    document.getElementById('stat-total-employes').textContent = data.stats.total_ouvrages;
+    document.getElementById('stat-conformes').textContent = data.stats.total_conformes;
+    document.getElementById('stat-conformes-desc').textContent = data.stats.taux_conformite + '% du total';
+    document.getElementById('stat-non-conformes').textContent = data.stats.total_non_conformes;
+    document.getElementById('stat-non-conformes-desc').textContent = (100 - data.stats.taux_conformite) + '% du total';
+
+    // Afficher la période et l'employé
+    document.getElementById('periode-badge').textContent = `${data.employe.nom_complet} - Période: ${data.periode.debut} au ${data.periode.fin}`;
+
+    // Construire le tableau : une ligne par ouvrage
+    const grilleBody = document.getElementById('grille-body');
+    let bodyHTML = '';
+
+    // On prend le premier (et unique) employé de la grille
+    if (data.grille && data.grille.length > 0) {
+        const employe = data.grille[0];
+
+        // Pour chaque ouvrage, créer une ligne
+        employe.ouvrages.forEach(ouvrage => {
+            const celluleClass = ouvrage.statut === 'conforme' ? 'cellule-conforme' : 'cellule-non-conforme';
+
+            bodyHTML += `<tr class="${celluleClass}">`;
+            bodyHTML += `<td class="font-semibold">${ouvrage.ouvrage_nom}</td>`;
+            bodyHTML += `<td class="text-center">${ouvrage.ouvrage_code}</td>`;
+            bodyHTML += `<td class="text-center">${ouvrage.objectif}</td>`;
+            bodyHTML += `<td class="text-center font-bold">${ouvrage.realise}</td>`;
+            bodyHTML += `<td class="text-center ${ouvrage.ecart >= 0 ? 'text-success' : 'text-error'} font-semibold">${ouvrage.ecart >= 0 ? '+' : ''}${ouvrage.ecart}</td>`;
+            bodyHTML += `<td class="text-center">${ouvrage.taux}%</td>`;
+            bodyHTML += `<td class="text-center">`;
+            bodyHTML += `<span class="badge ${ouvrage.statut === 'conforme' ? 'badge-success' : 'badge-error'}">`;
+            bodyHTML += ouvrage.statut === 'conforme' ? 'Conforme' : 'Non conforme';
+            bodyHTML += `</span></td>`;
+            bodyHTML += `</tr>`;
+        });
+    }
+
+    grilleBody.innerHTML = bodyHTML;
+
+    // Afficher la grille
+    document.getElementById('grille-container').style.display = 'block';
+    document.getElementById('btn-export').style.display = 'inline-flex';
+}
+
+function exporterExcel() {
+    alert('Fonctionnalité d\'export Excel à implémenter');
+}
+
+// Helper CSRF
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+</script>
+{% endblock %}

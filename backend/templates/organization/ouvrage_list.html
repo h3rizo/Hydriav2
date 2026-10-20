@@ -1,0 +1,2410 @@
+﻿{% extends 'base.html' %}
+{% load static hydria_asset_icons debit_source_tags %}
+
+{% block extra_head %}
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
+
+<style>
+@media (max-width: 767.98px) {
+    .ouvrages-view-toggle {
+        display: none !important;
+    }
+
+    #view-list {
+        display: none !important;
+    }
+
+    #view-cards {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) !important;
+        width: 100%;
+        min-width: 0;
+    }
+
+    #view-cards .ouvrage-mobile-card,
+    #view-cards .card-body {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    #view-cards .ouvrage-mobile-card h3,
+    #view-cards .ouvrage-mobile-card .ouvrage-card-value {
+        overflow-wrap: anywhere;
+        word-break: break-word;
+    }
+
+    #view-cards .ouvrage-card-actions {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    #view-cards .ouvrage-card-actions .btn {
+        width: 100%;
+        justify-content: flex-start;
+    }
+}
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('ðŸ“„ Page ouvrages chargée');
+
+    // Formater les compteurs initiaux
+    document.querySelectorAll('[data-stat]').forEach(stat => {
+        const value = parseInt(stat.textContent);
+        if (!isNaN(value)) {
+            stat.textContent = value.toLocaleString('fr-FR');
+        }
+    });
+
+    // Initialiser les pourcentages saisonniers/permanents au chargement
+    const initSaisonniers = {{ stats_counts.saisonniers|default:0 }};
+    const initNonSaisonniers = {{ stats_counts.non_saisonniers|default:0 }};
+    const initTotal = initSaisonniers + initNonSaisonniers;
+
+    if (initTotal > 0) {
+        const initPercentSaisonniers = Math.round((initSaisonniers / initTotal) * 100);
+        const initPercentNonSaisonniers = Math.round((initNonSaisonniers / initTotal) * 100);
+
+        // Mettre Ã  jour les anneaux de progression
+        const progressSaisonniers = document.querySelector('[data-progress="saisonniers-percent"]');
+        const progressNonSaisonniers = document.querySelector('[data-progress="non-saisonniers-percent"]');
+
+        if (progressSaisonniers) {
+            progressSaisonniers.style.setProperty('--value', initPercentSaisonniers);
+            progressSaisonniers.querySelector('[data-stat="saisonniers-percent"]').textContent = initPercentSaisonniers;
+        }
+
+        if (progressNonSaisonniers) {
+            progressNonSaisonniers.style.setProperty('--value', initPercentNonSaisonniers);
+            progressNonSaisonniers.querySelector('[data-stat="non-saisonniers-percent"]').textContent = initPercentNonSaisonniers;
+        }
+
+        // Mettre Ã  jour les textes de description
+        const textSaisonniers = document.querySelector('[data-stat="saisonniers-percent-text"]');
+        const textNonSaisonniers = document.querySelector('[data-stat="non-saisonniers-percent-text"]');
+
+        if (textSaisonniers) textSaisonniers.textContent = initPercentSaisonniers;
+        if (textNonSaisonniers) textNonSaisonniers.textContent = initPercentNonSaisonniers;
+    }
+
+    // Initialiser le filtrage avec recherche, organisation, type et saisonnier
+    window.filterOuvrages = function() {
+        const searchValue = document.getElementById('search-input')?.value.toLowerCase() || '';
+        const organisationFilter = document.getElementById('organisation-filter')?.value || 'all';
+        const typeFilter = document.getElementById('type-filter')?.value || 'all';
+        const rows = document.querySelectorAll('#ouvrages-tbody tr[data-ouvrage]');
+
+        let visibleCount = 0;
+        let totalCount = 0;
+        let visibleTypes = new Set();
+        let visibleOrganisations = new Set();
+
+        // Compteurs pour les stats qui peuvent être calculées par ouvrage
+        let totalPointsEau = 0;
+        let totalPointsEauCoupes = 0;
+        let totalPointsEauAbandonnes = 0;
+        let totalPointsEauSansDate = 0;
+        let totalCompteursTete = 0;
+        let totalTarifs = 0;
+        let totalModalites = 0;
+        let totalEquipements = 0;
+        let totalSaisonniers = 0;
+        let totalNonSaisonniers = 0;
+        let totalDossiersTechniques = 0;
+        let totalAepg = 0;
+        let totalAepgAvecDossierTechnique = 0;
+
+        rows.forEach(row => {
+            totalCount++;
+            const nomOuvrage = row.querySelector('td:nth-child(2)')?.textContent.toLowerCase() || '';
+            const typeOuvrage = row.dataset.typeOuvrage;
+            const organisation = row.dataset.organisation;
+            const saisonnier = row.dataset.saisonnier;
+            const typeOuvrageNom = (row.dataset.typeOuvrageNom || '').trim().toUpperCase();
+            const hasDossierTechnique = parseInt(row.dataset.dossiersTechniques || 0) > 0;
+
+            // Appliquer tous les filtres
+            const matchSearch = !searchValue || nomOuvrage.includes(searchValue);
+            const matchOrganisation = organisationFilter === 'all' || organisation === organisationFilter;
+            const matchType = typeFilter === 'all' || typeOuvrage === typeFilter;
+
+            if (matchSearch && matchOrganisation && matchType) {
+                row.style.display = '';
+                visibleCount++;
+                visibleTypes.add(typeOuvrage);
+                visibleOrganisations.add(organisation);
+
+                // Cumuler les compteurs des ouvrages visibles
+                totalPointsEau += parseInt(row.dataset.pointsEau || 0);
+                totalPointsEauCoupes += parseInt(row.dataset.pointsEauCoupes || 0);
+                totalPointsEauAbandonnes += parseInt(row.dataset.pointsEauAbandonnes || 0);
+                totalPointsEauSansDate += parseInt(row.dataset.pointsEauSansDate || 0);
+                totalCompteursTete += parseInt(row.dataset.compteursTete || 0);
+                totalTarifs += parseInt(row.dataset.tarifs || 0);
+                totalModalites += parseInt(row.dataset.modalites || 0);
+                totalEquipements += parseInt(row.dataset.equipements || 0);
+
+                // Compter saisonniers/non saisonniers
+                if (saisonnier === 'true') {
+                    totalSaisonniers++;
+                } else {
+                    totalNonSaisonniers++;
+                }
+
+                if (hasDossierTechnique) {
+                    totalDossiersTechniques++;
+                }
+                if (typeOuvrageNom === 'AEPG') {
+                    totalAepg++;
+                    if (hasDossierTechnique) {
+                        totalAepgAvecDossierTechnique++;
+                    }
+                }
+            } else {
+                row.style.display = 'none';
+            }
+        });
+
+        // Mettre à jour les compteurs avec formatage (sauf "total" qui reste fixe)
+        // Le compteur "total" affiche toujours les ouvrages avec points d'eau (valeur du serveur)
+        document.querySelector('[data-stat="types"]').textContent = visibleTypes.size.toLocaleString('fr-FR');
+        document.querySelector('[data-stat="organisations"]').textContent = visibleOrganisations.size.toLocaleString('fr-FR');
+
+        // Mettre Ã  jour les compteurs qui peuvent être calculés par ouvrage
+        document.querySelector('[data-stat="points_eau"]').textContent = totalPointsEau.toLocaleString('fr-FR');
+        const coupesStat = document.querySelector('[data-stat="points_eau_coupes"]');
+        if (coupesStat) coupesStat.textContent = totalPointsEauCoupes.toLocaleString('fr-FR');
+        const abandonnesStat = document.querySelector('[data-stat="points_eau_abandonnes"]');
+        if (abandonnesStat) abandonnesStat.textContent = totalPointsEauAbandonnes.toLocaleString('fr-FR');
+        const sansDateStat = document.querySelector('[data-stat="points_eau_sans_date"]');
+        if (sansDateStat) sansDateStat.textContent = totalPointsEauSansDate.toLocaleString('fr-FR');
+        document.querySelector('[data-stat="compteurs_tete"]').textContent = totalCompteursTete.toLocaleString('fr-FR');
+        const tarifsStat = document.querySelector('[data-stat="tarifs"]');
+        if (tarifsStat) {
+            tarifsStat.textContent = totalTarifs.toLocaleString('fr-FR');
+        }
+        const modalitesStat = document.querySelector('[data-stat="modalites"]');
+        if (modalitesStat) {
+            modalitesStat.textContent = totalModalites.toLocaleString('fr-FR');
+        }
+        document.querySelector('[data-stat="equipements"]').textContent = totalEquipements.toLocaleString('fr-FR');
+        document.querySelector('[data-stat="saisonniers"]').textContent = totalSaisonniers.toLocaleString('fr-FR');
+        document.querySelector('[data-stat="non_saisonniers"]').textContent = totalNonSaisonniers.toLocaleString('fr-FR');
+        document.querySelector('[data-stat="dossiers_techniques"]').textContent = totalDossiersTechniques.toLocaleString('fr-FR');
+
+        const percentAepgAvecDossier = totalAepg > 0
+            ? Math.round((totalAepgAvecDossierTechnique / totalAepg) * 100)
+            : 0;
+        const progressDossiersTechniques = document.querySelector('[data-progress="dossiers-techniques-percent"]');
+        if (progressDossiersTechniques) {
+            progressDossiersTechniques.style.setProperty('--value', percentAepgAvecDossier);
+            progressDossiersTechniques.querySelector('[data-stat="dossiers-techniques-percent"]').textContent = percentAepgAvecDossier;
+        }
+        const dossiersTechniquesText = document.querySelector('[data-stat="dossiers-techniques-percent-text"]');
+        if (dossiersTechniquesText) {
+            dossiersTechniquesText.textContent = `${percentAepgAvecDossier}% des AEPG (${totalAepgAvecDossierTechnique}/${totalAepg})`;
+        }
+
+        // Calculer et afficher les pourcentages saisonniers/permanents
+        const totalOuvrages = totalSaisonniers + totalNonSaisonniers;
+        const percentSaisonniers = totalOuvrages > 0 ? Math.round((totalSaisonniers / totalOuvrages) * 100) : 0;
+        const percentNonSaisonniers = totalOuvrages > 0 ? Math.round((totalNonSaisonniers / totalOuvrages) * 100) : 0;
+
+        // Mettre à jour les anneaux de progression
+        const progressSaisonniers = document.querySelector('[data-progress="saisonniers-percent"]');
+        const progressNonSaisonniers = document.querySelector('[data-progress="non-saisonniers-percent"]');
+
+        if (progressSaisonniers) {
+            progressSaisonniers.style.setProperty('--value', percentSaisonniers);
+            progressSaisonniers.querySelector('[data-stat="saisonniers-percent"]').textContent = percentSaisonniers;
+        }
+
+        if (progressNonSaisonniers) {
+            progressNonSaisonniers.style.setProperty('--value', percentNonSaisonniers);
+            progressNonSaisonniers.querySelector('[data-stat="non-saisonniers-percent"]').textContent = percentNonSaisonniers;
+        }
+
+        // Mettre à jour les textes de description
+        const textSaisonniers = document.querySelector('[data-stat="saisonniers-percent-text"]');
+        const textNonSaisonniers = document.querySelector('[data-stat="non-saisonniers-percent-text"]');
+
+        if (textSaisonniers) textSaisonniers.textContent = percentSaisonniers;
+        if (textNonSaisonniers) textNonSaisonniers.textContent = percentNonSaisonniers;
+
+        // Les compteurs adresses, fournisseurs et cartes_sociales restent fixes (totaux globaux)
+        // car ils ne sont pas liés directement aux ouvrages filtrés
+
+        // Afficher le nombre de résultats filtrés
+        const filterCount = document.getElementById('filter-count');
+        if (filterCount) {
+            if (visibleCount < totalCount) {
+                filterCount.textContent = `${visibleCount.toLocaleString('fr-FR')} / ${totalCount.toLocaleString('fr-FR')} ouvrages`;
+                filterCount.classList.remove('hidden');
+            } else {
+                filterCount.textContent = '';
+                filterCount.classList.add('hidden');
+            }
+        }
+    };
+
+    // Réinitialiser tous les filtres
+    window.resetFilters = function() {
+        document.getElementById('search-input').value = '';
+        document.getElementById('organisation-filter').value = 'all';
+        document.getElementById('type-filter').value = 'all';
+        filterOuvrages();
+    };
+
+    // Fonctions pour la sélection unique des lignes
+    window.selectRow = function(row) {
+        const radio = row.querySelector('input[type="radio"]');
+        if (event.target.type !== 'radio') {
+            radio.checked = true;
+            selectOuvrage(radio);
+        }
+    };
+
+    window.selectOuvrage = function(radio) {
+        // Retirer la sélection de toutes les autres lignes
+        const allRows = document.querySelectorAll('#ouvrages-tbody tr');
+        allRows.forEach(row => {
+            row.classList.remove('bg-primary', 'bg-opacity-20', 'selected');
+        });
+
+        // Ajouter la sélection Ã  la ligne actuelle
+        const currentRow = radio.closest('tr');
+        currentRow.classList.add('bg-primary', 'bg-opacity-20', 'selected');
+
+        // Stocker l'ID de l'ouvrage sélectionné
+        window.selectedOuvrageId = radio.value;
+
+        console.log('Ouvrage sélectionné:', radio.value);
+
+        // Vous pouvez ajouter ici d'autres actions quand un ouvrage est sélectionné
+        updateSelectedOuvrage(radio.value);
+    };
+
+    window.updateSelectedOuvrage = function(ouvrageId) {
+        // Trouver le nom de l'ouvrage sélectionné
+        const selectedRow = document.querySelector(`tr[data-ouvrage="${ouvrageId}"]`);
+        const ouvrageName = selectedRow ? selectedRow.querySelector('td:nth-child(2)').textContent : ouvrageId;
+
+        // Afficher l'information de sélection
+        const selectedInfo = document.getElementById('selected-info');
+        if (selectedInfo) {
+            selectedInfo.innerHTML = `<i class="fas fa-check-circle text-success mr-1"></i> Ouvrage sélectionné: <strong>${ouvrageName}</strong>`;
+            selectedInfo.classList.remove('hidden');
+        }
+
+        // Vous pouvez activer ici des boutons d'action spécifiques à la sélection
+        // Par exemple: activer un bouton "Voir détails" ou "Actions groupées"
+    };
+
+    window.getSelectedOuvrage = function() {
+        const selectedRadio = document.querySelector('input[name="selected_ouvrage"]:checked');
+        return selectedRadio ? selectedRadio.value : null;
+    };
+
+    // Navigation vers les modules avec ouvrage sélectionné
+    window.navigateToModule = function(module) {
+        const selectedOuvrageId = window.getSelectedOuvrage();
+
+        if (selectedOuvrageId) {
+            // Naviguer avec l'ouvrage sélectionné
+            window.location.href = `/organisations/${module}/${selectedOuvrageId}/`;
+        } else {
+            // Naviguer sans ouvrage spécifique (prendra le premier)
+            window.location.href = `/organisations/${module}/`;
+        }
+    };
+});
+
+// Fonctions pour les modales d'ouvrage (existantes)
+function openOuvrageCreateModal() {
+    const form = document.getElementById('ouvrageCreateForm');
+    if (form) {
+        form.reset();
+    }
+    const typeSelect = document.getElementById('create_type_ouvrage');
+    if (typeSelect) {
+        typeSelect.dispatchEvent(new Event('change'));
+    }
+    const modal = document.getElementById('ouvrageCreateModal');
+    if (modal) {
+        modal.checked = true;
+    }
+}
+
+function closeOuvrageCreateModal() {
+    const modal = document.getElementById('ouvrageCreateModal');
+    if (modal) {
+        modal.checked = false;
+    }
+}
+
+function normalizeOuvrageAutocomplete(value) {
+    return (value || '')
+        .toString()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+}
+
+function setupOuvrageSourceAutocomplete(prefix) {
+    const input = document.getElementById(`${prefix}_ouvrage_source_search`);
+    const hidden = document.getElementById(`${prefix}_ouvrage_source_id`);
+    const dropdown = document.getElementById(`${prefix}_ouvrage_source_dropdown`);
+    const dataElement = document.getElementById('ouvrages-sources-data');
+    const typeSelect = document.getElementById(`${prefix}_type_ouvrage`);
+
+    if (!input || !hidden || !dropdown || !dataElement || !typeSelect || input.dataset.ready === 'true') {
+        return;
+    }
+
+    input.dataset.ready = 'true';
+    const options = JSON.parse(dataElement.textContent || '[]').map((item) => ({
+        ...item,
+        normalized: normalizeOuvrageAutocomplete(item.label),
+    }));
+    const extensionTypeLabel = normalizeOuvrageAutocomplete('AEPG extension');
+
+    function isExtensionTypeSelected() {
+        const selectedOption = typeSelect.selectedOptions && typeSelect.selectedOptions[0];
+        return normalizeOuvrageAutocomplete(selectedOption ? selectedOption.textContent : '') === extensionTypeLabel;
+    }
+
+    function syncFieldState() {
+        const enabled = isExtensionTypeSelected();
+        input.disabled = !enabled;
+        hidden.disabled = !enabled;
+        input.placeholder = enabled
+            ? 'Rechercher un ouvrage source...'
+            : 'Sélectionnez d\'abord AEPG extension';
+        if (!enabled) {
+            input.value = '';
+            hidden.value = '';
+            dropdown.classList.add('hidden');
+            input.classList.add('input-disabled');
+        } else {
+            input.classList.remove('input-disabled');
+        }
+    }
+
+    const render = () => {
+        if (input.disabled) {
+            dropdown.classList.add('hidden');
+            return;
+        }
+        const term = normalizeOuvrageAutocomplete(input.value);
+        const filtered = term
+            ? options.filter((item) => item.normalized.includes(term))
+            : options;
+
+        if (!filtered.length) {
+            dropdown.innerHTML = '<div class="px-3 py-2 text-sm text-base-content/60">Aucun ouvrage trouvé</div>';
+            dropdown.classList.remove('hidden');
+            return;
+        }
+
+        dropdown.innerHTML = filtered.slice(0, 40).map((item) => `
+            <button type="button" class="block w-full px-3 py-2 text-left text-sm hover:bg-base-200 border-b border-base-200 last:border-b-0" data-id="${item.id}" data-label="${item.label}">
+                ${item.label}
+            </button>
+        `).join('');
+        dropdown.classList.remove('hidden');
+    };
+
+    const hide = () => dropdown.classList.add('hidden');
+
+    input.addEventListener('input', () => {
+        if (!input.value.trim()) {
+            hidden.value = '';
+        }
+        render();
+    });
+
+    input.addEventListener('focus', render);
+
+    input.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            hide();
+        }
+    });
+
+    dropdown.addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-id]');
+        if (!button) {
+            return;
+        }
+        hidden.value = button.dataset.id || '';
+        input.value = button.dataset.label || '';
+        hide();
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!dropdown.contains(event.target) && event.target !== input) {
+            hide();
+        }
+    });
+
+    const form = input.closest('form');
+    if (form) {
+        form.addEventListener('submit', (event) => {
+            if (isExtensionTypeSelected() && !hidden.value) {
+                event.preventDefault();
+                alert('Veuillez sélectionner un ouvrage source pour un ouvrage de type AEPG extension.');
+                input.focus();
+            }
+        });
+    }
+
+    typeSelect.addEventListener('change', () => {
+        syncFieldState();
+    });
+
+    syncFieldState();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    setupOuvrageSourceAutocomplete('create');
+    setupOuvrageSourceAutocomplete('edit');
+});
+
+function openOuvrageEditModal(pk, nom, typeOuvragePk, ouvrageSourcePk, ouvrageSourceLabel, anneeRealisation, anneeRealisationAvant, intervenant, saisonnier, observation, idxlsx) {
+    // Remplir les champs du formulaire d'édition
+    document.getElementById('edit_nom_ouvrage').value = nom;
+    document.getElementById('edit_type_ouvrage').value = typeOuvragePk || '';
+    const editSourceHidden = document.getElementById('edit_ouvrage_source_id') || document.getElementById('edit_ouvrage_source');
+    if (editSourceHidden) {
+        editSourceHidden.value = ouvrageSourcePk || '';
+    }
+    const editSourceSearch = document.getElementById('edit_ouvrage_source_search');
+    if (editSourceSearch) {
+        editSourceSearch.value = ouvrageSourceLabel || '';
+    }
+    document.getElementById('edit_annee_realisation').value = anneeRealisation || '';
+    document.getElementById('edit_annee_realisation_avant').value = anneeRealisationAvant || '';
+    document.getElementById('edit_intervenant').value = intervenant || '';
+    document.getElementById('edit_saisonnier').checked = saisonnier;
+    document.getElementById('edit_observation').value = observation || '';
+    document.getElementById('edit_idxlsx').value = idxlsx || '';
+    const editTypeSelect = document.getElementById('edit_type_ouvrage');
+    if (editTypeSelect) {
+        editTypeSelect.dispatchEvent(new Event('change'));
+    }
+
+    // Mettre Ã  jour l'action du formulaire
+    const form = document.getElementById('ouvrageEditForm');
+    form.action = `/organisations/ouvrages/${pk}/update/`;
+    // Revenir sur cette page (avec ses filtres) après l'enregistrement
+    document.getElementById('edit_next').value = window.location.pathname + window.location.search;
+
+    // Ouvrir la modale
+    const modal = document.getElementById('ouvrageEditModal');
+    if (modal) {
+        modal.checked = true;
+    }
+}
+
+function closeOuvrageEditModal() {
+    const modal = document.getElementById('ouvrageEditModal');
+    if (modal) {
+        modal.checked = false;
+    }
+}
+
+function openOuvrageDossierTechniqueModal(pk) {
+    const modal = document.getElementById(`ouvrage-dossier-technique-modal-${pk}`);
+    if (modal && typeof modal.showModal === 'function') {
+        modal.showModal();
+    }
+}
+
+function openOuvrageTechnicalPreview(url, filename, previewKind) {
+    const modal = document.getElementById('ouvrage-technical-preview-modal');
+    const image = document.getElementById('ouvrage-technical-preview-image');
+    const frame = document.getElementById('ouvrage-technical-preview-frame');
+    if (!modal || !image || !frame) return;
+    document.getElementById('ouvrage-technical-preview-title').textContent = filename || 'Fichier';
+    image.classList.add('hidden');
+    frame.classList.add('hidden');
+    image.removeAttribute('src');
+    frame.removeAttribute('src');
+    if (previewKind === 'image') {
+        image.src = url;
+        image.classList.remove('hidden');
+    } else {
+        frame.src = url;
+        frame.classList.remove('hidden');
+    }
+    modal.showModal();
+}
+
+function closeOuvrageTechnicalPreview() {
+    const modal = document.getElementById('ouvrage-technical-preview-modal');
+    document.getElementById('ouvrage-technical-preview-image')?.removeAttribute('src');
+    document.getElementById('ouvrage-technical-preview-frame')?.removeAttribute('src');
+    if (modal?.open) modal.close();
+}
+
+function confirmDeleteOuvrage(pk, nom) {
+    if (confirm(`Êtes-vous sûr de vouloir supprimer l'ouvrage "${nom}" ?`)) {
+        window.location.href = `/organisations/ouvrages/${pk}/delete/`;
+    }
+}
+
+// Gestion de la vue Carte/Liste
+function toggleView(mode, persist = true) {
+    const listBtn = document.getElementById('btn-view-list');
+    const gridBtn = document.getElementById('btn-view-grid');
+    const listView = document.getElementById('view-list');
+    const cardsView = document.getElementById('view-cards');
+
+    if (!listView || !cardsView) return;
+
+    if (mode === 'list') {
+        listView.classList.remove('hidden');
+        cardsView.classList.add('hidden');
+        if (listBtn) listBtn.classList.add('btn-active', 'btn-primary');
+        if (gridBtn) gridBtn.classList.remove('btn-active', 'btn-primary');
+        if (persist) localStorage.setItem('ouvrages_view_mode', 'list');
+    } else {
+        listView.classList.add('hidden');
+        cardsView.classList.remove('hidden');
+        if (listBtn) listBtn.classList.remove('btn-active', 'btn-primary');
+        if (gridBtn) gridBtn.classList.add('btn-active', 'btn-primary');
+        if (persist) localStorage.setItem('ouvrages_view_mode', 'grid');
+    }
+}
+
+function selectOuvrageCard(pk) {
+    const radio = document.querySelector(`input[name="selected_ouvrage"][value="${pk}"]`);
+    if (radio) {
+        radio.checked = true;
+        selectOuvrage(radio);
+        
+        // Sync card radio
+        const cardRadio = document.querySelector(`input[name="selected_ouvrage_card"][value="${pk}"]`);
+        if (cardRadio) cardRadio.checked = true;
+        
+        // Visual feedback on card
+        document.querySelectorAll('#view-cards .card').forEach(c => c.classList.remove('ring-2', 'ring-primary'));
+        const card = cardRadio ? cardRadio.closest('.card') : null;
+        if (card) card.classList.add('ring-2', 'ring-primary');
+    }
+}
+
+function syncSelectionFromCard(radio) {
+    selectOuvrageCard(radio.value);
+}
+
+// Initialisation de la vue au chargement
+document.addEventListener('DOMContentLoaded', function() {
+    const mobileViewQuery = window.matchMedia('(max-width: 767.98px)');
+    const applyResponsiveView = () => {
+        if (mobileViewQuery.matches) {
+            toggleView('grid', false);
+            return;
+        }
+        toggleView(localStorage.getItem('ouvrages_view_mode') || 'list', false);
+    };
+
+    applyResponsiveView();
+    if (typeof mobileViewQuery.addEventListener === 'function') {
+        mobileViewQuery.addEventListener('change', applyResponsiveView);
+    } else if (typeof mobileViewQuery.addListener === 'function') {
+        mobileViewQuery.addListener(applyResponsiveView);
+    }
+});
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="hydria-v1-page container mx-auto px-4 py-8">
+    {% if not est_directeur %}
+    <style>
+        [data-protected-delete] {
+            display: none !important;
+        }
+    </style>
+    {% endif %}
+    <!-- En-tÃªte de la page -->
+    <header class="hydria-v1-page-header hydria-v1-dropdown-surface flex flex-col xl:flex-row justify-between items-start xl:items-center mb-6 gap-4">
+        <div>
+            <h1 class="hydria-v1-page-title text-3xl font-bold">Gestion des ouvrages</h1>
+            <p class="text-base-content/60 mt-2">Gérez les ouvrages d'infrastructure et leurs données associées</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <a href="{% url 'organization:ouvrage_suivi_liaisons' %}" class="btn btn-warning">
+                <i class="fas fa-project-diagram mr-2"></i>Suivi liaisons
+            </a>
+            <!-- Bouton Gérer les tables (>20 enregistrements) -->
+            <div class="dropdown dropdown-end">
+                <div tabindex="0" role="button" class="btn btn-info btn-sm">
+                    <i class="fas fa-table mr-2"></i>Tables
+                    <i class="fas fa-chevron-down ml-1"></i>
+                </div>
+                <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-[1] w-64 p-2 shadow border border-base-300">
+                    <li class="menu-title text-xs font-semibold">Pages CRUD consolidées</li>
+                    <li><a href="{% url 'organization:points_eau_list' %}"><i class="fas fa-tint mr-2 text-info"></i>Points d'Eau <span class="badge badge-sm">~300</span></a></li>
+                    <li><a href="{% url 'organization:equipements_list' %}"><i class="fas fa-cog mr-2 text-warning"></i>Equipements <span class="badge badge-sm">~200</span></a></li>
+                    <li><a href="{% url 'organization:compteurs_list' %}"><i class="fas fa-tachometer-alt mr-2 text-primary"></i>Compteurs de têtes <span class="badge badge-sm">42</span></a></li>
+                    {% if est_directeur %}
+                    <li><a href="{% url 'organization:tarifs_list' %}"><i class="fas fa-dollar-sign mr-2 text-success"></i>Tarifs <span class="badge badge-sm">89</span></a></li>
+                    <li><a href="{% url 'organization:modalites_gestion_list' %}"><i class="fas fa-handshake mr-2 text-accent"></i>Modalités de gestion <span class="badge badge-sm">887</span></a></li>
+                    {% endif %}
+                    <li><a href="{% url 'organization:adresses_list' %}"><i class="fas fa-map-marker-alt mr-2 text-error"></i>Adresses <span class="badge badge-sm">351</span></a></li>
+                    <li><a href="{% url 'organization:fournisseurs_list' %}"><i class="fas fa-hiking mr-2 text-secondary"></i>Fournisseurs <span class="badge badge-sm">3876</span></a></li>
+                    <li><a href="{% url 'organization:cartes_sociales_list' %}"><i class="fas fa-id-card mr-2 text-neutral"></i>Cartes sociales <span class="badge badge-sm">227</span></a></li>
+                </ul>
+            </div>
+
+            <!-- Bouton Vue consolidée avec tarifs -->
+            <a href="{% url 'organization:consolidated_ouvrages' %}" class="btn btn-info">
+                <i class="fas fa-table mr-2"></i>Vue consolidée
+            </a>
+
+            <!-- Bouton Générer Abaque -->
+            <a href="{% url 'organization:abaque_facturation' %}" class="btn btn-success">
+                <i class="fas fa-file-invoice mr-2"></i>Abaque tarifaire
+            </a>
+
+            <button onclick="openOuvrageCreateModal()" class="btn btn-primary">
+                <i class="fas fa-plus mr-2"></i>Nouvel ouvrage
+            </button>
+
+            {% if est_directeur %}
+            <!-- Dropdown Export Excel -->
+            <div class="dropdown dropdown-end">
+                <div tabindex="0" role="button" class="btn btn-accent">
+                    <i class="fas fa-file-excel mr-2"></i>Export Excel
+                    <i class="fas fa-chevron-down ml-1"></i>
+                </div>
+                <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-[1] w-60 p-2 shadow border border-base-300">
+                    <li class="menu-title text-xs font-semibold">Exporter données Excel</li>
+                    <li><a href="{% url 'organization:export_excel' 'ouvrages' %}"><i class="fas fa-file-excel mr-2 text-primary"></i>Export Ouvrages</a></li>
+                    <li><a onclick="openCustomOuvragesExportModal()"><i class="fas fa-file-export mr-2 text-success"></i>Export ouvrages personnalisé</a></li>
+                    <li><a onclick="openResponsibleOuvragesExportModal()"><i class="fas fa-user-check mr-2 text-info"></i>Export par employé responsable</a></li>
+                    <li><a onclick="openCustomOuvragesExportModal(true)"><i class="fas fa-file-circle-plus mr-2 text-secondary"></i>Export ouvrages personnalisé +</a></li>
+                    <li><a href="{% url 'organization:export_excel' 'pointseaus' %}"><i class="fas fa-file-excel mr-2 text-primary"></i>Export Points d'Eau</a></li>
+                    <li><a href="{% url 'organization:export_excel' 'equipements' %}"><i class="fas fa-file-excel mr-2 text-primary"></i>Export Equipements</a></li>
+                    <li><a href="{% url 'organization:export_excel' 'compteurtetes' %}"><i class="fas fa-file-excel mr-2 text-primary"></i>Export Compteurs</a></li>
+                    <li><a href="{% url 'organization:export_excel' 'tarifs' %}"><i class="fas fa-file-excel mr-2 text-primary"></i>Export Tarifs</a></li>
+                    <li><a href="{% url 'organization:export_excel' 'tarifs_tranches' %}"><i class="fas fa-file-excel mr-2 text-primary"></i>Export Tarifs Tranches</a></li>
+                    <li><a href="{% url 'organization:export_tarifs_consolides_excel' %}"><i class="fas fa-layer-group mr-2 text-success"></i>Tarifs + tranches consolid&eacute;s</a></li>
+                    <li><a onclick="openModalitesExportModal()"><i class="fas fa-file-excel mr-2 text-primary"></i>Export Modalités</a></li>
+                    <li><a href="{% url 'organization:export_excel' 'fournisseurs' %}"><i class="fas fa-file-excel mr-2 text-primary"></i>Export Fournisseurs</a></li>
+                    <li><a href="{% url 'organization:export_excel' 'adresses' %}"><i class="fas fa-file-excel mr-2 text-primary"></i>Export Adresses</a></li>
+                    <li><a href="{% url 'organization:export_excel' 'cartes_sociales' %}"><i class="fas fa-file-excel mr-2 text-primary"></i>Export Cartes Sociales</a></li>
+                    <li><hr class="my-1"></li>
+                    <li class="menu-title text-xs font-semibold text-success"> Formaté avec styles et colonnes ajustées</li>
+                </ul>
+            </div>
+
+            <!-- Dropdown Import Excel -->
+            <div class="dropdown dropdown-end">
+                <div tabindex="0" role="button" class="btn btn-success">
+                    <i class="fas fa-file-excel mr-2"></i>Import Excel
+                    <i class="fas fa-chevron-down ml-1"></i>
+                </div>
+                <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-[1] w-60 p-2 shadow border border-base-300">
+                    <li class="menu-title text-xs font-semibold">Importer données Excel</li>
+                    <li><a onclick="showImportExcelModal('ouvrages', 'ouvrages', 'organization')"><i class="fas fa-upload mr-2 text-success"></i>Importer Ouvrages</a></li>
+                    <li><a onclick="showImportExcelModal('pointseaus', 'pointseaus', 'organization')"><i class="fas fa-upload mr-2 text-success"></i>Importer Points d'Eau</a></li>
+                    <li><a onclick="showImportExcelModal('equipements', 'équipements', 'organization')"><i class="fas fa-upload mr-2 text-success"></i>Importer Equipements</a></li>
+                    <li><a onclick="showImportExcelModal('compteurtetes', 'compteurtetes', 'organization')"><i class="fas fa-upload mr-2 text-success"></i>Importer Compteurs</a></li>
+                    <li><a onclick="showImportExcelModal('tarifs', 'tarifs', 'organization')"><i class="fas fa-upload mr-2 text-success"></i>Importer Tarifs</a></li>
+                    <li><a onclick="showImportExcelModal('tarifs_tranches', 'tarifs_tranches', 'organization')"><i class="fas fa-upload mr-2 text-success"></i>Importer Tarifs Tranches</a></li>
+                    <li><a onclick="showImportExcelModal('modalitegestion', 'modalitegestion', 'organization')"><i class="fas fa-upload mr-2 text-success"></i>Importer Modalités</a></li>
+                    <li><a onclick="showImportExcelModal('fournisseurs', 'fournisseurs', 'organization')"><i class="fas fa-upload mr-2 text-success"></i>Importer Fournisseurs</a></li>
+                    <li><a onclick="showImportExcelModal('adresses', 'adresses', 'organization')"><i class="fas fa-upload mr-2 text-success"></i>Importer Adresses</a></li>
+                    <li><a onclick="showImportExcelModal('cartes_sociales', 'cartes_sociales', 'organization')"><i class="fas fa-upload mr-2 text-success"></i>Importer Cartes Sociales</a></li>
+                    <li><hr class="my-1"></li>
+                    <li class="menu-title text-xs font-semibold text-warning">Mise à jour GPS uniquement</li>
+                    <li><a onclick="showGPSImportModal('equipements')"><i class="fas fa-map-marker-alt mr-2 text-warning"></i>GPS Equipements</a></li>
+                    <li><a onclick="showGPSImportModal('pointseaus')"><i class="fas fa-map-marker-alt mr-2 text-warning"></i>GPS Points d'Eau</a></li>
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+    </header>
+
+    {% if debit_filter == 'critique' %}
+    <div class="alert alert-info my-3 no-print">
+        <i class="fas fa-filter"></i>
+        <span>Filtre actif : ouvrages en débit de source critique uniquement.</span>
+        <a href="?{% for key, value in request.GET.items %}{% if key != 'debit' and key != 'page' %}{{ key }}={{ value|urlencode }}&{% endif %}{% endfor %}" class="btn btn-sm">Retirer le filtre</a>
+    </div>
+    {% else %}
+    {% debits_critiques_banner debit_scope_ids debit_filtre_url %}
+    {% endif %}
+
+    <!-- Statistiques rapides - Compteurs filtrables -->
+    <div class="mb-2">
+        <h3 class="text-sm font-semibold text-base-content/70 mb-2"> Statistiques filtrées</h3>
+        <div class="hydria-v1-kpi-grid grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+            <div class="stat bg-base-100 shadow rounded-lg">
+                <div class="stat-figure text-success">
+                    <i class="fas fa-check-circle text-2xl"></i>
+                </div>
+                <div class="stat-title text-xs">Ouvrages fonctionnels</div>
+                <div class="stat-value text-success text-2xl" data-stat="fonctionnels">{{ stats_counts.fonctionnels }}</div>
+                <div class="stat-desc text-xs">Case manuelle / chantier</div>
+            </div>
+            <div class="stat bg-base-100 shadow rounded-lg">
+                <div class="stat-figure text-error">
+                    <i class="fas fa-times-circle text-2xl"></i>
+                </div>
+                <div class="stat-title text-xs">Ouvrages non fonctionnels</div>
+                <div class="stat-value text-error text-2xl" data-stat="non_fonctionnels">{{ stats_counts.non_fonctionnels }}</div>
+                <div class="stat-desc text-xs">Case manuelle / chantier</div>
+            </div>
+            <div class="stat bg-base-100 shadow rounded-lg">
+                <div class="stat-figure text-primary">
+                    <i class="fas fa-hammer text-2xl"></i>
+                </div>
+                <div class="stat-title text-xs">Ouvrages avec points d'eau</div>
+                <div class="stat-value text-primary text-2xl" data-stat="total">{{ ouvrages_avec_pointeau }}</div>
+                <div class="stat-desc text-xs">Avec point d'eau actif (branché, non coupé)</div>
+            </div>
+            <div class="stat bg-base-100 shadow rounded-lg">
+                <div class="stat-figure text-accent">
+                    <i class="fas fa-tools text-2xl"></i>
+                </div>
+                <div class="stat-title text-xs">Types d'ouvrages</div>
+                <div class="stat-value text-accent text-2xl" data-stat="types">{{ stats_counts.types_ouvrages }}</div>
+                <div class="stat-desc text-xs">Différents types</div>
+            </div>
+            <div class="stat bg-base-100 shadow rounded-lg">
+                <div class="stat-figure text-warning">
+                    <i class="fas fa-building text-2xl"></i>
+                </div>
+                <div class="stat-title text-xs">Organisations</div>
+                <div class="stat-value text-warning text-2xl" data-stat="organisations">{{ stats_counts.organisations }}</div>
+                <div class="stat-desc text-xs">Organisations</div>
+            </div>
+            <a href="{% url 'geography:parcelle_list' %}" class="stat bg-base-100 shadow rounded-lg hover:shadow-2xl transition-shadow cursor-pointer">
+                <div class="stat-figure text-info">
+                    <i class="fas fa-tint text-2xl"></i>
+                </div>
+                <div class="stat-title text-xs">Points d'eau</div>
+                <div class="stat-value text-info text-2xl" data-stat="points_eau">{{ stats_counts.points_eau }}</div>
+                <div class="stat-desc text-xs">Actifs (branchés, non coupés)</div>
+                <div class="stat-desc text-xs">
+                    <span class="text-error"><span data-stat="points_eau_coupes">{{ stats_counts.points_eau_coupes }}</span> coupés</span>
+                    · <span class="text-base-content/60"><span data-stat="points_eau_abandonnes">{{ stats_counts.points_eau_abandonnes }}</span> abandonnés</span>
+                    · <span class="text-warning"><span data-stat="points_eau_sans_date">{{ stats_counts.points_eau_sans_date }}</span> sans date</span>
+                </div>
+            </a>
+            <a href="{% url 'organization:equipements_list' %}" class="stat bg-base-100 shadow rounded-lg hover:shadow-2xl transition-shadow cursor-pointer">
+                <div class="stat-figure text-warning">
+                    <i class="fas fa-cogs text-2xl"></i>
+                </div>
+                <div class="stat-title text-xs">Equipements</div>
+                <div class="stat-value text-warning text-2xl" data-stat="equipements">{{ stats_counts.equipements }}</div>
+                <div class="stat-desc text-xs">Equipements</div>
+            </a>
+            <a href="{% url 'organization:compteurs_list' %}" class="stat bg-base-100 shadow rounded-lg hover:shadow-2xl transition-shadow cursor-pointer">
+                <div class="stat-figure text-secondary">
+                    <i class="fas fa-tachometer-alt text-2xl"></i>
+                </div>
+                <div class="stat-title text-xs">Compteurs de tête</div>
+                <div class="stat-value text-secondary text-2xl" data-stat="compteurs_tete">{{ stats_counts.compteurs_tete }}</div>
+                <div class="stat-desc text-xs">Compteurs</div>
+            </a>
+            <a href="{% url 'organization:adresses_list' %}" class="stat bg-base-100 shadow rounded-lg hover:shadow-2xl transition-shadow cursor-pointer">
+                <div class="stat-figure text-error">
+                    <i class="fas fa-map-marker-alt text-2xl"></i>
+                </div>
+                <div class="stat-title text-xs">Adresses</div>
+                <div class="stat-value text-error text-2xl" data-stat="adresses">{{ stats_counts.adresses }}</div>
+                <div class="stat-desc text-xs">Adresses</div>
+            </a>
+            {% if est_directeur %}
+            <a href="{% url 'organization:tarifs_list' %}" class="stat bg-base-100 shadow rounded-lg hover:shadow-2xl transition-shadow cursor-pointer">
+                <div class="stat-figure text-primary">
+                    <i class="fas fa-coins text-2xl"></i>
+                </div>
+                <div class="stat-title text-xs">Tarifs</div>
+                <div class="stat-value text-primary text-2xl" data-stat="tarifs">{{ stats_counts.tarifs }}</div>
+                <div class="stat-desc text-xs">Tarifs actifs</div>
+            </a>
+            <a href="{% url 'organization:modalites_gestion_list' %}" class="stat bg-base-100 shadow rounded-lg hover:shadow-2xl transition-shadow cursor-pointer">
+                <div class="stat-figure text-warning">
+                    <i class="fas fa-handshake text-2xl"></i>
+                </div>
+                <div class="stat-title text-xs">Modalités</div>
+                <div class="stat-value text-warning text-2xl" data-stat="modalites">{{ stats_counts.modalites }}</div>
+                <div class="stat-desc text-xs">Modalités actives</div>
+            </a>
+            {% endif %}
+            <div class="stat bg-base-100 shadow rounded-lg">
+                <div class="stat-figure">
+                    <div class="radial-progress text-info" style="--value:0; --size:4rem; --thickness:4px;" role="progressbar" data-progress="saisonniers-percent">
+                        <span class="text-sm" data-stat="saisonniers-percent">0</span>%
+                    </div>
+                </div>
+                <div class="stat-title text-xs">Saisonniers</div>
+                <div class="stat-value text-info text-2xl" data-stat="saisonniers">{{ stats_counts.saisonniers }}</div>
+                <div class="stat-desc text-xs"><span data-stat="saisonniers-percent-text">0</span>% du total</div>
+            </div>
+            <div class="stat bg-base-100 shadow rounded-lg">
+                <div class="stat-figure">
+                    <div class="radial-progress text-success" style="--value:0; --size:4rem; --thickness:4px;" role="progressbar" data-progress="non-saisonniers-percent">
+                        <span class="text-sm" data-stat="non-saisonniers-percent">0</span>%
+                    </div>
+                </div>
+                <div class="stat-title text-xs">Permanents</div>
+                <div class="stat-value text-success text-2xl" data-stat="non_saisonniers">{{ stats_counts.non_saisonniers }}</div>
+                <div class="stat-desc text-xs"><span data-stat="non-saisonniers-percent-text">0</span>% du total</div>
+            </div>
+            <div class="stat bg-base-100 shadow rounded-lg">
+                <div class="stat-figure">
+                    <div class="radial-progress text-primary" style="--value:{{ stats_counts.pourcentage_aepg_avec_dossier_technique }}; --size:4rem; --thickness:4px;" role="progressbar" data-progress="dossiers-techniques-percent">
+                        <span class="text-sm" data-stat="dossiers-techniques-percent">{{ stats_counts.pourcentage_aepg_avec_dossier_technique }}</span>%
+                    </div>
+                </div>
+                <div class="stat-title text-xs">Dossiers techniques</div>
+                <div class="stat-value text-primary text-2xl" data-stat="dossiers_techniques">{{ stats_counts.dossiers_techniques }}</div>
+                <div class="stat-desc text-xs" data-stat="dossiers-techniques-percent-text">{{ stats_counts.pourcentage_aepg_avec_dossier_technique }}% des AEPG ({{ stats_counts.aepg_avec_dossier_technique }}/{{ stats_counts.aepg_total }})</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistiques globales (non filtrées) -->
+    <div class="mb-8">
+        <h3 class="text-sm font-semibold text-base-content/70 mb-2">Statistiques globales (totaux)</h3>
+        <div class="hydria-v1-kpi-grid grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+            <a href="{% url 'organization:fournisseurs_list' %}" class="stat bg-base-200/50 shadow rounded-lg hover:shadow-2xl transition-shadow cursor-pointer border-2 border-dashed border-base-300">
+                <div class="stat-figure text-success">
+                    <i class="fas fa-hiking text-2xl"></i>
+                </div>
+                <div class="stat-title text-xs">Fournisseurs</div>
+                <div class="stat-value text-success text-2xl" data-stat="fournisseurs">{{ stats_counts.fournisseurs }}</div>
+                <div class="stat-desc text-xs">Total actifs</div>
+            </a>
+            <a href="{% url 'organization:cartes_sociales_list' %}" class="stat bg-base-200/50 shadow rounded-lg hover:shadow-2xl transition-shadow cursor-pointer border-2 border-dashed border-base-300">
+                <div class="stat-figure text-accent">
+                    <i class="fas fa-id-card text-2xl"></i>
+                </div>
+                <div class="stat-title text-xs">Cartes sociales</div>
+                <div class="stat-value text-accent text-2xl" data-stat="cartes_sociales">{{ stats_counts.cartes_sociales }}</div>
+                <div class="stat-desc text-xs">Total cartes</div>
+            </a>
+        </div>
+    </div>
+
+    <!-- Liste des ouvrages -->
+    <div class="hydria-v1-table-card card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <div class="mb-6">
+                <div class="flex justify-between items-center mb-4">
+                    <div>
+                        <h2 class="card-title"> Liste des ouvrages</h2>
+                        <div id="selected-info" class="text-sm text-gray-600 mt-1 hidden">
+                            Aucun ouvrage sélectionné
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="ouvrages-view-toggle join flex">
+                            <button class="btn btn-sm join-item bg-base-100" id="btn-view-list" onclick="toggleView('list')" title="Vue liste">
+                                <i class="fas fa-list"></i>
+                            </button>
+                            <button class="btn btn-sm join-item bg-base-100" id="btn-view-grid" onclick="toggleView('grid')" title="Vue cartes">
+                                <i class="fas fa-th-large"></i>
+                            </button>
+                        </div>
+                        <button onclick="window.location.reload()" class="btn btn-ghost btn-sm" title="Actualiser">
+                            <i class="fas fa-sync-alt"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Filtres et recherche -->
+                <form method="GET" action="" class="hydria-v1-compact-filters flex flex-wrap gap-3 items-center">
+                    <div class="form-control">
+                        <div class="input-group input-group-sm">
+                            <span class="bg-base-200">
+                                <i class="fas fa-search px-3"></i>
+                            </span>
+                            <input type="text" name="search" placeholder="Rechercher un ouvrage..." class="input input-bordered input-sm w-64" value="{{ search_query }}">
+                        </div>
+                    </div>
+                    <select name="organisation" class="select select-bordered select-sm" onchange="this.form.submit()" title="Filtrer par organisation">
+                        <option value="all">Toutes les organisations</option>
+                        {% for organisation in organisations %}
+                        <option value="{{ organisation.pk }}" {% if organisation_filter == organisation.pk|stringformat:"s" %}selected{% endif %}>{{ organisation.nom_organisation }}</option>
+                        {% endfor %}
+                    </select>
+                    <select name="type" class="select select-bordered select-sm" onchange="this.form.submit()" title="Filtrer par type">
+                        <option value="all">Tous les types</option>
+                        {% for type_ouvrage in types_ouvrages %}
+                        <option value="{{ type_ouvrage.pk }}" {% if type_filter == type_ouvrage.pk|stringformat:"s" %}selected{% endif %}>{{ type_ouvrage.nom_type_ouvrage }}</option>
+                        {% endfor %}
+                    </select>
+
+                    <div class="grid w-full grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                        <select name="responsible_employee" id="ouvrageResponsibleEmployeeFilter" class="select select-bordered select-sm w-full" onchange="submitOuvrageCascadeFilter('employee')" title="Filtrer par employé responsable et ses subordonnés">
+                            <option value="all">Tous les employés responsables</option>
+                            {% for base_group in employee_groups %}
+                            <optgroup label="{{ base_group.label }}">
+                                {% for poste_group in base_group.postes %}
+                                <option disabled>── {{ poste_group.label }} ──</option>
+                                    {% for employee in poste_group.employees %}
+                                    <option value="{{ employee.pk }}" {% if responsible_employee_filter == employee.pk|stringformat:"s" %}selected{% endif %}>{{ employee.surnom|default:employee.nom_employe }}</option>
+                                    {% endfor %}
+                                {% endfor %}
+                            </optgroup>
+                            {% endfor %}
+                        </select>
+                        <select name="region" id="ouvrageRegionFilter" class="select select-bordered select-sm w-full" onchange="submitOuvrageCascadeFilter('region')" title="Filtrer par région">
+                            <option value="all">Toutes les régions</option>
+                            {% for region in regions %}
+                            <option value="{{ region.pk }}" {% if region_filter == region.pk|stringformat:"s" %}selected{% endif %}>{{ region.nom_region }}</option>
+                            {% endfor %}
+                        </select>
+                        <select name="district" id="ouvrageDistrictFilter" class="select select-bordered select-sm w-full" onchange="submitOuvrageCascadeFilter('district')" title="Filtrer par district">
+                            <option value="all">Tous les districts</option>
+                            {% for district in districts %}
+                            <option value="{{ district.pk }}" {% if district_filter == district.pk|stringformat:"s" %}selected{% endif %}>{{ district.nom_district }}</option>
+                            {% endfor %}
+                        </select>
+                        <select name="commune" id="ouvrageCommuneFilter" class="select select-bordered select-sm w-full" onchange="submitOuvrageCascadeFilter('commune')" title="Filtrer par commune">
+                            <option value="all">Toutes les communes</option>
+                            {% for commune in communes %}
+                            <option value="{{ commune.pk }}" {% if commune_filter == commune.pk|stringformat:"s" %}selected{% endif %}>{{ commune.nom_commune }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="fas fa-search mr-1"></i>Rechercher
+                    </button>
+                    <a href="{% url 'organization:ouvrage_list' %}" class="btn btn-ghost btn-sm" title="Réinitialiser les filtres">
+                        <i class="fas fa-times mr-1"></i>Réinitialiser
+                    </a>
+
+                    <!-- Filtres par données (affichés en ligne) -->
+                    <!-- Filtres par données -->
+                    <div class="collapse collapse-arrow w-full mt-2 border border-base-300 bg-base-100/60">
+                        <input type="checkbox" />
+                        <div class="collapse-title text-sm font-medium text-base-content/70">
+                            Filtrer par données
+                        </div>
+                <div class="collapse-content">
+                            <div class="flex flex-wrap gap-3 items-center pt-2">
+                                <label class="label cursor-pointer gap-2 py-1">
+                                    <input type="checkbox" name="has_points_eau" value="1" class="checkbox checkbox-sm checkbox-info" {% if request.GET.has_points_eau %}checked{% endif %} onclick="this.form.submit()">
+                                    <span class="label-text">💧 Avec points d'eau</span>
+                                </label>
+                                <label class="label cursor-pointer gap-2 py-1">
+                                    <input type="checkbox" name="has_compteurs" value="1" class="checkbox checkbox-sm checkbox-secondary" {% if request.GET.has_compteurs %}checked{% endif %} onclick="this.form.submit()">
+                                    <span class="label-text">🔢 Avec compteurs</span>
+                                </label>
+                                <label class="label cursor-pointer gap-2 py-1">
+                                    <input type="checkbox" name="has_equipements" value="1" class="checkbox checkbox-sm checkbox-warning" {% if request.GET.has_equipements %}checked{% endif %} onclick="this.form.submit()">
+                                    <span class="label-text">⚙️ Avec équipements</span>
+                                </label>
+                                <label class="label cursor-pointer gap-2 py-1">
+                                    <input type="checkbox" name="has_tarifs" value="1" class="checkbox checkbox-sm checkbox-primary" {% if request.GET.has_tarifs %}checked{% endif %} onclick="this.form.submit()">
+                                    <span class="label-text">💰 Avec tarifs actifs</span>
+                                </label>
+                                <label class="label cursor-pointer gap-2 py-1">
+                                    <input type="checkbox" name="has_modalites" value="1" class="checkbox checkbox-sm checkbox-accent" {% if request.GET.has_modalites %}checked{% endif %} onclick="this.form.submit()">
+                                    <span class="label-text">📋 Avec modalités</span>
+                                </label>
+                                <label class="label cursor-pointer gap-2 py-1">
+                                    <input type="checkbox" name="has_adresses" value="1" class="checkbox checkbox-sm checkbox-warning" {% if request.GET.has_adresses %}checked{% endif %} onclick="this.form.submit()">
+                                    <span class="label-text">📍 Avec adresses</span>
+                                </label>
+                                <label class="label cursor-pointer gap-2 py-1">
+                                    <input type="checkbox" name="has_cartes_sociales" value="1" class="checkbox checkbox-sm checkbox-info" {% if request.GET.has_cartes_sociales %}checked{% endif %} onclick="this.form.submit()">
+                                    <span class="label-text">🪪 Avec cartes sociales</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Filtre type de fonctionnement -->
+                    <div class="collapse collapse-arrow w-full mt-2 border border-base-300 bg-base-100/60">
+                        <input type="checkbox" />
+                        <div class="collapse-title text-sm font-medium text-base-content/70">
+                            Filtrer par type de fonctionnement
+                        </div>
+                        <div class="collapse-content">
+                            <div class="flex flex-wrap gap-3 items-center pt-2">
+                                <label class="label cursor-pointer gap-2 py-1">
+                                    <input type="radio" name="saisonnier" value="" class="radio radio-sm radio-primary" {% if not request.GET.saisonnier %}checked{% endif %} onclick="this.form.submit()">
+                                    <span class="label-text">Tous</span>
+                                </label>
+                                <label class="label cursor-pointer gap-2 py-1">
+                                    <input type="radio" name="saisonnier" value="true" class="radio radio-sm radio-info" {% if request.GET.saisonnier == 'true' %}checked{% endif %} onclick="this.form.submit()">
+                                    <span class="label-text">☀️ Saisonniers uniquement</span>
+                                </label>
+                                <label class="label cursor-pointer gap-2 py-1">
+                                    <input type="radio" name="saisonnier" value="false" class="radio radio-sm radio-secondary" {% if request.GET.saisonnier == 'false' %}checked{% endif %} onclick="this.form.submit()">
+                                    <span class="label-text">📆 Permanents uniquement</span>
+                                </label>
+                                <span class="mx-2 text-base-content/50">|</span>
+                                <label class="label cursor-pointer gap-2 py-1">
+                                    <input type="radio" name="fonctionnalite" value="" class="radio radio-sm radio-primary" {% if not fonctionnalite_filter %}checked{% endif %} onclick="this.form.submit()">
+                                    <span class="label-text">Tous statuts</span>
+                                </label>
+                                <label class="label cursor-pointer gap-2 py-1">
+                                    <input type="radio" name="fonctionnalite" value="fonctionnel" class="radio radio-sm radio-success" {% if fonctionnalite_filter == 'fonctionnel' %}checked{% endif %} onclick="this.form.submit()">
+                                    <span class="label-text">✓ Fonctionnels</span>
+                                </label>
+                                <label class="label cursor-pointer gap-2 py-1">
+                                    <input type="radio" name="fonctionnalite" value="non_fonctionnel" class="radio radio-sm radio-error" {% if fonctionnalite_filter == 'non_fonctionnel' %}checked{% endif %} onclick="this.form.submit()">
+                                    <span class="label-text">⚠ Non fonctionnels</span>
+                                </label>
+                                <span class="mx-2 text-base-content/50">|</span>
+                                <label class="label cursor-pointer gap-2 py-1">
+                                    <input type="hidden" name="hide_inexistants" value="0">
+                                    <input type="checkbox" name="hide_inexistants" value="1" id="hide-inexistants" class="checkbox checkbox-sm checkbox-error" {% if hide_inexistants %}checked{% endif %} onclick="this.form.submit()">
+                                    <span class="label-text">Masquer les ouvrages qui n'existent pas</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Pagination du haut -->
+            {% if page_obj.has_other_pages %}
+            <div class="flex justify-center items-center gap-2 mt-4">
+                <div class="join">
+                    {% if page_obj.has_previous %}
+                    <a href="{% querystring page=1 %}" class="join-item btn btn-sm">&laquo;</a>
+                    <a href="{% querystring page=page_obj.previous_page_number %}" class="join-item btn btn-sm">&lsaquo;</a>
+                    {% else %}
+                    <button class="join-item btn btn-sm btn-disabled">&laquo;</button>
+                    <button class="join-item btn btn-sm btn-disabled">&lsaquo;</button>
+                    {% endif %}
+
+                    {% for num in page_obj.paginator.page_range %}
+                        {% if page_obj.number == num %}
+                        <button class="join-item btn btn-sm btn-active">{{ num }}</button>
+                        {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
+                        <a href="{% querystring page=num %}" class="join-item btn btn-sm">{{ num }}</a>
+                        {% endif %}
+                    {% endfor %}
+
+                    {% if page_obj.has_next %}
+                    <a href="{% querystring page=page_obj.next_page_number %}" class="join-item btn btn-sm">&rsaquo;</a>
+                    <a href="{% querystring page=page_obj.paginator.num_pages %}" class="join-item btn btn-sm">&raquo;</a>
+                    {% else %}
+                    <button class="join-item btn btn-sm btn-disabled">&rsaquo;</button>
+                    <button class="join-item btn btn-sm btn-disabled">&raquo;</button>
+                    {% endif %}
+                </div>
+                <span class="text-sm text-gray-600 ml-4">
+                    Page {{ page_obj.number }} sur {{ page_obj.paginator.num_pages }}
+                    ({{ page_obj.paginator.count }} ouvrages)
+                </span>
+            </div>
+            {% endif %}
+
+            <!-- Vue Cartes (Mobile first / Grid) -->
+            <div id="view-cards" class="hidden grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {% for ouvrage in page_obj %}
+                <div class="ouvrage-mobile-card card min-w-0 bg-base-100 border border-base-200 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+                     onclick="selectOuvrageCard('{{ ouvrage.pk }}')">
+                    <div class="card-body p-4">
+                        <div class="flex justify-between items-start mb-2">
+                            <div>
+                                <h3 class="font-bold text-lg">{{ ouvrage.nom_ouvrage }}</h3>
+                                <div class="flex flex-wrap gap-1 mt-1">
+                                    {% if ouvrage.type_ouvrage %}
+                                    <span class="inline-flex items-center gap-2" title="{{ ouvrage.type_ouvrage.nom_type_ouvrage }}"><i class="fas {{ ouvrage.type_ouvrage.nom_type_ouvrage|ouvrage_icon }} {{ ouvrage.type_ouvrage.nom_type_ouvrage|ouvrage_icon_tone }} text-lg" aria-hidden="true"></i><span class="badge badge-outline badge-sm">{{ ouvrage.type_ouvrage.nom_type_ouvrage }}</span></span>
+                                    {% endif %}
+                                    {% debit_critique_badge ouvrage.pk %}
+                                    {% if ouvrage.ouvrage_source_id %}
+                                    <span class="badge badge-info badge-sm">Extension</span>
+                                    <span class="badge badge-outline badge-sm">{{ ouvrage.ouvrage_source.nom_ouvrage }}</span>
+                                    {% endif %}
+                                    {% if ouvrage.type_ouvrage.existe %}
+                                        <span class="badge badge-success badge-sm"><i class="fas fa-check mr-1"></i>Existe</span>
+                                    {% else %}
+                                        <span class="badge badge-error badge-sm"><i class="fas fa-times mr-1"></i>Inexistant</span>
+                                    {% endif %}
+                                    {% if ouvrage.saisonnier %}
+                                        <span class="badge badge-warning badge-sm">Saisonnier</span>
+                                    {% else %}
+                                        <span class="badge badge-success badge-sm">Permanent</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div onclick="event.stopPropagation()">
+                                <input id="ouvrage-card-selector-{{ ouvrage.pk }}" type="radio" name="selected_ouvrage_card" value="{{ ouvrage.pk }}" class="peer sr-only" onchange="syncSelectionFromCard(this)">
+                                <label for="ouvrage-card-selector-{{ ouvrage.pk }}" class="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg border border-base-300 bg-base-100 shadow transition peer-checked:border-primary peer-checked:ring-2 peer-checked:ring-primary/30" title="{{ ouvrage.type_ouvrage.nom_type_ouvrage|default:'Ouvrage' }}"><i class="fas {{ ouvrage.type_ouvrage.nom_type_ouvrage|ouvrage_icon }} {{ ouvrage.type_ouvrage.nom_type_ouvrage|ouvrage_icon_tone }} text-xl" aria-hidden="true"></i></label>
+                            </div>
+                        </div>
+
+                        <div class="text-sm text-base-content/70 mb-3">
+                            <div class="flex min-w-0 items-start gap-2">
+                                <i class="fas fa-building mt-0.5 w-4 shrink-0"></i>
+                                <span class="ouvrage-card-value min-w-0">{{ ouvrage.gestionnaire_actif_nom|default:"Pas de gestion active" }}</span>
+                            </div>
+                            <div class="flex min-w-0 items-start gap-2">
+                                <i class="fas fa-calendar-alt mt-0.5 w-4 shrink-0"></i>
+                                <span class="ouvrage-card-value min-w-0">
+                                    {% if ouvrage.annee_realisation %}
+                                        {{ ouvrage.annee_realisation }}
+                                    {% elif ouvrage.annee_realisation_avant %}
+                                        Avant {{ ouvrage.annee_realisation_avant }}
+                                    {% else %}
+                                        Non renseignée
+                                    {% endif %}
+                                </span>
+                            </div>
+                            <div class="flex min-w-0 items-start gap-2">
+                                <i class="fas fa-user-cog mt-0.5 w-4 shrink-0"></i>
+                                <span class="ouvrage-card-value min-w-0">{{ ouvrage.intervenant|default:"Intervenant non renseigné" }}</span>
+                            </div>
+                        </div>
+
+                        <!-- Stats Badges -->
+                        <div class="flex flex-wrap gap-1 mb-3">
+                            {% if ouvrage.nb_points_eau > 0 %}
+                            <span class="badge badge-sm badge-primary gap-1" title="Points d'eau actifs"><i class="fas fa-tint"></i> {{ ouvrage.nb_points_eau }}</span>
+                            {% endif %}
+                            {% if ouvrage.nb_points_eau_coupes > 0 %}
+                            <span class="badge badge-sm badge-error gap-1" title="Points d'eau coupés depuis moins d'un an"><i class="fas fa-ban"></i> {{ ouvrage.nb_points_eau_coupes }}</span>
+                            {% endif %}
+                            {% if ouvrage.nb_points_eau_abandonnes > 0 %}
+                            <span class="badge badge-sm badge-neutral gap-1" title="Points d'eau abandonnés (coupés depuis plus d'un an, non comptés)"><i class="fas fa-archive"></i> {{ ouvrage.nb_points_eau_abandonnes }}</span>
+                            {% endif %}
+                            {% if ouvrage.nb_points_eau_sans_date > 0 %}
+                            <span class="badge badge-sm badge-warning gap-1" title="Points d'eau sans date de branchement (non comptés)"><i class="fas fa-question-circle"></i> {{ ouvrage.nb_points_eau_sans_date }}</span>
+                            {% endif %}
+                            {% if ouvrage.nb_compteurs_tete > 0 %}
+                            <span class="badge badge-sm badge-info gap-1"><i class="fas fa-tachometer-alt"></i> {{ ouvrage.nb_compteurs_tete }}</span>
+                            {% endif %}
+                            {% if ouvrage.nb_equipements > 0 %}
+                            <span class="badge badge-sm badge-secondary gap-1"><i class="fas fa-cogs"></i> {{ ouvrage.nb_equipements }}</span>
+                            {% endif %}
+                            {% if ouvrage.nb_tarifs > 0 %}
+                            <span class="badge badge-sm badge-accent gap-1"><i class="fas fa-coins"></i> {{ ouvrage.nb_tarifs }}</span>
+                            {% endif %}
+                            {% if ouvrage.nb_modalites > 0 %}
+                            <span class="badge badge-sm badge-success gap-1"><i class="fas fa-handshake"></i> {{ ouvrage.nb_modalites }}</span>
+                            {% endif %}
+                            {% if ouvrage.nb_adresses > 0 %}
+                            <span class="badge badge-sm badge-warning gap-1"><i class="fas fa-map-marker-alt"></i> {{ ouvrage.nb_adresses }}</span>
+                            {% endif %}
+                            {% if ouvrage.nb_cartes_sociales > 0 %}
+                            <span class="badge badge-sm badge-info gap-1"><i class="fas fa-id-card"></i> {{ ouvrage.nb_cartes_sociales }}</span>
+                            {% endif %}
+                            {% if ouvrage.nb_dossiers_techniques > 0 %}
+                            <span class="badge badge-sm badge-success gap-1" title="Dossier technique renseigné"><i class="fas fa-folder-open"></i> {{ ouvrage.nb_dossiers_techniques }}</span>
+                            {% endif %}
+                            {% if ouvrage.nb_points_eau == 0 and ouvrage.nb_compteurs_tete == 0 and ouvrage.nb_equipements == 0 and ouvrage.nb_tarifs == 0 and ouvrage.nb_modalites == 0 and ouvrage.nb_adresses == 0 and ouvrage.nb_cartes_sociales == 0 and ouvrage.nb_dossiers_techniques == 0 %}
+                            <span class="text-xs text-base-content/50">Aucune donnée associée</span>
+                            {% endif %}
+                        </div>
+
+                        <div class="ouvrage-card-actions card-actions justify-end mt-auto border-t border-base-200 pt-3">
+                            <button type="button" onclick="event.stopPropagation(); openOuvrageDossierTechniqueModal('{{ ouvrage.pk }}')"
+                                    class="btn btn-xs {% if ouvrage.nb_dossiers_techniques > 0 %}btn-outline btn-success{% else %}btn-ghost text-base-content/40{% endif %}"
+                                    title="{% if ouvrage.nb_dossiers_techniques > 0 %}Dossier technique : {{ ouvrage.nb_dossiers_techniques }} fichier(s){% else %}Dossier technique non renseigné{% endif %}">
+                                <i class="fas {% if ouvrage.nb_dossiers_techniques > 0 %}fa-folder-open{% else %}fa-folder{% endif %}"></i>
+                                Dossier{% if ouvrage.nb_dossiers_techniques > 0 %} ({{ ouvrage.nb_dossiers_techniques }}){% endif %}
+                            </button>
+                            <button type="button" onclick="event.stopPropagation(); window.openOuvrageEditModal('{{ ouvrage.pk }}', '{{ ouvrage.nom_ouvrage|escapejs }}', '{{ ouvrage.type_ouvrage.pk|default:'' }}', '{{ ouvrage.ouvrage_source.pk|default:'' }}', '{{ ouvrage.ouvrage_source.nom_ouvrage|default:''|escapejs }}', '{{ ouvrage.annee_realisation|default:'' }}', '{{ ouvrage.annee_realisation_avant|default:'' }}', '{{ ouvrage.intervenant|default:''|escapejs }}', {{ ouvrage.saisonnier|yesno:'true,false' }}, '{{ ouvrage.observation|default:''|escapejs }}', '{{ ouvrage.idxlsx|default:'' }}')" 
+                                    class="btn btn-ghost btn-xs">
+                                <i class="fas fa-edit"></i> Modifier
+                            </button>
+                            <button type="button" onclick="event.stopPropagation(); confirmDeleteOuvrage('{{ ouvrage.pk }}', '{{ ouvrage.nom_ouvrage|escapejs }}')" 
+                                    class="btn btn-ghost btn-xs text-error" data-protected-delete>
+                                <i class="fas fa-trash"></i> Supprimer
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            {% if page_obj %}
+            <div id="view-list" class="hidden overflow-x-auto">
+                <table class="table table-zebra w-full">
+                    <thead>
+                        <tr>
+                            <th>Sélection</th>
+                            <th>Fonctionnel</th>
+                            <th>Nom de l'ouvrage</th>
+                            <th>Type</th>
+                            <th>Existe</th>
+                            <th>Organisation</th>
+                            <th>Année de réalisation</th>
+                            <th>Intervenant</th>
+                            <th>Saisonnier</th>
+                            <th>Données associées</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ouvrages-tbody">
+                        {% for ouvrage in page_obj %}
+                        <tr data-ouvrage="{{ ouvrage.pk }}"
+                            data-type-ouvrage="{{ ouvrage.type_ouvrage.pk|default:'' }}"
+                            data-type-ouvrage-nom="{{ ouvrage.type_ouvrage.nom_type_ouvrage|default:'' }}"
+                            data-organisation="{{ ouvrage.gestionnaire_actif_id|default:'' }}"
+                            data-saisonnier="{{ ouvrage.saisonnier|yesno:'true,false' }}"
+                            data-existe="{{ ouvrage.type_ouvrage.existe|yesno:'true,false' }}"
+                            data-points-eau="{{ ouvrage.nb_points_eau }}"
+                            data-points-eau-coupes="{{ ouvrage.nb_points_eau_coupes }}"
+                            data-points-eau-abandonnes="{{ ouvrage.nb_points_eau_abandonnes }}"
+                            data-points-eau-sans-date="{{ ouvrage.nb_points_eau_sans_date }}"
+                            data-compteurs-tete="{{ ouvrage.nb_compteurs_tete }}"
+                            data-tarifs="{{ ouvrage.nb_tarifs }}"
+                            data-modalites="{{ ouvrage.nb_modalites }}"
+                            data-equipements="{{ ouvrage.nb_equipements }}"
+                            data-dossiers-techniques="{{ ouvrage.nb_dossiers_techniques }}"
+                            data-adresses="{{ ouvrage.nb_adresses }}"
+                            data-fournisseurs="0"
+                            data-cartes-sociales="0"
+                            class="hover cursor-pointer" onclick="selectRow(this)">
+                            <td><input id="ouvrage-selector-{{ ouvrage.pk }}" type="radio" name="selected_ouvrage" value="{{ ouvrage.pk }}" class="peer sr-only" onchange="selectOuvrage(this)"><label for="ouvrage-selector-{{ ouvrage.pk }}" class="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-base-300 bg-base-100 transition peer-checked:border-primary peer-checked:ring-2 peer-checked:ring-primary/30" title="Sélectionner {{ ouvrage.nom_ouvrage }}"><i class="fas {{ ouvrage.type_ouvrage.nom_type_ouvrage|ouvrage_icon }} {{ ouvrage.type_ouvrage.nom_type_ouvrage|ouvrage_icon_tone }} text-lg" aria-hidden="true"></i></label></td>
+                            <td onclick="event.stopPropagation();">
+                                {% with sf=ouvrage.statut_fonctionnel %}
+                                {% if sf.source == 'chantier' %}
+                                <span class="badge badge-error gap-1" title="Chantier actif en cours : statut géré automatiquement">
+                                    <i class="fas fa-hard-hat"></i> En chantier
+                                </span>
+                                {% else %}
+                                <label class="cursor-pointer flex items-center gap-1" title="{% if not sf.checkbox_modifiable %}Réparation active : déjà suivi via le module Réparations{% else %}Cocher si cet ouvrage n'est pas fonctionnel{% endif %}">
+                                    <input type="checkbox"
+                                           class="checkbox checkbox-sm checkbox-error ouvrage-fonctionnel-toggle"
+                                           data-ouvrage-id="{{ ouvrage.pk }}"
+                                           {% if sf.marque_manuel %}checked{% endif %}
+                                           {% if not sf.checkbox_modifiable %}disabled{% endif %}>
+                                    <span class="text-xs {% if sf.fonctionnel %}text-success{% else %}text-error{% endif %}">
+                                        {% if sf.fonctionnel %}OK{% else %}Non fonc.{% endif %}
+                                    </span>
+                                    {% if sf.reparation_active %}<i class="fas fa-wrench text-warning text-xs" title="Réparation active"></i>{% endif %}
+                                </label>
+                                {% endif %}
+                                {% endwith %}
+                            </td>
+                            <td class="font-semibold">{{ ouvrage.nom_ouvrage }}<div>{% debit_critique_badge ouvrage.pk %}</div></td>
+                            <td>
+                                {% if ouvrage.type_ouvrage %}
+                                <span class="inline-flex items-center gap-2"><i class="fas {{ ouvrage.type_ouvrage.nom_type_ouvrage|ouvrage_icon }} {{ ouvrage.type_ouvrage.nom_type_ouvrage|ouvrage_icon_tone }} text-lg" aria-hidden="true"></i><span class="badge badge-outline">{{ ouvrage.type_ouvrage.nom_type_ouvrage }}</span></span>
+                                {% if ouvrage.ouvrage_source_id %}
+                                <div class="mt-1 flex flex-wrap gap-1">
+                                    <span class="badge badge-info badge-xs">Extension</span>
+                                    <span class="badge badge-outline badge-xs">{{ ouvrage.ouvrage_source.nom_ouvrage }}</span>
+                                </div>
+                                {% endif %}
+                                {% else %}
+                                <span class="badge badge-ghost text-gray-400">Non défini</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if ouvrage.type_ouvrage.existe %}
+                                    <span class="badge badge-success badge-sm gap-1">
+                                        <i class="fas fa-check"></i> Oui
+                                    </span>
+                                {% else %}
+                                    <span class="badge badge-error badge-sm gap-1">
+                                        <i class="fas fa-times"></i> Non
+                                    </span>
+                                {% endif %}
+                            </td>
+                            <td>{{ ouvrage.gestionnaire_actif_nom|default:"Pas de gestion active" }}</td>
+                            <td>
+                                {% if ouvrage.annee_realisation %}
+                                    {{ ouvrage.annee_realisation }}
+                                {% elif ouvrage.annee_realisation_avant %}
+                                    Avant {{ ouvrage.annee_realisation_avant }}
+                                {% else %}
+                                    <span class="text-gray-400">Non renseignée</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ ouvrage.intervenant|default:"Non renseigné" }}</td>
+                            <td>
+                                {% if ouvrage.saisonnier %}
+                                    <span class="badge badge-warning">Oui</span>
+                                {% else %}
+                                    <span class="badge badge-success">Non</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="flex flex-wrap gap-1 text-xs">
+                                    {% if ouvrage.nb_points_eau > 0 %}
+                                    <div class="tooltip" data-tip="Points d'eau actifs">
+                                        <span class="badge badge-sm badge-primary gap-1">
+                                            <i class="fas fa-tint"></i> {{ ouvrage.nb_points_eau }}
+                                        </span>
+                                    </div>
+                                    {% endif %}
+                                    {% if ouvrage.nb_points_eau_coupes > 0 %}
+                                    <div class="tooltip" data-tip="Points d'eau coupés depuis moins d'un an">
+                                        <span class="badge badge-sm badge-error gap-1">
+                                            <i class="fas fa-ban"></i> {{ ouvrage.nb_points_eau_coupes }}
+                                        </span>
+                                    </div>
+                                    {% endif %}
+                                    {% if ouvrage.nb_points_eau_abandonnes > 0 %}
+                                    <div class="tooltip" data-tip="Abandonnés : coupés depuis plus d'un an (non comptés)">
+                                        <span class="badge badge-sm badge-neutral gap-1">
+                                            <i class="fas fa-archive"></i> {{ ouvrage.nb_points_eau_abandonnes }}
+                                        </span>
+                                    </div>
+                                    {% endif %}
+                                    {% if ouvrage.nb_points_eau_sans_date > 0 %}
+                                    <div class="tooltip" data-tip="Sans date de branchement (non comptés)">
+                                        <span class="badge badge-sm badge-warning gap-1">
+                                            <i class="fas fa-question-circle"></i> {{ ouvrage.nb_points_eau_sans_date }}
+                                        </span>
+                                    </div>
+                                    {% endif %}
+                                    {% if ouvrage.nb_compteurs_tete > 0 %}
+                                    <div class="tooltip" data-tip="Compteurs tête">
+                                        <span class="badge badge-sm badge-info gap-1">
+                                            <i class="fas fa-tachometer-alt"></i> {{ ouvrage.nb_compteurs_tete }}
+                                        </span>
+                                    </div>
+                                    {% endif %}
+                                    {% if ouvrage.nb_equipements > 0 %}
+                                    <div class="tooltip" data-tip="Équipements">
+                                        <span class="badge badge-sm badge-secondary gap-1">
+                                            <i class="fas fa-cogs"></i> {{ ouvrage.nb_equipements }}
+                                        </span>
+                                    </div>
+                                    {% endif %}
+                                    {% if ouvrage.nb_tarifs > 0 %}
+                                    <div class="tooltip" data-tip="Tarifs actifs">
+                                        <span class="badge badge-sm badge-accent gap-1">
+                                            <i class="fas fa-coins"></i> {{ ouvrage.nb_tarifs }}
+                                        </span>
+                                    </div>
+                                    {% endif %}
+                                    {% if ouvrage.nb_modalites > 0 %}
+                                    <div class="tooltip" data-tip="Modalités de gestion">
+                                        <span class="badge badge-sm badge-success gap-1">
+                                            <i class="fas fa-handshake"></i> {{ ouvrage.nb_modalites }}
+                                        </span>
+                                    </div>
+                                    {% endif %}
+                                    {% if ouvrage.nb_adresses > 0 %}
+                                    <div class="tooltip" data-tip="Adresses">
+                                        <span class="badge badge-sm badge-warning gap-1">
+                                            <i class="fas fa-map-marker-alt"></i> {{ ouvrage.nb_adresses }}
+                                        </span>
+                                    </div>
+                                    {% endif %}
+                                    {% if ouvrage.nb_dossiers_techniques > 0 %}
+                                    <div class="tooltip" data-tip="Dossier technique">
+                                        <span class="badge badge-sm badge-success gap-1">
+                                            <i class="fas fa-folder-open"></i> {{ ouvrage.nb_dossiers_techniques }}
+                                        </span>
+                                    </div>
+                                    {% endif %}
+                                    {% if ouvrage.nb_cartes_sociales > 0 %}
+                                    <div class="tooltip" data-tip="Cartes sociales">
+                                        <span class="badge badge-sm badge-info gap-1">
+                                            <i class="fas fa-id-card"></i> {{ ouvrage.nb_cartes_sociales }}
+                                        </span>
+                                    </div>
+                                    {% endif %}
+                                    {% if ouvrage.nb_points_eau == 0 and ouvrage.nb_compteurs_tete == 0 and ouvrage.nb_equipements == 0 and ouvrage.nb_tarifs == 0 and ouvrage.nb_modalites == 0 and ouvrage.nb_adresses == 0 and ouvrage.nb_cartes_sociales == 0 %}
+                                    <span class="text-gray-400 text-xs">Aucune donnée</span>
+                                    {% endif %}
+                                </div>
+                            </td>
+                            <td>
+                                <div class="flex gap-1">
+                    <button onclick="event.stopPropagation(); openOuvrageDossierTechniqueModal('{{ ouvrage.pk }}')"
+                            class="btn btn-xs {% if ouvrage.nb_dossiers_techniques > 0 %}btn-outline btn-success{% else %}btn-ghost text-base-content/40{% endif %}"
+                            title="{% if ouvrage.nb_dossiers_techniques > 0 %}Dossier technique : {{ ouvrage.nb_dossiers_techniques }} fichier(s){% else %}Dossier technique non renseigné{% endif %}">
+                                        <i class="fas {% if ouvrage.nb_dossiers_techniques > 0 %}fa-folder-open{% else %}fa-folder{% endif %}"></i>
+                    </button>
+                    <button onclick="event.stopPropagation(); window.openOuvrageEditModal('{{ ouvrage.pk }}', '{{ ouvrage.nom_ouvrage|escapejs }}', '{{ ouvrage.type_ouvrage.pk|default:'' }}', '{{ ouvrage.ouvrage_source.pk|default:'' }}', '{{ ouvrage.ouvrage_source.nom_ouvrage|default:''|escapejs }}', '{{ ouvrage.annee_realisation|default:'' }}', '{{ ouvrage.annee_realisation_avant|default:'' }}', '{{ ouvrage.intervenant|default:''|escapejs }}', {{ ouvrage.saisonnier|yesno:'true,false' }}, '{{ ouvrage.observation|default:''|escapejs }}', '{{ ouvrage.idxlsx|default:'' }}')" class="btn btn-ghost btn-xs" title="Modifier">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <button onclick="event.stopPropagation(); confirmDeleteOuvrage('{{ ouvrage.pk }}', '{{ ouvrage.nom_ouvrage|escapejs }}')" class="btn btn-ghost btn-xs text-error" title="Supprimer" data-protected-delete>
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination du bas -->
+            {% if page_obj.has_other_pages %}
+            <div class="flex justify-center items-center gap-2 mt-6">
+                <div class="join">
+                    {% if page_obj.has_previous %}
+                    <a href="{% querystring page=1 %}" class="join-item btn btn-sm">&laquo;</a>
+                    <a href="{% querystring page=page_obj.previous_page_number %}" class="join-item btn btn-sm">&lsaquo;</a>
+                    {% else %}
+                    <button class="join-item btn btn-sm btn-disabled">&laquo;</button>
+                    <button class="join-item btn btn-sm btn-disabled">&lsaquo;</button>
+                    {% endif %}
+
+                    {% for num in page_obj.paginator.page_range %}
+                        {% if page_obj.number == num %}
+                        <button class="join-item btn btn-sm btn-active">{{ num }}</button>
+                        {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
+                        <a href="{% querystring page=num %}" class="join-item btn btn-sm">{{ num }}</a>
+                        {% endif %}
+                    {% endfor %}
+
+                    {% if page_obj.has_next %}
+                    <a href="{% querystring page=page_obj.next_page_number %}" class="join-item btn btn-sm">&rsaquo;</a>
+                    <a href="{% querystring page=page_obj.paginator.num_pages %}" class="join-item btn btn-sm">&raquo;</a>
+                    {% else %}
+                    <button class="join-item btn btn-sm btn-disabled">&rsaquo;</button>
+                    <button class="join-item btn btn-sm btn-disabled">&raquo;</button>
+                    {% endif %}
+                </div>
+                <span class="text-sm text-gray-600 ml-4">
+                    Page {{ page_obj.number }} sur {{ page_obj.paginator.num_pages }}
+                    ({{ page_obj.paginator.count }} ouvrages)
+                </span>
+            </div>
+            {% endif %}
+
+            {% else %}
+            <div class="text-center py-12">
+                <div class="text-gray-400 text-6xl mb-4">
+                    <i class="fas fa-hammer"></i>
+                </div>
+                <h3 class="text-2xl font-bold mb-4">Aucun ouvrage trouvé</h3>
+                <p class="text-gray-500 mb-6">Il n'y a actuellement aucun ouvrage enregistré dans le système.</p>
+                <button onclick="openOuvrageCreateModal()" class="btn btn-primary">
+                    <i class="fas fa-plus mr-2"></i>Créer le premier ouvrage
+                </button>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Section Actions CRUD pour les données liées -->
+    <div class="hydria-v1-panel card bg-base-100 shadow-xl mt-8">
+        <div class="card-body">
+            <h2 class="card-title mb-6"><i class="fas fa-link"></i> Gestion des données liées</h2>
+            <p class="text-gray-600 mb-6">Accédez aux différentes sections de gestion des données associées aux ouvrages</p>
+
+            <!-- Grille de boutons CRUD compacts -->
+            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                <!-- Points d'eau -->
+                <button class="btn btn-outline btn-info h-20 flex-col gap-1 text-xs" onclick="navigateToModule('points-eau')">
+                    <div class="text-2xl"><i class="fas fa-tint"></i></div>
+                    <span>Points d'eau</span>
+                </button>
+
+                <!-- Équipements -->
+                <button class="btn btn-outline btn-secondary h-20 flex-col gap-1 text-xs" onclick="navigateToModule('equipements')">
+                    <div class="text-2xl"><i class="fas fa-cogs"></i></div>
+                    <span>Équipements</span>
+                </button>
+
+                <!-- Compteurs -->
+                <button class="btn btn-outline btn-primary h-20 flex-col gap-1 text-xs" onclick="navigateToModule('compteurs')">
+                    <div class="text-2xl"><i class="fas fa-tachometer-alt"></i></div>
+                    <span>Compteurs de tête</span>
+                </button>
+
+                <!-- Tarifs -->
+                {% if est_directeur %}
+                <button class="btn btn-outline btn-accent h-20 flex-col gap-1 text-xs" onclick="navigateToModule('tarifs')">
+                    <div class="text-2xl"><i class="fas fa-coins"></i></div>
+                    <span>Tarifs</span>
+                </button>
+
+                <!-- Modalités -->
+                <button class="btn btn-outline btn-success h-20 flex-col gap-1 text-xs" onclick="navigateToModule('modalites-gestion')">
+                    <div class="text-2xl"><i class="fas fa-handshake"></i></div>
+                    <span>Modalités</span>
+                </button>
+                {% endif %}
+
+                <!-- Fournisseurs -->
+                <button class="btn btn-outline btn-warning h-20 flex-col gap-1 text-xs" onclick="navigateToModule('fournisseurs')">
+                    <div class="text-2xl"><i class="fas fa-store"></i></div>
+                    <span>Fournisseurs</span>
+                </button>
+
+                <!-- Adresses -->
+                <button class="btn btn-outline btn-error h-20 flex-col gap-1 text-xs" onclick="navigateToModule('adresses')">
+                    <div class="text-2xl"><i class="fas fa-map-marker-alt"></i></div>
+                    <span>Adresses</span>
+                </button>
+
+                <!-- Cartes sociales -->
+                <button class="btn btn-outline btn-info h-20 flex-col gap-1 text-xs" onclick="navigateToModule('cartes-sociales')">
+                    <div class="text-2xl"><i class="fas fa-id-card"></i></div>
+                    <span>Cartes sociales</span>
+                </button>
+            </div>
+
+            <!-- Actions groupées -->
+            <div class="divider"></div>
+            <div class="flex flex-wrap gap-4 justify-center">
+                <button class="btn btn-outline" onclick="window.print()">
+                    <i class="fas fa-print mr-2"></i>Imprimer la liste
+                </button>
+                <button class="btn btn-outline" onclick="window.location.href='/organisations/export/ouvrages/'">
+                    <i class="fas fa-download mr-2"></i>Exporter CSV
+                </button>
+                <button class="btn btn-outline" onclick="window.location.href='/organisations/rapports/'">
+                    <i class="fas fa-chart-bar mr-2"></i>Rapports
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{{ ouvrages_sources_data|json_script:"ouvrages-sources-data" }}
+
+<!-- Modale de création d'ouvrage -->
+<input type="checkbox" id="ouvrageCreateModal" class="modal-toggle" />
+<div class="modal">
+    <div class="modal-box relative">
+        <label for="ouvrageCreateModal" class="btn btn-sm btn-circle absolute right-2 top-2">âœ•</label>
+        <h3 class="text-lg font-bold mb-4">âž• Créer un nouvel ouvrage</h3>
+
+        <form method="post" action="{% url 'organization:ouvrage_create' %}" id="ouvrageCreateForm" enctype="multipart/form-data">
+            {% csrf_token %}
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Nom de l'ouvrage *</span>
+                    </label>
+                    <input type="text" name="nom_ouvrage" class="input input-bordered w-full" required>
+                </div>
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">IDXls</span>
+                    </label>
+                    <input type="number" name="idxlsx" class="input input-bordered w-full">
+                </div>
+            </div>
+
+            <div class="form-control w-full mb-4">
+                <label class="label">
+                    <span class="label-text">Type d'ouvrage *</span>
+                </label>
+                <select name="type_ouvrage" id="create_type_ouvrage" class="select select-bordered w-full" required>
+                    <option value="">Sélectionner un type</option>
+                    {% for type_ouvrage in types_ouvrages %}
+                    <option value="{{ type_ouvrage.pk }}">{{ type_ouvrage.nom_type_ouvrage }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-control w-full mb-4">
+                <label class="label">
+                    <span class="label-text">Ouvrage AEPG source</span>
+                </label>
+                <div class="relative">
+                    <input type="text" id="create_ouvrage_source_search" class="input input-bordered w-full" placeholder="Sélectionnez d'abord AEPG extension" autocomplete="off" disabled>
+                    <input type="hidden" name="ouvrage_source" id="create_ouvrage_source_id" disabled>
+                    <div id="create_ouvrage_source_dropdown" class="hidden absolute left-0 right-0 top-full z-[80] mt-1 max-h-56 overflow-y-auto rounded-box border border-base-300 bg-base-100 shadow"></div>
+                </div>
+                <label class="label">
+                    <span class="label-text-alt opacity-70">A renseigner seulement pour un ouvrage de type AEPG extension.</span>
+                </label>
+            </div>
+
+
+
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Année de réalisation</span>
+                    </label>
+                    <input type="number" name="annee_realisation" class="input input-bordered" min="1900" max="2100">
+                </div>
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Année de réalisation (avant)</span>
+                    </label>
+                    <input type="number" name="annee_realisation_avant" class="input input-bordered" min="1900" max="2100">
+                </div>
+            </div>
+
+            <div class="form-control w-full mb-4">
+                <label class="label">
+                    <span class="label-text">Intervenant</span>
+                </label>
+                <input type="text" name="intervenant" class="input input-bordered w-full">
+            </div>
+
+            <div class="form-control mb-4">
+                <label class="label cursor-pointer">
+                    <span class="label-text">Ouvrage saisonnier</span>
+                    <input type="checkbox" name="saisonnier" class="checkbox">
+                </label>
+            </div>
+
+            <div class="form-control w-full mb-6">
+                <label class="label">
+                    <span class="label-text">Observations</span>
+                </label>
+                <textarea name="observation" class="textarea textarea-bordered h-24"></textarea>
+            </div>
+
+            <div class="form-control w-full mb-6">
+                <label class="label">
+                    <span class="label-text">Dossier technique</span>
+                </label>
+                <input type="file" name="dossier_technique_files" class="file-input file-input-bordered w-full" multiple>
+                <label class="label">
+                    <span class="label-text-alt">Word, Excel, PDF, images ou tout autre format.</span>
+                </label>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" onclick="closeOuvrageCreateModal()" class="btn btn-ghost">Annuler</button>
+                <button type="submit" class="btn btn-primary">Créer l'ouvrage</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modale d'édition d'ouvrage -->
+<input type="checkbox" id="ouvrageEditModal" class="modal-toggle" />
+<div class="modal">
+    <div class="modal-box relative">
+        <label for="ouvrageEditModal" class="btn btn-sm btn-circle absolute right-2 top-2">âœ•</label>
+        <h3 class="text-lg font-bold mb-4">âœï¸ Modifier l'ouvrage</h3>
+
+        <form method="post" id="ouvrageEditForm" enctype="multipart/form-data">
+            {% csrf_token %}
+            <input type="hidden" name="next" id="edit_next" value="">
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Nom de l'ouvrage *</span>
+                    </label>
+                    <input type="text" name="nom_ouvrage" id="edit_nom_ouvrage" class="input input-bordered w-full" required>
+                </div>
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">IDXls</span>
+                    </label>
+                    <input type="number" name="idxlsx" id="edit_idxlsx" class="input input-bordered w-full">
+                </div>
+            </div>
+
+            <div class="form-control w-full mb-4">
+                <label class="label">
+                    <span class="label-text">Type d'ouvrage *</span>
+                </label>
+                <select name="type_ouvrage" id="edit_type_ouvrage" class="select select-bordered w-full" required>
+                    <option value="">Sélectionner un type</option>
+                    {% for type_ouvrage in types_ouvrages %}
+                    <option value="{{ type_ouvrage.pk }}">{{ type_ouvrage.nom_type_ouvrage }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-control w-full mb-4">
+                <label class="label">
+                    <span class="label-text">Ouvrage AEPG source</span>
+                </label>
+                <div class="relative">
+                    <input type="text" id="edit_ouvrage_source_search" class="input input-bordered w-full" placeholder="Sélectionnez d'abord AEPG extension" autocomplete="off" disabled>
+                    <input type="hidden" name="ouvrage_source" id="edit_ouvrage_source_id" disabled>
+                    <div id="edit_ouvrage_source_dropdown" class="hidden absolute left-0 right-0 top-full z-[80] mt-1 max-h-56 overflow-y-auto rounded-box border border-base-300 bg-base-100 shadow"></div>
+                </div>
+                <label class="label">
+                    <span class="label-text-alt opacity-70">A renseigner seulement pour un ouvrage de type AEPG extension.</span>
+                </label>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Année de réalisation</span>
+                    </label>
+                    <input type="number" name="annee_realisation" id="edit_annee_realisation" class="input input-bordered" min="1900" max="2100">
+                </div>
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Année de réalisation (avant)</span>
+                    </label>
+                    <input type="number" name="annee_realisation_avant" id="edit_annee_realisation_avant" class="input input-bordered" min="1900" max="2100">
+                </div>
+            </div>
+
+            <div class="form-control w-full mb-4">
+                <label class="label">
+                    <span class="label-text">Intervenant</span>
+                </label>
+                <input type="text" name="intervenant" id="edit_intervenant" class="input input-bordered w-full">
+            </div>
+
+            <div class="form-control mb-4">
+                <label class="label cursor-pointer">
+                    <span class="label-text">Ouvrage saisonnier</span>
+                    <input type="checkbox" name="saisonnier" id="edit_saisonnier" class="checkbox">
+                </label>
+            </div>
+
+            <div class="form-control w-full mb-6">
+                <label class="label">
+                    <span class="label-text">Observations</span>
+                </label>
+                <textarea name="observation" id="edit_observation" class="textarea textarea-bordered h-24"></textarea>
+            </div>
+
+            <div class="form-control w-full mb-6">
+                <label class="label">
+                    <span class="label-text">Ajouter au dossier technique</span>
+                </label>
+                <input type="file" name="dossier_technique_files" id="edit_dossier_technique_files" class="file-input file-input-bordered w-full" multiple>
+                <label class="label">
+                    <span class="label-text-alt">Les fichiers ajoutés seront conservés avec les existants.</span>
+                </label>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" onclick="closeOuvrageEditModal()" class="btn btn-ghost">Annuler</button>
+                <button type="submit" class="btn btn-primary">Modifier l'ouvrage</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% for ouvrage in page_obj %}
+<dialog id="ouvrage-dossier-technique-modal-{{ ouvrage.pk }}" class="modal">
+    <div class="modal-box max-w-3xl">
+        <h3 class="font-bold text-lg flex items-center gap-2">
+            <i class="fas fa-folder-open text-warning"></i>
+            <span>Dossier technique - {{ ouvrage.nom_ouvrage }}</span>
+        </h3>
+
+        <div class="mt-4 rounded-xl border border-base-300 bg-base-200/40 p-4">
+            <form method="post" action="{% url 'organization:ouvrage_dossier_technique_upload' ouvrage.pk %}" enctype="multipart/form-data" class="space-y-3">
+                {% csrf_token %}
+                <label class="form-control">
+                    <span class="label pb-1">
+                        <span class="label-text font-medium">Ajouter des fichiers</span>
+                    </span>
+                    <input type="file" name="dossier_technique_files" class="file-input file-input-bordered w-full" multiple>
+                    <span class="label pt-1">
+                        <span class="label-text-alt">Word, Excel, PDF, images ou tout autre format.</span>
+                    </span>
+                </label>
+
+                <div class="flex justify-end">
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="fas fa-upload mr-2"></i>Ajouter au dossier
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <div class="mt-5 space-y-3">
+            {% for dossier in ouvrage.dossiers_techniques.all %}
+            <div class="flex items-center justify-between gap-3 rounded-xl border border-base-300 bg-base-100 px-4 py-3">
+                <div class="min-w-0">
+                    <div class="break-all font-medium">
+                        <i class="fas fa-paperclip mr-2"></i>{{ dossier.display_name }}
+                    </div>
+                    <div class="text-xs opacity-60 mt-1">{{ dossier.created_at|date:"d/m/Y H:i" }}</div>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    {% if dossier.can_preview %}
+                    <button type="button" class="btn btn-info btn-xs"
+                            onclick="openOuvrageTechnicalPreview('{% url 'organization:ouvrage_dossier_technique_preview' dossier.pk %}', '{{ dossier.display_name|escapejs }}', '{{ dossier.preview_kind }}')">
+                        <i class="fas fa-eye mr-1"></i>Aperçu
+                    </button>
+                    {% endif %}
+                    <a href="{{ dossier.fichier.url }}" download class="btn btn-ghost btn-xs">
+                        <i class="fas fa-download mr-1"></i>Télécharger
+                    </a>
+                    <form method="post" action="{% url 'organization:ouvrage_dossier_technique_delete' dossier.pk %}">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-error btn-xs" onclick="return confirm('Supprimer ce fichier du dossier technique ?')">
+                            <i class="fas fa-trash mr-1"></i>Supprimer
+                        </button>
+                    </form>
+                </div>
+            </div>
+            {% empty %}
+            <div class="rounded-xl border border-dashed border-base-300 bg-base-200/30 px-4 py-8 text-center opacity-70">
+                Aucun fichier dans le dossier technique.
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="modal-action">
+            <form method="dialog">
+                <button class="btn">Fermer</button>
+            </form>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+{% endfor %}
+
+<dialog id="ouvrage-technical-preview-modal" class="modal">
+    <div class="modal-box flex h-[92vh] w-11/12 max-w-6xl flex-col overflow-hidden p-0">
+        <div class="flex items-center justify-between gap-3 border-b border-base-300 px-4 py-3">
+            <div class="min-w-0">
+                <h3 class="font-bold"><i class="fas fa-eye mr-2 text-info"></i>Aperçu du fichier</h3>
+                <p id="ouvrage-technical-preview-title" class="truncate text-xs opacity-70"></p>
+            </div>
+            <button type="button" class="btn btn-circle btn-ghost btn-sm" onclick="closeOuvrageTechnicalPreview()"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="min-h-0 flex-1 bg-base-200 p-2">
+            <img id="ouvrage-technical-preview-image" class="hidden h-full w-full object-contain" alt="Aperçu du fichier">
+            <iframe id="ouvrage-technical-preview-frame" class="hidden h-full w-full rounded bg-white" title="Aperçu du fichier"></iframe>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button onclick="closeOuvrageTechnicalPreview()">Fermer</button></form>
+</dialog>
+
+<dialog id="responsibleOuvragesExportModal" class="modal">
+    <div class="modal-box max-w-3xl">
+        <h3 class="font-bold text-lg">
+            <i class="fas fa-user-check mr-2 text-info"></i>Exporter par employé responsable
+        </h3>
+        <p class="py-3 text-sm text-base-content/70">
+            Le fichier contiendra les ouvrages sous la responsabilité actuelle de l'employé choisi ou de ses subordonnés actifs.
+        </p>
+        <form id="responsibleOuvragesExportForm" method="get" action="{% url 'organization:export_ouvrages_responsable_excel' %}">
+            <div class="grid grid-cols-1 gap-4">
+                <div class="form-control">
+                    <label class="label" for="responsibleExportEmployee"><span class="label-text font-semibold">Employé actif</span></label>
+                    <select name="responsible_employee" id="responsibleExportEmployee" class="select select-bordered w-full" required>
+                        <option value="">Choisir un employé</option>
+                        {% for base_group in employee_groups %}
+                        <optgroup label="{{ base_group.label }}">
+                            {% for poste_group in base_group.postes %}
+                            <option disabled>── {{ poste_group.label }} ──</option>
+                                {% for employee in poste_group.employees %}
+                                <option value="{{ employee.pk }}">{{ employee.surnom|default:employee.nom_employe }}</option>
+                                {% endfor %}
+                            {% endfor %}
+                        </optgroup>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('responsibleOuvragesExportModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-info"><i class="fas fa-download mr-2"></i>Exporter</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>Fermer</button></form>
+</dialog>
+
+<dialog id="customOuvragesExportModal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">
+            <i class="fas fa-file-excel mr-2 text-success"></i>Exporter les ouvrages
+        </h3>
+        <p class="py-3 text-sm text-base-content/70">Choisissez l'organisation affectée, la région et l'année à inclure dans l'export Excel.</p>
+
+        <form id="customOuvragesExportForm" method="get" action="{% url 'organization:export_ouvrages_custom_excel' %}">
+            <input type="hidden" id="customOuvragesExportVariant" value="standard">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Organisation</span>
+                    </label>
+                    <select name="organisation" id="customExportOrganisation" class="select select-bordered w-full">
+                        <option value="all">Toutes les organisations</option>
+                        {% for organisation in organisations %}
+                        <option value="{{ organisation.pk }}">{{ organisation.nom_organisation }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Région</span>
+                    </label>
+                    <select name="region" id="customExportRegion" class="select select-bordered w-full">
+                        <option value="all">Toutes les régions</option>
+                        {% for region in regions %}
+                        <option value="{{ region.pk }}">{{ region.nom_region }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Année</span>
+                    </label>
+                    <input
+                        type="number"
+                        name="annee"
+                        id="customExportYear"
+                        class="input input-bordered w-full"
+                        min="2000"
+                        max="2100"
+                        step="1"
+                        value="2025"
+                    >
+                </div>
+            </div>
+
+            <div class="alert alert-info mt-4 text-sm">
+                <i class="fas fa-info-circle"></i>
+                <span id="customOuvragesExportHelp">Export standard: localisation, ouvrage, type, points d'eau, habitants, organisation affectée.</span>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('customOuvragesExportModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-success">
+                    <i class="fas fa-download mr-2"></i>Exporter
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<dialog id="modalitesExportModal" class="modal">
+    <div class="modal-box max-w-lg">
+        <h3 class="font-bold text-lg">
+            <i class="fas fa-file-excel mr-2 text-success"></i>Exporter les modalités
+        </h3>
+        <p class="py-3 text-sm text-base-content/70">
+            Pour quelle organisation souhaitez-vous générer l'export ?
+        </p>
+
+        <form method="get" action="{% url 'organization:export_excel' 'modalitegestion' %}">
+            <div class="form-control">
+                <label class="label" for="modalitesExportOrganisation">
+                    <span class="label-text font-semibold">Organisation</span>
+                </label>
+                <select name="organisation" id="modalitesExportOrganisation" class="select select-bordered w-full" required>
+                    <option value="">Choisir une organisation</option>
+                    {% for organisation in organisations %}
+                        <option value="{{ organisation.pk }}">{{ organisation.nom_organisation }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="alert alert-info mt-4 text-sm">
+                <i class="fas fa-info-circle"></i>
+                <span>Le fichier contiendra uniquement les modalités de l'organisation sélectionnée, avec l'année de réalisation, la population desservie et le nombre de points d'eau par type. Un second onglet présentera la synthèse par commune. Les périodes successives identiques seront fusionnées.</span>
+            </div>
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('modalitesExportModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-success">
+                    <i class="fas fa-download mr-2"></i>Exporter
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>Fermer</button></form>
+</dialog>
+
+<!-- Modal Import Excel -->
+<dialog id="importExcelModal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg text-success">
+            <i class="fas fa-file-excel mr-2"></i>Importer des données Excel
+        </h3>
+        <p class="py-4" id="importExcelDescription">Sélectionnez un fichier Excel Ã  importer.</p>
+
+        <form id="importExcelForm" method="post" enctype="multipart/form-data">
+            {% csrf_token %}
+
+            <!-- Lien de téléchargement du template -->
+            <div class="alert alert-info mb-4">
+                <i class="fas fa-info-circle"></i>
+                <div>
+                    <p class="font-semibold">Besoin du template Excel A</p>
+                    <a id="templateDownloadLinkOuvrages" href="#" class="link link-primary" target="_blank">
+                        <i class="fas fa-download mr-2"></i>Télécharger le template pour ce type de données
+                    </a>
+                </div>
+            </div>
+
+            <div class="form-control w-full">
+                <label class="label">
+                    <span class="label-text">Fichier Excel</span>
+                </label>
+                <input type="file" name="excel_file" accept=".xlsx,.xls" class="file-input file-input-bordered w-full" required>
+                <label class="label">
+                    <span class="label-text-alt">Format Excel (.xlsx ou .xls) avec en-tÃªtes.</span>
+                </label>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('importExcelModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-success">
+                    <i class="fas fa-upload mr-2"></i>Importer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal d'import GPS -->
+<dialog id="importGPSModal" class="modal">
+    <div class="modal-box max-w-5xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-map-marker-alt text-warning mr-2"></i>
+            <span id="gpsModalTitle">Importer coordonnées GPS</span>
+        </h3>
+
+        <div class="alert alert-info mb-4">
+            <i class="fas fa-info-circle"></i>
+            <div>
+                <p class="font-semibold">Format du fichier Excel attendu :</p>
+                <ul class="list-disc list-inside text-sm mt-2">
+                    <li><strong>Colonne A</strong> : ID (UUID de l'enregistrement)</li>
+                    <li><strong>Colonne B</strong> : Nom (pour vérification visuelle)</li>
+                    <li><strong>Colonne C</strong> : Latitude (format décimal, ex: -18.8792)</li>
+                    <li><strong>Colonne D</strong> : Longitude (format décimal, ex: 47.5079)</li>
+                </ul>
+                <p class="text-xs mt-2 text-warning">âš ï¸ Seules les coordonnées GPS seront mises Ã  jour, le reste des données reste inchangé.</p>
+            </div>
+        </div>
+
+        <form id="importGPSForm" method="POST" enctype="multipart/form-data" class="space-y-4">
+            {% csrf_token %}
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text">Fichier Excel (.xlsx)</span>
+                </label>
+                <input type="file" name="excel_file" accept=".xlsx,.xls" class="file-input file-input-bordered file-input-warning w-full" required />
+            </div>
+
+            <div id="gpsImportProgress" class="hidden space-y-3 rounded-xl border border-base-300 bg-base-200 p-4">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                        <div class="font-semibold">Mise à jour et vérification en cours</div>
+                        <div id="gpsImportProgressText" class="text-sm opacity-70">Préparation du fichier…</div>
+                    </div>
+                    <span id="gpsImportProgressBadge" class="badge badge-info">0 / 0</span>
+                </div>
+                <progress id="gpsImportProgressBar" class="progress progress-info w-full" value="0" max="100"></progress>
+                <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <div class="stat rounded-lg bg-base-100 p-3"><div class="stat-title text-xs">Vérifiés</div><div id="gpsImportVerifiedCount" class="stat-value text-xl text-success">0</div></div>
+                    <div class="stat rounded-lg bg-base-100 p-3"><div class="stat-title text-xs">Modifiés</div><div id="gpsImportUpdatedCount" class="stat-value text-xl text-info">0</div></div>
+                    <div class="stat rounded-lg bg-base-100 p-3"><div class="stat-title text-xs">Déjà identiques</div><div id="gpsImportUnchangedCount" class="stat-value text-xl">0</div></div>
+                    <div class="stat rounded-lg bg-base-100 p-3"><div class="stat-title text-xs">Erreurs</div><div id="gpsImportErrorCount" class="stat-value text-xl text-error">0</div></div>
+                </div>
+                <div class="max-h-80 overflow-auto rounded-lg border border-base-300 bg-base-100">
+                    <table class="table table-xs table-pin-rows">
+                        <thead><tr><th>Ligne</th><th id="gpsImportEntityHeader">Élément</th><th>Coordonnées relues</th><th>Vérification</th></tr></thead>
+                        <tbody id="gpsImportResultsBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button id="gpsImportSubmitButton" type="submit" class="btn btn-warning">
+                    <i class="fas fa-upload mr-2"></i>Importer GPS
+                </button>
+                <button id="gpsImportCloseButton" type="button" onclick="document.getElementById('importGPSModal').close()" class="btn">Annuler</button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+function submitOuvrageCascadeFilter(level) {
+    const employee = document.getElementById('ouvrageResponsibleEmployeeFilter');
+    const region = document.getElementById('ouvrageRegionFilter');
+    const district = document.getElementById('ouvrageDistrictFilter');
+    const commune = document.getElementById('ouvrageCommuneFilter');
+    if (level === 'employee') {
+        if (region) region.value = 'all';
+        if (district) district.value = 'all';
+        if (commune) commune.value = 'all';
+    } else if (level === 'region') {
+        if (district) district.value = 'all';
+        if (commune) commune.value = 'all';
+    } else if (level === 'district' && commune) {
+        commune.value = 'all';
+    }
+    const form = (employee || region || district || commune)?.form;
+    if (form) form.submit();
+}
+
+function openCustomOuvragesExportModal(includeExtended = false) {
+    const modal = document.getElementById('customOuvragesExportModal');
+    const form = document.getElementById('customOuvragesExportForm');
+    const organisationField = document.getElementById('customExportOrganisation');
+    const regionField = document.getElementById('customExportRegion');
+    const yearField = document.getElementById('customExportYear');
+    const variantField = document.getElementById('customOuvragesExportVariant');
+    const helpField = document.getElementById('customOuvragesExportHelp');
+
+    if (organisationField) {
+        organisationField.value = '{{ organisation_filter|default:"all"|escapejs }}' || 'all';
+    }
+    if (regionField) {
+        regionField.value = 'all';
+    }
+    if (yearField && !yearField.value) {
+        yearField.value = '2025';
+    }
+    if (variantField) {
+        variantField.value = includeExtended ? 'extended' : 'standard';
+    }
+    if (form) {
+        form.action = includeExtended
+            ? '{% url "organization:export_ouvrages_custom_excel_plus" %}'
+            : '{% url "organization:export_ouvrages_custom_excel" %}';
+    }
+    if (helpField) {
+        helpField.textContent = includeExtended
+            ? "Export personnalisé +: ajoute la modalité de paiement en vigueur, l'agent de recouvrement responsable, le grading 2025 et le montant à collecter sur l'année choisie."
+            : "Export standard: localisation, ouvrage, type, points d'eau, habitants, organisation affectée.";
+    }
+    if (modal) {
+        modal.showModal();
+    }
+}
+
+function openResponsibleOuvragesExportModal() {
+    const modal = document.getElementById('responsibleOuvragesExportModal');
+    const employee = document.getElementById('responsibleExportEmployee');
+    if (employee) employee.value = '{{ responsible_employee_filter|default:""|escapejs }}';
+    if (modal) modal.showModal();
+}
+
+function openModalitesExportModal() {
+    const modal = document.getElementById('modalitesExportModal');
+    const organisationField = document.getElementById('modalitesExportOrganisation');
+    const currentOrganisation = '{{ organisation_filter|default:""|escapejs }}';
+    if (organisationField) {
+        organisationField.value = currentOrganisation && currentOrganisation !== 'all'
+            ? currentOrganisation
+            : '';
+    }
+    if (modal) modal.showModal();
+}
+
+function showImportExcelModal(modelKey, modelDisplayName, appName) {
+    const modal = document.getElementById('importExcelModal');
+    const form = document.getElementById('importExcelForm');
+    const description = document.getElementById('importExcelDescription');
+    const templateLink = document.getElementById('templateDownloadLinkOuvrages');
+
+    // Construire l'URL d'import Excel
+    const importUrl = `/${appName === 'geography' ? 'geographie' :
+                       appName === 'organization' ? 'organisations' :
+                       appName === 'employees' ? 'employes' : appName}/import-excel/${modelKey}/`;
+
+    form.action = importUrl;
+    description.textContent = `Importer des ${modelDisplayName} depuis un fichier Excel.`;
+
+    // Construire l'URL du template Excel
+    const templateUrl = `/${appName === 'geography' ? 'geographie' :
+                         appName === 'organization' ? 'organisations' :
+                         appName === 'employees' ? 'employes' : appName}/excel-template/${modelKey}/`;
+    templateLink.href = templateUrl;
+
+    // Ouvrir le modal
+    modal.showModal();
+}
+
+function showGPSImportModal(modelType) {
+    const modal = document.getElementById('importGPSModal');
+    const form = document.getElementById('importGPSForm');
+    const title = document.getElementById('gpsModalTitle');
+    form.dataset.modelType = modelType;
+    resetGPSImportProgress();
+
+    // Configurer le formulaire selon le type
+    if (modelType === 'equipements') {
+        form.action = '{% url "organization:import_excel_update_equipements_gps" %}';
+        title.textContent = 'Importer GPS - Equipements';
+        document.getElementById('gpsImportEntityHeader').textContent = 'Équipement';
+    } else if (modelType === 'pointseaus') {
+        form.action = '{% url "organization:import_excel_update_points_eau_gps" %}';
+        title.textContent = 'Importer GPS - Points d\'Eau';
+        document.getElementById('gpsImportEntityHeader').textContent = "Point d'eau";
+    }
+
+    // Ouvrir le modal
+    modal.showModal();
+}
+
+function resetGPSImportProgress() {
+    const progress = document.getElementById('gpsImportProgress');
+    progress?.classList.add('hidden');
+    document.getElementById('gpsImportResultsBody').innerHTML = '';
+    ['gpsImportVerifiedCount', 'gpsImportUpdatedCount', 'gpsImportUnchangedCount', 'gpsImportErrorCount'].forEach(id => {
+        document.getElementById(id).textContent = '0';
+    });
+    document.getElementById('gpsImportProgressBar').value = 0;
+    document.getElementById('gpsImportProgressBar').classList.remove('progress-success', 'progress-warning', 'progress-error');
+    document.getElementById('gpsImportProgressBar').classList.add('progress-info');
+    document.getElementById('gpsImportProgressBadge').textContent = '0 / 0';
+    document.getElementById('gpsImportProgressText').textContent = 'Préparation du fichier…';
+    document.getElementById('gpsImportSubmitButton').innerHTML = '<i class="fas fa-upload mr-2"></i>Importer GPS';
+    document.getElementById('gpsImportCloseButton').textContent = 'Annuler';
+}
+
+function appendGPSImportResult(event) {
+    const row = document.createElement('tr');
+    const lineCell = document.createElement('td');
+    const pointCell = document.createElement('td');
+    const coordinatesCell = document.createElement('td');
+    const statusCell = document.createElement('td');
+    const badge = document.createElement('span');
+
+    lineCell.textContent = event.row;
+    pointCell.textContent = event.name || event.excel_name || event.id;
+    pointCell.title = event.id || '';
+    coordinatesCell.className = 'font-mono';
+    coordinatesCell.textContent = event.status === 'verified'
+        ? Number(event.latitude).toFixed(8) + ', ' + Number(event.longitude).toFixed(8)
+        : '—';
+    badge.className = 'badge badge-sm ' + (event.status === 'verified' ? 'badge-success' : 'badge-error');
+    badge.textContent = event.message;
+    statusCell.appendChild(badge);
+    row.append(lineCell, pointCell, coordinatesCell, statusCell);
+    document.getElementById('gpsImportResultsBody').appendChild(row);
+    row.scrollIntoView({ block: 'nearest' });
+}
+
+function updateGPSImportStream(event, counters) {
+    if (event.event === 'start') {
+        document.getElementById('gpsImportProgressText').textContent = event.total + ' ligne(s) à traiter.';
+        document.getElementById('gpsImportProgressBadge').textContent = '0 / ' + event.total;
+        return;
+    }
+    if (event.event === 'row') {
+        if (event.status === 'verified') {
+            counters.verified += 1;
+            if (event.changed) counters.updated += 1;
+            else counters.unchanged += 1;
+        } else {
+            counters.errors += 1;
+        }
+        const percentage = event.total ? Math.round((event.position / event.total) * 100) : 100;
+        document.getElementById('gpsImportProgressBar').value = percentage;
+        document.getElementById('gpsImportProgressBadge').textContent = event.position + ' / ' + event.total;
+        document.getElementById('gpsImportProgressText').textContent = 'Ligne Excel ' + event.row + ' : ' + event.message;
+        document.getElementById('gpsImportVerifiedCount').textContent = counters.verified;
+        document.getElementById('gpsImportUpdatedCount').textContent = counters.updated;
+        document.getElementById('gpsImportUnchangedCount').textContent = counters.unchanged;
+        document.getElementById('gpsImportErrorCount').textContent = counters.errors;
+        appendGPSImportResult(event);
+        return;
+    }
+    if (event.event === 'complete') {
+        document.getElementById('gpsImportProgressBar').value = 100;
+        document.getElementById('gpsImportProgressBar').classList.remove('progress-info');
+        document.getElementById('gpsImportProgressBar').classList.add(event.errors ? 'progress-warning' : 'progress-success');
+        document.getElementById('gpsImportProgressText').textContent =
+            'Terminé : ' + event.verified + ' vérifié(s) en base, ' + event.updated + ' modifié(s), ' + event.errors + ' erreur(s).';
+    }
+}
+
+document.getElementById('importGPSForm')?.addEventListener('submit', async function (submitEvent) {
+    if (!['pointseaus', 'equipements'].includes(this.dataset.modelType)) return;
+    submitEvent.preventDefault();
+
+    const progress = document.getElementById('gpsImportProgress');
+    const submitButton = document.getElementById('gpsImportSubmitButton');
+    const closeButton = document.getElementById('gpsImportCloseButton');
+    resetGPSImportProgress();
+    progress.classList.remove('hidden');
+    submitButton.disabled = true;
+    closeButton.disabled = true;
+    submitButton.innerHTML = '<span class="loading loading-spinner loading-sm"></span> Import en cours';
+    const counters = { verified: 0, updated: 0, unchanged: 0, errors: 0 };
+
+    try {
+        const response = await fetch(this.action, {
+            method: 'POST',
+            body: new FormData(this),
+            credentials: 'same-origin',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        if (!response.ok || !response.body) throw new Error('Le serveur a refusé l’import (HTTP ' + response.status + ').');
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        while (true) {
+            const { value, done } = await reader.read();
+            buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            lines.filter(Boolean).forEach(line => updateGPSImportStream(JSON.parse(line), counters));
+            if (done) break;
+        }
+        if (buffer.trim()) updateGPSImportStream(JSON.parse(buffer), counters);
+    } catch (error) {
+        document.getElementById('gpsImportProgressText').textContent = 'Erreur : ' + error.message;
+        document.getElementById('gpsImportProgressBar').classList.remove('progress-info');
+        document.getElementById('gpsImportProgressBar').classList.add('progress-error');
+    } finally {
+        submitButton.disabled = false;
+        closeButton.disabled = false;
+        closeButton.textContent = 'Fermer';
+        submitButton.innerHTML = '<i class="fas fa-redo mr-2"></i>Relancer l’import';
+    }
+});
+
+(function () {
+    const TOGGLE_URL_TEMPLATE = "{% url 'organization:api_ouvrage_toggle_fonctionnel' '00000000-0000-0000-0000-000000000000' %}";
+
+    function getCookieLocal(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(';').shift();
+        return null;
+    }
+
+    document.querySelectorAll('.ouvrage-fonctionnel-toggle').forEach(function (checkbox) {
+        checkbox.addEventListener('change', function (event) {
+            event.stopPropagation();
+            const ouvrageId = this.dataset.ouvrageId;
+            const nouvelleValeur = this.checked;
+            const checkboxEl = this;
+            checkboxEl.disabled = true;
+            const toggleUrl = TOGGLE_URL_TEMPLATE.replace('00000000-0000-0000-0000-000000000000', ouvrageId);
+            fetch(toggleUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookieLocal('csrftoken'),
+                },
+                body: JSON.stringify({ marque_non_fonctionnel: nouvelleValeur }),
+            })
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (!data.success) {
+                        alert('Erreur : ' + (data.error || 'modification impossible'));
+                        checkboxEl.checked = !nouvelleValeur;
+                    } else {
+                        const label = checkboxEl.closest('label').querySelector('span.text-xs');
+                        if (label) {
+                            label.textContent = data.marque_non_fonctionnel ? 'Non fonc.' : 'OK';
+                            label.classList.toggle('text-error', data.marque_non_fonctionnel);
+                            label.classList.toggle('text-success', !data.marque_non_fonctionnel);
+                        }
+                    }
+                })
+                .catch(function () {
+                    alert('Erreur réseau : modification impossible.');
+                    checkboxEl.checked = !nouvelleValeur;
+                })
+                .finally(function () {
+                    checkboxEl.disabled = false;
+                });
+        });
+    });
+})();
+</script>
+
+{% endblock %}

@@ -1,0 +1,399 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block head %}
+<style>
+.crud-card {
+    transition: all 0.3s ease;
+}
+.crud-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+}
+.crud-actions {
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+.crud-card:hover .crud-actions {
+    opacity: 1;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8">
+        <div class="mb-4 sm:mb-0">
+            <h1 class="text-3xl font-bold text-base-content">{{ title }}</h1>
+            <p class="text-base-content/70 mt-2">Gestion des types de désignations et navigation vers les désignations</p>
+        </div>
+
+        <!-- Bouton Nouveau -->
+        <button onclick="openCreateModal()" class="btn btn-primary btn-lg">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+            </svg>
+            Nouveau Type
+        </button>
+    </div>
+
+    <!-- Statistiques -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div class="stat bg-base-200 rounded-lg">
+            <div class="stat-title">Types de Désignations</div>
+            <div class="stat-value" id="total-types">0</div>
+            <div class="stat-desc">Total enregistrés</div>
+        </div>
+        <div class="stat bg-base-200 rounded-lg">
+            <div class="stat-title">Désignations Liées</div>
+            <div class="stat-value" id="total-designations">0</div>
+            <div class="stat-desc">Réparties dans les types</div>
+        </div>
+        <div class="stat bg-base-200 rounded-lg">
+            <div class="stat-title">Types Actifs</div>
+            <div class="stat-value" id="types-actifs">0</div>
+            <div class="stat-desc">En utilisation</div>
+        </div>
+    </div>
+
+    <!-- Liste des Types -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="types-container">
+        <!-- Les types seront chargés ici par JavaScript -->
+    </div>
+
+    <!-- Message si aucun type -->
+    <div id="no-types" class="text-center py-16 hidden">
+        <div class="text-6xl mb-4">🏷️</div>
+        <h3 class="text-xl font-semibold mb-2">Aucun type de désignation</h3>
+        <p class="text-base-content/70 mb-6">Créez votre premier type de désignation pour commencer</p>
+        <button onclick="openCreateModal()" class="btn btn-primary">
+            Créer le Premier Type
+        </button>
+    </div>
+</div>
+
+<!-- Modal Créer/Modifier Type -->
+<div id="type-modal" class="modal">
+    <div class="modal-box w-11/12 max-w-md">
+        <h3 class="font-bold text-lg mb-4" id="modal-title">Nouveau Type de Désignation</h3>
+        <form id="type-form">
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Nom du type *</span>
+                </label>
+                <input type="text" id="nom" class="input input-bordered" placeholder="Ex: Matériaux, Équipements..." required>
+            </div>
+
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text">Description</span>
+                </label>
+                <textarea id="description" class="textarea textarea-bordered" placeholder="Description optionnelle..." rows="3"></textarea>
+            </div>
+
+            <div class="form-control mb-4">
+                <label class="cursor-pointer label">
+                    <span class="label-text">Type actif</span>
+                    <input type="checkbox" id="is_active" class="checkbox checkbox-primary" checked>
+                </label>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="closeModal()">Annuler</button>
+                <button type="submit" class="btn btn-primary" id="submit-btn">Créer</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal Confirmation Suppression -->
+<div id="delete-modal" class="modal">
+    <div class="modal-box w-11/12 max-w-sm">
+        <h3 class="font-bold text-lg mb-4">Confirmer la suppression</h3>
+        <p class="mb-4">Êtes-vous sûr de vouloir supprimer ce type de désignation ?</p>
+        <p class="text-warning text-sm mb-6" id="delete-warning"></p>
+
+        <div class="modal-action">
+            <button type="button" class="btn" onclick="closeDeleteModal()">Annuler</button>
+            <button type="button" class="btn btn-error" onclick="confirmDelete()" id="confirm-delete-btn">Supprimer</button>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentTypeId = null;
+let deleteTypeId = null;
+
+// Charger les types au démarrage
+document.addEventListener('DOMContentLoaded', loadTypes);
+
+async function loadTypes() {
+    try {
+        const response = await fetch('/plannings/crud/api/types-designations/');
+        const types = await response.json();
+
+        const container = document.getElementById('types-container');
+        const noTypesDiv = document.getElementById('no-types');
+
+        if (types.length === 0) {
+            container.classList.add('hidden');
+            noTypesDiv.classList.remove('hidden');
+        } else {
+            container.classList.remove('hidden');
+            noTypesDiv.classList.add('hidden');
+
+            container.innerHTML = types.map(type => `
+                <div class="card bg-base-100 shadow-lg crud-card">
+                    <div class="card-body">
+                        <div class="flex justify-between items-start">
+                            <h2 class="card-title text-lg">${type.nom}</h2>
+                            <div class="dropdown dropdown-end crud-actions">
+                                <label tabindex="0" class="btn btn-ghost btn-circle btn-sm">
+                                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                        <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z"/>
+                                    </svg>
+                                </label>
+                                <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52">
+                                    <li><a href="#" class="js-edit-type" data-id="${type.id}" data-nom="${escapeHtml(type.nom)}" data-description="${escapeHtml(type.description || '')}" data-active="${type.is_active}">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                                        </svg>
+                                        Modifier
+                                    </a></li>
+                                    <li><a href="#" class="js-delete-type" data-id="${type.id}" data-nom="${escapeHtml(type.nom)}" data-count="${type.designations_count || 0}">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                        </svg>
+                                        Supprimer
+                                    </a></li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        ${type.description ? `<p class="text-sm text-base-content/70 mt-2">${type.description}</p>` : ''}
+
+                        <div class="flex items-center gap-2 mt-2">
+                            <span class="badge badge-secondary">${type.designations_count} désignation${type.designations_count > 1 ? 's' : ''}</span>
+                            <span class="badge ${type.is_active ? 'badge-success' : 'badge-ghost'}">${type.is_active ? 'Actif' : 'Inactif'}</span>
+                        </div>
+
+                        <div class="card-actions justify-between mt-4">
+                            <button class="btn btn-outline btn-sm js-view-designations" data-id="${type.id}" data-nom="${escapeHtml(type.nom)}">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                </svg>
+                                Voir Désignations
+                            </button>
+                            <small class="text-base-content/60">
+                                ${type.created_at ? new Date(type.created_at).toLocaleDateString('fr-FR') : 'N/A'}
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Mettre à jour les statistiques
+        updateStats(types);
+
+    } catch (error) {
+        console.error('Erreur lors du chargement:', error);
+        showAlert('Erreur lors du chargement des types de désignations', 'error');
+    }
+}
+
+function updateStats(types) {
+    document.getElementById('total-types').textContent = types.length;
+
+    const totalDesignations = types.reduce((sum, type) => sum + type.designations_count, 0);
+    document.getElementById('total-designations').textContent = totalDesignations;
+
+    const typesActifs = types.filter(type => type.is_active).length;
+    document.getElementById('types-actifs').textContent = typesActifs;
+}
+
+function openCreateModal() {
+    currentTypeId = null;
+    document.getElementById('modal-title').textContent = 'Nouveau Type de Désignation';
+    document.getElementById('submit-btn').textContent = 'Créer';
+    document.getElementById('nom').value = '';
+    document.getElementById('description').value = '';
+    document.getElementById('is_active').checked = true;
+    document.getElementById('type-modal').classList.add('modal-open');
+}
+
+function openEditModal(id, nom, description, isActive) {
+    currentTypeId = id;
+    document.getElementById('modal-title').textContent = 'Modifier Type de Désignation';
+    document.getElementById('submit-btn').textContent = 'Modifier';
+    document.getElementById('nom').value = nom;
+    document.getElementById('description').value = description;
+    document.getElementById('is_active').checked = isActive;
+    document.getElementById('type-modal').classList.add('modal-open');
+}
+
+function closeModal() {
+    document.getElementById('type-modal').classList.remove('modal-open');
+}
+
+function openDeleteModal(id, nom, designationsCount) {
+    deleteTypeId = id;
+    const warning = document.getElementById('delete-warning');
+    const confirmBtn = document.getElementById('confirm-delete-btn');
+
+    if (designationsCount > 0) {
+        warning.textContent = `Ce type contient ${designationsCount} désignation(s). Suppression impossible.`;
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Suppression impossible';
+    } else {
+        warning.textContent = `Type "${nom}" sera définitivement supprimé.`;
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Supprimer';
+    }
+
+    document.getElementById('delete-modal').classList.add('modal-open');
+}
+
+function closeDeleteModal() {
+    document.getElementById('delete-modal').classList.remove('modal-open');
+}
+
+// Soumettre le formulaire
+document.getElementById('type-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const formData = {
+        nom: document.getElementById('nom').value.trim(),
+        description: document.getElementById('description').value.trim(),
+        is_active: document.getElementById('is_active').checked
+    };
+
+    if (!formData.nom) {
+        showAlert('Le nom du type est obligatoire', 'error');
+        return;
+    }
+
+    try {
+        const url = currentTypeId
+            ? `/plannings/crud/api/types-designations/${currentTypeId}/update/`
+            : '/plannings/crud/api/types-designations/create/';
+
+        const method = currentTypeId ? 'PUT' : 'POST';
+
+        const response = await fetch(url, {
+            method: method,
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrfToken()
+            },
+            body: JSON.stringify(formData)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            showAlert(result.message, 'success');
+            closeModal();
+            loadTypes();
+        } else {
+            showAlert(result.message, 'error');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        showAlert('Erreur lors de l\'opération', 'error');
+    }
+});
+
+async function confirmDelete() {
+    if (!deleteTypeId) return;
+
+    try {
+        const response = await fetch(`/plannings/crud/api/types-designations/${deleteTypeId}/delete/`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRFToken': getCsrfToken()
+            }
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            showAlert(result.message, 'success');
+            closeDeleteModal();
+            loadTypes();
+        } else {
+            showAlert(result.message, 'error');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        showAlert('Erreur lors de la suppression', 'error');
+    }
+}
+
+function viewDesignations(typeId, typeNom) {
+    window.location.href = `/plannings/crud/designations/type/${typeId}/`;
+}
+
+function escapeHtml(unsafe) {
+    return unsafe
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+function showAlert(message, type = 'info') {
+    const alertClass = {
+        'success': 'alert-success',
+        'error': 'alert-error',
+        'warning': 'alert-warning',
+        'info': 'alert-info'
+    }[type] || 'alert-info';
+
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert ${alertClass} fixed top-4 right-4 w-auto max-w-sm z-50`;
+    alertDiv.innerHTML = `
+        <span>${message}</span>
+        <button class="btn btn-ghost btn-sm" onclick="this.parentElement.remove()">×</button>
+    `;
+
+    document.body.appendChild(alertDiv);
+
+    setTimeout(() => {
+        if (alertDiv.parentElement) {
+            alertDiv.remove();
+        }
+    }, 5000);
+}
+
+function getCsrfToken() {
+    return document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+}
+
+document.getElementById('types-container').addEventListener('click', function(e) {
+    const editLink = e.target.closest('.js-edit-type');
+    if (editLink) {
+        e.preventDefault();
+        openEditModal(editLink.dataset.id, editLink.dataset.nom, editLink.dataset.description, editLink.dataset.active === 'true');
+        return;
+    }
+
+    const deleteLink = e.target.closest('.js-delete-type');
+    if (deleteLink) {
+        e.preventDefault();
+        openDeleteModal(deleteLink.dataset.id, deleteLink.dataset.nom, parseInt(deleteLink.dataset.count || '0', 10));
+        return;
+    }
+
+    const viewButton = e.target.closest('.js-view-designations');
+    if (viewButton) {
+        e.preventDefault();
+        viewDesignations(viewButton.dataset.id, viewButton.dataset.nom);
+    }
+});
+</script>
+{% endblock %}

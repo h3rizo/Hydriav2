@@ -1,0 +1,322 @@
+{% extends logistics_shell_base_template|default:"base.html" %}
+{% load humanize %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- En-tête -->
+    <div class="flex justify-between items-center">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">{{ title }}</h1>
+            <p class="text-sm text-base-content/70 mt-1">Vue consolidée des achats par désignation</p>
+        </div>
+
+        <div class="flex gap-2">
+            <a href="{% url 'inventory:purchases' %}" class="btn btn-ghost btn-sm">
+                <i class="fas fa-list mr-2"></i>Liste des achats
+            </a>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <h3 class="card-title text-lg">
+                <i class="fas fa-filter mr-2"></i>Filtres
+            </h3>
+
+            <form method="GET" id="filterForm" class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <!-- Filtre Désignation avec autocomplétion -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Recherche désignation</span>
+                    </label>
+                    <div class="relative">
+                        <input
+                            type="text"
+                            id="designationSearch"
+                            name="designation_search"
+                            class="input input-bordered input-sm w-full pr-8"
+                            placeholder="Taper pour rechercher..."
+                            value="{{ filter_designation_search }}"
+                            autocomplete="off"
+                        >
+                        <button type="button" onclick="clearDesignation()" class="btn btn-ghost btn-xs absolute right-1 top-1" title="Effacer">
+                            <i class="fas fa-times"></i>
+                        </button>
+                        <!-- Dropdown suggestions -->
+                        <div id="designationSuggestions" class="absolute z-50 w-full mt-1 bg-base-100 shadow-lg rounded-lg max-h-60 overflow-y-auto hidden border border-base-300">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Filtre Fournisseur -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Fournisseur</span>
+                    </label>
+                    <select name="fournisseur" class="select select-bordered select-sm">
+                        <option value="">Tous les fournisseurs</option>
+                        {% for fournisseur in fournisseurs %}
+                            <option value="{{ fournisseur.id }}" {% if filter_fournisseur == fournisseur.id|stringformat:"s" %}selected{% endif %}>
+                                {{ fournisseur.nom_fournisseur }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Filtre Magasin -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Magasin</span>
+                    </label>
+                    <select name="magasin" class="select select-bordered select-sm">
+                        <option value="">Tous les magasins</option>
+                        {% for magasin in magasins %}
+                            <option value="{{ magasin.id }}" {% if filter_magasin == magasin.id|stringformat:"s" %}selected{% endif %}>
+                                {{ magasin.nom_magasin }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Date Début -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Date début</span>
+                    </label>
+                    <input type="date" name="date_debut" class="input input-bordered input-sm" value="{{ filter_date_debut }}">
+                </div>
+
+                <!-- Date Fin -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Date fin</span>
+                    </label>
+                    <input type="date" name="date_fin" class="input input-bordered input-sm" value="{{ filter_date_fin }}">
+                </div>
+            </form>
+
+            <div class="flex gap-2 mt-4">
+                <button type="submit" class="btn btn-primary btn-sm" onclick="document.getElementById('filterForm').submit()">
+                    <i class="fas fa-filter mr-1"></i>Filtrer
+                </button>
+                <a href="{% url 'inventory:purchases_consolidated' %}" class="btn btn-ghost btn-sm">
+                    <i class="fas fa-times mr-1"></i>Réinitialiser
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistiques globales -->
+    <div class="stats stats-vertical lg:stats-horizontal shadow w-full">
+        <div class="stat bg-base-200">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-boxes text-3xl"></i>
+            </div>
+            <div class="stat-title">Désignations distinctes</div>
+            <div class="stat-value text-primary">{{ consolidated|length }}</div>
+        </div>
+
+        <div class="stat bg-base-200">
+            <div class="stat-figure text-success">
+                <i class="fas fa-shopping-cart text-3xl"></i>
+            </div>
+            <div class="stat-title">Total achats</div>
+            <div class="stat-value text-success">
+                {% widthratio consolidated|length 1 1 as total_achats %}
+                {{ consolidated|length }}
+            </div>
+        </div>
+
+        <div class="stat bg-base-200">
+            <div class="stat-figure text-info">
+                <i class="fas fa-money-bill-wave text-3xl"></i>
+            </div>
+            <div class="stat-title">Montant total</div>
+            <div class="stat-value text-info text-xl">
+                <span id="totalMontant">0</span> Ar
+            </div>
+        </div>
+    </div>
+
+    <!-- Tableau consolidé groupé par magasin puis par type -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <h3 class="card-title">
+                <i class="fas fa-table mr-2"></i>Achats par désignation (groupés par magasin et type)
+            </h3>
+
+            {% if consolidated_grouped %}
+                {% for magasin_nom, types_list in consolidated_grouped %}
+                <div class="mb-10">
+                    <!-- En-tête du magasin -->
+                    <div class="bg-secondary text-secondary-content px-6 py-3 rounded-lg mb-4 flex items-center gap-3 shadow-md">
+                        <i class="fas fa-warehouse text-2xl"></i>
+                        <h3 class="text-xl font-bold">{{ magasin_nom }}</h3>
+                    </div>
+
+                    <!-- Groupes par type dans ce magasin -->
+                    {% for type_nom, items in types_list %}
+                    <div class="ml-6 mb-6">
+                        <!-- En-tête du type -->
+                        <div class="bg-primary text-primary-content px-4 py-2 rounded-lg mb-2 flex items-center gap-2">
+                            <i class="fas fa-folder"></i>
+                            <h4 class="text-lg font-bold">{{ type_nom }}</h4>
+                            <span class="badge badge-neutral ml-auto">{{ items|length }} désignation(s)</span>
+                        </div>
+
+                        <!-- Tableau pour ce type -->
+                        <div class="overflow-x-auto">
+                            <table class="table table-zebra table-sm w-full">
+                                <thead>
+                                    <tr>
+                                        <th>Désignation</th>
+                                        <th>Unité</th>
+                                        <th class="text-right">Quantité</th>
+                                        <th class="text-right">Nb achats</th>
+                                        <th>Premier achat</th>
+                                        <th>Dernier achat</th>
+                                        <th class="text-right">Montant Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for item in items %}
+                                    <tr class="hover">
+                                        <td class="font-medium">{{ item.designation__nom }}</td>
+                                        <td>
+                                            {% if item.designation__unite %}
+                                                <span class="badge badge-ghost badge-sm">{{ item.designation__unite }}</span>
+                                            {% else %}
+                                                <span class="text-base-content/50">-</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-right font-mono">{{ item.total_quantite_commandee|floatformat:2|intcomma }}</td>
+                                        <td class="text-right">
+                                            <span class="badge badge-info badge-sm">{{ item.nombre_achats }}</span>
+                                        </td>
+                                        <td>
+                                            {% if item.date_premier_achat %}
+                                                <span class="text-sm">{{ item.date_premier_achat|date:"d/m/Y" }}</span>
+                                            {% else %}
+                                                <span class="text-base-content/50">-</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if item.date_dernier_achat %}
+                                                <span class="text-sm">{{ item.date_dernier_achat|date:"d/m/Y" }}</span>
+                                            {% else %}
+                                                <span class="text-base-content/50">-</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-right font-semibold">
+                                            {{ item.total_montant|floatformat:0|intcomma }} Ar
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endfor %}
+
+                <!-- Total général -->
+                <div class="bg-base-300 px-4 py-3 rounded-lg">
+                    <div class="flex justify-end items-center gap-4">
+                        <span class="text-lg font-bold">TOTAL GÉNÉRAL :</span>
+                        <span class="text-2xl font-bold text-primary">
+                            <span id="totalFooter">0</span> Ar
+                        </span>
+                    </div>
+                </div>
+            {% else %}
+                <div class="text-center text-base-content/50 py-12">
+                    <i class="fas fa-inbox text-5xl mb-3"></i>
+                    <p class="text-lg">Aucun achat trouvé avec les filtres appliqués</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+// Variables globales
+let searchTimeout;
+const suggestionsContainer = document.getElementById('designationSuggestions');
+const searchInput = document.getElementById('designationSearch');
+
+// Autocomplétion des désignations
+searchInput.addEventListener('input', function() {
+    clearTimeout(searchTimeout);
+    const query = this.value.trim();
+
+    if (query.length < 2) {
+        suggestionsContainer.classList.add('hidden');
+        return;
+    }
+
+    searchTimeout = setTimeout(() => {
+        fetch(`{% url 'inventory:api_designations_autocomplete' %}?q=${encodeURIComponent(query)}`)
+            .then(response => response.json())
+            .then(data => {
+                displaySuggestions(data.results);
+            })
+            .catch(error => {
+                console.error('Erreur autocomplétion:', error);
+            });
+    }, 300);
+});
+
+function displaySuggestions(results) {
+    if (results.length === 0) {
+        suggestionsContainer.classList.add('hidden');
+        return;
+    }
+
+    suggestionsContainer.innerHTML = '';
+    results.forEach(item => {
+        const div = document.createElement('div');
+        div.className = 'px-4 py-2 hover:bg-base-200 cursor-pointer border-b border-base-300 last:border-0';
+        div.innerHTML = `
+            <div class="font-medium">${item.text}</div>
+            <div class="text-xs text-base-content/70">
+                ${item.type ? `<span class="badge badge-xs badge-ghost mr-1">${item.type}</span>` : ''}
+                ${item.unite ? `<span class="badge badge-xs badge-ghost">${item.unite}</span>` : ''}
+            </div>
+        `;
+        div.addEventListener('click', () => {
+            searchInput.value = item.text;
+            suggestionsContainer.classList.add('hidden');
+        });
+        suggestionsContainer.appendChild(div);
+    });
+
+    suggestionsContainer.classList.remove('hidden');
+}
+
+// Fermer suggestions en cliquant ailleurs
+document.addEventListener('click', function(e) {
+    if (!searchInput.contains(e.target) && !suggestionsContainer.contains(e.target)) {
+        suggestionsContainer.classList.add('hidden');
+    }
+});
+
+function clearDesignation() {
+    searchInput.value = '';
+    suggestionsContainer.classList.add('hidden');
+    searchInput.focus();
+}
+
+// Calculer le montant total
+document.addEventListener('DOMContentLoaded', function() {
+    let totalMontant = 0;
+    {% for item in consolidated %}
+        totalMontant += {{ item.total_montant|default:0 }};
+    {% endfor %}
+
+    document.getElementById('totalMontant').textContent = totalMontant.toLocaleString('fr-FR', {maximumFractionDigits: 0});
+    document.getElementById('totalFooter').textContent = totalMontant.toLocaleString('fr-FR', {maximumFractionDigits: 0});
+});
+</script>
+{% endblock %}

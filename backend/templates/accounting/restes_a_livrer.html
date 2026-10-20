@@ -1,0 +1,205 @@
+{% extends "accounting/base.html" %}
+{% load humanize %}
+
+{% block title %}Restes à livrer{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+        <div>
+            <h1 class="text-3xl font-bold"><i class="fas fa-truck-ramp-box mr-3 text-primary"></i>Restes à livrer</h1>
+            <p class="mt-1 text-sm opacity-70">
+                Articles achetés (comptes 218 / 601 / 602 / 605) dont une partie reste à recevoir. Chaque livraison
+                alimente le stock (ligne ajoutée à la fiche de stock) ou le suivi hors stock.
+            </p>
+        </div>
+        <span id="rl-retard" class="badge badge-warning badge-lg hidden"></span>
+    </div>
+
+    <div class="card bg-base-200 shadow mb-4">
+        <div class="card-body py-4">
+            <div class="flex flex-wrap items-end gap-3">
+                <label class="form-control">
+                    <span class="label-text text-xs">Recherche</span>
+                    <input id="rl-q" type="text" class="input input-bordered input-sm" placeholder="Désignation, fournisseur, description">
+                </label>
+                <label class="form-control">
+                    <span class="label-text text-xs">Mode</span>
+                    <select id="rl-mode" class="select select-bordered select-sm">
+                        <option value="">Tous</option>
+                        <option value="stock">Entrée en stock</option>
+                        <option value="hors_stock">Hors stock</option>
+                    </select>
+                </label>
+                <label class="label cursor-pointer gap-2">
+                    <input id="rl-tout" type="checkbox" class="checkbox checkbox-sm">
+                    <span class="label-text">Inclure les articles livrés en plusieurs fois</span>
+                </label>
+                <button id="rl-refresh" type="button" class="btn btn-primary btn-sm">Actualiser</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="rl-feedback" class="mb-3"></div>
+
+    <div class="overflow-x-auto">
+        <table class="table table-sm table-zebra">
+            <thead>
+                <tr>
+                    <th>Achat</th><th>Désignation</th><th>Mode / destination</th>
+                    <th class="text-right">Acheté</th><th class="text-right">Reçu</th><th class="text-right">Reste</th>
+                    <th>Âge</th><th></th>
+                </tr>
+            </thead>
+            <tbody id="rl-body"><tr><td colspan="8" class="text-center py-6 opacity-60">Chargement…</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<dialog id="rl-modal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-1">Enregistrer une livraison</h3>
+        <p id="rl-modal-info" class="text-sm opacity-70 mb-4"></p>
+        <div class="space-y-3">
+            <label class="form-control">
+                <span class="label-text">Quantité livrée <span id="rl-modal-max" class="opacity-60"></span></span>
+                <input id="rl-modal-qte" type="number" min="0" step="0.01" class="input input-bordered">
+            </label>
+            <label class="form-control">
+                <span class="label-text">Date de livraison</span>
+                <input id="rl-modal-date" type="date" class="input input-bordered">
+            </label>
+            <label class="form-control">
+                <span class="label-text">Remarque (facultatif)</span>
+                <input id="rl-modal-remarque" type="text" maxlength="255" class="input input-bordered" placeholder="N° bon de livraison, transporteur…">
+            </label>
+            <div id="rl-modal-error" class="alert alert-error hidden text-sm"></div>
+        </div>
+        <div class="modal-action">
+            <button type="button" class="btn" onclick="document.getElementById('rl-modal').close()">Annuler</button>
+            <button id="rl-modal-save" type="button" class="btn btn-primary">Enregistrer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>Fermer</button></form>
+</dialog>
+
+<script>
+const URL_LISTE = "{% url 'accounting:api_restes_a_livrer' %}";
+const URL_LIVRER = "{% url 'accounting:api_livraison_creer' %}";
+const URL_ANNULER = "{% url 'accounting:api_livraison_annuler' %}";
+let articles = [];
+let courant = null;
+
+function esc(v) { const d = document.createElement('div'); d.textContent = v == null ? '' : String(v); return d.innerHTML; }
+function fmt(n) { return Number(n).toLocaleString('fr-FR', { maximumFractionDigits: 2 }); }
+function dateFr(iso) { const p = (iso || '').split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : ''; }
+function getCookie(name) {
+    const m = document.cookie.split(';').map((c) => c.trim()).find((c) => c.startsWith(name + '='));
+    return m ? decodeURIComponent(m.split('=')[1]) : '';
+}
+async function post(url, body) {
+    const r = await fetch(url, { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') }, body: JSON.stringify(body) });
+    const data = await r.json();
+    if (!r.ok || !data.success) throw new Error(data.error || 'Opération impossible.');
+    return data;
+}
+function feedback(msg, ok) {
+    document.getElementById('rl-feedback').innerHTML =
+        `<div class="alert ${ok ? 'alert-success' : 'alert-error'} text-sm"><span>${esc(msg)}</span></div>`;
+}
+
+function render() {
+    const body = document.getElementById('rl-body');
+    if (!articles.length) {
+        body.innerHTML = '<tr><td colspan="8" class="text-center py-6 opacity-60">Aucun reste à livrer.</td></tr>';
+        return;
+    }
+    body.innerHTML = articles.map((a, i) => {
+        const dest = a.mode === 'stock' ? 'Entrée en stock' : ('Hors stock → ' + esc(a.destination || '—'));
+        const hist = a.livraisons.length ? `
+            <tr class="bg-base-200"><td colspan="8" class="text-xs">
+                <div class="font-semibold mb-1">Livraisons enregistrées</div>
+                ${a.livraisons.map((l) => `
+                    <div class="flex items-center gap-3 ${l.annulee ? 'line-through opacity-50' : ''}">
+                        <span>${dateFr(l.date)}</span><span>+${fmt(l.quantite)}</span>
+                        <span>${esc(l.par)}</span><span class="opacity-70">${esc(l.remarque)}</span>
+                        ${l.annulee ? '<span class="badge badge-ghost badge-xs">annulée</span>'
+                            : `<button type="button" class="btn btn-ghost btn-xs text-error" data-annuler="${esc(l.id)}">Annuler</button>`}
+                    </div>`).join('')}
+            </td></tr>` : '';
+        return `
+            <tr>
+                <td><div class="font-semibold">${dateFr(a.saisie_date)} · ${esc(a.compte_code)}</div>
+                    <div class="text-xs opacity-70">${esc(a.description)}${a.fournisseur ? ' — ' + esc(a.fournisseur) : ''}</div>
+                    <div class="text-xs opacity-50">${esc(a.base)}</div></td>
+                <td>${esc(a.designation)}${a.unite ? ` <span class="opacity-60">(${esc(a.unite)})</span>` : ''}</td>
+                <td>${dest}</td>
+                <td class="text-right">${fmt(a.quantite)}</td>
+                <td class="text-right">${fmt(a.quantite_recue)}</td>
+                <td class="text-right font-bold ${a.reste > 0 ? 'text-warning' : 'text-success'}">${fmt(a.reste)}</td>
+                <td>${a.reste > 0 ? `<span class="badge ${a.en_retard ? 'badge-warning' : 'badge-ghost'} badge-sm">${a.age_jours} j</span>` : ''}</td>
+                <td>${a.reste > 0 ? `<button type="button" class="btn btn-primary btn-xs" data-livrer="${i}">Livrer</button>` : ''}</td>
+            </tr>${hist}`;
+    }).join('');
+}
+
+async function charger() {
+    const p = new URLSearchParams({
+        q: document.getElementById('rl-q').value, mode: document.getElementById('rl-mode').value,
+        tout: document.getElementById('rl-tout').checked ? '1' : '',
+    });
+    const r = await fetch(URL_LISTE + '?' + p.toString(), { credentials: 'same-origin' });
+    const data = await r.json();
+    articles = data.articles || [];
+    const badge = document.getElementById('rl-retard');
+    badge.classList.toggle('hidden', !data.nb_en_retard);
+    badge.textContent = `${data.nb_en_retard} en retard (> ${data.jours_retard} jours)`;
+    render();
+}
+
+document.getElementById('rl-body').addEventListener('click', async (e) => {
+    const livrer = e.target.closest('[data-livrer]');
+    const annuler = e.target.closest('[data-annuler]');
+    if (livrer) {
+        courant = articles[Number(livrer.dataset.livrer)];
+        document.getElementById('rl-modal-info').textContent =
+            `${courant.designation} — achat du ${dateFr(courant.saisie_date)} (${courant.mode === 'stock' ? 'entrée en stock' : 'hors stock'})`;
+        document.getElementById('rl-modal-max').textContent = `(reste ${fmt(courant.reste)})`;
+        document.getElementById('rl-modal-qte').value = courant.reste;
+        document.getElementById('rl-modal-date').value = new Date().toISOString().slice(0, 10);
+        document.getElementById('rl-modal-remarque').value = '';
+        document.getElementById('rl-modal-error').classList.add('hidden');
+        document.getElementById('rl-modal').showModal();
+    } else if (annuler) {
+        if (!confirm('Annuler cette livraison ? La quantité sera retirée du stock (mode stock) et le reste rétabli.')) return;
+        try {
+            await post(URL_ANNULER, { livraison_id: annuler.dataset.annuler });
+            feedback('Livraison annulée.', true);
+            await charger();
+        } catch (err) { feedback(err.message, false); }
+    }
+});
+
+document.getElementById('rl-modal-save').addEventListener('click', async () => {
+    const errEl = document.getElementById('rl-modal-error');
+    errEl.classList.add('hidden');
+    try {
+        await post(URL_LIVRER, {
+            article_id: courant.id,
+            quantite: document.getElementById('rl-modal-qte').value,
+            date: document.getElementById('rl-modal-date').value,
+            remarque: document.getElementById('rl-modal-remarque').value,
+        });
+        document.getElementById('rl-modal').close();
+        feedback('Livraison enregistrée.', true);
+        await charger();
+    } catch (err) { errEl.textContent = err.message; errEl.classList.remove('hidden'); }
+});
+
+document.getElementById('rl-refresh').addEventListener('click', charger);
+['rl-mode', 'rl-tout'].forEach((id) => document.getElementById(id).addEventListener('change', charger));
+document.getElementById('rl-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') charger(); });
+charger();
+</script>
+{% endblock %}

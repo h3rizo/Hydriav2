@@ -1,0 +1,679 @@
+{% load humanize %}
+{% load static %}
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>Paiements Forfaitaires {{ annee }} - Impression</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.4.19/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @media print {
+            body {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+                margin: 0 !important;
+                padding: 0 0 1cm 0 !important;
+            }
+            .container {
+                margin: 0 !important;
+                padding: 0 !important;
+                max-width: none !important;
+            }
+            .no-print {
+                display: none !important;
+            }
+            .table-sm td, .table-sm th {
+                padding: 0.25rem 0.5rem !important;
+                font-size: 0.65rem;
+            }
+            .stats-grid {
+                grid-template-columns: repeat(7, minmax(0, 1fr)) !important;
+                gap: 0.25rem !important;
+            }
+            .stats-grid .stat {
+                padding: 0.2rem 0.3rem !important;
+                min-height: auto !important;
+            }
+            .stats-grid .stat-title {
+                font-size: 0.5rem !important;
+                line-height: 1.1 !important;
+            }
+            .stats-grid .stat-value {
+                font-size: 0.8rem !important;
+                line-height: 1.1 !important;
+            }
+            .stats-grid .stat-desc {
+                display: none !important;
+            }
+            .stats-grid .stat-figure {
+                display: none !important;
+            }
+            .card {
+                break-inside: avoid;
+                page-break-inside: avoid;
+            }
+
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                display: table;
+            }
+            thead {
+                display: table-header-group;
+            }
+            tr {
+                page-break-inside: avoid;
+            }
+            .commune-section {
+                break-inside: avoid;
+                page-break-inside: avoid;
+            }
+            .print-footer {
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                text-align: center;
+                font-size: 9pt;
+                padding: 5px;
+                background: white;
+                border-top: 1px solid #eee;
+            }
+            #page-number:after {
+                content: "Page " counter(page);
+            }
+        }
+
+        @page {
+            size: A4 landscape;
+            margin: 1cm;
+        }
+
+        .print-footer {
+            display: none;
+        }
+
+        .commune-banner {
+            background-color: #dbeafe;
+            border-left: 4px solid #1e40af;
+            padding: 8px 12px;
+            margin-top: 0;
+            margin-bottom: 8px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .ouvrage-banner {
+            background-color: #f0f9ff;
+            border-left: 4px solid #0284c7;
+            padding: 6px 12px;
+            margin-bottom: 8px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+    </style>
+</head>
+
+<body class="bg-base-100">
+    <div class="container mx-auto p-6">
+        <!-- Bouton Imprimer (masqué à l'impression) -->
+        <div class="no-print mb-6 flex justify-between items-center">
+            <h1 class="text-3xl font-bold">
+                <i class="fas fa-money-bill-wave text-primary mr-2"></i>
+                Paiements Forfaitaires {{ annee }}
+            </h1>
+            <button onclick="window.print()" class="btn btn-primary">
+                <i class="fas fa-print mr-2"></i>Imprimer
+            </button>
+        </div>
+
+        <!-- Filtres géographiques -->
+        <div class="no-print mb-6 card bg-base-100 shadow-sm border border-base-300">
+            <div class="card-body p-4">
+                <form method="GET" id="filters-form" class="flex flex-wrap items-end gap-3">
+                    <input type="hidden" name="annee" value="{{ annee }}">
+                    {% if ouvrage_id %}
+                    <input type="hidden" name="ouvrage" value="{{ ouvrage_id }}">
+                    {% endif %}
+                    {% if employe_filter %}
+                    <input type="hidden" name="employe" value="{{ employe_filter }}">
+                    {% endif %}
+                    {% if recap_mois %}
+                    <input type="hidden" name="recap_mois" value="{{ recap_mois }}">
+                    <input type="hidden" name="regroupement" value="{{ regroupement_impression }}">
+                    {% endif %}
+                    {% if avec_dates %}
+                    <input type="hidden" name="avec_dates" value="1">
+                    {% endif %}
+                    {% if impayes_echus %}
+                    <input type="hidden" name="impayes_echus" value="{{ impayes_echus }}">
+                    {% endif %}
+
+                    <div class="form-control min-w-[180px]">
+                        <label class="label py-0 pb-1"><span class="label-text text-xs">Région</span></label>
+                        <select name="region" id="filter-region" class="select select-bordered select-sm w-full">
+                            <option value="">Toutes</option>
+                            {% for region in regions %}
+                            <option value="{{ region.id }}" {% if region.id|stringformat:"s" == region_filter %}selected{% endif %}>
+                                {{ region.nom_region }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="form-control min-w-[180px]">
+                        <label class="label py-0 pb-1"><span class="label-text text-xs">District</span></label>
+                        <select name="district" id="filter-district" class="select select-bordered select-sm w-full">
+                            <option value="">Tous</option>
+                            {% for district in districts_all %}
+                            <option value="{{ district.id }}"
+                                    data-region-id="{{ district.region_id }}"
+                                    {% if district.id|stringformat:"s" == district_filter %}selected{% endif %}>
+                                {{ district.nom_district }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="form-control min-w-[180px]">
+                        <label class="label py-0 pb-1"><span class="label-text text-xs">Commune</span></label>
+                        <select name="commune" id="filter-commune" class="select select-bordered select-sm w-full">
+                            <option value="">Toutes</option>
+                            {% for commune in communes_all %}
+                            <option value="{{ commune.id }}"
+                                    data-district-id="{{ commune.district_id }}"
+                                    data-region-id="{{ commune.district.region_id }}"
+                                    {% if commune.id|stringformat:"s" == commune_filter %}selected{% endif %}>
+                                {{ commune.nom_commune }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="fas fa-search mr-1"></i>Filtrer
+                    </button>
+                    <a href="{% url 'core:impression_paiements_forfaitaires' %}?annee={{ annee }}{% if ouvrage_id %}&ouvrage={{ ouvrage_id }}{% endif %}{% if employe_filter %}&employe={{ employe_filter }}{% endif %}{% if recap_mois %}&recap_mois={{ recap_mois }}&regroupement={{ regroupement_impression }}{% endif %}{% if avec_dates %}&avec_dates=1{% endif %}{% if impayes_echus %}&impayes_echus={{ impayes_echus }}{% endif %}"
+                       class="btn btn-ghost btn-sm">
+                        <i class="fas fa-redo mr-1"></i>Réinitialiser
+                    </a>
+                </form>
+            </div>
+        </div>
+
+        <!-- En-tête du rapport -->
+        <div class="card bg-base-200 shadow-sm mb-6">
+            <div class="card-body p-4">
+                <div class="text-center">
+                    <h2 class="text-2xl font-bold mb-2">
+                        {% if recap_mois %}
+                        Récapitulatif des Paiements Forfaitaires — {{ recap_mois_nom }} {{ annee }}
+                        {% else %}
+                        Rapport des Paiements Forfaitaires {{ annee }}
+                        {% endif %}
+                    </h2>
+                    <div class="text-sm text-base-content/70">
+                        {% if region_nom %}
+                        <span class="font-semibold">Région :</span> {{ region_nom }}
+                        <span class="mx-2">|</span>
+                        {% endif %}
+                        {% if district_nom %}
+                        <span class="font-semibold">District :</span> {{ district_nom }}
+                        <span class="mx-2">|</span>
+                        {% endif %}
+                        <span class="font-semibold">Communes :</span> {{ communes_noms }}
+                        {% if ouvrage_nom %}
+                        <span class="mx-2">|</span>
+                        <span class="font-semibold">Ouvrage :</span> {{ ouvrage_nom }}
+                        {% endif %}
+                        {% if employe_nom %}
+                        <span class="mx-2">|</span>
+                        <span class="font-semibold">Employé :</span> {{ employe_nom }}
+                        {% endif %}
+                        {% if recap_mois %}
+                        <span class="mx-2">|</span>
+                        <span class="font-semibold">Regroupement :</span>
+                        {% if regroupement_impression == 'employe' %}Par employé{% else %}Par commune{% endif %}
+                        {% endif %}
+                        <span class="font-semibold">Impression :</span> {{ date_impression }}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {% if recap_mois %}
+        <div class="grid grid-cols-3 gap-3 mb-6 stats-grid">
+            <div class="stat bg-base-200 rounded-lg shadow-sm">
+                <div class="stat-title text-xs uppercase opacity-70">Lignes</div>
+                <div class="stat-value text-primary text-xl">{{ recap_total_lignes|intcomma }}</div>
+            </div>
+            <div class="stat bg-base-200 rounded-lg shadow-sm">
+                <div class="stat-title text-xs uppercase opacity-70">Quantité totale</div>
+                <div class="stat-value text-info text-xl">{{ recap_total_quantite|intcomma }}</div>
+            </div>
+            <div class="stat bg-base-200 rounded-lg shadow-sm">
+                <div class="stat-title text-xs uppercase opacity-70">Montant total</div>
+                <div class="stat-value text-success text-xl">{{ recap_total_montant|floatformat:0|intcomma }}</div>
+                <div class="stat-desc">Ar</div>
+            </div>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="table table-sm w-full mb-4">
+                <thead>
+                    <tr class="bg-base-200">
+                        <th>IDXLs</th>
+                        <th>Nom abonné</th>
+                        <th class="text-center">Quantité</th>
+                        <th class="text-right">Prix unitaire</th>
+                        <th class="text-right">Montant</th>
+                        <th class="text-center">Statut</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for groupe in recap_groupes %}
+                    <tr class="commune-section">
+                        <td colspan="6" class="p-0 border-none">
+                            <div class="commune-banner">
+                                <div class="flex-1 flex items-center gap-2">
+                                    <i class="fas {% if regroupement_impression == 'employe' %}fa-user{% else %}fa-map-marker-alt{% endif %} text-blue-700"></i>
+                                    <span class="text-lg">{{ groupe.nom }}</span>
+                                </div>
+                                <div class="flex items-center gap-4 text-xs font-normal">
+                                    <span>{{ groupe.total_quantite }} unité(s)</span>
+                                    <span class="font-bold">{{ groupe.total_montant|floatformat:0|intcomma }} Ar</span>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% for commune in groupe.communes %}
+                    {% if regroupement_impression == 'employe' %}
+                    <tr>
+                        <td colspan="6" class="bg-blue-50 font-semibold text-blue-800">
+                            <i class="fas fa-map-marker-alt mr-2"></i>{{ commune.nom }}
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% for ouvrage in commune.ouvrages %}
+                    <tr>
+                        <td colspan="6" class="p-0 border-none">
+                            <div class="ouvrage-banner">
+                                <div class="flex-1 flex items-center gap-2">
+                                    <i class="fas fa-water text-sky-600"></i>
+                                    <span>{{ ouvrage.nom }}</span>
+                                </div>
+                                <div class="flex items-center gap-4 text-xs font-normal">
+                                    <span>{{ ouvrage.total_quantite }} unité(s)</span>
+                                    <span class="font-bold">{{ ouvrage.total_montant|floatformat:0|intcomma }} Ar</span>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% for ligne in ouvrage.lignes %}
+                    <tr>
+                        <td class="font-mono font-semibold">{{ ligne.idxls }}</td>
+                        <td>{{ ligne.nom_abonne }}</td>
+                        <td class="text-center">{{ ligne.quantite }}</td>
+                        <td class="text-right font-mono">{{ ligne.prix_unitaire|floatformat:0|intcomma }}</td>
+                        <td class="text-right font-mono font-semibold">{{ ligne.montant|floatformat:0|intcomma }}</td>
+                        <td class="text-center">
+                            {% if ligne.est_paye %}
+                            <span class="badge badge-success badge-sm">Payé</span>
+                            {% else %}
+                            <span class="badge badge-error badge-sm">Non payé</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% endfor %}
+                    {% endfor %}
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="text-center py-8 text-base-content/60">
+                            Aucun paiement forfaitaire pour {{ recap_mois_nom }} {{ annee }} avec les filtres sélectionnés.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+
+        <!-- Statistiques globales -->
+        <div class="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-9 gap-2 mb-6 stats-grid">
+            <div class="stat bg-base-200 rounded-lg shadow-sm">
+                <div class="stat-title text-[0.6rem] uppercase opacity-70">Ouvrages</div>
+                <div class="stat-value text-primary text-xl">{{ nb_ouvrages|intcomma }}</div>
+            </div>
+
+            <div class="stat bg-base-200 rounded-lg shadow-sm">
+                <div class="stat-title text-[0.6rem] uppercase opacity-70">Points d'eau</div>
+                <div class="stat-value text-primary text-xl">{{ nb_points_eau|intcomma }}</div>
+            </div>
+
+            <div class="stat bg-base-200 rounded-lg shadow-sm">
+                <div class="stat-title text-[0.6rem] uppercase opacity-70">Prévu (YTD)</div>
+                <div class="stat-value text-info text-xl">{{ montant_prevu_total|floatformat:0|intcomma }}</div>
+                <div class="stat-desc font-bold text-info">k Ar</div>
+            </div>
+
+            <div class="stat bg-base-200 rounded-lg shadow-sm border-l-2 border-error">
+                <div class="stat-title text-[0.6rem] uppercase opacity-70">Décote</div>
+                <div class="stat-value text-error text-xl">{{ decote_totale_globale|floatformat:0|intcomma }}</div>
+                <div class="stat-desc font-bold text-error">k Ar</div>
+            </div>
+
+            <div class="stat bg-base-200 rounded-lg shadow-sm">
+                <div class="stat-title text-[0.6rem] uppercase opacity-70">Planifié (YTD)</div>
+                <div class="stat-value text-warning text-xl">{{ montant_planifie_total|floatformat:0|intcomma }}</div>
+                <div class="stat-desc font-bold text-warning">k Ar</div>
+            </div>
+
+            <div class="stat bg-base-200 rounded-lg shadow-sm">
+                <div class="stat-title text-[0.6rem] uppercase opacity-70">Payé</div>
+                <div class="stat-value text-success text-xl">{{ montant_paye_total|floatformat:0|intcomma }}</div>
+                <div class="stat-desc font-bold text-success">k Ar</div>
+            </div>
+
+            <div class="stat bg-base-200 rounded-lg shadow-sm border-l-2 border-accent">
+                <div class="stat-title text-[0.6rem] uppercase opacity-70">Recouvrement</div>
+                <div class="stat-value text-accent text-lg">
+                    <span title="Payé / Prévu">{{ taux_recouvrement_prevu }}%</span>
+                    <span class="text-xs opacity-50 px-1">/</span>
+                    <span class="text-xs" title="Payé / Planifié">{{ taux_recouvrement_planifie }}%</span>
+                </div>
+            </div>
+
+            <div class="stat bg-base-200 rounded-lg shadow-sm">
+                <div class="stat-title text-[0.6rem] uppercase opacity-70">Tout payé</div>
+                <div class="stat-value text-success text-xl">{{ nb_tout_paye|intcomma }}</div>
+            </div>
+
+            <div class="stat bg-base-200 rounded-lg shadow-sm">
+                <div class="stat-title text-[0.6rem] uppercase opacity-70">Coupé</div>
+                <div class="stat-value text-error text-xl">{{ nb_coupe|intcomma }}</div>
+            </div>
+        </div>
+
+        <!-- Tableau des paiements -->
+        {% if regroupement_impression == 'employe' and employe_nom %}
+        <div class="commune-banner mb-3">
+            <div class="flex-1 flex items-center gap-2">
+                <i class="fas fa-user text-blue-700"></i>
+                <span class="text-lg">{{ employe_nom }}</span>
+            </div>
+            <span class="text-xs font-normal">Rapport regroupé par employé, commune et ouvrage</span>
+        </div>
+        {% endif %}
+        <div class="overflow-x-auto">
+            <table class="table table-sm w-full mb-4">
+                <thead>
+                    <tr class="bg-base-200">
+                        <th class="text-center w-24">IDxls</th>
+                        {% for mois in mois_colonnes %}
+                        <th class="text-center">{{ mois.label }}</th>
+                        {% endfor %}
+                        <th class="text-right">Tarif<br><span class="text-xs font-normal text-base-content/60">(k Ar)</span></th>
+                        <th class="text-right">Payé<br><span class="text-xs font-normal text-base-content/60">(k Ar)</span></th>
+                        <th class="text-center">Contrôle tranches</th>
+                        <th class="text-center">Statut</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for commune in communes_organisees %}
+                    <tr class="commune-section">
+                        <td colspan="{{ mois_colonnes|length|add:'5' }}" class="p-0 border-none">
+                            <!-- Bannière Commune -->
+                            <div class="commune-banner">
+                                <div class="flex-1 flex items-center gap-2">
+                                    <i class="fas fa-map-marker-alt text-blue-700"></i>
+                                    <span class="text-lg">{{ commune.nom }}</span>
+                                </div>
+                                <div class="flex items-center gap-4 text-xs font-normal">
+                                    <span title="Ouvrages"><i class="fas fa-water mr-1"></i>{{ commune.nb_ouvrages }}</span>
+                                    <span title="Points d'eau"><i class="fas fa-tint mr-1"></i>{{ commune.nb_pe }}</span>
+                                    <span title="Recouvrement" class="font-bold"><i class="fas fa-percentage mr-1"></i>{{ commune.taux }}%</span>
+                                    <span title="Payés" class="text-success"><i class="fas fa-check-circle mr-1"></i>{{ commune.nb_tout_paye }}</span>
+                                    <span title="Coupés" class="text-error"><i class="fas fa-scissors mr-1"></i>{{ commune.nb_coupe }}</span>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+
+                    {% for ouvrage in commune.ouvrages %}
+                    <tr>
+                        <td colspan="{{ mois_colonnes|length|add:'5' }}" class="p-0 border-none">
+                            <div class="ouvrage-banner">
+                                <div class="flex-1 flex items-center gap-2">
+                                    {% if 'AEPG' in ouvrage.type_ouvrage %}
+                                    <i class="fas fa-faucet text-sky-600"></i>
+                                    {% elif 'PMH' in ouvrage.type_ouvrage %}
+                                    <i class="fas fa-tint text-sky-600"></i>
+                                    {% else %}
+                                    <i class="fas fa-water text-sky-600"></i>
+                                    {% endif %}
+                                    <span>{{ ouvrage.nom }}</span>
+                                    {% if ouvrage.saisonnier %}
+                                    <span class="badge badge-warning badge-sm ml-2">
+                                    <i class="fas fa-sun mr-1"></i>Saisonnier
+                                    </span>
+                                    {% endif %}
+                                </div>
+                                <div class="flex items-center gap-4 text-[0.7rem] font-normal">
+                                    <span title="Points d'eau"><i class="fas fa-tint mr-1"></i>{{ ouvrage.nb_pe }} PE</span>
+                                    <span title="Recouvrement" class="font-bold"><i class="fas fa-percentage mr-1"></i>{{ ouvrage.taux }}%</span>
+                                    <span title="Payés" class="text-success"><i class="fas fa-check-circle mr-1"></i>{{ ouvrage.nb_tout_paye }}</span>
+                                    <span title="Coupés" class="text-error"><i class="fas fa-scissors mr-1"></i>{{ ouvrage.nb_coupe }}</span>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+
+                    {% for pe in ouvrage.points_eau %}
+                    <tr class="hover:bg-base-200/50">
+                    <td class="text-center font-mono font-semibold">
+                        {{ pe.idxls }}
+                        {% if pe.est_tout_paye %}
+                        <i class="fas fa-check-circle text-success ml-1" title="Tout payé"></i>
+                        {% endif %}
+                        {% if pe.est_coupe %}
+                        <i class="fas fa-scissors text-error ml-1" title="Coupé"></i>
+                        {% endif %}
+                    </td>
+                    {% for mois in pe.mois_data %}
+                    <td class="text-center">
+                        {% if avec_dates and mois.dates %}
+                        <div class="flex flex-col gap-1">
+                            {% if mois.paye > 0 %}
+                            <span class="badge badge-success-light badge-sm"><span class="opacity-70 mr-1">{{ mois.label|slice:":1"|upper }}</span>{{ mois.paye }}</span>
+                            {% elif mois.non_paye > 0 %}
+                            <span class="badge badge-error badge-sm"><span class="opacity-70 mr-1">{{ mois.label|slice:":1"|upper }}</span>{{ mois.non_paye }}</span>
+                            {% endif %}
+                            {% for d in mois.dates %}
+                            <span class="text-xs text-base-content/70">{{ d|date:"d/m" }}</span>
+                            {% endfor %}
+                        </div>
+                        {% elif mois.paye > 0 %}
+                        <span class="badge badge-success-light badge-sm"><span class="opacity-70 mr-1">{{ mois.label|slice:":1"|upper }}</span>{{ mois.paye }}</span>
+                        {% elif mois.non_paye > 0 %}
+                        <span class="badge badge-error badge-sm"><span class="opacity-70 mr-1">{{ mois.label|slice:":1"|upper }}</span>{{ mois.non_paye }}</span>
+                        {% else %}
+                        <span class="text-base-content/30">-</span>
+                        {% endif %}
+                    </td>
+                    {% endfor %}
+
+                        <td class="text-right font-mono">{{ pe.tarif|floatformat:0|intcomma }}</td>
+                        <td class="text-right font-mono {% if pe.montant_paye > 0 %}text-success font-semibold{% endif %}">
+                            {{ pe.montant_paye|floatformat:0|intcomma }}
+                        </td>
+
+                        <td class="text-center">
+                            <div>
+                                <span class="badge badge-outline badge-sm">{{ pe.tranches_annuelles }}/{{ pe.tranches_reference }}</span>
+                            </div>
+                            <div class="mt-1">
+                                <span class="badge badge-{{ pe.tranches_controle_badge }} badge-xs">
+                                    {{ pe.tranches_controle_action }}
+                                </span>
+                            </div>
+                            {% if pe.tranches_ecart != 0 %}
+                            <div class="text-[10px] mt-1 text-base-content/70">
+                                {{ pe.tranches_controle_detail }}
+                            </div>
+                            {% endif %}
+                        </td>
+
+                        <td class="text-center">
+                            {% if pe.statut == 'coupe' %}
+                            <span class="badge badge-error badge-sm">Coupé</span>
+                            {% elif pe.statut == 'en_trop' %}
+                            <span class="badge badge-accent-light badge-sm">En trop</span>
+                            {% elif pe.statut == 'tout_paye' %}
+                            <span class="badge badge-success-light badge-sm">Payé</span>
+                            {% elif pe.statut == 'partiellement_paye' %}
+                            <span class="badge badge-warning badge-sm">Partiel</span>
+                            {% else %}
+                            <span class="badge badge-ghost badge-sm">Non payé</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% endfor %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+
+        <!-- Légende -->
+        <div class="card bg-base-200 mt-6 no-print">
+            <div class="card-body p-4">
+                <h3 class="card-title text-sm mb-2">
+                    <i class="fas fa-info-circle mr-2"></i>Légende
+                </h3>
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
+                    <div><span class="badge badge-success badge-sm mr-1"></span> Payé</div>
+                    <div><span class="badge badge-error badge-sm mr-1"></span> Non payé</div>
+                    <div><span class="badge badge-accent badge-sm mr-1"></span> En trop</div>
+                    <div><i class="fas fa-check-circle text-success mr-1"></i> Tout payé</div>
+                    <div><i class="fas fa-scissors text-error mr-1"></i> Eau coupée</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer d'impression -->
+    <div class="print-footer">
+        <div class="flex justify-between items-center px-4">
+            <span class="text-xs text-base-content/50">Hydria - Rapport des Paiements Forfaitaires {{ annee }}</span>
+            <span id="page-number" class="font-semibold"></span>
+            <span class="text-xs text-base-content/50">Imprimé le {{ date_impression }}</span>
+        </div>
+    </div>
+
+    <script>
+        (function initGeoCascadeFilters() {
+            const form = document.getElementById('filters-form');
+            const regionSelect = document.getElementById('filter-region');
+            const districtSelect = document.getElementById('filter-district');
+            const communeSelect = document.getElementById('filter-commune');
+
+            if (!form || !regionSelect || !districtSelect || !communeSelect) {
+                return;
+            }
+
+            const districtOptions = Array.from(districtSelect.options || []);
+            const communeOptions = Array.from(communeSelect.options || []);
+
+            function applyDistrictCascade() {
+                const regionId = regionSelect.value;
+                let selectedDistrictVisible = false;
+
+                districtOptions.forEach((option) => {
+                    if (!option.value) {
+                        option.hidden = false;
+                        option.disabled = false;
+                        return;
+                    }
+
+                    const visible = !regionId || option.dataset.regionId === regionId;
+                    option.hidden = !visible;
+                    option.disabled = !visible;
+
+                    if (option.value === districtSelect.value && visible) {
+                        selectedDistrictVisible = true;
+                    }
+                });
+
+                if (districtSelect.value && !selectedDistrictVisible) {
+                    districtSelect.value = '';
+                }
+            }
+
+            function applyCommuneCascade() {
+                const regionId = regionSelect.value;
+                const districtId = districtSelect.value;
+                let selectedCommuneVisible = false;
+
+                communeOptions.forEach((option) => {
+                    if (!option.value) {
+                        option.hidden = false;
+                        option.disabled = false;
+                        return;
+                    }
+
+                    let visible = true;
+                    if (districtId) {
+                        visible = option.dataset.districtId === districtId;
+                    } else if (regionId) {
+                        visible = option.dataset.regionId === regionId;
+                    }
+
+                    option.hidden = !visible;
+                    option.disabled = !visible;
+
+                    if (option.value === communeSelect.value && visible) {
+                        selectedCommuneVisible = true;
+                    }
+                });
+
+                if (communeSelect.value && !selectedCommuneVisible) {
+                    communeSelect.value = '';
+                }
+            }
+
+            applyDistrictCascade();
+            applyCommuneCascade();
+
+            regionSelect.addEventListener('change', function () {
+                districtSelect.value = '';
+                communeSelect.value = '';
+                applyDistrictCascade();
+                applyCommuneCascade();
+                form.submit();
+            });
+
+            districtSelect.addEventListener('change', function () {
+                communeSelect.value = '';
+                applyCommuneCascade();
+                form.submit();
+            });
+
+            communeSelect.addEventListener('change', function () {
+                form.submit();
+            });
+        })();
+    </script>
+    <script src="{% static 'js/geographic-filter-groups.js' %}" defer></script>
+</body>
+</html>

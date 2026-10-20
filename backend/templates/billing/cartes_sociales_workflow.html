@@ -1,0 +1,1114 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div id="pageContent" class="container mx-auto p-4">
+    <!-- Header -->
+    <div class="mb-6 flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div class="min-w-0">
+            <h1 class="text-2xl font-bold sm:text-3xl">
+                <i class="fas fa-id-card text-info mr-2"></i>
+                Workflow Cartes Sociales
+            </h1>
+            <p class="text-sm text-gray-500 mt-1">
+                Émission de tickets de caisse pour les cartes sociales
+            </p>
+        </div>
+        <div class="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 xl:flex xl:w-auto xl:flex-wrap xl:justify-end">
+            <a href="{% url 'billing:api_template_consos_excel' %}" class="btn btn-info btn-sm h-auto min-h-10 w-full justify-start whitespace-normal py-2 sm:justify-center xl:w-auto">
+                <i class="fas fa-download shrink-0"></i>
+                Template Excel
+            </a>
+            <button type="button" onclick="document.getElementById('fileImportExcel').click()" class="btn btn-warning btn-sm h-auto min-h-10 w-full justify-start whitespace-normal py-2 sm:justify-center xl:w-auto">
+                <i class="fas fa-upload shrink-0"></i>
+                Importer Excel
+            </button>
+            <button type="button" onclick="exporterExcel()" class="btn btn-primary btn-sm h-auto min-h-10 w-full justify-start whitespace-normal py-2 sm:justify-center xl:w-auto">
+                <i class="fas fa-file-excel shrink-0"></i>
+                Exporter Excel
+            </button>
+            <a href="{% url 'billing:cartes_sociales_encaissement' %}" class="btn btn-success btn-sm h-auto min-h-10 w-full justify-start whitespace-normal py-2 sm:justify-center xl:w-auto">
+                <i class="fas fa-cash-register shrink-0"></i>
+                Encaissement
+            </a>
+            <button type="button" id="btnImprimerSelection" onclick="imprimerSelection()" class="btn btn-secondary btn-sm h-auto min-h-10 w-full justify-start whitespace-normal py-2 sm:col-span-2 sm:justify-center xl:col-auto xl:w-auto" disabled>
+                <i class="fas fa-print shrink-0"></i>
+                <span>Imprimer sélection</span>
+                <span id="selectionCount" class="badge badge-primary shrink-0">0</span>
+            </button>
+        </div>
+        <input type="file" id="fileImportExcel" class="hidden" accept=".xlsx,.xls" onchange="importerExcel(event)">
+    </div>
+
+    <!-- Sélection Ouvrage -->
+    <div class="card bg-base-100 shadow mb-4">
+        <div class="card-body">
+            <h2 class="card-title text-lg">
+                <i class="fas fa-filter mr-2"></i>
+                Sélectionner un ouvrage
+            </h2>
+            <div class="form-control w-full">
+                <select id="selectOuvrage" class="select select-bordered w-full">
+                    <option value="">-- Choisir un ouvrage --</option>
+                    {% for ouvrage in ouvrages %}
+                    <option value="{{ ouvrage.id }}">
+                        {{ ouvrage.nom_ouvrage }}
+                        {% with modalite=ouvrage.modalites_gestion.all.0 %}
+                            {% if modalite and modalite.gestionnaire %}
+                            ({{ modalite.gestionnaire.nom_organisation }})
+                            {% endif %}
+                        {% endwith %}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Info Tarif -->
+    <div id="infoTarif" class="alert alert-info hidden mb-4">
+        <i class="fas fa-info-circle"></i>
+        <div>
+            <strong>Tarif carte sociale :</strong>
+            <span id="tarifDisplay">-</span> Ar
+        </div>
+    </div>
+
+    <!-- Liste des Points d'Eau et Cartes -->
+    <div id="listePE" class="hidden">
+        <h2 class="text-2xl font-bold mb-4">
+            <i class="fas fa-tint mr-2"></i>
+            Points d'Eau - <span id="ouvrageNom"></span>
+        </h2>
+
+        <div id="pointsEauContainer"></div>
+    </div>
+
+</div>
+<!-- Zone d'impression cachée -->
+<div id="printArea" class="hidden print:block"></div>
+
+<!-- Modal Confirmation Impression -->
+<dialog id="modalImpression" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-print text-info mr-2"></i>
+            Imprimer le ticket de caisse
+        </h3>
+
+        <div class="space-y-4">
+            <div>
+                <p><strong>Carte sociale :</strong> <span id="modalNumero"></span></p>
+                <p><strong>Bénéficiaire :</strong> <span id="modalBeneficiaire"></span></p>
+                <p><strong>Point d'eau :</strong> <span id="modalPointEau"></span></p>
+            </div>
+
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text">Date de facture *</span>
+                </label>
+                <input type="date" id="inputDateFacture" class="input input-bordered" required>
+            </div>
+
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text">Montant (Ar)</span>
+                </label>
+                <input type="number" step="0.01" id="inputMontant" class="input input-bordered" readonly>
+                <label class="label">
+                    <span class="label-text-alt text-info">Tarif défini dans l'organisation</span>
+                </label>
+            </div>
+
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle"></i>
+                <span>2 tickets seront imprimés : un pour le bénéficiaire (avec cases) et un pour l'organisation (avec montant)</span>
+            </div>
+        </div>
+
+        <div class="modal-action">
+            <button type="button" class="btn" onclick="document.getElementById('modalImpression').close()">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="confirmerImpression()">
+                <i class="fas fa-print mr-2"></i>
+                Imprimer
+            </button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<style>
+@media print {
+    @page {
+        size: A4 portrait;
+        margin: 0.2cm 0.35cm 0.2cm 0.05cm;
+    }
+    body {
+        margin: 0;
+    }
+    body > *:not(main) {
+        display: none !important;
+    }
+    main {
+        padding: 0 !important;
+    }
+    main > *:not(#printArea) {
+        display: none !important;
+    }
+    #printArea {
+        display: block !important;
+        position: static;
+        width: 100%;
+    }
+    #printArea, #printArea * {
+        visibility: visible !important;
+    }
+}
+
+.print-sheet {
+    width: 19.9cm;
+    min-height: 27.8cm;
+    margin: 0 0 12px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.22cm;
+    font-family: Arial, sans-serif;
+}
+
+.print-copy {
+    width: 100%;
+    min-height: 3.95cm;
+    border: 1.4px solid #111827;
+    background: #fff;
+    display: grid;
+    grid-template-columns: 5.2cm 1fr;
+    overflow: hidden;
+}
+
+.print-copy-left {
+    padding: 0.10cm 0.10cm 0.10cm 0.06cm;
+    border-right: 1px solid #cbd5e1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.10cm;
+}
+
+.print-copy-title {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+}
+
+.print-copy-header {
+    min-height: 0.62cm;
+    display: flex;
+    align-items: center;
+    gap: 0.12cm;
+    margin-bottom: 0.03cm;
+}
+
+.print-organisation-logo {
+    width: auto;
+    max-width: 1.35cm;
+    height: 0.58cm;
+    object-fit: contain;
+    flex: 0 0 auto;
+}
+
+.print-organisation-name {
+    max-width: 3.3cm;
+    margin-top: 1px;
+    overflow: hidden;
+    font-size: 7px;
+    font-weight: 700;
+    line-height: 1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.print-info-line {
+    font-size: 10px;
+    line-height: 1.1;
+    display: flex;
+    gap: 4px;
+}
+
+.print-info-line strong {
+    white-space: nowrap;
+}
+
+.print-info-line span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.print-amount-box {
+    margin-top: auto;
+    border: 1.6px solid #111827;
+    padding: 0.1cm 0.12cm;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.print-amount-label {
+    font-size: 8px;
+    text-transform: uppercase;
+    color: #475569;
+}
+
+.print-amount-box strong {
+    font-size: 15px;
+    line-height: 1.1;
+}
+
+.print-signature {
+    margin-top: 0.08cm;
+}
+
+.print-signature-label {
+    font-size: 8px;
+    font-weight: 700;
+    color: #334155;
+    margin-bottom: 0.12cm;
+}
+
+.print-signature-line {
+    border-top: 1px solid #111827;
+    width: 92%;
+}
+
+.print-copy-right {
+    padding: 0.06cm 0.04cm 0.06cm 0.03cm;
+    display: flex;
+    align-items: center;
+    border-right: 1.4px solid #111827;
+    overflow: hidden;
+}
+
+.print-days-grid {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.03cm;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.print-days-row {
+    display: grid;
+    gap: 0.03cm;
+    justify-content: start;
+}
+
+.print-days-row--8 {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+}
+
+.print-days-row--6 {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    width: 75%;
+}
+
+.print-day-box {
+    border: 1px solid #94a3b8;
+    min-height: 0.82cm;
+    max-height: 0.82cm;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1px 0;
+    min-width: 0.58cm;
+}
+
+.print-day-label {
+    font-size: 7px;
+    font-weight: 700;
+    color: #334155;
+    line-height: 1;
+}
+
+.print-day-check {
+    width: 0.36cm;
+    height: 0.36cm;
+    border: 1.2px solid #111827;
+    display: block;
+    margin-top: 1px;
+}
+</style>
+
+<script>
+let selectedCarte = null;
+let currentTarif = null;
+let currentOuvrage = null;
+let currentCarteInfo = null;
+window.currentOuvrage = null;
+window.currentCarteInfo = null;
+
+// Charger les cartes d'un ouvrage
+async function chargerCartes() {
+    const ouvrageId = document.getElementById('selectOuvrage').value;
+
+    if (!ouvrageId) {
+        document.getElementById('listePE').classList.add('hidden');
+        document.getElementById('infoTarif').classList.add('hidden');
+        return;
+    }
+
+    try {
+        const response = await fetch(`{% url 'billing:api_cartes_list' %}?ouvrage_id=${ouvrageId}`);
+        const data = await response.json();
+
+        if (data.success) {
+            currentOuvrage = data.ouvrage;
+            window.currentOuvrage = currentOuvrage;
+            currentTarif = data.tarif_carte_sociale;
+
+            // Afficher le tarif
+            if (currentTarif) {
+                document.getElementById('tarifDisplay').textContent = currentTarif.toLocaleString('fr-FR');
+                document.getElementById('infoTarif').classList.remove('hidden');
+                document.getElementById('inputMontant').value = currentTarif;
+            } else {
+                document.getElementById('infoTarif').classList.add('hidden');
+            }
+
+            // Afficher le nom de l'ouvrage
+            document.getElementById('ouvrageNom').textContent = data.ouvrage.nom;
+
+            // Afficher les points d'eau et cartes
+            const container = document.getElementById('pointsEauContainer');
+            container.innerHTML = '';
+
+            if (data.points_eau.length === 0) {
+                container.innerHTML = `
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <span>Aucune carte sociale active trouvée pour cet ouvrage.</span>
+                    </div>
+                `;
+            } else {
+                data.points_eau.forEach(pe => {
+                    const peCard = document.createElement('div');
+                    peCard.className = 'card bg-base-200 shadow mb-4';
+                    peCard.innerHTML = `
+                        <div class="card-body p-4 sm:p-6">
+                            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                <h3 class="flex min-w-0 flex-wrap items-center gap-2 text-lg font-bold">
+                                    <i class="fas fa-tint shrink-0 text-primary" aria-hidden="true"></i>
+                                    <span class="break-words">${pe.nom}</span>
+                                    <span class="badge badge-info badge-sm">${pe.type}</span>
+                                    <span class="badge badge-success badge-sm">${pe.cartes.length} carte(s)</span>
+                                </h3>
+                                <label class="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-base-300 bg-base-100 px-3 lg:hidden">
+                                    <input type="checkbox" class="checkbox checkbox-sm" onchange="toggleAllCartes(this, '${pe.id}')">
+                                    <span class="text-sm font-medium">Tout sélectionner</span>
+                                </label>
+                            </div>
+
+                            <div class="mt-4 lg:overflow-x-auto">
+                                <table class="table table-sm block w-full lg:table">
+                                    <thead class="hidden lg:table-header-group">
+                                        <tr>
+                                            <th>
+                                                <label>
+                                                    <input type="checkbox" class="checkbox checkbox-sm" onchange="toggleAllCartes(this, '${pe.id}')">
+                                                </label>
+                                            </th>
+                                            <th>N° Carte</th>
+                                            <th>Bénéficiaire</th>
+                                            <th>Habitants</th>
+                                            <th>Date création</th>
+                                            <th>Expiration</th>
+                                            <th>Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="tbody-pe-${pe.id}" class="block space-y-3 lg:table-row-group lg:space-y-0">
+                                        ${pe.cartes.map(carte => `
+                                            <tr class="block rounded-lg border border-base-300 bg-base-100 p-4 shadow-sm lg:table-row lg:border-0 lg:bg-transparent lg:p-0 lg:shadow-none">
+                                                <td class="flex items-center justify-between gap-3 border-0 px-0 py-2 lg:table-cell lg:px-4 lg:py-3">
+                                                    <span class="text-xs font-medium text-base-content/60 lg:hidden">Sélection</span>
+                                                    <label class="flex min-h-8 cursor-pointer items-center">
+                                                        <input type="checkbox" class="checkbox checkbox-sm carte-checkbox"
+                                                               data-carte-id="${carte.id}"
+                                                               data-carte-numero="${carte.numero}"
+                                                               data-carte-beneficiaire="${carte.beneficiaire}"
+                                                               data-pe-nom="${pe.nom}"
+                                                               onchange="updateSelectionCount()">
+                                                    </label>
+                                                </td>
+                                                <td class="flex items-center justify-between gap-3 border-0 px-0 py-2 lg:table-cell lg:px-4 lg:py-3">
+                                                    <span class="text-xs font-medium text-base-content/60 lg:hidden">N° carte</span>
+                                                    <span class="badge badge-outline">${carte.numero}</span>
+                                                </td>
+                                                <td class="flex items-start justify-between gap-3 border-0 px-0 py-2 text-right lg:table-cell lg:px-4 lg:py-3 lg:text-left">
+                                                    <span class="shrink-0 text-xs font-medium text-base-content/60 lg:hidden">Bénéficiaire</span>
+                                                    <span class="min-w-0 break-words font-medium">${carte.beneficiaire}</span>
+                                                </td>
+                                                <td class="flex items-center justify-between gap-3 border-0 px-0 py-2 lg:table-cell lg:px-4 lg:py-3">
+                                                    <span class="text-xs font-medium text-base-content/60 lg:hidden">Habitants</span>
+                                                    <span>${carte.nombre_habitants}</span>
+                                                </td>
+                                                <td class="flex items-center justify-between gap-3 border-0 px-0 py-2 lg:table-cell lg:px-4 lg:py-3">
+                                                    <span class="text-xs font-medium text-base-content/60 lg:hidden">Création</span>
+                                                    <span>${formatDate(carte.date_creation)}</span>
+                                                </td>
+                                                <td class="flex items-center justify-between gap-3 border-0 px-0 py-2 lg:table-cell lg:px-4 lg:py-3">
+                                                    <span class="text-xs font-medium text-base-content/60 lg:hidden">Expiration</span>
+                                                    <span>${carte.date_expiration ? formatDate(carte.date_expiration) : 'Illimitée'}</span>
+                                                </td>
+                                                <td class="block border-0 px-0 pt-3 lg:table-cell lg:px-4 lg:py-3">
+                                                    <div class="grid grid-cols-2 gap-2 lg:flex">
+                                                        <button type="button" class="btn btn-sm btn-primary min-w-0" onclick="ouvrirModalImpression('${carte.id}', '${carte.numero}', '${carte.beneficiaire}', '${pe.nom}')">
+                                                            <i class="fas fa-print shrink-0" aria-hidden="true"></i>
+                                                            Imprimer
+                                                        </button>
+                                                        <button type="button" class="btn btn-sm btn-error min-w-0" onclick="supprimerCarte('${carte.id}', '${carte.numero}', '${carte.beneficiaire.replace(/'/g, '\\&#39;')}')">
+                                                            <i class="fas fa-trash shrink-0" aria-hidden="true"></i>
+                                                            Supprimer
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    `;
+                    container.appendChild(peCard);
+                });
+            }
+
+            document.getElementById('listePE').classList.remove('hidden');
+        } else {
+            alert('Erreur : ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur :', error);
+        alert('Erreur réseau : ' + error.message);
+    }
+}
+
+// Ouvrir modal impression
+function ouvrirModalImpression(carteId, numero, beneficiaire, pointEau) {
+    currentCarteInfo = {
+        id: carteId,
+        numero: numero,
+        beneficiaire: beneficiaire,
+        peNom: pointEau
+    };
+    selectedCarte = currentCarteInfo;
+    window.currentCarteInfo = currentCarteInfo;
+    window.cartesAImprimer = null;
+
+    document.getElementById('modalNumero').textContent = numero;
+    document.getElementById('modalBeneficiaire').textContent = beneficiaire;
+    document.getElementById('modalPointEau').textContent = pointEau;
+
+    // Pré-remplir la date d'aujourd'hui
+    document.getElementById('inputDateFacture').value = new Date().toISOString().split('T')[0];
+
+    // Pré-remplir le montant si tarif disponible
+    if (currentTarif) {
+        document.getElementById('inputMontant').value = currentTarif;
+    }
+
+    document.getElementById('modalImpression').showModal();
+}
+
+// Confirmer et imprimer
+async function confirmerImpression() {
+    const dateFacture = document.getElementById('inputDateFacture').value;
+    const montant = parseFloat(currentTarif || document.getElementById('inputMontant').value || 0);
+
+    if (!dateFacture || !montant) {
+        alert('Veuillez remplir tous les champs obligatoires');
+        return;
+    }
+
+    try {
+        // Appeler l'API pour créer la ligne conso
+        const response = await fetch(`{% url 'billing:api_imprimer_ticket' %}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                carte_id: selectedCarte.id,
+                montant: montant,
+                date_facture: dateFacture
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            // Générer les 2 tickets (bénéficiaire + organisation)
+            genererDeuxTickets(data.ticket_data);
+
+            // Fermer le modal
+            document.getElementById('modalImpression').close();
+
+            // Imprimer
+            window.print();
+
+            alert('✓ 2 tickets imprimés et ligne de consommation créée');
+        } else {
+            alert('Erreur : ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur :', error);
+        alert('Erreur réseau : ' + error.message);
+    }
+}
+
+async function supprimerCarte(carteId, numeroCarte, beneficiaire) {
+    const confirmation = confirm(
+        `Supprimer la carte sociale ${numeroCarte} de ${beneficiaire} ?\n\n` +
+        `La carte sera retiree de la liste, sans supprimer le beneficiaire.`
+    );
+
+    if (!confirmation) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`{% url 'billing:api_supprimer_carte' %}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                carte_id: carteId
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            await chargerCartes();
+            updateSelectionCount();
+            alert('Carte supprimee avec succes.');
+        } else {
+            alert('Erreur : ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur :', error);
+        alert('Erreur reseau : ' + error.message);
+    }
+}
+
+// Générer les 2 tickets (bénéficiaire + organisation)
+function genererDeuxTickets(ticketData) {
+    const printArea = document.getElementById('printArea');
+
+    // Ticket 1: Bénéficiaire (avec cases à cocher + montant)
+    const ticketBeneficiaire = `
+        <div class="ticket-caisse">
+            <h2>${ticketData.organisation}</h2>
+            <p style="text-align: center; font-weight: bold; margin: 10px 0;">KARATRA</p>
+            <div class="separator"></div>
+
+            <p><strong>Fotodrafitrasa :</strong> ${ticketData.ouvrage}</p>
+            <p><strong>Kiosque :</strong> ${ticketData.point_eau}</p>
+            <div class="separator"></div>
+
+            <p><strong>KARATRA</strong></p>
+            <p>N° : ${ticketData.numero_carte}</p>
+            <p>Tompon'ny karatra : ${ticketData.beneficiaire}</p>
+            <div class="separator"></div>
+
+            <p>Date : ${formatDate(ticketData.date)}</p>
+            <p>Isan'ny bidons : ${ticketData.nb_bidons}</p>
+            <p style="font-size: 16px;"><strong>VOLA ALOA : ${ticketData.montant.toLocaleString('fr-FR')} Ar</strong></p>
+
+            <div class="separator"></div>
+            <p><strong>Asiana marika eto (bidon) :</strong></p>
+            <div class="grid-cases" style="margin: 10px 0;">
+                ${Array(30).fill(0).map((_, i) => `
+                    <div class="case-bidon">
+                        <span class="numero">${i + 1}</span>
+                    </div>
+                `).join('')}
+            </div>
+
+            <div class="separator"></div>
+            <p style="text-align: center; font-size: 10px;">Misaotra</p>
+        </div>
+    `;
+
+    // Séparateur entre les 2 tickets (ligne de découpe)
+    const separateur = `
+        <div style="page-break-after: always; margin: 20px 0; padding: 10px 0; border-top: 2px dashed #000; text-align: center;">
+            ✂ - - - - - - - - - - - - - - - - - - - - - - - - - ✂
+        </div>
+    `;
+
+    // Ticket 2: Organisation (avec montant, sans cases)
+    const ticketOrganisation = `
+        <div class="ticket-caisse">
+            <h2>${ticketData.organisation}</h2>
+            <p style="text-align: center; font-weight: bold; margin: 10px 0;">TICKET ORGANISATION</p>
+            <div class="separator"></div>
+
+            <p><strong>Ouvrage :</strong> ${ticketData.ouvrage}</p>
+            <p><strong>Point d'eau :</strong> ${ticketData.point_eau}</p>
+            <div class="separator"></div>
+
+            <p><strong>CARTE SOCIALE</strong></p>
+            <p>N° : ${ticketData.numero_carte}</p>
+            <p>Bénéficiaire : ${ticketData.beneficiaire}</p>
+            <div class="separator"></div>
+
+            <p>Date : ${formatDate(ticketData.date)}</p>
+            <p>Nombre de bidons : ${ticketData.nb_bidons}</p>
+
+            <div class="separator"></div>
+            <p style="font-size: 18px; text-align: center;"><strong>MONTANT : ${ticketData.montant.toLocaleString('fr-FR')} Ar</strong></p>
+
+            <div class="separator"></div>
+            <p style="text-align: center; font-size: 10px;">Merci pour votre confiance</p>
+        </div>
+    `;
+
+    // Afficher les 2 tickets l'un au-dessus de l'autre (vertical, pour imprimante thermique)
+    printArea.innerHTML = `
+        <div style="width: 80mm; margin: 0 auto;">
+            ${ticketBeneficiaire}
+            ${separateur}
+            ${ticketOrganisation}
+        </div>
+    `;
+}
+
+// Générer le HTML d'un ticket (fonction conservée pour compatibilité)
+function genererTicket(ticketData, type) {
+    const printArea = document.getElementById('printArea');
+
+    let ticketHTML = `
+        <div class="ticket-caisse">
+            <h2>${ticketData.organisation}</h2>
+            <div class="separator"></div>
+
+            <p><strong>Ouvrage :</strong> ${ticketData.ouvrage}</p>
+            <p><strong>Point d'eau :</strong> ${ticketData.point_eau}</p>
+            <div class="separator"></div>
+
+            <p><strong>CARTE SOCIALE</strong></p>
+            <p>N° : ${ticketData.numero_carte}</p>
+            <p>Bénéficiaire : ${ticketData.beneficiaire}</p>
+            <div class="separator"></div>
+
+            <p>Date : ${formatDate(ticketData.date)}</p>
+            <p>Nombre de bidons : ${ticketData.nb_bidons}</p>
+    `;
+
+    if (type === 'beneficiaire') {
+        // Ticket avec 30 cases à cocher (5 colonnes × 6 lignes)
+        ticketHTML += `
+            <div class="separator"></div>
+            <p><strong>Cases à cocher (20L/bidon) :</strong></p>
+            <div class="grid-cases" style="margin: 10px 0;">
+                ${Array(30).fill(0).map((_, i) => `
+                    <div class="case-bidon">
+                        <span class="numero">${i + 1}</span>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    } else {
+        // Ticket agent avec montant
+        ticketHTML += `
+            <div class="separator"></div>
+            <p style="font-size: 16px;"><strong>MONTANT : ${ticketData.montant.toLocaleString('fr-FR')} Ar</strong></p>
+        `;
+    }
+
+    ticketHTML += `
+            <div class="separator"></div>
+            <p style="text-align: center; font-size: 10px;">Merci pour votre confiance</p>
+        </div>
+    `;
+
+    printArea.innerHTML = ticketHTML;
+}
+
+// Helper functions
+function formatDate(dateString) {
+    if (!dateString) return '-';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('fr-FR');
+}
+
+function formatMonthYear(dateString) {
+    if (!dateString) return '-';
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return '-';
+    return date.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+}
+
+function buildCasesGridCompact() {
+    const rows = [8, 8, 8, 6];
+    let current = 1;
+
+    return rows.map(count => {
+        const cells = Array.from({ length: count }, () => `
+            <div class="print-day-box">
+                <span class="print-day-label">${current++}</span>
+                <span class="print-day-check"></span>
+            </div>
+        `).join('');
+
+        return `<div class="print-days-row print-days-row--${count}">${cells}</div>`;
+    }).join('');
+}
+
+function buildCarteCompacte(ticketData) {
+    const organisationLogo = escapeHtml(ticketData.organisation_logo || '');
+    const organisationNom = escapeHtml(ticketData.organisation || '');
+    return `
+        <section class="print-copy">
+            <div class="print-copy-left">
+                <div class="print-copy-header">
+                    ${organisationLogo ? `<img class="print-organisation-logo" src="${organisationLogo}" alt="Logo ${organisationNom}">` : ''}
+                    <div>
+                        <div class="print-copy-title">FACTURE</div>
+                        ${organisationNom ? `<div class="print-organisation-name">${organisationNom}</div>` : ''}
+                    </div>
+                </div>
+                <div class="print-info-line"><strong>Mois :</strong> <span>${escapeHtml(formatMonthYear(ticketData.date))}</span></div>
+                <div class="print-info-line"><strong>Kiosque :</strong> <span>${escapeHtml(ticketData.point_eau)}</span></div>
+                <div class="print-info-line"><strong>Beneficiaire :</strong> <span>${escapeHtml(ticketData.beneficiaire)}</span></div>
+                <div class="print-amount-box">
+                    <span class="print-amount-label">Montant a payer</span>
+                    <strong>100 Ar</strong>
+                </div>
+                <div class="print-signature">
+                    <div class="print-signature-label">Signature agent</div>
+                    <div class="print-signature-line"></div>
+                </div>
+            </div>
+            <div class="print-copy-right">
+                <div class="print-days-grid">
+                    ${buildCasesGridCompact()}
+                </div>
+            </div>
+        </section>
+    `;
+}
+
+function renderCartesCompactesA4(ticketsData) {
+    const printArea = document.getElementById('printArea');
+    const copies = [...ticketsData];
+    const pages = [];
+
+    for (let i = 0; i < copies.length; i += 6) {
+        pages.push(copies.slice(i, i + 6));
+    }
+
+    printArea.innerHTML = pages.map(page => `
+        <div class="print-sheet">
+            ${page.map(ticket => buildCarteCompacte(ticket)).join('')}
+        </div>
+    `).join('');
+}
+
+async function attendreImagesImpression() {
+    const images = Array.from(document.querySelectorAll('#printArea img'));
+    await Promise.all(images.map(image => {
+        if (image.complete) return Promise.resolve();
+        return new Promise(resolve => {
+            image.addEventListener('load', resolve, { once: true });
+            image.addEventListener('error', resolve, { once: true });
+        });
+    }));
+}
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Exporter les consommations en Excel
+async function exporterExcel() {
+    const ouvrageId = document.getElementById('selectOuvrage').value;
+
+    // Construire l'URL avec les filtres actuels
+    let url = '{% url "billing:api_export_consos_excel" %}';
+    if (ouvrageId) {
+        url += `?ouvrage_id=${ouvrageId}`;
+    }
+
+    // Ouvrir le téléchargement dans une nouvelle fenêtre
+    window.open(url, '_blank');
+}
+
+// Importer les consommations depuis Excel
+async function importerExcel(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const response = await fetch('{% url "billing:api_import_consos_excel" %}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: formData
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            let message = `✓ ${data.nb_imported} consommation(s) importée(s) avec succès.`;
+
+            if (data.errors && data.errors.length > 0) {
+                message += `\n\n⚠️ ${data.errors.length} erreur(s) :\n` + data.errors.join('\n');
+            }
+
+            alert(message);
+
+            // Recharger si ouvrage sélectionné
+            if (document.getElementById('selectOuvrage').value) {
+                chargerCartes();
+            }
+        } else {
+            alert('Erreur lors de l\'import : ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau : ' + error.message);
+    }
+
+    // Réinitialiser l'input file
+    event.target.value = '';
+}
+
+// Fonctions pour la sélection multiple
+function toggleAllCartes(checkbox, peId) {
+    const tbody = document.getElementById(`tbody-pe-${peId}`);
+    const checkboxes = tbody.querySelectorAll('.carte-checkbox');
+    checkboxes.forEach(cb => {
+        cb.checked = checkbox.checked;
+    });
+    updateSelectionCount();
+}
+
+function updateSelectionCount() {
+    const selected = document.querySelectorAll('.carte-checkbox:checked');
+    const count = selected.length;
+    document.getElementById('selectionCount').textContent = count;
+    document.getElementById('btnImprimerSelection').disabled = count === 0;
+}
+
+async function imprimerSelection() {
+    const selected = document.querySelectorAll('.carte-checkbox:checked');
+
+    if (selected.length === 0) {
+        alert('Veuillez sélectionner au moins une carte');
+        return;
+    }
+
+    if (!confirm(`Imprimer ${selected.length} carte(s) sociale(s) ?`)) {
+        return;
+    }
+
+    // Collecter les données des cartes sélectionnées
+    const cartesData = [];
+    selected.forEach(checkbox => {
+        cartesData.push({
+            id: checkbox.dataset.carteId,
+            numero: checkbox.dataset.carteNumero,
+            beneficiaire: checkbox.dataset.carteBeneficiaire,
+            peNom: checkbox.dataset.peNom
+        });
+    });
+
+    // Ouvrir le modal pour saisir les infos communes
+    document.getElementById('inputDateFacture').valueAsDate = new Date();
+
+    // Stocker les cartes à imprimer globalement
+    window.cartesAImprimer = cartesData;
+
+    // Modifier le titre du modal
+    document.querySelector('#modalImpression h3').textContent = `Impression de ${cartesData.length} carte(s) sociale(s)`;
+
+    document.getElementById('modalImpression').showModal();
+}
+
+// Modifier la fonction confirmerImpression pour gérer l'impression multiple
+async function confirmerImpression() {
+    const dateFacture = document.getElementById('inputDateFacture').value;
+    const montant = parseFloat(document.getElementById('inputMontant').value) || 0;
+
+    if (!dateFacture) {
+        alert('Veuillez saisir la date');
+        return;
+    }
+
+    // Vérifier s'il s'agit d'une impression multiple
+    if (window.cartesAImprimer && window.cartesAImprimer.length > 0) {
+        // Impression multiple
+        await imprimerCartesMultiples(window.cartesAImprimer, dateFacture, montant);
+        window.cartesAImprimer = null;
+    } else {
+        // Impression simple (existante)
+        await imprimerCarteSimple(dateFacture, montant);
+    }
+
+    document.getElementById('modalImpression').close();
+}
+
+async function imprimerCartesMultiples(cartes, dateFacture, montant) {
+    const tarifsParCarte = parseFloat(currentTarif || montant || 0);
+    const ouvrageInfo = window.currentOuvrage || currentOuvrage || {};
+    const organisationNom = ouvrageInfo.organisation || 'Organisation';
+    const ouvrageNom = ouvrageInfo.nom || 'Ouvrage';
+    const ticketsData = [];
+
+    for (let i = 0; i < cartes.length; i++) {
+        const carte = cartes[i];
+
+        // Créer le ticket
+        const ticketData = {
+            organisation: organisationNom,
+            organisation_logo: ouvrageInfo.organisation_logo || '',
+            ouvrage: ouvrageNom,
+            point_eau: carte.peNom,
+            numero_carte: carte.numero,
+            beneficiaire: carte.beneficiaire,
+            date: dateFacture,
+            nb_bidons: 30,
+            montant: tarifsParCarte
+        };
+
+        // Générer le ticket (bénéficiaire)
+        ticketsData.push(ticketData);
+
+        // Attendre un peu avant d'imprimer
+    }
+
+    renderCartesCompactesA4(ticketsData);
+    await attendreImagesImpression();
+    window.print();
+
+    // Appeler l'API pour enregistrer toutes les consommations
+    try {
+        const response = await fetch('{% url "billing:api_imprimer_ticket" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                cartes: cartes.map(c => ({
+                    carte_id: c.id,
+                    date: dateFacture,
+                    montant: tarifsParCarte
+                }))
+            })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            alert(`${cartes.length} carte(s) imprimée(s) et enregistrée(s) avec succès`);
+            // Décocher toutes les cases
+            document.querySelectorAll('.carte-checkbox:checked').forEach(cb => cb.checked = false);
+            updateSelectionCount();
+            chargerCartes();
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Tickets imprimés mais erreur lors de l\'enregistrement');
+    }
+}
+
+async function imprimerCarteSimple(dateFacture, montant) {
+    const ouvrageInfo = window.currentOuvrage || currentOuvrage;
+    const carteInfo = window.currentCarteInfo || currentCarteInfo;
+    if (!carteInfo || !ouvrageInfo) {
+        alert('Veuillez réouvrir la carte à imprimer.');
+        return;
+    }
+    const organisationNom = ouvrageInfo.organisation || 'Organisation';
+    const ouvrageNom = ouvrageInfo.nom || 'Ouvrage';
+
+    // Code existant pour impression simple
+    const ticketData = {
+        organisation: organisationNom,
+        organisation_logo: ouvrageInfo.organisation_logo || '',
+        ouvrage: ouvrageNom,
+        point_eau: carteInfo.peNom,
+        numero_carte: carteInfo.numero,
+        beneficiaire: carteInfo.beneficiaire,
+        date: dateFacture,
+        nb_bidons: 30,
+        montant: montant
+    };
+
+    renderCartesCompactesA4([ticketData]);
+    await attendreImagesImpression();
+    window.print();
+
+    // Enregistrer la consommation
+    try {
+        const response = await fetch('{% url "billing:api_imprimer_ticket" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                carte_id: carteInfo.id,
+                date: dateFacture,
+                montant: montant
+            })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            alert('Ticket imprimé et enregistré avec succès');
+            chargerCartes();
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+    }
+}
+
+// Event listeners
+document.getElementById('selectOuvrage').addEventListener('change', chargerCartes);
+</script>
+{% endblock %}

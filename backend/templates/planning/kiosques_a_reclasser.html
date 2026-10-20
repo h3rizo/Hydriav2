@@ -1,0 +1,172 @@
+{% extends planning_shell_base_template %}
+{% load humanize %}
+{% load l10n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container mx-auto p-4 space-y-4">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+            <h1 class="text-2xl font-bold">
+                <i class="fas fa-bell text-warning mr-2"></i>Kiosques à reclasser
+                <span class="badge badge-warning ml-2" id="compteur-restants">{{ lignes|length }}</span>
+            </h1>
+            <p class="text-sm text-base-content/70 mt-1">
+                Rappel : ces « kiosques » consomment moins de <strong>{{ seuil|floatformat:"-2" }} m³ par mois</strong> en moyenne en {{ annee }}.
+                Ce sont probablement des branchements privés (BP) ou des points d'eau institutionnels enregistrés comme kiosques :
+                <strong>leur type de point d'eau est à corriger</strong>. Choisissez le bon type puis enregistrez ; la ligne sort alors du rappel.
+            </p>
+        </div>
+        <a href="{% url 'planning:analyse_consommation' %}?annee={{ annee }}" class="btn btn-sm btn-ghost"><i class="fas fa-chart-bar mr-1"></i>Analyse de la consommation</a>
+    </div>
+
+    <form method="get" class="card bg-base-100 shadow">
+        <div class="card-body p-4 flex flex-wrap items-end gap-3">
+            <label class="form-control">
+                <span class="label-text text-xs">Année</span>
+                <select name="annee" class="select select-bordered select-sm">
+                    {% for a in annees %}<option value="{{ a }}" {% if a == annee %}selected{% endif %}>{{ a }}</option>{% endfor %}
+                </select>
+            </label>
+            <label class="form-control">
+                <span class="label-text text-xs">Seuil (m³/mois)</span>
+                <input type="number" name="seuil" min="0" step="1" value="{{ seuil|floatformat:"-2"|unlocalize }}" class="input input-bordered input-sm w-24">
+            </label>
+            {% if organisations|length > 1 %}
+            <label class="form-control">
+                <span class="label-text text-xs">Organisation</span>
+                <select name="organisation" class="select select-bordered select-sm">
+                    <option value="all">Toutes</option>
+                    {% for o in organisations %}<option value="{{ o.id }}" {% if organisation_filter == o.id|stringformat:"s" %}selected{% endif %}>{{ o.nom_organisation }}</option>{% endfor %}
+                </select>
+            </label>
+            {% endif %}
+            <button type="submit" class="btn btn-sm btn-primary"><i class="fas fa-filter mr-1"></i>Appliquer</button>
+        </div>
+    </form>
+
+    {% if lignes %}
+    <div class="card bg-base-100 shadow">
+        <div class="card-body p-4 space-y-3">
+            <div class="flex flex-wrap items-end gap-3">
+                <input type="search" id="recherche" class="input input-bordered input-sm flex-1 min-w-[12rem]" placeholder="Rechercher un point d'eau, un ouvrage, un village...">
+                <label class="form-control">
+                    <span class="label-text text-xs">Pré-remplir toutes les lignes avec</span>
+                    <select id="type-global" class="select select-bordered select-sm">
+                        <option value="">— Choisir un type —</option>
+                        {% for t in types_cibles %}<option value="{{ t.id }}">{{ t.nom_type }}</option>{% endfor %}
+                    </select>
+                </label>
+                <button type="button" class="btn btn-sm btn-outline" id="btn-prefill">Pré-remplir</button>
+                <button type="button" class="btn btn-sm btn-primary" id="btn-enregistrer-tout"><i class="fas fa-floppy-disk mr-1"></i>Enregistrer les lignes pré-remplies</button>
+            </div>
+            <p class="text-xs text-base-content/60">
+                Le pré-remplissage ne modifie rien : il propose un type dans chaque ligne. Rien n'est enregistré avant « Enregistrer » (ligne) ou « Enregistrer les lignes pré-remplies » (avec confirmation).
+                Le type d'abonné est effacé quand le nouveau type n'est plus un kiosque.
+            </p>
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm" id="table-kiosques">
+                    <thead>
+                        <tr class="bg-base-200">
+                            <th>#</th><th>Point d'eau</th><th>IDXLS</th><th>Ouvrage</th><th>Village · Commune</th>
+                            <th>Statut</th><th>Type d'abonné</th>
+                            <th class="text-center">Moyenne (m³/mois)</th><th class="text-center">Relevés</th><th class="text-center">Volume (m³)</th>
+                            <th>Nouveau type de point d'eau</th><th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for k in lignes %}
+                        <tr data-id="{{ k.id }}" data-texte="{{ k.nom|lower }} {{ k.ouvrage|lower }} {{ k.village|lower }} {{ k.commune|lower }} {{ k.idxls }}">
+                            <td>{{ forloop.counter }}</td>
+                            <td class="font-semibold">{{ k.nom }}</td>
+                            <td class="font-mono text-xs">{{ k.idxls|default:"-" }}</td>
+                            <td>
+                                {{ k.ouvrage }}
+                                {% if k.ouvrage_id %}<a href="/organisations/points-eau/{{ k.ouvrage_id }}/" target="_blank" rel="noopener" class="ml-1 opacity-60 hover:opacity-100" title="Ouvrir les points d'eau de l'ouvrage"><i class="fas fa-arrow-up-right-from-square text-xs"></i></a>{% endif %}
+                            </td>
+                            <td class="text-xs">{{ k.village|default:"-" }}{% if k.commune %} · {{ k.commune }}{% endif %}</td>
+                            <td>{% if k.actif %}<span class="badge badge-success badge-sm">Actif</span>{% else %}<span class="badge badge-ghost badge-sm">Coupé / sans date</span>{% endif %}</td>
+                            <td>{% if k.type_abonne == 'Non renseigné' %}<span class="badge badge-error badge-sm">Non renseigné</span>{% else %}<span class="badge badge-ghost badge-sm">{{ k.type_abonne }}</span>{% endif %}</td>
+                            <td class="text-center"><span class="badge badge-warning">{{ k.moyenne|floatformat:2 }}</span></td>
+                            <td class="text-center">{{ k.nb_releves }}</td>
+                            <td class="text-center">{{ k.volume_total|floatformat:2|intcomma }}</td>
+                            <td>
+                                <select class="select select-bordered select-xs type-ligne">
+                                    <option value="">— Choisir —</option>
+                                    {% for t in types_cibles %}<option value="{{ t.id }}">{{ t.nom_type }}</option>{% endfor %}
+                                </select>
+                            </td>
+                            <td class="text-right whitespace-nowrap">
+                                <button type="button" class="btn btn-xs btn-primary btn-enregistrer"><i class="fas fa-floppy-disk"></i> Enregistrer</button>
+                                <span class="etat text-xs"></span>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="alert alert-success">
+        <i class="fas fa-circle-check"></i>
+        <span>Aucun kiosque sous {{ seuil|floatformat:"-2" }} m³ par mois en {{ annee }} : rien à reclasser pour ces critères.</span>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const table = document.getElementById('table-kiosques');
+    if (!table) return;
+    const URL_API = "{% url 'planning:api_changer_type_point_eau' %}";
+    const compteur = document.getElementById('compteur-restants');
+    const cookie = n => (document.cookie.split('; ').find(c => c.startsWith(n + '=')) || '').split('=')[1] || '';
+
+    async function enregistrer(tr) {
+        const select = tr.querySelector('.type-ligne'), etat = tr.querySelector('.etat'), bouton = tr.querySelector('.btn-enregistrer');
+        if (!select.value) { etat.textContent = 'Choisissez un type'; etat.className = 'etat text-xs text-warning'; return false; }
+        bouton.disabled = true; select.disabled = true; etat.textContent = '…'; etat.className = 'etat text-xs';
+        try {
+            const data = new URLSearchParams({point_eau_id: tr.dataset.id, type_point_eau_id: select.value});
+            const r = await fetch(URL_API, {method: 'POST', credentials: 'same-origin', body: data,
+                headers: {'X-CSRFToken': decodeURIComponent(cookie('csrftoken')), 'Content-Type': 'application/x-www-form-urlencoded'}});
+            const j = await r.json();
+            if (!r.ok || !j.success) throw new Error(j.error || ('HTTP ' + r.status));
+            tr.classList.add('opacity-60'); tr.style.background = 'rgba(34,197,94,.12)';
+            etat.textContent = '✓ ' + j.type; etat.className = 'etat text-xs text-success font-semibold';
+            tr.dataset.fait = '1';
+            compteur.textContent = Math.max(0, table.querySelectorAll('tbody tr:not([data-fait])').length);
+            return true;
+        } catch (e) {
+            etat.textContent = 'Erreur : ' + e.message; etat.className = 'etat text-xs text-error';
+            bouton.disabled = false; select.disabled = false;
+            return false;
+        }
+    }
+
+    table.addEventListener('click', e => {
+        const b = e.target.closest('.btn-enregistrer');
+        if (b) enregistrer(b.closest('tr'));
+    });
+    document.getElementById('btn-prefill').addEventListener('click', () => {
+        const v = document.getElementById('type-global').value;
+        if (!v) return;
+        table.querySelectorAll('tbody tr:not([data-fait]):not([hidden]) .type-ligne').forEach(s => { s.value = v; });
+    });
+    document.getElementById('btn-enregistrer-tout').addEventListener('click', async () => {
+        const lignes = [...table.querySelectorAll('tbody tr:not([data-fait])')].filter(tr => tr.querySelector('.type-ligne').value);
+        if (!lignes.length) { alert('Aucune ligne pré-remplie.'); return; }
+        if (!confirm(`Changer le type de point d'eau de ${lignes.length} point(s) d'eau ? Cette action modifie les données.`)) return;
+        let ok = 0;
+        for (const tr of lignes) { if (await enregistrer(tr)) ok++; }
+        alert(`${ok} point(s) d'eau reclassé(s) sur ${lignes.length}.`);
+    });
+    document.getElementById('recherche').addEventListener('input', e => {
+        const q = e.target.value.trim().toLowerCase();
+        table.querySelectorAll('tbody tr').forEach(tr => { tr.hidden = q && !tr.dataset.texte.includes(q); });
+    });
+});
+</script>
+{% endblock %}

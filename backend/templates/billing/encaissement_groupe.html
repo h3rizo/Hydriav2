@@ -1,0 +1,419 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% load static %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex flex-col gap-3 lg:flex-row lg:justify-between lg:items-center">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">
+                <i class="fas fa-cash-register mr-2 text-success"></i>Encaissement des paiements forfaitaires
+            </h1>
+            <p class="text-base-content/70 mt-1">
+                La caissière encaisse ici. La compta saisit ensuite dans DiameX, puis le pointage confirme.
+            </p>
+        </div>
+        <a href="{% url 'billing:suivi_paiements_forfaitaires' %}" class="btn btn-ghost btn-sm">
+            <i class="fas fa-arrow-left mr-2"></i>Retour au suivi
+        </a>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-200 shadow-md">
+        <div class="card-body">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Statut</span></label>
+                    <select id="filter-statut" class="select select-bordered select-sm" onchange="loadFactures()">
+                        <option value="a_encaisser">À encaisser</option>
+                        <option value="encaisse">Encaissés, en attente de pointage</option>
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Organisation</span></label>
+                    <select id="filter-organisation" class="select select-bordered select-sm">
+                        <option value="all">Toutes les organisations</option>
+                        {% for org in organisations %}
+                        <option value="{{ org.id }}">{{ org.nom_organisation }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Ouvrage</span></label>
+                    <select id="filter-ouvrage" class="select select-bordered select-sm">
+                        <option value="all">Tous les ouvrages</option>
+                        {% for ouvrage in ouvrages %}
+                        <option value="{{ ouvrage.id }}">{{ ouvrage.nom_ouvrage }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Recherche</span></label>
+                    <input type="text" id="filter-search" class="input input-bordered input-sm" placeholder="Nom, code ou IDXLS..."
+                           onkeydown="if(event.key==='Enter') loadFactures()">
+                </div>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button onclick="loadFactures()" class="btn btn-primary btn-sm">
+                    <i class="fas fa-filter mr-2"></i>Filtrer
+                </button>
+                <button onclick="resetFilters()" class="btn btn-ghost btn-sm">
+                    <i class="fas fa-redo mr-2"></i>Réinitialiser
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Encaissement de la sélection -->
+    <div class="card bg-base-200 shadow-md" id="card-action">
+        <div class="card-body">
+            <div class="flex flex-col gap-4 xl:flex-row xl:justify-between xl:items-end">
+                <div class="flex flex-wrap items-center gap-6">
+                    <div>
+                        <span class="font-semibold text-lg" id="selection-count">0</span>
+                        <span class="text-base-content/70">facture(s) sélectionnée(s)</span>
+                    </div>
+                    <div>
+                        <span class="font-semibold text-lg text-success" id="selection-total">0 Ar</span>
+                        <span class="text-base-content/70">à encaisser</span>
+                    </div>
+                    <div class="form-control">
+                        <label class="label py-0"><span class="label-text text-xs">Date d'encaissement</span></label>
+                        <input type="date" id="date-encaissement" class="input input-bordered input-sm"
+                               value="{{ today|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}">
+                    </div>
+                    <div class="form-control">
+                        <label class="label py-0"><span class="label-text text-xs">Journal</span></label>
+                        <select id="journal-code" class="select select-bordered select-sm">
+                            <option value="00PERS">00PERS</option>
+                        </select>
+                    </div>
+                    <label class="label cursor-pointer gap-2" id="label-groupe">
+                        <input type="checkbox" id="chk-groupe" class="checkbox checkbox-sm checkbox-success" checked>
+                        <span class="label-text text-sm" id="txt-groupe">Une seule ligne DiameX (même ouvrage)</span>
+                    </label>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <button onclick="selectAll()" class="btn btn-sm btn-ghost">
+                        <i class="fas fa-check-double mr-2"></i>Tout sélectionner
+                    </button>
+                    <button onclick="deselectAll()" class="btn btn-sm btn-ghost">
+                        <i class="fas fa-times mr-2"></i>Désélectionner
+                    </button>
+                    <button onclick="encaisserSelection()" class="btn btn-sm btn-success" id="btn-encaisser" disabled>
+                        <i class="fas fa-cash-register mr-2"></i>Encaisser la sélection
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Factures dont la validité court encore -->
+    <div class="card bg-base-100 shadow" id="card-actives">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-calendar-check mr-2 text-success"></i>Factures actives
+                <span class="badge badge-success badge-sm ml-2" id="count-actives">0</span>
+            </h2>
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm">
+                    <thead>
+                        <tr>
+                            <th class="col-check"><input type="checkbox" class="checkbox checkbox-sm" id="checkbox-all-actives" onchange="toggleGroup('actives')"></th>
+                            <th>Ouvrage</th><th>Point d'eau</th><th>IDXLS</th><th>Date facture</th>
+                            <th>Qté</th><th>Prix unitaire</th><th>Montant</th><th>Durée</th><th>Fin validité</th><th class="col-enc">Encaissé le</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody-actives"></tbody>
+                </table>
+            </div>
+            <div class="text-sm text-base-content/70 mt-2">
+                <i class="fas fa-info-circle mr-1"></i>Fin de validité aujourd'hui ou dans le futur, la plus proche en premier.
+            </div>
+        </div>
+    </div>
+
+    <!-- Factures dont la validité est passée -->
+    <div class="card bg-base-100 shadow" id="card-expirees">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-calendar-times mr-2 text-error"></i>Factures expirées
+                <span class="badge badge-error badge-sm ml-2" id="count-expirees">0</span>
+            </h2>
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm">
+                    <thead>
+                        <tr>
+                            <th class="col-check"><input type="checkbox" class="checkbox checkbox-sm" id="checkbox-all-expirees" onchange="toggleGroup('expirees')"></th>
+                            <th>Ouvrage</th><th>Point d'eau</th><th>IDXLS</th><th>Date facture</th>
+                            <th>Qté</th><th>Prix unitaire</th><th>Montant</th><th>Durée</th><th>Fin validité</th><th class="col-enc">Encaissé le</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody-expirees"></tbody>
+                </table>
+            </div>
+            <div class="text-sm text-base-content/70 mt-2">
+                <i class="fas fa-info-circle mr-1"></i>Fin de validité dépassée, la plus récente en premier.
+            </div>
+        </div>
+    </div>
+
+    <div id="empty-state" class="hidden card bg-base-100 shadow">
+        <div class="card-body items-center text-base-content/50 py-10">
+            <i class="fas fa-inbox text-4xl mb-2"></i>
+            <p id="empty-text">Aucune facture trouvée</p>
+        </div>
+    </div>
+
+    <!-- Derniers encaissements -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-history mr-2 text-info"></i>Derniers encaissements (30 jours)
+            </h2>
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                        <tr><th>Date</th><th>Description</th><th class="text-right">Montant</th><th>Factures</th><th>Compta</th><th></th></tr>
+                    </thead>
+                    <tbody id="tbody-derniers">
+                        <tr><td colspan="6" class="text-center text-base-content/50 py-4">Chargement...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let selected = new Map();        // id -> {montant, ouvrage_id}
+let listes = {actives: [], expirees: []};
+
+const fmt = n => Number(n || 0).toLocaleString('fr-FR');
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// "YYYY-MM-DD" -> "DD/MM/YYYY" sans passer par Date() (piège timezone)
+const fmtDate = s => { if (!s) return ''; const p = s.split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : s; };
+function estExpire(s) {
+    if (!s) return false;
+    const [y, m, d] = s.split('-').map(Number);
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    return new Date(y, m - 1, d) < t;
+}
+function getCookie(name) {
+    const m = document.cookie.split(';').map(c => c.trim()).find(c => c.startsWith(name + '='));
+    return m ? decodeURIComponent(m.substring(name.length + 1)) : null;
+}
+const modeEncaisse = () => document.getElementById('filter-statut').value === 'encaisse';
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadJournaux();
+    loadFactures();
+    loadDerniers();
+});
+
+async function loadJournaux() {
+    try {
+        const r = await fetch('{% url "billing:api_liste_journaux" %}');
+        const d = await r.json();
+        if (d.success && d.journaux.length) {
+            const sel = document.getElementById('journal-code');
+            sel.innerHTML = d.journaux.map(j =>
+                `<option value="${esc(j.code)}" ${j.code === '00PERS' ? 'selected' : ''}>${esc(j.code)}${j.nom ? ' - ' + esc(j.nom) : ''}</option>`
+            ).join('');
+        }
+    } catch (e) { /* le journal 00PERS par défaut reste disponible */ }
+}
+
+async function loadFactures() {
+    const params = new URLSearchParams({statut: document.getElementById('filter-statut').value});
+    const org = document.getElementById('filter-organisation').value;
+    const ouv = document.getElementById('filter-ouvrage').value;
+    const q = document.getElementById('filter-search').value.trim();
+    if (org !== 'all') params.append('organisation_id', org);
+    if (ouv !== 'all') params.append('ouvrage_id', ouv);
+    if (q) params.append('search', q);
+
+    selected.clear();
+    let messageVide = modeEncaisse() ? 'Aucun paiement encaissé en attente de pointage' : 'Aucune facture à encaisser';
+    try {
+        const r = await fetch('{% url "billing:api_liste_paiements_forfaitaires" %}?' + params);
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Erreur de chargement');
+        listes.actives = d.paiements_actifs || [];
+        listes.expirees = d.paiements_expires || [];
+    } catch (e) {
+        listes = {actives: [], expirees: []};
+        messageVide = 'Erreur de chargement : ' + e.message;
+    }
+
+    // En mode « encaissés », on consulte seulement : pas de sélection possible
+    document.getElementById('card-action').classList.toggle('hidden', modeEncaisse());
+    document.querySelectorAll('.col-check').forEach(el => el.classList.toggle('hidden', modeEncaisse()));
+    document.querySelectorAll('.col-enc').forEach(el => el.classList.toggle('hidden', !modeEncaisse()));
+    document.getElementById('empty-text').textContent = messageVide;
+
+    document.getElementById('count-actives').textContent = listes.actives.length;
+    document.getElementById('count-expirees').textContent = listes.expirees.length;
+    document.getElementById('card-actives').classList.toggle('hidden', !listes.actives.length);
+    document.getElementById('card-expirees').classList.toggle('hidden', !listes.expirees.length);
+    document.getElementById('empty-state').classList.toggle('hidden', listes.actives.length + listes.expirees.length > 0);
+    render();
+}
+
+function ligneHtml(f) {
+    const exp = estExpire(f.date_fin_validite);
+    const chk = selected.has(f.id);
+    const colCheck = modeEncaisse() ? '' : `<td><input type="checkbox" class="checkbox checkbox-sm" data-id="${esc(f.id)}" ${chk ? 'checked' : ''} onchange="toggleSelection('${esc(f.id)}')"></td>`;
+    const colEnc = modeEncaisse() ? `<td><span class="badge badge-warning badge-sm">${fmtDate(f.date_encaissement)}</span></td>` : '';
+    return `<tr class="${chk ? 'bg-primary/10' : ''}">
+        ${colCheck}
+        <td class="font-semibold">${esc(f.ouvrage_nom)}</td>
+        <td>${esc(f.point_eau_nom)}${f.deja_marque_paye ? ' <span class="badge badge-warning badge-xs" title="Marqué payé avant la mise en place de la date d\'encaissement : vérifier qu\'il n\'a pas déjà été encaissé">déjà marqué payé ?</span>' : ''}</td>
+        <td>${esc(f.idxls)}</td>
+        <td>${fmtDate(f.date_facture)}</td>
+        <td>${f.quantite}</td>
+        <td>${fmt(f.prix_unitaire)} Ar</td>
+        <td class="font-bold">${fmt(f.montant)} Ar</td>
+        <td>${f.duree_mois} mois</td>
+        <td>${f.date_fin_validite ? `<span class="text-sm ${exp ? 'text-error font-bold' : 'text-success'}">${fmtDate(f.date_fin_validite)}${exp ? ' <i class="fas fa-exclamation-triangle ml-1"></i>' : ''}</span>` : '-'}</td>
+        ${colEnc}
+    </tr>`;
+}
+
+function render() {
+    document.getElementById('tbody-actives').innerHTML = listes.actives.map(ligneHtml).join('');
+    document.getElementById('tbody-expirees').innerHTML = listes.expirees.map(ligneHtml).join('');
+    majResume();
+}
+
+function toutes() { return [...listes.actives, ...listes.expirees]; }
+
+function toggleSelection(id) {
+    if (selected.has(id)) selected.delete(id);
+    else {
+        const f = toutes().find(x => x.id === id);
+        if (f) selected.set(id, {montant: f.montant, ouvrage_id: f.ouvrage_id});
+    }
+    render();
+}
+
+function toggleGroup(nom) {
+    const cochee = document.getElementById('checkbox-all-' + nom).checked;
+    listes[nom].forEach(f => cochee ? selected.set(f.id, {montant: f.montant, ouvrage_id: f.ouvrage_id}) : selected.delete(f.id));
+    render();
+}
+
+function selectAll() { toutes().forEach(f => selected.set(f.id, {montant: f.montant, ouvrage_id: f.ouvrage_id})); render(); }
+function deselectAll() { selected.clear(); render(); }
+
+function majResume() {
+    const items = [...selected.values()];
+    const total = items.reduce((s, p) => s + p.montant, 0);
+    const ouvrages = new Set(items.map(p => p.ouvrage_id));
+    document.getElementById('selection-count').textContent = items.length;
+    document.getElementById('selection-total').textContent = fmt(total) + ' Ar';
+    document.getElementById('btn-encaisser').disabled = items.length === 0;
+    document.getElementById('checkbox-all-actives').checked = listes.actives.length > 0 && listes.actives.every(f => selected.has(f.id));
+    document.getElementById('checkbox-all-expirees').checked = listes.expirees.length > 0 && listes.expirees.every(f => selected.has(f.id));
+
+    // Plusieurs ouvrages : une ligne DiameX par facture, le regroupement n'a pas de sens
+    const chk = document.getElementById('chk-groupe');
+    const multi = ouvrages.size > 1;
+    chk.disabled = multi;
+    if (multi) chk.checked = false;
+    document.getElementById('txt-groupe').textContent = multi
+        ? 'Ouvrages différents : une ligne DiameX par facture'
+        : 'Une seule ligne DiameX (même ouvrage)';
+}
+
+async function encaisserSelection() {
+    const items = [...selected.entries()];
+    if (!items.length) return;
+    const total = items.reduce((s, [, p]) => s + p.montant, 0);
+    const groupe = document.getElementById('chk-groupe').checked && !document.getElementById('chk-groupe').disabled;
+    const dateEnc = document.getElementById('date-encaissement').value;
+
+    if (!confirm(`Encaisser ${items.length} facture(s) pour ${fmt(total)} Ar au ${fmtDate(dateEnc)} ?\n\n` +
+        (groupe ? 'Une seule ligne sera créée dans DiameX temporaire.' : 'Une ligne DiameX temporaire sera créée par facture.'))) return;
+
+    const btn = document.getElementById('btn-encaisser');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Encaissement...';
+    try {
+        const r = await fetch('{% url "billing:api_encaisser_paiements_forfaitaires" %}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+            body: JSON.stringify({
+                paiement_ids: items.map(([id]) => id),
+                groupe: groupe,
+                date_encaissement: dateEnc,
+                journal_code: document.getElementById('journal-code').value
+            })
+        });
+        const d = await r.json();
+        if (d.success) {
+            alert(d.message + (d.erreurs && d.erreurs.length ? '\n\nIgnorés :\n' + d.erreurs.join('\n') : ''));
+            await loadFactures();
+            loadDerniers();
+        } else {
+            alert('Erreur : ' + d.error + (d.erreurs && d.erreurs.length ? '\n' + d.erreurs.join('\n') : ''));
+        }
+    } catch (e) {
+        alert('Erreur réseau : ' + e.message);
+    } finally {
+        btn.innerHTML = '<i class="fas fa-cash-register mr-2"></i>Encaisser la sélection';
+        majResume();
+    }
+}
+
+async function loadDerniers() {
+    const tb = document.getElementById('tbody-derniers');
+    try {
+        const r = await fetch('{% url "billing:api_derniers_encaissements_forfaitaires" %}');
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error);
+        if (!d.encaissements.length) {
+            tb.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/50 py-4">Aucun encaissement récent</td></tr>';
+            return;
+        }
+        tb.innerHTML = d.encaissements.map(e => `<tr>
+            <td>${esc(e.date_encaissement)}</td>
+            <td class="max-w-md truncate" title="${esc(e.description)}">${esc(e.description)}</td>
+            <td class="text-right font-bold">${fmt(e.montant)} Ar</td>
+            <td>${e.nb_paiements}</td>
+            <td>${e.nb_pointes === e.nb_paiements
+                ? '<span class="badge badge-success badge-sm">Pointé</span>'
+                : `<span class="badge badge-warning badge-sm">${esc(e.statut_compta)} - ${e.nb_pointes}/${e.nb_paiements} pointé(s)</span>`}</td>
+            <td>${e.annulable ? `<button class="btn btn-xs btn-error btn-outline" onclick="annuler(${e.ligne_id})"><i class="fas fa-undo mr-1"></i>Annuler</button>` : ''}</td>
+        </tr>`).join('');
+    } catch (e) {
+        tb.innerHTML = `<tr><td colspan="6" class="text-center text-error py-4">Erreur : ${esc(e.message)}</td></tr>`;
+    }
+}
+
+async function annuler(ligneId) {
+    if (!confirm("Annuler cet encaissement ?\n\nLa ligne DiameX temporaire sera supprimée et les factures redeviendront « à encaisser ».")) return;
+    try {
+        const r = await fetch('{% url "billing:api_annuler_encaissement_forfaitaire" %}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+            body: JSON.stringify({ligne_id: ligneId})
+        });
+        const d = await r.json();
+        alert(d.success ? d.message : 'Erreur : ' + d.error);
+        if (d.success) { await loadFactures(); loadDerniers(); }
+    } catch (e) {
+        alert('Erreur réseau : ' + e.message);
+    }
+}
+
+function resetFilters() {
+    document.getElementById('filter-statut').value = 'a_encaisser';
+    document.getElementById('filter-organisation').value = 'all';
+    document.getElementById('filter-ouvrage').value = 'all';
+    document.getElementById('filter-search').value = '';
+    loadFactures();
+}
+</script>
+{% endblock %}

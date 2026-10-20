@@ -1,0 +1,337 @@
+{% extends analyses_shell_base_template %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+            <h1 class="text-2xl font-bold">Gradings annuels des ouvrages</h1>
+            <p class="text-sm text-base-content/70">Gestion manuelle + import/export Excel.</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <a href="{% url 'organization:ouvrage_grading_annuel_analyse' %}" class="btn btn-outline btn-sm">
+                <i class="fas fa-chart-bar mr-2"></i>Analyse
+            </a>
+            <a href="{% url 'organization:ouvrage_grading_annuel_template_excel' %}" class="btn btn-outline btn-sm">
+                <i class="fas fa-file-excel mr-2"></i>Template Excel
+            </a>
+            <a href="{% url 'organization:ouvrage_grading_annuel_export_excel' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-outline btn-sm">
+                <i class="fas fa-download mr-2"></i>Export Excel
+            </a>
+            <form id="import-excel-quick-form" method="post" action="{% url 'organization:ouvrage_grading_annuel_import_excel' %}" enctype="multipart/form-data" class="inline-flex">
+                {% csrf_token %}
+                <input id="excel-file-quick" type="file" name="excel_file" class="hidden" accept=".xlsx" required onchange="if (this.files && this.files.length) { this.form.submit(); }">
+                <label for="excel-file-quick" class="btn btn-ghost btn-sm">
+                    <i class="fas fa-upload mr-2"></i>Import Excel
+                </label>
+            </form>
+            <a href="{% url 'organization:ouvrage_grading_annuel_create' %}" class="btn btn-primary btn-sm">
+                <i class="fas fa-plus mr-2"></i>Nouveau grading
+            </a>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                <div class="stat bg-base-200 rounded-box">
+                    <div class="stat-title">Ouvrages</div>
+                    <div class="stat-value text-primary">{{ stats_total_ouvrages }}</div>
+                    <div class="stat-desc">Distincts (filtres appliqués)</div>
+                </div>
+                <div class="stat bg-base-200 rounded-box">
+                    <div class="stat-title">Lignes</div>
+                    <div class="stat-value">{{ stats_total_lignes }}</div>
+                    <div class="stat-desc">Ouvrage + année</div>
+                </div>
+                {% for item in grade_stats %}
+                <div class="stat bg-base-200 rounded-box">
+                    <div class="stat-title">Grading {{ item.label }}</div>
+                    <div class="stat-value {% if item.value == 'A' %}text-info{% elif item.value == 'B' %}text-success{% elif item.value == 'D' %}text-warning{% elif 'PANNE' in item.value %}text-error{% else %}text-secondary{% endif %}">
+                        {{ item.count }}
+                    </div>
+                    <div class="stat-desc">Ouvrages</div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <form method="get" class="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-8 gap-3">
+                <select name="organisation_id" class="select select-bordered">
+                    <option value="">Toutes les organisations</option>
+                    {% for org in organisations %}
+                    <option value="{{ org.id }}" {% if filters.organisation_id == org.id|stringformat:'s' %}selected{% endif %}>
+                        {{ org.nom_organisation }}
+                    </option>
+                    {% endfor %}
+                </select>
+                <select name="region_id" class="select select-bordered">
+                    <option value="">Toutes les regions</option>
+                    {% for region in regions %}
+                    <option value="{{ region.id }}" {% if filters.region_id == region.id|stringformat:'s' %}selected{% endif %}>
+                        {{ region.nom_region }}
+                    </option>
+                    {% endfor %}
+                </select>
+                <select name="district_id" class="select select-bordered">
+                    <option value="">Tous les districts</option>
+                    {% for district in districts %}
+                    <option value="{{ district.id }}" {% if filters.district_id == district.id|stringformat:'s' %}selected{% endif %}>
+                        {{ district.nom_district }}
+                    </option>
+                    {% endfor %}
+                </select>
+                <select name="commune_id" class="select select-bordered">
+                    <option value="">Toutes les communes</option>
+                    {% for commune in communes %}
+                    <option value="{{ commune.id }}" {% if filters.commune_id == commune.id|stringformat:'s' %}selected{% endif %}>
+                        {{ commune.nom_commune }}
+                    </option>
+                    {% endfor %}
+                </select>
+                <input
+                    type="text"
+                    name="q"
+                    class="input input-bordered"
+                    placeholder="Recherche ouvrage / type / observation"
+                    value="{{ filters.q }}"
+                >
+                <select name="annee" class="select select-bordered">
+                    <option value="">Toutes les annees</option>
+                    {% for y in annees %}
+                    <option value="{{ y }}" {% if filters.annee == y|stringformat:'s' %}selected{% endif %}>{{ y }}</option>
+                    {% endfor %}
+                </select>
+                <select name="grade" class="select select-bordered">
+                    <option value="">Tous les gradings</option>
+                    {% for value, label in grade_choices %}
+                    <option value="{{ value }}" {% if filters.grade == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+                <div class="flex gap-2">
+                    <button type="submit" class="btn btn-primary flex-1">Filtrer</button>
+                    <a href="{% url 'organization:ouvrage_grading_annuel_list' %}" class="btn btn-ghost">Reset</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="flex justify-end">
+        <div class="join">
+            <button id="btn-view-cards" type="button" class="join-item btn btn-sm btn-active" onclick="switchGradingView('cards')">
+                <i class="fas fa-th-large mr-2"></i>Cards
+            </button>
+            <button id="btn-view-table" type="button" class="join-item btn btn-sm" onclick="switchGradingView('table')">
+                <i class="fas fa-table mr-2"></i>Tableau
+            </button>
+        </div>
+    </div>
+
+    <div id="view-cards" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {% for card in grading_cards %}
+        <div class="card bg-base-100 shadow border border-base-300">
+            <div class="card-body p-4">
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <h3 class="font-bold text-base">{{ card.nom_ouvrage }}</h3>
+                        <div class="flex flex-wrap items-center gap-2 mt-1">
+                            <p class="text-xs text-base-content/70">{{ card.type_ouvrage }}</p>
+                            {% if card.saisonnier %}
+                            <span class="inline-flex items-center text-yellow-500" title="Saisonnier">
+                                <i class="fas fa-calendar-alt"></i>
+                            </span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% if card.latest_grading %}
+                    <span class="badge {% if card.latest_grading.grade == 'A' %}badge-info{% elif card.latest_grading.grade == 'B' %}badge-success{% elif card.latest_grading.grade == 'D' %}badge-warning{% elif 'PANNE' in card.latest_grading.grade %}badge-error{% else %}badge-outline{% endif %}">
+                        {{ card.latest_grading.grade }}
+                    </span>
+                    {% endif %}
+                </div>
+
+                <p class="text-xs text-base-content/60">
+                    {{ card.region_nom }} / {{ card.district_nom }} / {{ card.commune_nom }}
+                </p>
+
+                <div class="overflow-x-auto">
+                    <table class="table table-xs">
+                        <thead>
+                            <tr>
+                                <th>Annee</th>
+                                <th>Grading</th>
+                                <th>Source</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for g in card.gradings %}
+                            <tr>
+                                <td>{{ g.annee }}</td>
+                                <td>
+                                    <span class="badge badge-sm {% if g.grade == 'A' %}badge-info{% elif g.grade == 'B' %}badge-success{% elif g.grade == 'D' %}badge-warning{% elif 'PANNE' in g.grade %}badge-error{% else %}badge-outline{% endif %}">
+                                        {{ g.grade }}
+                                    </span>
+                                </td>
+                                <td>{{ g.source_display }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="col-span-full text-center py-8 text-base-content/60">Aucune donnee.</div>
+        {% endfor %}
+    </div>
+
+    <div id="view-table" class="card bg-base-100 shadow hidden">
+        <div class="card-body p-0">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra">
+                    <thead>
+                        <tr>
+                            <th>Ouvrage</th>
+                            <th>Type</th>
+                            <th>Annee</th>
+                            <th>Grading</th>
+                            <th>Observation</th>
+                            <th>Source</th>
+                            <th>Maj</th>
+                            <th class="text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if gradings %}
+                        {% regroup gradings by region_nom as region_groups %}
+                        {% for region in region_groups %}
+                        <tr class="bg-base-200">
+                            <td colspan="8">
+                                <button type="button" class="btn btn-ghost btn-xs font-semibold px-0" onclick="toggleGroup('region-{{ forloop.counter }}', this)">
+                                    <i class="fas fa-chevron-down mr-2 text-xs"></i>
+                                    Region: {{ region.grouper }} ({{ region.list|length }})
+                                </button>
+                            </td>
+                        </tr>
+                            {% regroup region.list by district_nom as district_groups %}
+                            {% for district in district_groups %}
+                            <tr class="bg-base-200/60 region-{{ forloop.parentloop.counter }}">
+                                <td colspan="8" class="pl-6">
+                                    <button type="button" class="btn btn-ghost btn-xs font-semibold px-0" onclick="toggleGroup('district-{{ forloop.parentloop.counter }}-{{ forloop.counter }}', this)">
+                                        <i class="fas fa-chevron-down mr-2 text-xs"></i>
+                                        District: {{ district.grouper }} ({{ district.list|length }})
+                                    </button>
+                                </td>
+                            </tr>
+                                {% regroup district.list by commune_nom as commune_groups %}
+                                {% for commune in commune_groups %}
+                                <tr class="bg-base-100 region-{{ forloop.parentloop.parentloop.counter }} district-{{ forloop.parentloop.parentloop.counter }}-{{ forloop.parentloop.counter }}">
+                                    <td colspan="8" class="pl-12">
+                                        <button type="button" class="btn btn-ghost btn-xs px-0" onclick="toggleGroup('commune-{{ forloop.parentloop.parentloop.counter }}-{{ forloop.parentloop.counter }}-{{ forloop.counter }}', this)">
+                                            <i class="fas fa-chevron-down mr-2 text-xs"></i>
+                                            Commune: {{ commune.grouper }} ({{ commune.list|length }})
+                                        </button>
+                                    </td>
+                                </tr>
+                                    {% for item in commune.list %}
+                                    <tr class="region-{{ forloop.parentloop.parentloop.parentloop.counter }} district-{{ forloop.parentloop.parentloop.parentloop.counter }}-{{ forloop.parentloop.parentloop.counter }} commune-{{ forloop.parentloop.parentloop.parentloop.counter }}-{{ forloop.parentloop.parentloop.counter }}-{{ forloop.parentloop.counter }}">
+                                        <td class="font-semibold pl-16">{{ item.ouvrage.nom_ouvrage }}</td>
+                                        <td>
+                                            <div>{{ item.ouvrage.type_ouvrage.nom_type_ouvrage|default:'-' }}</div>
+                                            {% if item.ouvrage.saisonnier %}
+                                            <span class="inline-flex items-center text-yellow-500 text-xs mt-1" title="Saisonnier">
+                                                <i class="fas fa-calendar-alt"></i>
+                                            </span>
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ item.annee }}</td>
+                                        <td>
+                                            <span class="badge {% if item.grade == 'A' %}badge-info{% elif item.grade == 'B' %}badge-success{% elif item.grade == 'D' %}badge-warning{% elif 'PANNE' in item.grade %}badge-error{% else %}badge-outline{% endif %}">
+                                                {{ item.grade }}
+                                            </span>
+                                        </td>
+                                        <td>{{ item.observation|default:'-' }}</td>
+                                        <td>{{ item.get_source_display }}</td>
+                                        <td>{{ item.updated_at|date:"d/m/Y H:i" }}</td>
+                                        <td class="text-right">
+                                            {% if is_directeur %}
+                                            <a href="{% url 'organization:ouvrage_grading_annuel_update' item.pk %}" class="btn btn-ghost btn-xs">
+                                                <i class="fas fa-edit"></i>
+                                            </a>
+                                            <a href="{% url 'organization:ouvrage_grading_annuel_delete' item.pk %}" class="btn btn-ghost btn-xs text-error">
+                                                <i class="fas fa-trash"></i>
+                                            </a>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                {% endfor %}
+                            {% endfor %}
+                        {% endfor %}
+                        {% else %}
+                        <tr>
+                            <td colspan="8" class="text-center py-8 text-base-content/60">Aucune donnee.</td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    {% if page_obj.paginator.num_pages > 1 %}
+    <div class="join">
+        {% if page_obj.has_previous %}
+        <a class="join-item btn btn-sm" href="?{% if request.GET.urlencode %}{{ request.GET.urlencode }}&{% endif %}page={{ page_obj.previous_page_number }}">«</a>
+        {% endif %}
+        <button class="join-item btn btn-sm btn-disabled">Page {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</button>
+        {% if page_obj.has_next %}
+        <a class="join-item btn btn-sm" href="?{% if request.GET.urlencode %}{{ request.GET.urlencode }}&{% endif %}page={{ page_obj.next_page_number }}">»</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+<script>
+function switchGradingView(view) {
+    const viewCards = document.getElementById('view-cards');
+    const viewTable = document.getElementById('view-table');
+    const btnCards = document.getElementById('btn-view-cards');
+    const btnTable = document.getElementById('btn-view-table');
+
+    if (!viewCards || !viewTable || !btnCards || !btnTable) return;
+
+    const showCards = view === 'cards';
+    viewCards.classList.toggle('hidden', !showCards);
+    viewTable.classList.toggle('hidden', showCards);
+    btnCards.classList.toggle('btn-active', showCards);
+    btnTable.classList.toggle('btn-active', !showCards);
+}
+
+function toggleGroup(groupClass, button) {
+    const rows = document.querySelectorAll('tr.' + groupClass);
+    const icon = button.querySelector('i');
+    let hasVisible = false;
+
+    rows.forEach((row) => {
+        if (!row.classList.contains('hidden')) {
+            hasVisible = true;
+        }
+    });
+
+    rows.forEach((row) => {
+        if (hasVisible) {
+            row.classList.add('hidden');
+        } else {
+            row.classList.remove('hidden');
+        }
+    });
+
+    if (icon) {
+        icon.classList.toggle('fa-chevron-down', !hasVisible);
+        icon.classList.toggle('fa-chevron-right', hasVisible);
+    }
+}
+</script>
+{% endblock %}

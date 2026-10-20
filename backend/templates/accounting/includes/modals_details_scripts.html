@@ -1,0 +1,533 @@
+<script>
+async function renderScanPreview(containerId, scanPath) {
+    const scanContainer = document.getElementById(containerId);
+    if (!scanContainer) return;
+    const encodedPath = encodeURIComponent(scanPath);
+    const metaUrl = `{% url 'accounting:serve_scan_image' %}?path=${encodedPath}&metadata=1`;
+    try {
+        const metaResponse = await fetch(metaUrl);
+        if (!metaResponse.ok) {
+            throw new Error(`HTTP ${metaResponse.status}`);
+        }
+
+        const meta = await metaResponse.json();
+        if (meta.file_type === 'tiff' && meta.page_count > 1) {
+            let pagesHtml = '';
+            for (let page = 1; page <= meta.page_count; page++) {
+                pagesHtml += `
+                    <div class="mb-4">
+                        <div class="text-xs font-semibold text-base-content/60 mb-2">Page ${page}</div>
+                        <img src="{% url 'accounting:serve_scan_image' %}?path=${encodedPath}&page=${page}"
+                             alt="Document scanne page ${page}"
+                             class="w-full h-auto rounded-lg shadow bg-base-200">
+                    </div>
+                `;
+            }
+
+            scanContainer.classList.remove('items-center', 'justify-center');
+            scanContainer.classList.add('block', 'p-4', 'overflow-y-auto');
+            scanContainer.innerHTML = pagesHtml;
+            return;
+        }
+
+        scanContainer.classList.add('items-center', 'justify-center');
+        scanContainer.innerHTML = `
+            <img src="{% url 'accounting:serve_scan_image' %}?path=${encodedPath}"
+                 alt="Document scanne"
+                 class="w-full h-auto rounded-lg shadow"
+                 onerror="this.parentElement.innerHTML='<div class=\\'text-center text-error\\'><i class=\\'fas fa-exclamation-triangle text-4xl mb-2\\'></i><p class=\\'text-sm\\'>Impossible de charger le scan</p><p class=\\'text-xs mt-1\\'>${scanPath}</p></div>'">
+        `;
+    } catch (error) {
+        scanContainer.innerHTML = `<div class="text-center text-error"><i class="fas fa-exclamation-triangle text-4xl mb-2"></i><p class="text-sm">Impossible de charger le scan</p><p class="text-xs mt-1">${scanPath}</p></div>`;
+    }
+}
+// Fonction pour voir le rapprochement de solde
+async function voirRapprochementSolde(annee, mois, fichier) {
+    const modal = document.getElementById('modal-rapprochement-solde');
+    const loading = document.getElementById('rapprochement-loading');
+    const contenu = document.getElementById('rapprochement-contenu');
+    const error = document.getElementById('rapprochement-error');
+
+    // Ouvrir le modal et afficher le loading
+    modal.showModal();
+    loading.classList.remove('hidden');
+    contenu.classList.add('hidden');
+    error.classList.add('hidden');
+
+    try {
+        const response = await fetch(`{% url "accounting:api_rapprochement_solde" %}?annee=${annee}&mois=${mois}&fichier=${encodeURIComponent(fichier)}`);
+        const data = await response.json();
+
+        if (data.success) {
+            // Mettre à jour le titre
+            document.getElementById('rapprochement-titre').textContent = data.titre;
+
+            // Remplir le tableau
+            const tbody = document.getElementById('rapprochement-tbody');
+            tbody.innerHTML = '';
+
+            data.comparaisons.forEach(comp => {
+                const tr = document.createElement('tr');
+                const conforme = Math.abs(comp.ecart) < 0.01;
+                tr.innerHTML = `
+                    <td class="font-mono font-semibold">${comp.journal}</td>
+                    <td class="text-right font-mono">${comp.solde_reel.toLocaleString('fr-FR')}</td>
+                    <td class="text-right font-mono">${comp.solde_calcule.toLocaleString('fr-FR')}</td>
+                    <td class="text-right font-mono ${comp.ecart !== 0 ? 'text-error font-bold' : ''}">
+                        ${comp.ecart.toLocaleString('fr-FR')}
+                    </td>
+                    <td class="text-center">
+                        ${conforme ?
+                            '<span class="badge badge-success badge-sm gap-1"><i class="fas fa-check"></i>Conforme</span>' :
+                            '<span class="badge badge-error badge-sm gap-1"><i class="fas fa-times"></i>Non conforme</span>'}
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            // Afficher le contenu
+            loading.classList.add('hidden');
+            contenu.classList.remove('hidden');
+        } else {
+            throw new Error(data.error || 'Erreur inconnue');
+        }
+    } catch (e) {
+        loading.classList.add('hidden');
+        error.classList.remove('hidden');
+        error.textContent = `Erreur lors du chargement du rapprochement de solde: ${e.message}`;
+    }
+}
+
+// Fonction pour voir le compte de tiers
+async function voirCompteTiers(annee, mois, fichier) {
+    const modal = document.getElementById('modal-compte-tiers');
+    const loading = document.getElementById('tiers-loading');
+    const contenu = document.getElementById('tiers-contenu');
+    const error = document.getElementById('tiers-error');
+
+    // Ouvrir le modal et afficher le loading
+    modal.showModal();
+    loading.classList.remove('hidden');
+    contenu.classList.add('hidden');
+    error.classList.add('hidden');
+
+    try {
+        const response = await fetch(`{% url "accounting:api_compte_tiers" %}?annee=${annee}&mois=${mois}&fichier=${encodeURIComponent(fichier)}`);
+        const data = await response.json();
+
+        if (data.success) {
+            // Mettre à jour le titre
+            document.getElementById('tiers-titre').textContent = data.titre;
+
+            // Remplir le tableau
+            const tbody = document.getElementById('tiers-tbody');
+            tbody.innerHTML = '';
+
+            data.avances.forEach(avance => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="font-semibold">${avance.tiers}</td>
+                    <td>
+                        ${avance.type === 'fournisseur' ?
+                            '<span class="badge badge-warning badge-xs">Fournisseur</span>' :
+                            avance.type === 'employe' ?
+                            '<span class="badge badge-info badge-xs">Employé</span>' :
+                            '<span class="badge badge-ghost badge-xs">Inconnu</span>'}
+                    </td>
+                    <td class="text-right font-mono ${avance.org_doit > 0 ? 'text-error' : ''}">
+                        ${avance.org_doit.toLocaleString('fr-FR')}
+                    </td>
+                    <td class="text-right font-mono ${avance.tiers_doit > 0 ? 'text-success' : ''}">
+                        ${avance.tiers_doit.toLocaleString('fr-FR')}
+                    </td>
+                    <td class="text-right font-mono font-bold ${avance.solde > 0 ? 'text-error' : avance.solde < 0 ? 'text-success' : ''}">
+                        ${avance.solde.toLocaleString('fr-FR')}
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            // Afficher le contenu
+            loading.classList.add('hidden');
+            contenu.classList.remove('hidden');
+        } else {
+            throw new Error(data.error || 'Erreur inconnue');
+        }
+    } catch (e) {
+        loading.classList.add('hidden');
+        error.classList.remove('hidden');
+        error.textContent = `Erreur lors du chargement du compte de tiers: ${e.message}`;
+    }
+}
+
+// Fonction pour voir le comptage caisse
+async function voirComptageCaisse(annee, mois, fichier, journal) {
+    const modal = document.getElementById('modal-comptage-caisse');
+    const loading = document.getElementById('caisse-loading');
+    const contenu = document.getElementById('caisse-contenu');
+    const error = document.getElementById('caisse-error');
+    const ocrResults = document.getElementById('caisse-ocr-results');
+
+    // Ouvrir le modal et afficher le loading
+    modal.showModal();
+    loading.classList.remove('hidden');
+    contenu.classList.add('hidden');
+    error.classList.add('hidden');
+    if (ocrResults) ocrResults.classList.add('hidden');
+
+    try {
+        const response = await fetch(`{% url "accounting:api_comptage_caisse" %}?annee=${annee}&mois=${mois}&fichier=${encodeURIComponent(fichier)}&journal=${encodeURIComponent(journal)}`);
+        const data = await response.json();
+
+        if (data.success) {
+            // Mettre à jour le titre
+            document.getElementById('caisse-titre').textContent = data.titre;
+
+            // Mettre à jour les soldes
+            document.getElementById('caisse-solde-depart').textContent = data.solde_depart.toLocaleString('fr-FR');
+            document.getElementById('caisse-total-in').textContent = data.total_in.toLocaleString('fr-FR');
+            document.getElementById('caisse-total-out').textContent = data.total_out.toLocaleString('fr-FR');
+            document.getElementById('caisse-solde-fin').textContent = data.solde_fin.toLocaleString('fr-FR');
+
+            // Remplir le tableau
+            const tbody = document.getElementById('caisse-tbody');
+            tbody.innerHTML = '';
+
+            data.transactions.forEach(trans => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${trans.date}</td>
+                    <td>${trans.rec}</td>
+                    <td class="text-xs">${trans.description}</td>
+                    <td class="text-xs">${trans.detail || '—'}</td>
+                    <td class="text-xs">${trans.pers || '—'}</td>
+                    <td class="font-mono text-xs">${trans.compte || '—'}</td>
+                    <td class="text-right font-mono text-success">
+                        ${trans.in ? trans.in.toLocaleString('fr-FR') : '—'}
+                    </td>
+                    <td class="text-right font-mono text-error">
+                        ${trans.out ? trans.out.toLocaleString('fr-FR') : '—'}
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            // Charger le scan si disponible
+            const scanContainer = document.getElementById('caisse-scan-container');
+            const btnOCR = document.getElementById('btn-ocr-caisse');
+
+            if (data.scan_path && data.scan_path.trim() !== '') {
+                // Stocker les paramètres pour l'OCR
+                currentDocParams.caisse = {
+                    scan_path: data.scan_path,
+                    annee: annee,
+                    mois: mois,
+                    fichier: fichier,
+                    journal: journal
+                };
+
+                await renderScanPreview('caisse-scan-container', data.scan_path);
+                const encodedPath = encodeURIComponent(data.scan_path);
+                scanContainer.innerHTML = `
+                    <img src="{% url 'accounting:serve_scan_image' %}?path=${encodedPath}"
+                         alt="Document scanné"
+                         class="w-full h-auto rounded-lg shadow"
+                         onerror="this.parentElement.innerHTML='<div class=\\'text-center text-error\\'><i class=\\'fas fa-exclamation-triangle text-4xl mb-2\\'></i><p class=\\'text-sm\\'>Impossible de charger le scan</p><p class=\\'text-xs mt-1\\'>${data.scan_path}</p></div>'">
+                `;
+
+                await renderScanPreview('caisse-scan-container', data.scan_path);
+                // Activer le bouton OCR
+                if (btnOCR) btnOCR.disabled = false;
+            } else {
+                // Pas de scan disponible
+                currentDocParams.caisse = null;
+                scanContainer.innerHTML = `
+                    <div class="text-center text-base-content/50">
+                        <i class="fas fa-file-image text-4xl mb-2"></i>
+                        <p class="text-sm">Aucun scan disponible</p>
+                    </div>
+                `;
+
+                // Désactiver le bouton OCR
+                if (btnOCR) btnOCR.disabled = true;
+            }
+
+            // Afficher le contenu
+            loading.classList.add('hidden');
+            contenu.classList.remove('hidden');
+        } else {
+            throw new Error(data.error || 'Erreur inconnue');
+        }
+    } catch (e) {
+        loading.classList.add('hidden');
+        error.classList.remove('hidden');
+        error.textContent = `Erreur lors du chargement du comptage caisse: ${e.message}`;
+    }
+}
+
+// Fonction pour voir le relevé bancaire
+async function voirReleveBancaire(annee, mois, fichier, journal) {
+    const modal = document.getElementById('modal-releve-bancaire');
+    const loading = document.getElementById('banque-loading');
+    const contenu = document.getElementById('banque-contenu');
+    const error = document.getElementById('banque-error');
+
+    // Ouvrir le modal et afficher le loading
+    modal.showModal();
+    loading.classList.remove('hidden');
+    contenu.classList.add('hidden');
+    error.classList.add('hidden');
+
+    try {
+        const response = await fetch(`{% url "accounting:api_releve_bancaire" %}?annee=${annee}&mois=${mois}&fichier=${encodeURIComponent(fichier)}&journal=${encodeURIComponent(journal)}`);
+        const data = await response.json();
+
+        if (data.success) {
+            // Mettre à jour le titre
+            document.getElementById('banque-titre').textContent = data.titre;
+
+            // Mettre à jour les soldes
+            document.getElementById('banque-solde-depart').textContent = data.solde_depart.toLocaleString('fr-FR');
+            document.getElementById('banque-total-in').textContent = data.total_in.toLocaleString('fr-FR');
+            document.getElementById('banque-total-out').textContent = data.total_out.toLocaleString('fr-FR');
+            document.getElementById('banque-solde-fin').textContent = data.solde_fin.toLocaleString('fr-FR');
+
+            // Remplir le tableau
+            const tbody = document.getElementById('banque-tbody');
+            tbody.innerHTML = '';
+
+            data.transactions.forEach(trans => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${trans.date}</td>
+                    <td>${trans.rec}</td>
+                    <td class="text-xs">${trans.description}</td>
+                    <td class="text-xs">${trans.detail || '—'}</td>
+                    <td class="text-xs">${trans.pers || '—'}</td>
+                    <td class="font-mono text-xs">${trans.compte || '—'}</td>
+                    <td class="text-right font-mono text-success">
+                        ${trans.in ? trans.in.toLocaleString('fr-FR') : '—'}
+                    </td>
+                    <td class="text-right font-mono text-error">
+                        ${trans.out ? trans.out.toLocaleString('fr-FR') : '—'}
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            // Charger le scan si disponible
+            const scanContainer = document.getElementById('banque-scan-container');
+            const btnOCR = document.getElementById('btn-ocr-banque');
+
+            if (data.scan_path && data.scan_path.trim() !== '') {
+                // Stocker les paramètres pour l'OCR
+                currentDocParams.banque = {
+                    scan_path: data.scan_path,
+                    annee: annee,
+                    mois: mois,
+                    fichier: fichier,
+                    journal: journal
+                };
+
+                await renderScanPreview('banque-scan-container', data.scan_path);
+                const encodedPath = encodeURIComponent(data.scan_path);
+                scanContainer.innerHTML = `
+                    <img src="{% url 'accounting:serve_scan_image' %}?path=${encodedPath}"
+                         alt="Document scanné"
+                         class="w-full h-auto rounded-lg shadow"
+                         onerror="this.parentElement.innerHTML='<div class=\\'text-center text-error\\'><i class=\\'fas fa-exclamation-triangle text-4xl mb-2\\'></i><p class=\\'text-sm\\'>Impossible de charger le scan</p><p class=\\'text-xs mt-1\\'>${data.scan_path}</p></div>'">
+                `;
+
+                await renderScanPreview('banque-scan-container', data.scan_path);
+                // Activer le bouton OCR
+                if (btnOCR) btnOCR.disabled = false;
+            } else {
+                // Pas de scan disponible
+                currentDocParams.banque = null;
+                scanContainer.innerHTML = `
+                    <div class="text-center text-base-content/50">
+                        <i class="fas fa-file-image text-4xl mb-2"></i>
+                        <p class="text-sm">Aucun scan disponible</p>
+                    </div>
+                `;
+
+                // Désactiver le bouton OCR
+                if (btnOCR) btnOCR.disabled = true;
+            }
+
+            // Afficher le contenu
+            loading.classList.add('hidden');
+            contenu.classList.remove('hidden');
+        } else {
+            throw new Error(data.error || 'Erreur inconnue');
+        }
+    } catch (e) {
+        loading.classList.add('hidden');
+        error.classList.remove('hidden');
+        error.textContent = `Erreur lors du chargement du relevé bancaire: ${e.message}`;
+    }
+}
+
+// Variables globales pour stocker les paramètres du document actuel
+let currentDocParams = {
+    caisse: null,
+    banque: null
+};
+
+// Fonction pour vérifier avec OCR - Comptage caisse
+async function verifierOCRCaisse() {
+    if (!currentDocParams.caisse) {
+        alert('Aucun document chargé');
+        return;
+    }
+
+    const btn = document.getElementById('btn-ocr-caisse');
+    const resultsDiv = document.getElementById('caisse-ocr-results');
+    const contentDiv = document.getElementById('caisse-ocr-content');
+
+    // Désactiver le bouton et afficher un spinner
+    btn.disabled = true;
+    btn.innerHTML = '<span class="loading loading-spinner loading-xs"></span> Analyse OCR...';
+
+    try {
+        const params = currentDocParams.caisse;
+        const response = await fetch('{% url "accounting:api_ocr_verification" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                scan_path: params.scan_path,
+                type_document: 'comptage_caisse',
+                annee: params.annee,
+                mois: params.mois,
+                fichier_source: params.fichier,
+                journal_code: params.journal
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            // Afficher les résultats
+            resultsDiv.classList.remove('hidden');
+            contentDiv.innerHTML = genererTableauResultatsOCR(data.resultats);
+        } else {
+            contentDiv.innerHTML = `<div class="alert alert-error text-xs"><i class="fas fa-exclamation-triangle"></i> ${data.error}</div>`;
+            resultsDiv.classList.remove('hidden');
+        }
+
+    } catch (error) {
+        console.error('Erreur OCR:', error);
+        contentDiv.innerHTML = `<div class="alert alert-error text-xs"><i class="fas fa-exclamation-triangle"></i> Erreur: ${error.message}</div>`;
+        resultsDiv.classList.remove('hidden');
+    } finally {
+        // Réactiver le bouton
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-robot"></i> Vérifier OCR';
+    }
+}
+
+// Fonction pour vérifier avec OCR - Relevé bancaire
+async function verifierOCRBanque() {
+    if (!currentDocParams.banque) {
+        alert('Aucun document chargé');
+        return;
+    }
+
+    const btn = document.getElementById('btn-ocr-banque');
+    const resultsDiv = document.getElementById('banque-ocr-results');
+    const contentDiv = document.getElementById('banque-ocr-content');
+
+    // Désactiver le bouton et afficher un spinner
+    btn.disabled = true;
+    btn.innerHTML = '<span class="loading loading-spinner loading-xs"></span> Analyse OCR...';
+
+    try {
+        const params = currentDocParams.banque;
+        const response = await fetch('{% url "accounting:api_ocr_verification" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                scan_path: params.scan_path,
+                type_document: 'releve_bancaire',
+                annee: params.annee,
+                mois: params.mois,
+                fichier_source: params.fichier,
+                journal_code: params.journal
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            // Afficher les résultats
+            resultsDiv.classList.remove('hidden');
+            contentDiv.innerHTML = genererTableauResultatsOCR(data.resultats);
+        } else {
+            contentDiv.innerHTML = `<div class="alert alert-error text-xs"><i class="fas fa-exclamation-triangle"></i> ${data.error}</div>`;
+            resultsDiv.classList.remove('hidden');
+        }
+
+    } catch (error) {
+        console.error('Erreur OCR:', error);
+        contentDiv.innerHTML = `<div class="alert alert-error text-xs"><i class="fas fa-exclamation-triangle"></i> Erreur: ${error.message}</div>`;
+        resultsDiv.classList.remove('hidden');
+    } finally {
+        // Réactiver le bouton
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-robot"></i> Vérifier OCR';
+    }
+}
+
+// Générer le tableau HTML des résultats OCR
+function genererTableauResultatsOCR(resultats) {
+    let html = '<table class="table table-xs table-zebra">';
+    html += '<thead><tr><th>Champ</th><th>Valeur Base</th><th>Valeur OCR</th><th>Statut</th></tr></thead>';
+    html += '<tbody>';
+
+    for (const [cle, data] of Object.entries(resultats)) {
+        const label = {
+            'solde_depart': 'Solde départ',
+            'total_in': 'Total entrées',
+            'total_out': 'Total sorties',
+            'solde_fin': 'Solde fin'
+        }[cle] || cle;
+
+        const valeurRef = data.valeur_ref.toLocaleString('fr-FR');
+        const valeurOCR = data.valeur_ocr !== null ? data.valeur_ocr.toLocaleString('fr-FR') : '—';
+
+        let badgeClass = 'badge-ghost';
+        let badgeText = 'Non trouvé';
+        let badgeIcon = 'fa-question';
+
+        if (data.trouve) {
+            if (data.correspond) {
+                badgeClass = 'badge-success';
+                badgeText = 'Conforme';
+                badgeIcon = 'fa-check';
+            } else {
+                badgeClass = 'badge-warning';
+                badgeText = 'Différence';
+                badgeIcon = 'fa-exclamation-triangle';
+            }
+        }
+
+        html += `
+            <tr>
+                <td class="font-semibold">${label}</td>
+                <td class="font-mono">${valeurRef}</td>
+                <td class="font-mono">${valeurOCR}</td>
+                <td><span class="badge ${badgeClass} badge-sm gap-1"><i class="fas ${badgeIcon}"></i>${badgeText}</span></td>
+            </tr>
+        `;
+    }
+
+    html += '</tbody></table>';
+    return html;
+}
+</script>

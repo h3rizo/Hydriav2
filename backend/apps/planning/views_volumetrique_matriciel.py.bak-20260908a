@@ -1,0 +1,477 @@
+"""Vue matricielle pour le suivi des paiements volumétriques par point d'eau"""
+from django.shortcuts import render
+from django.contrib.auth.decorators import login_required
+from django.http import JsonResponse
+from django.db.models import Q, Prefetch
+from django.views.decorators.http import require_http_methods
+from datetime import datetime
+from collections import defaultdict
+import json
+import pytz
+
+from apps.billing.models import Releve, PointEau, ModaliteGestion, TypePointEau
+from apps.geography.models import Commune
+from apps.organization.models import Ouvrage
+from apps.organization.scoping import get_user_accessible_gestionnaire_ids
+
+
+def _get_user_gestionnaire_ids(user):
+    return get_user_accessible_gestionnaire_ids(user)
+
+
+@login_required
+def suivi_paiements_matriciel(request):
+    """Vue matricielle des paiements volumétriques par point d'eau et mois"""
+
+    # Filtres
+    annee_filter = request.GET.get('annee', str(datetime.now().year))
+    commune_id = request.GET.get('commune', '')
+    gestionnaire_ids = _get_user_gestionnaire_ids(request.user)
+    ouvrage_id = request.GET.get('ouvrage', '')
+    type_point_eau_id = request.GET.get('type_point_eau', '')
+
+    # Récupérer l'ouvrage sélectionné (si spécifié)
+    ouvrage_selectionne = None
+    if ouvrage_id and ouvrage_id != 'all':
+        try:
+            ouvrage_selectionne = Ouvrage.objects.get(id=ouvrage_id)
+        except Ouvrage.DoesNotExist:
+            pass
+
+    # Récupérer les points d'eau avec modalité volumétrique
+    modalites_qs = ModaliteGestion.objects.filter(
+        date_fin__isnull=True,
+        modalitepaiement__in=['au_volume', 'mixte']
+    )
+    if gestionnaire_ids is not None:
+        if gestionnaire_ids:
+            modalites_qs = modalites_qs.filter(gestionnaire_id__in=gestionnaire_ids)
+        else:
+            modalites_qs = modalites_qs.none()
+    ouvrages_ids = modalites_qs.values_list('ouvrage_id', flat=True).distinct()
+
+    points_eau_qs = PointEau.objects.filter(
+        ouvrage_id__in=ouvrages_ids
+    ).select_related(
+        'ouvrage',
+        'parcelle__village__fokontany__commune',
+        'type_point_eau'
+    )
+
+    # Filtrer par commune
+    if commune_id and commune_id != 'all':
+        points_eau_qs = points_eau_qs.filter(
+            parcelle__village__fokontany__commune_id=commune_id
+        )
+
+    # Filtrer par ouvrage (OBLIGATOIRE pour l'affichage)
+    if ouvrage_id and ouvrage_id != 'all':
+        points_eau_qs = points_eau_qs.filter(ouvrage_id=ouvrage_id)
+    else:
+        # Si aucun ouvrage sélectionné, ne pas afficher les données
+        points_eau_qs = PointEau.objects.none()
+
+    # Filtrer par type de point d'eau
+    if type_point_eau_id and type_point_eau_id != 'all':
+        points_eau_qs = points_eau_qs.filter(type_point_eau_id=type_point_eau_id)
+
+    # Récupérer les relevés de l'année avec conversion timezone
+    # CRITICAL: Ne garder que les relevés avec montant > 0 (factures réelles)
+    # ET exclure les relevés avec "coupé" dans la remarque (pas de facture à recouvrer)
+    tz_madagascar = pytz.timezone('Indian/Antananarivo')
+    releves = list(Releve.objects.filter(
+        point_eau__in=points_eau_qs
+    ).exclude(
+        Q(montant__isnull=True) | Q(montant=0) | Q(remarque__icontains='coupé')
+    ).select_related('point_eau__ouvrage', 'point_eau__type_point_eau').order_by('datereleve'))
+
+    # Les factures de périodes coupées restent visibles et pointables. Leur
+    # exclusion concerne uniquement les compteurs et montants à recouvrer.
+    from apps.accounting.views import _build_coupure_periods_by_point, _is_releve_non_recouvrable
+    from apps.accounting.volume_recovery import (
+        build_recouvrement_par_ouvrage_mois,
+        build_score_totals_from_releves,
+        build_volume_kpis,
+        split_mois,
+    )
+    from django.utils import timezone as dj_timezone
+    point_eau_ids = [str(point_id) for point_id in points_eau_qs.values_list('id', flat=True)]
+    periodes_coupure = _build_coupure_periods_by_point(point_eau_ids)
+
+    annee_int = int(annee_filter) if annee_filter else datetime.now().year
+    today_mg = dj_timezone.localdate()
+    mois_passes_set, mois_en_cours_num = split_mois(annee_int, today_mg)
+
+    # Organiser les données par point d'eau et mois
+    donnees_matricielles = {}
+    mois_liste = list(range(1, 13))  # Janvier à Décembre
+
+    for pe in points_eau_qs:
+        donnees_matricielles[str(pe.id)] = {
+            'point_eau': pe,
+            'mois': {
+                mois: {'paye': False, 'montant': 0, 'releve_id': None, 'non_recouvrable': False}
+                for mois in mois_liste
+            }
+        }
+
+    # Remplir les données des relevés
+    for releve in releves:
+        if not releve.datereleve:
+            continue
+
+        # datereleve est un DateField (date object), pas datetime
+        # Pas besoin de conversion timezone pour date seule
+        date_obj = releve.datereleve
+
+        # CRITICAL: La facture est pour le mois SUIVANT le relevé
+        # Un relevé de mars → facture d'avril
+        # Un relevé de décembre 2024 → facture de janvier 2025
+        from dateutil.relativedelta import relativedelta
+        date_facture = date_obj + relativedelta(months=1)
+
+        # Filtrer par année (année de la facture, pas du relevé)
+        if date_facture.year != int(annee_filter):
+            continue
+
+        pe_id = str(releve.point_eau.id)
+        mois = date_facture.month  # Mois de la facture, pas du relevé
+
+        if pe_id in donnees_matricielles:
+            # Vérifier si payé (numeroDiameX renseigné)
+            est_paye = bool(releve.numeroDiameX and str(releve.numeroDiameX).strip())
+
+            donnees_matricielles[pe_id]['mois'][mois] = {
+                'paye': est_paye,
+                'montant': float(releve.montant) if releve.montant else 0,
+                'releve_id': str(releve.id),
+                'date_releve': date_obj.strftime('%d/%m/%Y'),
+                'non_recouvrable': _is_releve_non_recouvrable(releve, periodes_coupure),
+            }
+
+    # Préparer les données pour le template
+    points_eau_data = []
+    stats_globales = {
+        'total_factures': 0,
+        'factures_payees': 0,
+        'factures_impayees': 0,
+        'montant_impaye': 0,
+        'points_eau_coupes': 0,
+        'points_eau_tout_paye': 0
+    }
+
+    for pe_id, data in donnees_matricielles.items():
+        pe = data['point_eau']
+        mois_data = data['mois']
+
+        # Calculer stats par ligne
+        # Un relevé est considéré comme facture seulement si montant > 0
+        nb_factures_visibles = sum(1 for m in mois_data.values() if m['releve_id'] and m['montant'] > 0)
+        nb_non_recouvrables = sum(
+            1 for m in mois_data.values()
+            if m['releve_id'] and m['montant'] > 0 and m['non_recouvrable']
+        )
+        nb_releves = sum(
+            1 for m in mois_data.values()
+            if m['releve_id'] and m['montant'] > 0 and not m['non_recouvrable']
+        )
+        nb_payes = sum(
+            1 for m in mois_data.values()
+            if m['paye'] and m['montant'] > 0 and not m['non_recouvrable']
+        )
+        nb_impayes = nb_releves - nb_payes
+        montant_impaye = sum(
+            m['montant'] for m in mois_data.values()
+            if m['releve_id'] and m['montant'] > 0 and not m['paye'] and not m['non_recouvrable']
+        )
+        taux = int(round(nb_payes / nb_releves * 100)) if nb_releves > 0 else 0
+
+        # Synthèse dédoublée mois passés / mois en cours (comptes de factures)
+        def _periode_stats(numeros_mois):
+            rel = sum(
+                1 for mo, m in mois_data.items()
+                if mo in numeros_mois and m['releve_id'] and m['montant'] > 0 and not m['non_recouvrable']
+            )
+            pay = sum(
+                1 for mo, m in mois_data.items()
+                if mo in numeros_mois and m['paye'] and m['montant'] > 0 and not m['non_recouvrable']
+            )
+            return rel, pay, rel - pay, (int(round(pay / rel * 100)) if rel > 0 else 0)
+
+        nb_releves_passes, nb_payes_passes, nb_impayes_passes, taux_passes = _periode_stats(mois_passes_set)
+        mois_courant_set = {mois_en_cours_num} if mois_en_cours_num else set()
+        nb_releves_courant, nb_payes_courant, nb_impayes_courant, taux_courant = _periode_stats(mois_courant_set)
+
+        # Vérifier si point d'eau coupé (définir comme ayant 2+ factures impayées consécutives)
+        est_coupe = False
+        impayes_consecutifs = 0
+        for mois in mois_liste:
+            if (
+                mois_data[mois]['releve_id']
+                and mois_data[mois]['montant'] > 0
+                and not mois_data[mois]['paye']
+                and not mois_data[mois]['non_recouvrable']
+            ):
+                impayes_consecutifs += 1
+                if impayes_consecutifs >= 2:
+                    est_coupe = True
+                    break
+            elif mois_data[mois]['paye']:
+                impayes_consecutifs = 0
+
+        # Vérifier si toutes les factures sont payées
+        tout_paye = nb_releves > 0 and nb_impayes == 0
+
+        # Ne garder que les points d'eau avec au moins une facture (relevé avec montant > 0)
+        if nb_factures_visibles > 0:
+            points_eau_data.append({
+                'point_eau': pe,
+                'mois': mois_data,
+                'nb_releves': nb_releves,
+                'nb_payes': nb_payes,
+                'nb_impayes': nb_impayes,
+                'nb_non_recouvrables': nb_non_recouvrables,
+                'taux': taux,  # Déjà un entier grâce à int(round(...))
+                'est_coupe': est_coupe,
+                'tout_paye': tout_paye,
+                'nb_releves_passes': nb_releves_passes,
+                'nb_payes_passes': nb_payes_passes,
+                'nb_impayes_passes': nb_impayes_passes,
+                'taux_passes': taux_passes,
+                'nb_releves_courant': nb_releves_courant,
+                'nb_payes_courant': nb_payes_courant,
+                'nb_impayes_courant': nb_impayes_courant,
+                'taux_courant': taux_courant,
+                'settled_past': nb_releves_passes > 0 and nb_impayes_passes == 0,
+            })
+
+            # Mettre à jour les stats globales
+            stats_globales['total_factures'] += nb_releves
+            stats_globales['factures_payees'] += nb_payes
+            stats_globales['factures_impayees'] += nb_impayes
+            stats_globales['montant_impaye'] += montant_impaye
+            if est_coupe:
+                stats_globales['points_eau_coupes'] += 1
+            if tout_paye:
+                stats_globales['points_eau_tout_paye'] += 1
+
+    mois_colonnes = [
+        {'number': 1, 'label': 'Jan'},
+        {'number': 2, 'label': 'Fév'},
+        {'number': 3, 'label': 'Mar'},
+        {'number': 4, 'label': 'Avr'},
+        {'number': 5, 'label': 'Mai'},
+        {'number': 6, 'label': 'Jun'},
+        {'number': 7, 'label': 'Jul'},
+        {'number': 8, 'label': 'Aoû'},
+        {'number': 9, 'label': 'Sep'},
+        {'number': 10, 'label': 'Oct'},
+        {'number': 11, 'label': 'Nov'},
+        {'number': 12, 'label': 'Déc'},
+    ]
+    visible_mois_liste = [
+        month['number']
+        for month in mois_colonnes
+        if any(
+            data['mois'][month['number']]['releve_id']
+            and data['mois'][month['number']]['montant'] > 0
+            for data in points_eau_data
+        )
+    ]
+    visible_mois_noms = [
+        month['label']
+        for month in mois_colonnes
+        if month['number'] in visible_mois_liste
+    ]
+
+    # Calculer le taux de paiement global (arrondi sans virgule)
+    if stats_globales['total_factures'] > 0:
+        stats_globales['taux_paiement'] = round(
+            (stats_globales['factures_payees'] / stats_globales['total_factures']) * 100
+        )
+    else:
+        stats_globales['taux_paiement'] = 0
+
+    # --- Blocs KPI (Général / Mois passés / Mois en cours) + colonnes mensuelles ---
+    facture_counts_par_mois = {mois: {'total': 0, 'payes': 0, 'impayes': 0} for mois in mois_liste}
+    for data in points_eau_data:
+        for mois, m in data['mois'].items():
+            if not (m['releve_id'] and m['montant'] > 0 and not m['non_recouvrable']):
+                continue
+            facture_counts_par_mois[mois]['total'] += 1
+            if m['paye']:
+                facture_counts_par_mois[mois]['payes'] += 1
+            else:
+                facture_counts_par_mois[mois]['impayes'] += 1
+
+    ouvrages_scope_ids = set(points_eau_qs.values_list('ouvrage_id', flat=True).distinct())
+    recouvrement_par_ouvrage_mois = build_recouvrement_par_ouvrage_mois(
+        releves, ouvrages_scope_ids, annee_int, periodes_coupure, gestionnaire_ids,
+    )
+    score_totals_by_point = build_score_totals_from_releves(
+        releves, annee_int, periodes_coupure, today_mg,
+    )
+    points_eau_coupes_count = points_eau_qs.filter(datearretbranchement__isnull=False).count()
+    kpis = build_volume_kpis(
+        recouvrement_par_ouvrage_mois=recouvrement_par_ouvrage_mois,
+        facture_counts_par_mois=facture_counts_par_mois,
+        score_totals_by_point=score_totals_by_point,
+        points_eau_coupes_count=points_eau_coupes_count,
+        annee_int=annee_int,
+        today=today_mg,
+    )
+
+    mois_colonnes_visibles = []
+    for month in mois_colonnes:
+        n = month['number']
+        if n not in visible_mois_liste:
+            continue
+        counts = facture_counts_par_mois.get(n, {})
+        col_taux = (
+            int(round(counts.get('payes', 0) / counts['total'] * 100))
+            if counts.get('total') else None
+        )
+        mois_colonnes_visibles.append({
+            'number': n,
+            'label': month['label'],
+            'is_current': n == mois_en_cours_num,
+            'settled': col_taux == 100,
+        })
+
+    # Regrouper par parcelle
+    donnees_par_parcelle = defaultdict(list)
+
+    for data in points_eau_data:
+        pe = data['point_eau']
+        # Utiliser l'ID de la parcelle comme clé, ou "Sans parcelle" si None
+        parcelle_key = str(pe.parcelle.id) if pe.parcelle else 'sans_parcelle'
+        parcelle_nom = pe.parcelle.reference_parcelle if pe.parcelle else 'Sans parcelle'
+
+        if parcelle_key not in [p['parcelle_id'] for p in donnees_par_parcelle.values() for item in [p]]:
+            donnees_par_parcelle[parcelle_key] = {
+                'parcelle_id': parcelle_key,
+                'parcelle_nom': parcelle_nom,
+                'points_eau': []
+            }
+
+        donnees_par_parcelle[parcelle_key]['points_eau'].append(data)
+
+    # Trier les points d'eau dans chaque parcelle par type : Kiosque > BI > BP, puis par IDxls
+    def get_sort_priority(data):
+        # Priorité par type
+        type_nom = data['point_eau'].type_point_eau.nom_type.upper() if data['point_eau'].type_point_eau else 'ZZZ'
+        if 'KIOSQUE' in type_nom:
+            type_priority = 0
+        elif 'BI' in type_nom or 'BORNE' in type_nom:
+            type_priority = 1
+        elif 'BP' in type_nom or 'BRANCHEMENT' in type_nom:
+            type_priority = 2
+        else:
+            type_priority = 3
+
+        # IDxls pour le tri secondaire (convertir en int si possible, sinon utiliser un grand nombre)
+        idxls = data['point_eau'].idxls
+        if idxls:
+            try:
+                idxls_sort = int(idxls)
+            except (ValueError, TypeError):
+                # Pour les valeurs non-numériques, utiliser le hash pour un tri cohérent
+                idxls_sort = 999999 + abs(hash(str(idxls))) % 100000
+        else:
+            idxls_sort = 999999  # Les valeurs nulles à la fin
+
+        return (type_priority, idxls_sort)
+
+    for parcelle_data in donnees_par_parcelle.values():
+        parcelle_data['points_eau'].sort(key=get_sort_priority)
+
+    # Convertir en liste triée par nom de parcelle
+    parcelles_organisees = sorted(donnees_par_parcelle.values(), key=lambda x: x['parcelle_nom'])
+
+    # Contexte
+
+    # Filtrer les ouvrages qui ont au moins un tarif volumétrique actif
+    from apps.billing.models import TarifVolumetrique
+    ouvrages_avec_tarifs = TarifVolumetrique.objects.filter(
+        actif=True,
+        ouvrage_id__in=ouvrages_ids
+    ).values_list('ouvrage_id', flat=True).distinct()
+
+    ouvrages = Ouvrage.objects.filter(id__in=ouvrages_avec_tarifs).order_by('nom_ouvrage')
+
+    # Filtrer les communes qui ont des points d'eau reliés à des tarifs volumétriques
+    # Relation: Commune -> Fokontany -> Village -> Parcelle -> PointEau -> Ouvrage -> TarifVolumetrique
+    points_eau_avec_tarifs = PointEau.objects.filter(
+        ouvrage_id__in=ouvrages_avec_tarifs
+    ).values_list('parcelle__village__fokontany__commune_id', flat=True).distinct()
+
+    communes = Commune.objects.filter(
+        id__in=points_eau_avec_tarifs
+    ).select_related('district').order_by('district__nom_district', 'nom_commune')
+
+    types_points_eau = TypePointEau.objects.filter(actif=True).order_by('nom_type')
+
+    # Titre dynamique
+    if ouvrage_selectionne:
+        title = f'Suivi Paiements - {ouvrage_selectionne.nom_ouvrage}'
+    else:
+        title = 'Suivi Paiements Volumétriques'
+
+    context = {
+        'title': title,
+        'ouvrage_selectionne': ouvrage_selectionne,
+        'points_eau_data': points_eau_data,
+        'parcelles_organisees': parcelles_organisees,
+        'mois_liste': visible_mois_liste,
+        'mois_noms': visible_mois_noms,
+        'mois_colonnes_visibles': mois_colonnes_visibles,
+        'mois_en_cours_num': mois_en_cours_num,
+        'kpis': kpis,
+        'annee_filter': annee_filter,
+        'commune_id': commune_id,
+        'ouvrage_id': ouvrage_id,
+        'type_point_eau_id': type_point_eau_id,
+        'communes': communes,
+        'ouvrages': ouvrages,
+        'types_points_eau': types_points_eau,
+        'stats': stats_globales,
+        'total_points_eau': len(points_eau_data),
+    }
+
+    return render(request, 'planning/suivi_paiements_matriciel.html', context)
+
+
+@require_http_methods(["GET"])
+def api_ouvrages_autocomplete(request):
+    """API pour l'autocomplétion des ouvrages (modalité volumétrique uniquement)"""
+    search = request.GET.get('q', '').strip()
+
+    # Récupérer les ouvrages avec modalité volumétrique
+    modalites_qs = ModaliteGestion.objects.filter(
+        date_fin__isnull=True,
+        modalitepaiement__in=['au_volume', 'mixte']
+    )
+    gestionnaire_ids = _get_user_gestionnaire_ids(request.user)
+    if gestionnaire_ids is not None:
+        if gestionnaire_ids:
+            modalites_qs = modalites_qs.filter(gestionnaire_id__in=gestionnaire_ids)
+        else:
+            modalites_qs = modalites_qs.none()
+
+    ouvrages_ids = modalites_qs.values_list('ouvrage_id', flat=True).distinct()
+
+    ouvrages = Ouvrage.objects.filter(id__in=ouvrages_ids)
+
+    # Filtrer par recherche
+    if search:
+        ouvrages = ouvrages.filter(nom_ouvrage__icontains=search)
+
+    ouvrages = ouvrages.order_by('nom_ouvrage')[:20]
+
+    results = [{
+        'id': str(o.id),
+        'text': o.nom_ouvrage
+    } for o in ouvrages]
+
+    return JsonResponse({'results': results})
+

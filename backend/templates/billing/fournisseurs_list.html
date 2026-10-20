@@ -1,0 +1,1849 @@
+{% extends 'accounting/base.html' %}
+{% load humanize %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex justify-between items-center">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">{{ title }}</h1>
+            <p class="text-sm text-base-content/70 mt-1">
+                <i class="fas fa-info-circle mr-1"></i>
+                Gestion des fournisseurs pour la comptabilité en partie double
+            </p>
+        </div>
+        <div class="flex items-center gap-2">
+            {% if can_merge_fournisseurs %}
+            <button onclick="openMergeModal()" class="btn btn-secondary">
+                <i class="fas fa-code-branch mr-2"></i>Fusionner
+            </button>
+            {% endif %}
+            <a href="{% url 'billing:fournisseurs_adresses_districts' %}" class="btn btn-outline">
+                <i class="fas fa-map-marked-alt mr-2"></i>Adresses et districts
+            </a>
+            <button onclick="openCreateModal()" class="btn btn-primary">
+                <i class="fas fa-plus mr-2"></i>Nouveau Fournisseur
+            </button>
+        </div>
+    </div>
+
+    {% if can_merge_fournisseurs %}
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <h2 class="card-title">Recherche de doublons et Instructions DiameX</h2>
+            <p class="text-sm text-base-content/70">
+                Le calcul des doublons fournisseurs et le suivi des corrections DiameX ont ete deplaces sur une page dediee
+                pour accelerer le chargement de cette liste.
+            </p>
+            <div class="mt-4">
+                <a href="{% url 'billing:fournisseurs_duplicates' %}" class="btn btn-outline">
+                    <i class="fas fa-clone mr-2"></i>Ouvrir le module dedie
+                </a>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Statistiques -->
+    <div class="grid grid-cols-1 md:grid-cols-6 gap-4">
+        <div class="stats shadow">
+            <div class="stat">
+                <div class="stat-figure text-primary">
+                    <i class="fas fa-store text-3xl"></i>
+                </div>
+                <div class="stat-title">Total</div>
+                <div class="stat-value text-primary" id="stat-total">{{ stats.total|intcomma }}</div>
+                <div class="stat-desc">Fournisseurs</div>
+            </div>
+        </div>
+        <div class="stats shadow">
+            <div class="stat">
+                <div class="stat-figure text-success">
+                    <i class="fas fa-check-circle text-3xl"></i>
+                </div>
+                <div class="stat-title">Actifs</div>
+                <div class="stat-value text-success" id="stat-actifs">{{ stats.actifs|intcomma }}</div>
+                <div class="stat-desc">Disponibles</div>
+            </div>
+        </div>
+        <div class="stats shadow">
+            <div class="stat">
+                <div class="stat-figure text-error">
+                    <i class="fas fa-ban text-3xl"></i>
+                </div>
+                <div class="stat-title">Inactifs</div>
+                <div class="stat-value text-error" id="stat-inactifs">{{ stats.inactifs|intcomma }}</div>
+                <div class="stat-desc">Désactivés</div>
+            </div>
+        </div>
+        <div class="stats shadow">
+            <div class="stat">
+                <div class="stat-figure text-info">
+                    <i class="fas fa-tag text-3xl"></i>
+                </div>
+                <div class="stat-title">Avec Code</div>
+                <div class="stat-value text-info" id="stat-code-tiers">{{ stats.avec_code_tiers|intcomma }}</div>
+                <div class="stat-desc">Code Tiers renseigné</div>
+            </div>
+        </div>
+        <div class="stats shadow">
+            <div class="stat">
+                <div class="stat-figure text-secondary">
+                    <i class="fas fa-layer-group text-3xl"></i>
+                </div>
+                <div class="stat-title">Par type</div>
+                <div class="text-sm text-base-content/70 mt-2" id="stat-types">
+                    Chargement...
+                </div>
+            </div>
+        </div>
+        <div class="stats shadow">
+            <div class="stat cursor-pointer" onclick="applyAdresseDistrictQuickFilter('unmapped')">
+                <div class="stat-figure text-warning">
+                    <i class="fas fa-map-pin text-3xl"></i>
+                </div>
+                <div class="stat-title">Adresse non affectee</div>
+                <div class="stat-value text-warning" id="stat-adresse-non-affectee">{{ stats.adresse_non_affectee|intcomma }}</div>
+                <div class="stat-desc">Sans district mappe</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <div class="flex flex-wrap gap-4 items-end">
+                <div class="form-control flex-1 min-w-[200px]">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-search mr-1"></i>Recherche
+                        </span>
+                    </label>
+                    <input type="text" id="search" placeholder="Nom, téléphone, email, NIF, CIN, code tiers, ID XLS..." class="input input-bordered w-full">
+                </div>
+                <div class="form-control w-48">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-layer-group mr-1"></i>Type
+                        </span>
+                    </label>
+                    <select id="filter-type" class="select select-bordered w-full">
+                        <option value="">Tous</option>
+                        {% for type_choice in types_fournisseur %}
+                            <option value="{{ type_choice.0 }}">{{ type_choice.1 }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control w-48">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-filter mr-1"></i>Statut
+                        </span>
+                    </label>
+                    <select id="filter-statut" class="select select-bordered w-full">
+                        <option value="">Tous</option>
+                        <option value="actif">Actifs</option>
+                        <option value="inactif">Inactifs</option>
+                    </select>
+                </div>
+                <div class="form-control w-56">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-map-marked-alt mr-1"></i>Adresse / district
+                        </span>
+                    </label>
+                    <select id="filter-adresse-district" class="select select-bordered w-full">
+                        <option value="">Tous</option>
+                        <option value="mapped">Adresse affectee</option>
+                        <option value="unmapped">Adresse non affectee</option>
+                    </select>
+                </div>
+                <div class="form-control w-48">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-tag mr-1"></i>Code Tiers
+                        </span>
+                    </label>
+                    <input type="text" id="filter-code-tiers" value="{{ code_tiers_filter|default:'' }}" maxlength="6" placeholder="Ex: 401001" class="input input-bordered w-full">
+                </div>
+                <div class="form-control w-40">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-calendar-alt mr-1"></i>Année
+                        </span>
+                    </label>
+                    <select id="filter-compta-annee" class="select select-bordered w-full">
+                        <option value="">Toutes</option>
+                        {% for annee in compta_available_years %}
+                            <option value="{{ annee }}" {% if compta_annee == annee %}selected{% endif %}>{{ annee }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control w-40">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-calendar mr-1"></i>Mois
+                        </span>
+                    </label>
+                    <select id="filter-compta-mois" class="select select-bordered w-full">
+                        <option value="">Tous</option>
+                        <option value="1" {% if compta_mois == 1 %}selected{% endif %}>Jan</option>
+                        <option value="2" {% if compta_mois == 2 %}selected{% endif %}>Fev</option>
+                        <option value="3" {% if compta_mois == 3 %}selected{% endif %}>Mar</option>
+                        <option value="4" {% if compta_mois == 4 %}selected{% endif %}>Avr</option>
+                        <option value="5" {% if compta_mois == 5 %}selected{% endif %}>Mai</option>
+                        <option value="6" {% if compta_mois == 6 %}selected{% endif %}>Jun</option>
+                        <option value="7" {% if compta_mois == 7 %}selected{% endif %}>Jul</option>
+                        <option value="8" {% if compta_mois == 8 %}selected{% endif %}>Aou</option>
+                        <option value="9" {% if compta_mois == 9 %}selected{% endif %}>Sep</option>
+                        <option value="10" {% if compta_mois == 10 %}selected{% endif %}>Oct</option>
+                        <option value="11" {% if compta_mois == 11 %}selected{% endif %}>Nov</option>
+                        <option value="12" {% if compta_mois == 12 %}selected{% endif %}>Dec</option>
+                    </select>
+                </div>
+                <div class="form-control min-w-[260px]">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-sort mr-1"></i>Tri
+                        </span>
+                    </label>
+                    <div class="join">
+                        <button type="button" id="sort-idxls" onclick="toggleSort('idxls')" class="btn btn-outline join-item">
+                            <i class="fas fa-sort-numeric-down mr-2"></i>ID XLS
+                        </button>
+                        <button type="button" id="sort-nom" onclick="toggleSort('nom')" class="btn btn-outline join-item">
+                            <i class="fas fa-sort-alpha-down mr-2"></i>Nom
+                        </button>
+                    </div>
+                </div>
+                <button onclick="applyFilters()" class="btn btn-primary">
+                    <i class="fas fa-filter mr-2"></i>Filtrer
+                </button>
+                <button onclick="resetFilters()" class="btn btn-ghost">
+                    <i class="fas fa-undo mr-2"></i>Réinitialiser
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tableau des fournisseurs -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <h2 class="font-semibold text-base-content">
+                    <i class="fas fa-list mr-2"></i>Liste des fournisseurs
+                </h2>
+                <div class="join">
+                    <button type="button" id="fournisseurs-view-table-btn" class="btn btn-sm btn-primary join-item" onclick="setFournisseursViewMode('table')">Tableau</button>
+                    <button type="button" id="fournisseurs-view-card-btn" class="btn btn-sm btn-outline join-item" onclick="setFournisseursViewMode('card')">Card</button>
+                </div>
+            </div>
+            <div id="fournisseurs-table-wrap" class="overflow-x-auto">
+                <table class="table table-zebra">
+                    <thead>
+                        <tr>
+                            <th>ID XLS</th>
+                            <th>Nom</th>
+                            <th>Type</th>
+                            <th>Code Tiers</th>
+                            <th>Téléphone</th>
+                            <th>Email</th>
+                            <th>NIF</th>
+                            <th>CIN</th>
+                            <th class="text-right">Lignes DiameX</th>
+                            <th class="text-right">Total DiameX</th>
+                            <th>Statut</th>
+                            <th class="text-center">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="fournisseurs-tbody">
+                        <!-- Données chargées via JS -->
+                    </tbody>
+                </table>
+            </div>
+            <div id="fournisseurs-card-wrap" class="hidden grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+            <div id="no-results" class="text-center py-8 hidden">
+                <i class="fas fa-search text-4xl text-base-content/30 mb-2"></i>
+                <p class="text-base-content/70">Aucun fournisseur trouvé</p>
+            </div>
+            <div id="loading" class="text-center py-8">
+                <span class="loading loading-spinner loading-lg"></span>
+                <p class="mt-2 text-base-content/70">Chargement...</p>
+            </div>
+            <div id="pagination-container" class="mt-4 flex flex-wrap items-center justify-between gap-3 hidden">
+                <div id="pagination-info" class="text-sm text-base-content/70"></div>
+                <div id="pagination-controls" class="join"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Créer/Modifier Fournisseur -->
+<dialog id="modal-fournisseur" class="modal">
+    <div class="modal-box max-w-3xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-store mr-2"></i>
+            <span id="modal-title">Nouveau Fournisseur</span>
+        </h3>
+        <form id="form-fournisseur">
+            <input type="hidden" id="fournisseur-id">
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Nom -->
+                <div class="form-control col-span-2">
+                    <label class="label">
+                        <span class="label-text font-semibold">Nom <span class="text-error">*</span></span>
+                    </label>
+                    <input type="text" id="nom_fournisseur" class="input input-bordered" required>
+                </div>
+
+                <!-- Type -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Type <span class="text-error">*</span></span>
+                    </label>
+                    <select id="type_fournisseur" class="select select-bordered" required>
+                        <option value="">Sélectionner...</option>
+                        {% for type_choice in types_fournisseur %}
+                            <option value="{{ type_choice.0 }}">{{ type_choice.1 }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Code Tiers -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Code Tiers</span>
+                        <span class="label-text-alt text-base-content/60">Format: 401xxx</span>
+                    </label>
+                    <input type="text" id="code_tiers" class="input input-bordered" maxlength="6" pattern="401\d{3}" placeholder="Ex: 401001">
+                    <div class="mt-2 flex flex-wrap items-center gap-2">
+                        <span id="code-tiers-status" class="text-xs text-base-content/70">Code tiers disponible: chargement...</span>
+                        <button type="button" id="btn-use-next-code-tiers" class="btn btn-xs btn-outline" onclick="useNextCodeTiers()">
+                            Utiliser le prochain
+                        </button>
+                    </div>
+                </div>
+
+                <!-- ID XLS -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">ID XLS</span>
+                        <span class="label-text-alt text-base-content/60">Import/Export Excel</span>
+                    </label>
+                    <input type="number" id="idxlsx" class="input input-bordered" placeholder="Ex: 123">
+                    <div class="mt-2 flex flex-wrap items-center gap-2">
+                        <span id="idxls-status" class="text-xs text-base-content/70">IDXls disponible: chargement...</span>
+                        <button type="button" id="btn-use-next-idxls" class="btn btn-xs btn-outline" onclick="useNextIdxls()">
+                            Utiliser le suivant
+                        </button>
+                    </div>
+                </div>
+
+
+                <!-- Téléphone -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Téléphone</span>
+                    </label>
+                    <input type="tel" id="telephone" class="input input-bordered" placeholder="Ex: 034 12 345 67">
+                </div>
+
+                <!-- Email -->
+                <div class="form-control col-span-2">
+                    <label class="label">
+                        <span class="label-text font-semibold">Email</span>
+                    </label>
+                    <input type="email" id="email" class="input input-bordered" placeholder="Ex: contact@fournisseur.mg">
+                </div>
+
+                <!-- Adresse -->
+                <div class="form-control col-span-2">
+                    <label class="label">
+                        <span class="label-text font-semibold">Adresse</span>
+                        <span class="label-text-alt text-base-content/60">Liste geree dans Adresses et districts</span>
+                    </label>
+                    <div class="flex gap-2">
+                        <input type="text" id="adresse" list="adresses-fournisseur-options" class="input input-bordered flex-1" placeholder="Selectionner ou saisir une adresse existante">
+                        <button type="button" class="btn btn-outline" onclick="openCreateAdresseFromFournisseurModal()">Ajouter une adresse</button>
+                    </div>
+                    <datalist id="adresses-fournisseur-options">
+                        {% for adresse_option in adresses_fournisseur_options %}
+                            <option value="{{ adresse_option }}"></option>
+                        {% endfor %}
+                    </datalist>
+                </div>
+
+                <!-- NIF -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">NIF</span>
+                    </label>
+                    <input type="text" id="numero_nif" class="input input-bordered" placeholder="Ex: 1234567890">
+                </div>
+
+                <!-- STAT -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">STAT</span>
+                    </label>
+                    <input type="text" id="numero_stat" class="input input-bordered" placeholder="Ex: 12345678912345">
+                </div>
+
+                <!-- CIN -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">CIN</span>
+                    </label>
+                    <input type="text" id="cin" class="input input-bordered" placeholder="Ex: 101 234 567 890">
+                </div>
+
+                <!-- Date CIN -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">Date CIN</span>
+                    </label>
+                    <input type="date" id="date_cin" class="input input-bordered">
+                </div>
+
+                <!-- Devis -->
+                <div class="form-control col-span-2">
+                    <label class="label cursor-pointer justify-start gap-4">
+                        <input type="checkbox" id="devis" class="checkbox checkbox-primary">
+                        <span class="label-text font-semibold">Fournisseur de devis</span>
+                        <span class="label-text-alt text-base-content/60">Éligible pour la saisie de proformas (module Approvisionnement)</span>
+                    </label>
+                </div>
+
+                <!-- Statut actif -->
+                <div class="form-control col-span-2">
+                    <label class="label cursor-pointer justify-start gap-4">
+                        <input type="checkbox" id="actif" class="checkbox checkbox-primary" checked>
+                        <span class="label-text font-semibold">Fournisseur actif</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost" onclick="closeModal()">Annuler</button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>Fermer</button>
+    </form>
+</dialog>
+
+<dialog id="modal-create-adresse-fournisseur" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">Ajouter une adresse</h3>
+        <label class="form-control">
+            <span class="label-text font-semibold">Adresse</span>
+            <textarea id="create-adresse-fournisseur-value" class="textarea textarea-bordered" rows="4"></textarea>
+        </label>
+        <div class="modal-action">
+            <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal-create-adresse-fournisseur').close()">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="saveCreatedAdresseFromFournisseur()">Enregistrer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>Fermer</button></form>
+</dialog>
+
+<!-- Modal Confirmation Suppression -->
+<dialog id="modal-delete" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg text-error mb-4">
+            <i class="fas fa-exclamation-triangle mr-2"></i>
+            Confirmer la suppression
+        </h3>
+        <p class="py-4">
+            Êtes-vous sûr de vouloir supprimer le fournisseur <strong id="delete-nom"></strong> ?
+        </p>
+        <p class="text-sm text-base-content/70">
+            <i class="fas fa-info-circle mr-1"></i>
+            Cette action est irréversible.
+        </p>
+        <input type="hidden" id="delete-id">
+        <div class="modal-action">
+            <button type="button" class="btn btn-ghost" onclick="closeDeleteModal()">Annuler</button>
+            <button type="button" class="btn btn-error" onclick="confirmDelete()">
+                <i class="fas fa-trash mr-2"></i>Supprimer
+            </button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>Fermer</button>
+    </form>
+</dialog>
+
+{% if can_merge_fournisseurs %}
+<dialog id="modal-merge-fournisseur" class="modal">
+    <div class="modal-box max-w-2xl">
+        <h3 class="font-bold text-lg mb-4"><i class="fas fa-code-branch mr-2"></i>Fusionner des fournisseurs</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Fournisseur a fusionner</span></label>
+                <select id="merge-source-id" class="select select-bordered">
+                    <option value="">Choisir la fiche a supprimer</option>
+                    {% for fournisseur in fournisseurs %}
+                    <option value="{{ fournisseur.id }}">{{ fournisseur.nom_fournisseur }}{% if fournisseur.idxls %} [{{ fournisseur.idxls }}]{% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">Fournisseur a conserver</span></label>
+                <input type="hidden" id="merge-target-id">
+                <input
+                    type="text"
+                    id="merge-target-search"
+                    class="input input-bordered"
+                    list="merge-target-options"
+                    placeholder="Tape le nom ou l'ID XLS du fournisseur a garder"
+                    autocomplete="off"
+                    oninput="syncMergeTargetSelection()"
+                >
+                <datalist id="merge-target-options">
+                    {% for fournisseur in fournisseurs %}
+                    <option value="{{ fournisseur.nom_fournisseur }}{% if fournisseur.idxls %} [{{ fournisseur.idxls }}]{% endif %}"></option>
+                    {% endfor %}
+                </datalist>
+                <p class="text-xs text-base-content/70 mt-2">Choisis une valeur proposee pour remplir automatiquement la cible.</p>
+            </div>
+        </div>
+        <div class="alert alert-warning mt-4">
+            <span>La fiche source sera supprimee apres reaffectation. Si les IDxls changent, une instruction DiameX sera creee.</span>
+        </div>
+        <div class="modal-action">
+            <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal-merge-fournisseur').close()">Annuler</button>
+            <button type="button" class="btn btn-secondary" onclick="submitMergeFournisseur()">Fusionner</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>Fermer</button></form>
+</dialog>
+{% endif %}
+
+<!-- Modal Details Comptables -->
+<dialog id="modal-compta-details" class="modal">
+    <div class="modal-box w-11/12 max-w-7xl">
+        <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
+            <div>
+                <h3 class="font-bold text-lg">
+                    <i class="fas fa-file-invoice-dollar text-info mr-2"></i>
+                    <span id="modal-compta-title">Details comptables fournisseur</span>
+                </h3>
+                <p id="compta-details-filters" class="text-sm text-base-content/70 mt-1">Periode: toutes</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+                <label class="text-sm text-base-content/70" for="compta-sort-date">Tri date</label>
+                <select id="compta-sort-date" class="select select-bordered select-sm" onchange="onComptaDateSortChange(this.value)">
+                    <option value="desc" selected>Recente -> ancienne</option>
+                    <option value="asc">Ancienne -> recente</option>
+                </select>
+                <div class="join">
+                    <button type="button" id="compta-view-table-btn" class="btn btn-sm btn-primary join-item" onclick="setComptaViewMode('table')">Tableau</button>
+                    <button type="button" id="compta-view-card-btn" class="btn btn-sm btn-outline join-item" onclick="setComptaViewMode('card')">Card</button>
+                </div>
+                <button type="button" class="btn btn-sm btn-ghost" onclick="closeComptaDetailsModal()">Fermer</button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+            <div class="stat bg-base-200 rounded-lg">
+                <div class="stat-title">Lignes</div>
+                <div id="compta-total-lignes" class="stat-value text-primary text-2xl">0</div>
+            </div>
+            <div class="stat bg-base-200 rounded-lg">
+                <div class="stat-title">Total In</div>
+                <div id="compta-total-in" class="stat-value text-success text-2xl">0.00</div>
+            </div>
+            <div class="stat bg-base-200 rounded-lg">
+                <div class="stat-title">Total Out</div>
+                <div id="compta-total-out" class="stat-value text-error text-2xl">0.00</div>
+            </div>
+            <div class="stat bg-base-200 rounded-lg">
+                <div class="stat-title">Total Mouvement</div>
+                <div id="compta-total-mouvement" class="stat-value text-info text-2xl">0.00</div>
+            </div>
+        </div>
+
+        <div id="compta-details-loading" class="text-center py-6 hidden">
+            <span class="loading loading-spinner loading-md"></span>
+            <p class="text-sm text-base-content/70 mt-2">Chargement des lignes comptables...</p>
+        </div>
+
+        <div id="compta-details-empty" class="alert hidden mb-3">
+            <i class="fas fa-info-circle"></i>
+            <span>Aucune ligne comptable trouvee pour ce fournisseur et cette periode.</span>
+        </div>
+
+        <div id="compta-details-table-wrap" class="overflow-x-auto">
+            <table class="table table-zebra table-sm">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Journal</th>
+                        <th>Compte</th>
+                        <th>Description</th>
+                        <th class="text-right">In</th>
+                        <th class="text-right">Out</th>
+                        <th class="text-right">Mouvement</th>
+                        <th>Fichier</th>
+                    </tr>
+                </thead>
+                <tbody id="compta-details-tbody">
+                    <tr>
+                        <td colspan="8" class="text-center text-base-content/50">Aucune donnee</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div id="compta-details-card-wrap" class="hidden grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+
+        <div id="compta-details-pagination" class="mt-4 flex justify-end"></div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>Fermer</button>
+    </form>
+</dialog>
+
+<script>
+let fournisseurs = [];
+let currentSort = '{{ sort_by|default:"nom_asc" }}';
+let currentPage = {{ page|default:1 }};
+let perPage = {{ per_page|default:25 }};
+let pagination = null;
+let nextAvailableCodeTiers = null;
+let nextAvailableIdxls = null;
+let isCreateMode = true;
+let codeTiersInputTimer = null;
+let currentComptaFournisseurId = null;
+let currentComptaFournisseurPage = 1;
+let currentComptaDateSort = 'desc';
+let currentComptaViewMode = 'table';
+let currentFournisseursViewMode = 'table';
+const comptaDetailsPerPage = 25;
+const mergeTargetOptions = {
+    {% for fournisseur in fournisseurs %}
+    "{{ fournisseur.nom_fournisseur|escapejs }}{% if fournisseur.idxls %} [{{ fournisseur.idxls }}]{% endif %}": "{{ fournisseur.id }}",
+    {% endfor %}
+};
+
+// Charger les fournisseurs
+async function loadFournisseurs(page = currentPage) {
+    currentPage = page;
+    const search = document.getElementById('search').value;
+    const type = document.getElementById('filter-type').value;
+    const statut = document.getElementById('filter-statut').value;
+    const adresseDistrict = document.getElementById('filter-adresse-district').value;
+    const codeTiers = document.getElementById('filter-code-tiers').value.trim();
+    const comptaAnnee = document.getElementById('filter-compta-annee').value;
+    const comptaMois = document.getElementById('filter-compta-mois').value;
+
+    const params = new URLSearchParams();
+    params.append('format', 'json');  // Forcer le format JSON
+    if (search) params.append('search', search);
+    if (type) params.append('type', type);
+    if (statut) params.append('statut', statut);
+    if (adresseDistrict) params.append('adresse_district', adresseDistrict);
+    if (codeTiers) params.append('code_tiers', codeTiers);
+    if (comptaAnnee) params.append('compta_annee', comptaAnnee);
+    if (comptaMois) params.append('compta_mois', comptaMois);
+    if (currentSort) params.append('sort', currentSort);
+    params.append('page', String(currentPage));
+    params.append('per_page', String(perPage));
+
+    try {
+        document.getElementById('loading').classList.remove('hidden');
+        document.getElementById('no-results').classList.add('hidden');
+
+        const response = await fetch(`/facturation/fournisseurs/?${params.toString()}`, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            if (data.sort_by) {
+                currentSort = data.sort_by;
+            }
+            if (data.pagination) {
+                pagination = data.pagination;
+                currentPage = data.pagination.page;
+                perPage = data.pagination.per_page;
+            }
+            fournisseurs = data.fournisseurs;
+            displayFournisseurs(fournisseurs);
+            updateStats(data.stats);
+            updatePagination(pagination);
+            updateSortButtons();
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors du chargement des fournisseurs');
+    } finally {
+        document.getElementById('loading').classList.add('hidden');
+    }
+}
+
+// Afficher les fournisseurs
+function displayFournisseurs(data) {
+    const tbody = document.getElementById('fournisseurs-tbody');
+    const cardsWrap = document.getElementById('fournisseurs-card-wrap');
+    const noResults = document.getElementById('no-results');
+    tbody.innerHTML = '';
+    if (cardsWrap) {
+        cardsWrap.innerHTML = '';
+    }
+
+    if (data.length === 0) {
+        if (noResults) {
+            noResults.classList.remove('hidden');
+        }
+        return;
+    }
+    if (noResults) {
+        noResults.classList.add('hidden');
+    }
+
+    data.forEach(f => {
+        const fournisseurNameJs = String(f.nom_fournisseur || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${f.idxlsx ? `<span class="badge badge-ghost">${f.idxlsx}</span>` : '<span class="text-base-content/50">-</span>'}</td>
+            <td class="font-semibold">${f.nom_fournisseur}</td>
+            <td><span class="badge badge-outline">${f.type_fournisseur_display}</span></td>
+            <td>${f.code_tiers ? `<span class="badge badge-info">${f.code_tiers}</span>` : '<span class="text-base-content/50">-</span>'}</td>
+            <td>${f.telephone || '-'}</td>
+            <td>${f.email || '-'}</td>
+            <td>${f.numero_nif || '-'}</td>
+            <td>${f.cin || '-'}</td>
+            <td class="text-right font-mono">${Number(f.compta_nb_lignes || 0) === 0 ? '<span class="text-base-content/40">-</span>' : Number(f.compta_nb_lignes).toLocaleString()}</td>
+            <td class="text-right font-mono">${Number(f.compta_total_montant || 0) === 0 ? '<span class="text-base-content/40">-</span>' : Number(f.compta_total_montant).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            <td>
+                <span class="badge ${f.actif ? 'badge-success' : 'badge-error'}">
+                    <i class="fas ${f.actif ? 'fa-check' : 'fa-ban'} mr-1"></i>
+                    ${f.actif ? 'Actif' : 'Inactif'}
+                </span>
+            </td>
+            <td class="text-center">
+                <div class="join">
+                    <button onclick="openComptaDetails('${f.id}')" class="btn btn-sm btn-ghost join-item text-info" title="Voir details comptables">
+                        <i class="fas fa-eye"></i>
+                    </button>
+                    <button onclick="editFournisseur('${f.id}')" class="btn btn-sm btn-ghost join-item" title="Modifier">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    {% if can_merge_fournisseurs %}
+                    <button onclick="openMergeModal('${f.id}')" class="btn btn-sm btn-ghost join-item text-secondary" title="Fusionner">
+                        <i class="fas fa-code-branch"></i>
+                    </button>
+                    {% endif %}
+                    <button onclick="deleteFournisseur('${f.id}', '${fournisseurNameJs}')" class="btn btn-sm btn-ghost join-item text-error" title="Supprimer">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    renderFournisseursCards(data);
+    setFournisseursViewMode(currentFournisseursViewMode);
+}
+
+function setFournisseursViewMode(mode) {
+    currentFournisseursViewMode = mode === 'card' ? 'card' : 'table';
+    const tableWrap = document.getElementById('fournisseurs-table-wrap');
+    const cardsWrap = document.getElementById('fournisseurs-card-wrap');
+    const tableBtn = document.getElementById('fournisseurs-view-table-btn');
+    const cardBtn = document.getElementById('fournisseurs-view-card-btn');
+
+    if (tableWrap) tableWrap.classList.toggle('hidden', currentFournisseursViewMode !== 'table');
+    if (cardsWrap) cardsWrap.classList.toggle('hidden', currentFournisseursViewMode !== 'card');
+
+    if (tableBtn) {
+        tableBtn.classList.toggle('btn-primary', currentFournisseursViewMode === 'table');
+        tableBtn.classList.toggle('btn-outline', currentFournisseursViewMode !== 'table');
+    }
+    if (cardBtn) {
+        cardBtn.classList.toggle('btn-primary', currentFournisseursViewMode === 'card');
+        cardBtn.classList.toggle('btn-outline', currentFournisseursViewMode !== 'card');
+    }
+}
+
+function renderFournisseursCards(data) {
+    const cardsWrap = document.getElementById('fournisseurs-card-wrap');
+    if (!cardsWrap) return;
+
+    cardsWrap.innerHTML = '';
+    data.forEach((f) => {
+        const hasValue = (value) => value !== null && value !== undefined && String(value).trim() !== '';
+        const nom = escapeHtml(f.nom_fournisseur || '-');
+        const typeLabelRaw = String(f.type_fournisseur_display || '').trim();
+        const codeTiersRaw = String(f.code_tiers || '').trim();
+        const telephoneRaw = String(f.telephone || '').trim();
+        const emailRaw = String(f.email || '').trim();
+        const nifRaw = String(f.numero_nif || '').trim();
+        const cinRaw = String(f.cin || '').trim();
+        const idxlsRaw = (f.idxlsx === null || f.idxlsx === undefined) ? '' : String(f.idxlsx).trim();
+        const fournisseurNameJs = String(f.nom_fournisseur || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        const lignesCompta = Number(f.compta_nb_lignes || 0);
+        const totalCompta = Number(f.compta_total_montant || 0);
+
+        const badges = [];
+        if (hasValue(typeLabelRaw) && typeLabelRaw !== '-') {
+            badges.push(`<span class="badge badge-outline">${escapeHtml(typeLabelRaw)}</span>`);
+        }
+        if (hasValue(idxlsRaw)) {
+            badges.push(`<span class="badge badge-ghost">ID XLS ${escapeHtml(idxlsRaw)}</span>`);
+        }
+        if (hasValue(codeTiersRaw)) {
+            badges.push(`<span class="badge badge-info">${escapeHtml(codeTiersRaw)}</span>`);
+        }
+
+        const details = [];
+        if (hasValue(telephoneRaw)) details.push(`<div><span class="text-base-content/70">Telephone:</span> ${escapeHtml(telephoneRaw)}</div>`);
+        if (hasValue(emailRaw)) details.push(`<div class="col-span-2 break-all"><span class="text-base-content/70">Email:</span> ${escapeHtml(emailRaw)}</div>`);
+        if (hasValue(nifRaw)) details.push(`<div><span class="text-base-content/70">NIF:</span> ${escapeHtml(nifRaw)}</div>`);
+        if (hasValue(cinRaw)) details.push(`<div><span class="text-base-content/70">CIN:</span> ${escapeHtml(cinRaw)}</div>`);
+
+        const comptaTiles = [];
+        if (lignesCompta > 0) {
+            comptaTiles.push(`
+                <div class="bg-base-200 rounded p-2">
+                    <div class="text-xs text-base-content/70">Lignes DiameX</div>
+                    <div class="font-mono text-right">${lignesCompta.toLocaleString()}</div>
+                </div>
+            `);
+        }
+        if (totalCompta > 0) {
+            comptaTiles.push(`
+                <div class="bg-base-200 rounded p-2">
+                    <div class="text-xs text-base-content/70">Total DiameX</div>
+                    <div class="font-mono text-right">${formatAmount(totalCompta)}</div>
+                </div>
+            `);
+        }
+
+        const card = document.createElement('div');
+        card.className = 'card bg-base-100 border border-base-300 shadow-sm';
+        card.innerHTML = `
+            <div class="card-body p-4 gap-3">
+                <div class="flex items-start justify-between gap-2">
+                    <div>
+                        <h3 class="font-semibold text-base">${nom}</h3>
+                        ${badges.length ? `<div class="mt-1 flex flex-wrap gap-1">${badges.join('')}</div>` : ''}
+                    </div>
+                    <span class="badge ${f.actif ? 'badge-success' : 'badge-error'}">${f.actif ? 'Actif' : 'Inactif'}</span>
+                </div>
+                ${details.length ? `<div class="grid grid-cols-2 gap-2 text-sm">${details.join('')}</div>` : ''}
+                ${comptaTiles.length ? `<div class="grid grid-cols-2 gap-2">${comptaTiles.join('')}</div>` : ''}
+                <div class="card-actions justify-end">
+                    <div class="join">
+                        <button onclick="openComptaDetails('${f.id}')" class="btn btn-sm btn-ghost join-item text-info" title="Voir details comptables">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        <button onclick="editFournisseur('${f.id}')" class="btn btn-sm btn-ghost join-item" title="Modifier">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        {% if can_merge_fournisseurs %}
+                        <button onclick="openMergeModal('${f.id}')" class="btn btn-sm btn-ghost join-item text-secondary" title="Fusionner">
+                            <i class="fas fa-code-branch"></i>
+                        </button>
+                        {% endif %}
+                        <button onclick="deleteFournisseur('${f.id}', '${fournisseurNameJs}')" class="btn btn-sm btn-ghost join-item text-error" title="Supprimer">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        cardsWrap.appendChild(card);
+    });
+}
+
+// Mettre à jour les stats
+function updateStats(stats) {
+    document.getElementById('stat-total').textContent = Number(stats.total || 0).toLocaleString();
+    document.getElementById('stat-actifs').textContent = Number(stats.actifs || 0).toLocaleString();
+    document.getElementById('stat-inactifs').textContent = Number(stats.inactifs || 0).toLocaleString();
+    document.getElementById('stat-code-tiers').textContent = Number(stats.avec_code_tiers || 0).toLocaleString();
+    document.getElementById('stat-adresse-non-affectee').textContent = Number(stats.adresse_non_affectee || 0).toLocaleString();
+
+    const typesEl = document.getElementById('stat-types');
+    if (typesEl) {
+        const types = Array.isArray(stats.types) ? stats.types : [];
+        if (types.length === 0) {
+            typesEl.textContent = 'Aucun';
+        } else {
+            typesEl.innerHTML = types.map((item) => {
+                const label = item.label || item.value || 'Non renseigne';
+                const v = Number(item.total || 0).toLocaleString();
+                return `<div class="flex items-center justify-between gap-2"><span>${label}</span><span class="badge badge-outline">${v}</span></div>`;
+            }).join('');
+        }
+    }
+}
+
+// Pagination
+function goToPage(page) {
+    if (!Number.isInteger(page) || page < 1) {
+        return;
+    }
+    loadFournisseurs(page);
+}
+
+function updatePagination(paginationData) {
+    const container = document.getElementById('pagination-container');
+    const info = document.getElementById('pagination-info');
+    const controls = document.getElementById('pagination-controls');
+    if (!container || !info || !controls) return;
+
+    if (!paginationData || paginationData.total_items === 0) {
+        container.classList.add('hidden');
+        info.textContent = '';
+        controls.innerHTML = '';
+        return;
+    }
+
+    info.textContent = `Affichage ${paginationData.start_index}-${paginationData.end_index} sur ${paginationData.total_items} fournisseurs`;
+
+    if (paginationData.total_pages <= 1) {
+        controls.innerHTML = '';
+        container.classList.remove('hidden');
+        return;
+    }
+
+    const startPage = Math.max(1, paginationData.page - 2);
+    const endPage = Math.min(paginationData.total_pages, paginationData.page + 2);
+
+    const makeButton = (label, targetPage, disabled = false, active = false) => {
+        const style = active ? 'btn-primary' : 'btn-outline';
+        const disabledAttr = disabled ? 'disabled' : '';
+        const disabledClass = disabled ? 'btn-disabled' : '';
+        return `<button type="button" class="btn btn-sm ${style} ${disabledClass} join-item" ${disabledAttr} onclick="goToPage(${targetPage})">${label}</button>`;
+    };
+
+    let html = '';
+    html += makeButton('<<', 1, paginationData.page === 1);
+    html += makeButton('<', paginationData.page - 1, !paginationData.has_previous);
+
+    for (let p = startPage; p <= endPage; p++) {
+        html += makeButton(String(p), p, false, p === paginationData.page);
+    }
+
+    html += makeButton('>', paginationData.page + 1, !paginationData.has_next);
+    html += makeButton('>>', paginationData.total_pages, paginationData.page === paginationData.total_pages);
+
+    controls.innerHTML = html;
+    container.classList.remove('hidden');
+}
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function formatAmount(value) {
+    return Number(value || 0).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+}
+
+function formatDateDisplay(value) {
+    if (!value) return '-';
+    const parts = String(value).split('-');
+    if (parts.length !== 3) return String(value);
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+function closeComptaDetailsModal() {
+    const modal = document.getElementById('modal-compta-details');
+    if (modal) {
+        modal.close();
+    }
+}
+
+function setComptaViewMode(mode) {
+    currentComptaViewMode = mode === 'card' ? 'card' : 'table';
+    const tableWrap = document.getElementById('compta-details-table-wrap');
+    const cardWrap = document.getElementById('compta-details-card-wrap');
+    const tableBtn = document.getElementById('compta-view-table-btn');
+    const cardBtn = document.getElementById('compta-view-card-btn');
+
+    if (tableWrap) tableWrap.classList.toggle('hidden', currentComptaViewMode !== 'table');
+    if (cardWrap) cardWrap.classList.toggle('hidden', currentComptaViewMode !== 'card');
+
+    if (tableBtn) {
+        tableBtn.classList.toggle('btn-primary', currentComptaViewMode === 'table');
+        tableBtn.classList.toggle('btn-outline', currentComptaViewMode !== 'table');
+    }
+    if (cardBtn) {
+        cardBtn.classList.toggle('btn-primary', currentComptaViewMode === 'card');
+        cardBtn.classList.toggle('btn-outline', currentComptaViewMode !== 'card');
+    }
+}
+
+function onComptaDateSortChange(value) {
+    currentComptaDateSort = value === 'asc' ? 'asc' : 'desc';
+    if (currentComptaFournisseurId) {
+        openComptaDetails(currentComptaFournisseurId, 1);
+    }
+}
+
+async function openComptaDetails(fournisseurId, page = 1) {
+    currentComptaFournisseurId = fournisseurId;
+    currentComptaFournisseurPage = Number(page) > 0 ? Number(page) : 1;
+
+    const modal = document.getElementById('modal-compta-details');
+    const loadingEl = document.getElementById('compta-details-loading');
+    const emptyEl = document.getElementById('compta-details-empty');
+    const tbody = document.getElementById('compta-details-tbody');
+    const cardWrap = document.getElementById('compta-details-card-wrap');
+    const paginationEl = document.getElementById('compta-details-pagination');
+    const comptaAnnee = document.getElementById('filter-compta-annee').value;
+    const comptaMois = document.getElementById('filter-compta-mois').value;
+    const sortDateEl = document.getElementById('compta-sort-date');
+    if (sortDateEl) {
+        sortDateEl.value = currentComptaDateSort;
+    }
+
+    if (modal && !modal.open) {
+        modal.showModal();
+    }
+    if (loadingEl) loadingEl.classList.remove('hidden');
+    if (emptyEl) emptyEl.classList.add('hidden');
+    if (tbody) tbody.innerHTML = '';
+    if (cardWrap) cardWrap.innerHTML = '';
+    if (paginationEl) paginationEl.innerHTML = '';
+
+    try {
+        const params = new URLSearchParams();
+        if (comptaAnnee) params.append('compta_annee', comptaAnnee);
+        if (comptaMois) params.append('compta_mois', comptaMois);
+        params.append('sort_date', currentComptaDateSort);
+        params.append('page', String(currentComptaFournisseurPage));
+        params.append('per_page', String(comptaDetailsPerPage));
+
+        const response = await fetch(`/facturation/api/fournisseurs/${fournisseurId}/compta-details/?${params.toString()}`, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+            }
+        });
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || `HTTP ${response.status}`);
+        }
+
+        if (data.sort_date === 'asc' || data.sort_date === 'desc') {
+            currentComptaDateSort = data.sort_date;
+            if (sortDateEl) {
+                sortDateEl.value = currentComptaDateSort;
+            }
+        }
+
+        const fournisseurNom = data.fournisseur?.nom_fournisseur || 'Fournisseur';
+        const idxlsValue = data.fournisseur?.idxls;
+        const idxlsLabel = (idxlsValue === null || idxlsValue === undefined || idxlsValue === '') ? '' : ` (IDXls ${idxlsValue})`;
+        const titleEl = document.getElementById('modal-compta-title');
+        if (titleEl) {
+            titleEl.textContent = `Details comptables - ${fournisseurNom}${idxlsLabel}`;
+        }
+
+        const moisLabels = {
+            1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Avr', 5: 'Mai', 6: 'Jun',
+            7: 'Jul', 8: 'Aou', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec',
+        };
+        const filterParts = [];
+        if (comptaAnnee) filterParts.push(`Annee ${comptaAnnee}`);
+        if (comptaMois) filterParts.push(`Mois ${moisLabels[Number(comptaMois)] || comptaMois}`);
+        const filtersEl = document.getElementById('compta-details-filters');
+        if (filtersEl) {
+            filtersEl.textContent = filterParts.length ? `Periode: ${filterParts.join(' | ')}` : 'Periode: toutes';
+        }
+
+        updateComptaDetailsTotals(data.totaux || {});
+        renderComptaDetailsRows(data.lignes || []);
+        renderComptaDetailsCards(data.lignes || []);
+        setComptaViewMode(currentComptaViewMode);
+        renderComptaDetailsPagination(data.pagination || null);
+
+        if (!Array.isArray(data.lignes) || data.lignes.length === 0) {
+            if (emptyEl) emptyEl.classList.remove('hidden');
+        }
+    } catch (error) {
+        console.error('Erreur details comptables:', error);
+        updateComptaDetailsTotals({});
+        if (tbody) {
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-error">Erreur lors du chargement des details.</td></tr>';
+        }
+        if (cardWrap) {
+            cardWrap.innerHTML = '<div class="alert alert-error"><i class="fas fa-exclamation-triangle"></i><span>Erreur lors du chargement des details.</span></div>';
+        }
+        alert(`Erreur lors du chargement des details comptables: ${error.message || error}`);
+    } finally {
+        if (loadingEl) loadingEl.classList.add('hidden');
+    }
+}
+
+function updateComptaDetailsTotals(totaux = {}) {
+    document.getElementById('compta-total-lignes').textContent = Number(totaux.nb_lignes || 0).toLocaleString();
+    document.getElementById('compta-total-in').textContent = formatAmount(totaux.total_in || 0);
+    document.getElementById('compta-total-out').textContent = formatAmount(totaux.total_out || 0);
+    document.getElementById('compta-total-mouvement').textContent = formatAmount(totaux.total_mouvement || 0);
+}
+
+function renderComptaDetailsRows(lignes) {
+    const tbody = document.getElementById('compta-details-tbody');
+    if (!tbody) return;
+
+    if (!Array.isArray(lignes) || lignes.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-base-content/50">Aucune ligne comptable.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = '';
+    lignes.forEach((ligne) => {
+        const dateValue = ligne.date_rec || ligne.date_m || '';
+        const journalCode = escapeHtml(ligne.journal_code || '-');
+        const compteCode = escapeHtml(ligne.compte_code || '-');
+        const description = escapeHtml(ligne.description || '-');
+        const fichierSource = escapeHtml(ligne.fichier_source || '-');
+        const montantIn = Number(ligne.montant_in || 0);
+        const montantOut = Number(ligne.montant_out || 0);
+        const montantMouvement = Number(ligne.montant_mouvement || 0);
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td class="whitespace-nowrap">${formatDateDisplay(dateValue)}</td>
+            <td class="font-mono text-xs">${journalCode}</td>
+            <td class="font-mono text-xs">${compteCode}</td>
+            <td class="max-w-[380px]">
+                <div class="truncate" title="${description}">${description}</div>
+            </td>
+            <td class="text-right font-mono">${montantIn === 0 ? '<span class="text-base-content/40">-</span>' : formatAmount(montantIn)}</td>
+            <td class="text-right font-mono">${montantOut === 0 ? '<span class="text-base-content/40">-</span>' : formatAmount(montantOut)}</td>
+            <td class="text-right font-mono">${montantMouvement === 0 ? '<span class="text-base-content/40">-</span>' : formatAmount(montantMouvement)}</td>
+            <td class="text-xs">${fichierSource}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function renderComptaDetailsCards(lignes) {
+    const cardWrap = document.getElementById('compta-details-card-wrap');
+    if (!cardWrap) return;
+
+    if (!Array.isArray(lignes) || lignes.length === 0) {
+        cardWrap.innerHTML = '<div class="col-span-full text-center text-base-content/50 py-4">Aucune ligne comptable.</div>';
+        return;
+    }
+
+    cardWrap.innerHTML = '';
+    lignes.forEach((ligne) => {
+        const dateValue = formatDateDisplay(ligne.date_rec || ligne.date_m || '');
+        const journalCode = escapeHtml(ligne.journal_code || '-');
+        const compteCode = escapeHtml(ligne.compte_code || '-');
+        const description = escapeHtml(ligne.description || '-');
+        const fichierSource = escapeHtml(ligne.fichier_source || '-');
+        const montantIn = Number(ligne.montant_in || 0);
+        const montantOut = Number(ligne.montant_out || 0);
+        const montantMouvement = Number(ligne.montant_mouvement || 0);
+
+        const card = document.createElement('div');
+        card.className = 'card bg-base-100 border border-base-300 shadow-sm';
+        card.innerHTML = `
+            <div class="card-body p-4 gap-2">
+                <div class="flex items-center justify-between">
+                    <div class="text-xs text-base-content/70">Date</div>
+                    <div class="font-mono text-sm">${dateValue}</div>
+                </div>
+                <div class="flex items-center justify-between">
+                    <div class="text-xs text-base-content/70">Journal</div>
+                    <div class="font-mono text-xs">${journalCode}</div>
+                </div>
+                <div class="flex items-center justify-between">
+                    <div class="text-xs text-base-content/70">Compte</div>
+                    <div class="font-mono text-xs">${compteCode}</div>
+                </div>
+                <div class="pt-1">
+                    <div class="text-xs text-base-content/70 mb-1">Description</div>
+                    <div class="text-sm break-words">${description}</div>
+                </div>
+                <div class="grid grid-cols-3 gap-2 pt-2">
+                    <div class="bg-base-200 rounded p-2">
+                        <div class="text-[11px] text-base-content/70">In</div>
+                        <div class="font-mono text-sm text-right">${montantIn === 0 ? '-' : formatAmount(montantIn)}</div>
+                    </div>
+                    <div class="bg-base-200 rounded p-2">
+                        <div class="text-[11px] text-base-content/70">Out</div>
+                        <div class="font-mono text-sm text-right">${montantOut === 0 ? '-' : formatAmount(montantOut)}</div>
+                    </div>
+                    <div class="bg-base-200 rounded p-2">
+                        <div class="text-[11px] text-base-content/70">Mouv.</div>
+                        <div class="font-mono text-sm text-right">${montantMouvement === 0 ? '-' : formatAmount(montantMouvement)}</div>
+                    </div>
+                </div>
+                <div class="pt-1">
+                    <div class="text-xs text-base-content/70">Fichier</div>
+                    <div class="text-xs break-all">${fichierSource}</div>
+                </div>
+            </div>
+        `;
+        cardWrap.appendChild(card);
+    });
+}
+
+function goToComptaDetailsPage(page) {
+    if (!currentComptaFournisseurId || !Number.isInteger(page) || page < 1) {
+        return;
+    }
+    openComptaDetails(currentComptaFournisseurId, page);
+}
+
+function renderComptaDetailsPagination(paginationData) {
+    const container = document.getElementById('compta-details-pagination');
+    if (!container) return;
+
+    if (!paginationData || !paginationData.total_pages || paginationData.total_pages <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+
+    const startPage = Math.max(1, paginationData.page - 2);
+    const endPage = Math.min(paginationData.total_pages, paginationData.page + 2);
+
+    const makeButton = (label, targetPage, disabled = false, active = false) => {
+        const classes = [
+            'btn',
+            'btn-sm',
+            active ? 'btn-primary' : 'btn-outline',
+            'join-item',
+            disabled ? 'btn-disabled' : '',
+        ].filter(Boolean).join(' ');
+        const disabledAttr = disabled ? 'disabled' : '';
+        return `<button type="button" class="${classes}" ${disabledAttr} onclick="goToComptaDetailsPage(${targetPage})">${label}</button>`;
+    };
+
+    let html = '<div class="join">';
+    html += makeButton('<<', 1, paginationData.page === 1);
+    html += makeButton('<', paginationData.page - 1, !paginationData.has_previous);
+    for (let p = startPage; p <= endPage; p++) {
+        html += makeButton(String(p), p, false, p === paginationData.page);
+    }
+    html += makeButton('>', paginationData.page + 1, !paginationData.has_next);
+    html += makeButton('>>', paginationData.total_pages, paginationData.page === paginationData.total_pages);
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+// Code tiers availability
+function setCodeTiersStatus(message, level = 'info') {
+    const statusEl = document.getElementById('code-tiers-status');
+    if (!statusEl) return;
+
+    statusEl.textContent = message;
+    statusEl.classList.remove('text-base-content/70', 'text-success', 'text-error', 'text-warning');
+    if (level === 'success') {
+        statusEl.classList.add('text-success');
+    } else if (level === 'error') {
+        statusEl.classList.add('text-error');
+    } else if (level === 'warning') {
+        statusEl.classList.add('text-warning');
+    } else {
+        statusEl.classList.add('text-base-content/70');
+    }
+}
+
+function setIdxlsStatus(message, level = 'info') {
+    const statusEl = document.getElementById('idxls-status');
+    if (!statusEl) return;
+
+    statusEl.textContent = message;
+    statusEl.classList.remove('text-base-content/70', 'text-success', 'text-error', 'text-warning');
+    if (level === 'success') {
+        statusEl.classList.add('text-success');
+    } else if (level === 'error') {
+        statusEl.classList.add('text-error');
+    } else if (level === 'warning') {
+        statusEl.classList.add('text-warning');
+    } else {
+        statusEl.classList.add('text-base-content/70');
+    }
+}
+
+async function refreshCodeTiersAvailability(code = '') {
+    const button = document.getElementById('btn-use-next-code-tiers');
+    const idxlsButton = document.getElementById('btn-use-next-idxls');
+    const idxlsInput = document.getElementById('idxlsx');
+    if (!button) return;
+
+    if (!isCreateMode) {
+        button.classList.add('hidden');
+        if (idxlsButton) idxlsButton.classList.add('hidden');
+        setCodeTiersStatus('Le code tiers doit etre unique (format 401xxx).', 'info');
+        setIdxlsStatus('IDXls libre: n/a en mode modification.', 'info');
+        return;
+    }
+
+    button.classList.remove('hidden');
+    if (idxlsButton) idxlsButton.classList.remove('hidden');
+
+    try {
+        const params = new URLSearchParams();
+        if (code) {
+            params.append('code_tiers', code);
+        }
+        const response = await fetch(`/facturation/api/fournisseurs/code-tiers-disponible/?${params.toString()}`, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' }
+        });
+        const data = await response.json();
+        if (!data.success) {
+            setCodeTiersStatus('Impossible de verifier les codes disponibles.', 'warning');
+            return;
+        }
+
+        nextAvailableCodeTiers = data.next_available || null;
+        nextAvailableIdxls = data.next_idxls ?? null;
+
+        if (nextAvailableIdxls !== null) {
+            setIdxlsStatus(`IDXls disponible suggere: ${nextAvailableIdxls}`, 'info');
+            if (idxlsInput && !idxlsInput.value) {
+                idxlsInput.value = String(nextAvailableIdxls);
+            }
+        } else {
+            setIdxlsStatus('Aucun IDXls disponible.', 'warning');
+        }
+
+        if (code) {
+            if (!data.is_valid_format) {
+                setCodeTiersStatus(`Format invalide. Utiliser 401xxx. Prochain: ${data.next_available || '-'}`, 'warning');
+                return;
+            }
+            if (data.is_available) {
+                setCodeTiersStatus(`Code ${code} disponible. Prochain libre: ${data.next_available || '-'}`, 'success');
+            } else if (data.existing_supplier) {
+                setCodeTiersStatus(`Code ${code} deja utilise par ${data.existing_supplier.nom_fournisseur}.`, 'error');
+            } else {
+                setCodeTiersStatus(`Code ${code} indisponible.`, 'error');
+            }
+            return;
+        }
+
+        if (data.next_available) {
+            const sample = (data.suggestions || []).slice(0, 3).join(', ');
+            setCodeTiersStatus(`Prochains codes disponibles: ${sample}`, 'info');
+        } else {
+            setCodeTiersStatus('Aucun code tiers disponible.', 'error');
+        }
+    } catch (error) {
+        console.error('Erreur code tiers:', error);
+        setCodeTiersStatus('Erreur lors du chargement des codes tiers.', 'warning');
+    }
+}
+
+function useNextCodeTiers() {
+    if (!nextAvailableCodeTiers) {
+        return;
+    }
+    const input = document.getElementById('code_tiers');
+    if (!input) return;
+    input.value = nextAvailableCodeTiers;
+    refreshCodeTiersAvailability(nextAvailableCodeTiers);
+}
+
+function useNextIdxls() {
+    if (nextAvailableIdxls === null || nextAvailableIdxls === undefined) {
+        return;
+    }
+    const input = document.getElementById('idxlsx');
+    if (!input) return;
+    input.value = String(nextAvailableIdxls);
+}
+
+// Tri
+function toggleSort(field) {
+    const ascValue = `${field}_asc`;
+    const descValue = `${field}_desc`;
+    currentSort = (currentSort === ascValue) ? descValue : ascValue;
+    currentPage = 1;
+    updateSortButtons();
+    loadFournisseurs(1);
+}
+
+function updateSortButtons() {
+    const idxlsBtn = document.getElementById('sort-idxls');
+    const nomBtn = document.getElementById('sort-nom');
+    if (!idxlsBtn || !nomBtn) return;
+
+    const idxlsActive = currentSort.startsWith('idxls');
+    const nomActive = currentSort.startsWith('nom');
+
+    const idxlsDirection = currentSort === 'idxls_desc' ? 'DESC' : 'ASC';
+    const nomDirection = currentSort === 'nom_desc' ? 'DESC' : 'ASC';
+
+    idxlsBtn.classList.toggle('btn-primary', idxlsActive);
+    idxlsBtn.classList.toggle('btn-outline', !idxlsActive);
+    nomBtn.classList.toggle('btn-primary', nomActive);
+    nomBtn.classList.toggle('btn-outline', !nomActive);
+
+    idxlsBtn.innerHTML = `<i class="fas fa-sort-numeric-down mr-2"></i>ID XLS ${idxlsDirection}`;
+    nomBtn.innerHTML = `<i class="fas fa-sort-alpha-down mr-2"></i>Nom ${nomDirection}`;
+}
+
+// Filtres
+function applyFilters() {
+    currentPage = 1;
+    loadFournisseurs(1);
+}
+
+function applyAdresseDistrictQuickFilter(value) {
+    const select = document.getElementById('filter-adresse-district');
+    if (!select) return;
+    select.value = value || '';
+    applyFilters();
+}
+
+function resetFilters() {
+    document.getElementById('search').value = '';
+    document.getElementById('filter-type').value = '';
+    document.getElementById('filter-statut').value = '';
+    document.getElementById('filter-adresse-district').value = '';
+    document.getElementById('filter-code-tiers').value = '';
+    document.getElementById('filter-compta-annee').value = '';
+    document.getElementById('filter-compta-mois').value = '';
+    currentSort = 'nom_asc';
+    currentPage = 1;
+    updateSortButtons();
+    loadFournisseurs(1);
+}
+
+// Modal création
+function openCreateModal() {
+    isCreateMode = true;
+    document.getElementById('modal-title').textContent = 'Nouveau Fournisseur';
+    document.getElementById('fournisseur-id').value = '';
+    document.getElementById('form-fournisseur').reset();
+    document.getElementById('actif').checked = true;
+    document.getElementById('devis').checked = false;
+    document.getElementById('adresse').value = '';
+    refreshCodeTiersAvailability();
+    document.getElementById('modal-fournisseur').showModal();
+}
+
+function openMergeModal(sourceId = '') {
+    const modal = document.getElementById('modal-merge-fournisseur');
+    if (!modal) return;
+    const sourceSelect = document.getElementById('merge-source-id');
+    const targetIdInput = document.getElementById('merge-target-id');
+    const targetSearchInput = document.getElementById('merge-target-search');
+    if (sourceSelect) sourceSelect.value = sourceId || '';
+    if (targetIdInput) targetIdInput.value = '';
+    if (targetSearchInput) targetSearchInput.value = '';
+    modal.showModal();
+}
+
+function syncMergeTargetSelection() {
+    const targetSearchInput = document.getElementById('merge-target-search');
+    const targetIdInput = document.getElementById('merge-target-id');
+    if (!targetSearchInput || !targetIdInput) return;
+    targetIdInput.value = mergeTargetOptions[targetSearchInput.value] || '';
+}
+
+async function submitMergeFournisseur() {
+    const sourceId = document.getElementById('merge-source-id')?.value || '';
+    const targetId = document.getElementById('merge-target-id')?.value || '';
+
+    if (!sourceId || !targetId) {
+        alert('Selectionnez les deux fournisseurs.');
+        return;
+    }
+    if (sourceId === targetId) {
+        alert('La source et la cible doivent etre differentes.');
+        return;
+    }
+    if (!confirm('La fiche source sera supprimee apres fusion. Continuer ?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/facturation/api/fournisseurs/merge/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                source_fournisseur_id: sourceId,
+                target_fournisseur_id: targetId
+            })
+        });
+        const data = await response.json();
+        if (data.success) {
+            document.getElementById('modal-merge-fournisseur').close();
+            alert(data.message);
+            window.location.reload();
+            return;
+        }
+        alert('Erreur: ' + (data.error || 'Fusion impossible'));
+    } catch (error) {
+        console.error('Erreur fusion:', error);
+        alert('Erreur lors de la fusion');
+    }
+}
+
+async function updateMergeInstruction(instructionId, statut) {
+    const textarea = document.getElementById(`merge-instruction-comment-${instructionId}`);
+    const commentaire_admin = textarea ? textarea.value : '';
+    try {
+        const response = await fetch(`/facturation/api/fournisseurs/merge-instructions/${instructionId}/update/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ statut, commentaire_admin })
+        });
+        const data = await response.json();
+        if (data.success) {
+            window.location.reload();
+            return;
+        }
+        alert('Erreur: ' + (data.error || 'Mise a jour impossible'));
+    } catch (error) {
+        console.error('Erreur instruction:', error);
+        alert('Erreur lors de la mise a jour');
+    }
+}
+
+async function ignoreDuplicateSuggestion(signature, label) {
+    if (!signature) {
+        alert('Signature suggestion manquante');
+        return;
+    }
+
+    if (!confirm(`Retirer la suggestion "${label || 'ce doublon'}" de la liste ?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/facturation/api/fournisseurs/duplicate-suggestions/ignore/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ signature, label })
+        });
+        const data = await response.json();
+        if (data.success) {
+            window.location.reload();
+            return;
+        }
+        alert('Erreur: ' + (data.error || 'Retrait impossible'));
+    } catch (error) {
+        console.error('Erreur ignore suggestion:', error);
+        alert('Erreur lors du retrait de la suggestion');
+    }
+}
+
+function getDuplicateSuggestionCheckboxes() {
+    return Array.from(document.querySelectorAll('.duplicate-group-checkbox'));
+}
+
+function updateDuplicateSuggestionSelectionState() {
+    const checkboxes = getDuplicateSuggestionCheckboxes();
+    const selectedCount = checkboxes.filter((checkbox) => checkbox.checked).length;
+    const selectAll = document.getElementById('duplicate-groups-select-all');
+    const bulkButton = document.getElementById('bulk-ignore-duplicates-btn');
+
+    if (selectAll) {
+        selectAll.checked = checkboxes.length > 0 && selectedCount === checkboxes.length;
+        selectAll.indeterminate = selectedCount > 0 && selectedCount < checkboxes.length;
+    }
+    if (bulkButton) {
+        bulkButton.disabled = selectedCount === 0;
+        bulkButton.textContent = selectedCount > 0
+            ? `Ne pas fusionner la selection (${selectedCount})`
+            : 'Ne pas fusionner la selection';
+    }
+}
+
+function toggleAllDuplicateSuggestions(checked) {
+    getDuplicateSuggestionCheckboxes().forEach((checkbox) => {
+        checkbox.checked = checked;
+    });
+    updateDuplicateSuggestionSelectionState();
+}
+
+async function ignoreSelectedDuplicateSuggestions() {
+    const selectedGroups = getDuplicateSuggestionCheckboxes()
+        .filter((checkbox) => checkbox.checked)
+        .map((checkbox) => ({
+            signature: checkbox.dataset.signature || '',
+            label: checkbox.dataset.label || '',
+        }))
+        .filter((group) => group.signature);
+
+    if (!selectedGroups.length) {
+        alert('Selectionnez au moins un doublon suggere.');
+        return;
+    }
+
+    if (!confirm(`Retirer ${selectedGroups.length} suggestion(s) de doublon de la liste ?`)) {
+        return;
+    }
+
+    const bulkButton = document.getElementById('bulk-ignore-duplicates-btn');
+    if (bulkButton) {
+        bulkButton.disabled = true;
+    }
+
+    try {
+        for (const group of selectedGroups) {
+            const response = await fetch('/facturation/api/fournisseurs/duplicate-suggestions/ignore/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                body: JSON.stringify({
+                    signature: group.signature,
+                    label: group.label,
+                })
+            });
+            const data = await response.json();
+            if (!data.success) {
+                throw new Error(data.error || `Retrait impossible pour ${group.label || group.signature}`);
+            }
+        }
+        window.location.reload();
+    } catch (error) {
+        console.error('Erreur ignore suggestions:', error);
+        alert(error.message || 'Erreur lors du retrait des suggestions');
+        updateDuplicateSuggestionSelectionState();
+    }
+}
+
+window.updateDuplicateSuggestionSelectionState = updateDuplicateSuggestionSelectionState;
+window.toggleAllDuplicateSuggestions = toggleAllDuplicateSuggestions;
+window.ignoreSelectedDuplicateSuggestions = ignoreSelectedDuplicateSuggestions;
+
+// Modal édition
+async function editFournisseur(id) {
+    try {
+        isCreateMode = false;
+        const response = await fetch(`/facturation/api/fournisseurs/${id}/`);
+        const data = await response.json();
+
+        if (data.success) {
+            const f = data.fournisseur;
+            document.getElementById('modal-title').textContent = 'Modifier Fournisseur';
+            document.getElementById('fournisseur-id').value = f.id;
+            document.getElementById('nom_fournisseur').value = f.nom_fournisseur;
+            document.getElementById('type_fournisseur').value = f.type_fournisseur;
+            document.getElementById('code_tiers').value = f.code_tiers || '';
+            document.getElementById('idxlsx').value = f.idxlsx || '';
+            document.getElementById('telephone').value = f.telephone || '';
+            document.getElementById('email').value = f.email || '';
+            document.getElementById('adresse').value = f.adresse || '';
+            document.getElementById('numero_nif').value = f.numero_nif || '';
+            document.getElementById('numero_stat').value = f.numero_stat || '';
+            document.getElementById('cin').value = f.cin || '';
+            document.getElementById('date_cin').value = f.date_cin || '';
+            document.getElementById('devis').checked = f.devis;
+            document.getElementById('actif').checked = f.actif;
+            refreshCodeTiersAvailability(f.code_tiers || '');
+
+            document.getElementById('modal-fournisseur').showModal();
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors du chargement du fournisseur');
+    }
+}
+
+function closeModal() {
+    document.getElementById('modal-fournisseur').close();
+}
+
+function openCreateAdresseFromFournisseurModal() {
+    document.getElementById('create-adresse-fournisseur-value').value = document.getElementById('adresse').value || '';
+    document.getElementById('modal-create-adresse-fournisseur').showModal();
+}
+
+async function saveCreatedAdresseFromFournisseur() {
+    const adresse = document.getElementById('create-adresse-fournisseur-value').value;
+    const response = await fetch(`/facturation/api/fournisseurs/adresses-districts/create/`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({ adresse })
+    });
+    const data = await response.json();
+    if (!data.success) {
+        alert(data.error || 'Erreur lors de la creation');
+        return;
+    }
+    document.getElementById('adresse').value = data.adresse || adresse;
+    const datalist = document.getElementById('adresses-fournisseur-options');
+    if (datalist && data.adresse) {
+        const exists = Array.from(datalist.options).some(option => option.value === data.adresse);
+        if (!exists) {
+            const option = document.createElement('option');
+            option.value = data.adresse;
+            datalist.appendChild(option);
+        }
+    }
+    document.getElementById('modal-create-adresse-fournisseur').close();
+}
+
+// Soumettre le formulaire
+document.getElementById('form-fournisseur').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const id = document.getElementById('fournisseur-id').value;
+    const url = id ? `/facturation/api/fournisseurs/${id}/update/` : '/facturation/api/fournisseurs/create/';
+
+    const formData = {
+        nom_fournisseur: document.getElementById('nom_fournisseur').value,
+        type_fournisseur: document.getElementById('type_fournisseur').value,
+        code_tiers: document.getElementById('code_tiers').value || null,
+        idxlsx: document.getElementById('idxlsx').value || null,
+        telephone: document.getElementById('telephone').value || null,
+        email: document.getElementById('email').value || null,
+        adresse: (document.getElementById('adresse').value || '').trim() || null,
+        numero_nif: document.getElementById('numero_nif').value || null,
+        numero_stat: document.getElementById('numero_stat').value || null,
+        cin: document.getElementById('cin').value || null,
+        date_cin: document.getElementById('date_cin').value || null,
+        devis: document.getElementById('devis').checked,
+        actif: document.getElementById('actif').checked
+    };
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(formData)
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            closeModal();
+            loadFournisseurs();
+            alert(data.message);
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors de l\'enregistrement');
+    }
+});
+
+// Modal suppression
+function deleteFournisseur(id, nom) {
+    document.getElementById('delete-id').value = id;
+    document.getElementById('delete-nom').textContent = nom;
+    document.getElementById('modal-delete').showModal();
+}
+
+function closeDeleteModal() {
+    document.getElementById('modal-delete').close();
+}
+
+async function confirmDelete() {
+    const id = document.getElementById('delete-id').value;
+
+    try {
+        const response = await fetch(`/facturation/api/fournisseurs/${id}/delete/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            closeDeleteModal();
+            loadFournisseurs();
+            alert(data.message);
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur lors de la suppression');
+    }
+}
+
+// Helper pour CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Charger au démarrage
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('search').value = '{{ search_query|escapejs }}';
+    document.getElementById('filter-type').value = '{{ type_filter|escapejs }}';
+    document.getElementById('filter-statut').value = '{{ statut_filter|escapejs }}';
+    document.getElementById('filter-adresse-district').value = '{{ adresse_district_filter|escapejs }}';
+    updateSortButtons();
+    setFournisseursViewMode('table');
+    setComptaViewMode('table');
+    const codeTiersInput = document.getElementById('code_tiers');
+    if (codeTiersInput) {
+        codeTiersInput.addEventListener('input', () => {
+            if (!isCreateMode) return;
+            if (codeTiersInputTimer) {
+                clearTimeout(codeTiersInputTimer);
+            }
+            codeTiersInputTimer = setTimeout(() => {
+                refreshCodeTiersAvailability(codeTiersInput.value.trim());
+            }, 300);
+        });
+        codeTiersInput.addEventListener('blur', () => {
+            if (!isCreateMode) return;
+            refreshCodeTiersAvailability(codeTiersInput.value.trim());
+        });
+    }
+    loadFournisseurs();
+});
+</script>
+
+{% endblock %}

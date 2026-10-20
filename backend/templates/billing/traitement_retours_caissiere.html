@@ -1,0 +1,1594 @@
+{% extends "planning/base.html" %}
+{% load static %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+#scanner-container {
+    position: relative;
+    width: 100%;
+    max-width: 500px;
+    margin: 0 auto;
+}
+#scanner-video {
+    width: 100%;
+    border-radius: 8px;
+    border: 2px solid #4CAF50;
+}
+.scanner-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border: 3px solid rgba(76, 175, 80, 0.5);
+    pointer-events: none;
+}
+.scanner-line {
+    position: absolute;
+    width: 100%;
+    height: 2px;
+    background: #4CAF50;
+    animation: scan 2s infinite;
+}
+@keyframes scan {
+    0%, 100% { top: 0; }
+    50% { top: 100%; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <!-- En-tête -->
+    <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-8">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content mb-2">
+                <i class="fas fa-barcode mr-3"></i>Traitement des retours - Caissière
+            </h1>
+            <p class="text-base-content/70">Scanner ou saisir les tickets de caisse retournés par les agents</p>
+        </div>
+        <div class="mt-4 lg:mt-0 flex gap-3 flex-wrap">
+            <a href="/" class="btn btn-outline btn-sm">
+                <i class="fas fa-home mr-2"></i>Accueil
+            </a>
+        </div>
+    </div>
+
+    <!-- Statistiques -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div class="stat bg-warning/10 rounded-lg shadow border border-warning/30">
+            <div class="stat-figure text-warning">
+                <i class="fas fa-clock text-3xl"></i>
+            </div>
+            <div class="stat-title">En attente</div>
+            <div class="stat-value text-warning">{{ stats.en_attente }}</div>
+        </div>
+        <div class="stat bg-success/10 rounded-lg shadow border border-success/30">
+            <div class="stat-figure text-success">
+                <i class="fas fa-check-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Envoyé</div>
+            <div class="stat-value text-success">{{ stats.envoye }}</div>
+        </div>
+        <div class="stat bg-error/10 rounded-lg shadow border border-error/30">
+            <div class="stat-figure text-error">
+                <i class="fas fa-exclamation-triangle text-3xl"></i>
+            </div>
+            <div class="stat-title">Erreurs</div>
+            <div class="stat-value text-error">{{ stats.erreur }}</div>
+        </div>
+        <div class="stat bg-info/10 rounded-lg shadow border border-info/30">
+            <div class="stat-figure text-info">
+                <i class="fas fa-coins text-3xl"></i>
+            </div>
+            <div class="stat-title">Montant total</div>
+            <div class="stat-value text-info text-lg">{{ stats.montant_total_attente|floatformat:0 }} Ar</div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <!-- Zone de scan/saisie -->
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-qrcode mr-2"></i>Scanner/Saisir un ticket
+                </h2>
+
+                <!-- Tabs : Scanner QR vs Saisie manuelle -->
+                <div role="tablist" class="tabs tabs-bordered mb-4">
+                    <input type="radio" name="scan_tabs" role="tab" class="tab" aria-label="Scanner QR" checked onclick="showScanner()" />
+                    <div role="tabpanel" class="tab-content pt-4">
+                        <!-- Scanner QR Code -->
+                        <div id="scanner-container" class="mb-4">
+                            <video id="scanner-video" autoplay playsinline></video>
+                            <div class="scanner-overlay">
+                                <div class="scanner-line"></div>
+                            </div>
+                        </div>
+                        <div class="text-center">
+                            <button id="btn-start-scanner" class="btn btn-success" onclick="startScanner()">
+                                <i class="fas fa-camera mr-2"></i>Démarrer le scanner
+                            </button>
+                            <button id="btn-stop-scanner" class="btn btn-error hidden" onclick="stopScanner()">
+                                <i class="fas fa-stop mr-2"></i>Arrêter le scanner
+                            </button>
+                        </div>
+                    </div>
+
+                    <input type="radio" name="scan_tabs" role="tab" class="tab" aria-label="Saisie manuelle" onclick="showManualInput()" />
+                    <div role="tabpanel" class="tab-content pt-4">
+                        <!-- Saisie manuelle -->
+                        <form id="form-saisie-manuelle" onsubmit="rechercherTicket(event)">
+                            <div class="form-control mb-4">
+                                <label class="label">
+                                    <span class="label-text font-semibold">Numéro du ticket</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    id="input-numero-ticket"
+                                    class="input input-bordered input-lg"
+                                    placeholder="Saisissez le numéro..."
+                                    autofocus
+                                >
+                            </div>
+                            <button type="submit" class="btn btn-primary btn-block">
+                                <i class="fas fa-search mr-2"></i>Rechercher
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Détails du ticket scanné -->
+                <div id="ticket-details" class="hidden mt-6 p-4 bg-base-200 rounded-lg">
+                    <h3 class="text-lg font-bold mb-4">
+                        <span id="ticket-type-badge" class="badge badge-lg"></span>
+                        Ticket <span id="ticket-numero"></span>
+                    </h3>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                            <span class="font-semibold">Désignation:</span>
+                            <span id="ticket-designation"></span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="font-semibold">Quantité:</span>
+                            <span id="ticket-quantite"></span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="font-semibold">Prix unitaire:</span>
+                            <span id="ticket-pu"></span> Ar
+                        </div>
+                        <div class="flex justify-between text-lg font-bold">
+                            <span>Montant:</span>
+                            <span id="ticket-montant"></span> Ar
+                        </div>
+                        <div class="divider"></div>
+                        <div class="flex justify-between">
+                            <span class="font-semibold">Employé:</span>
+                            <span id="ticket-employe"></span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="font-semibold">Ouvrage:</span>
+                            <span id="ticket-ouvrage"></span>
+                        </div>
+                        <div id="ticket-fournisseur-div" class="flex justify-between hidden">
+                            <span class="font-semibold">Fournisseur:</span>
+                            <span id="ticket-fournisseur"></span>
+                        </div>
+                        <div id="ticket-equipement-div" class="flex justify-between hidden">
+                            <span class="font-semibold">Équipement:</span>
+                            <span id="ticket-equipement"></span>
+                        </div>
+                        <div id="ticket-magasin-div" class="flex justify-between hidden">
+                            <span class="font-semibold">Magasin:</span>
+                            <span id="ticket-magasin"></span>
+                        </div>
+                        <div id="ticket-point-eau-div" class="flex justify-between hidden">
+                            <span class="font-semibold">Point d'eau:</span>
+                            <span id="ticket-point-eau"></span>
+                        </div>
+                    </div>
+
+                    <!-- Aperçu de la ligne DiameX -->
+                    <div id="apercu-diamex" class="mt-6 p-4 bg-info/10 border border-info rounded-lg hidden">
+                        <h4 class="font-bold text-info mb-3 flex items-center">
+                            <i class="fas fa-eye mr-2"></i>
+                            Aperçu de la ligne qui sera créée dans DiameX
+                        </h4>
+                        <div id="info-livraison" class="alert alert-warning hidden mb-4">
+                            <i class="fas fa-info-circle mr-2"></i>
+                            Les bons de livraison ne génèrent pas de ligne DiameX. Le workflow continue uniquement dans la fiche de stock.
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="table table-xs table-zebra">
+                                <thead>
+                                    <tr>
+                                        <th>Journal</th>
+                                        <th>Rec</th>
+                                        <th>DateRec</th>
+                                        <th>Description</th>
+                                        <th>In</th>
+                                        <th>Out</th>
+                                        <th>Cat</th>
+                                        <th>PERS</th>
+                                        <th>Fournisseur</th>
+                                        <th>ACTIV</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr class="font-semibold text-xs">
+                                        <td class="font-mono" id="diamex-journal"></td>
+                                        <td class="font-mono" id="diamex-rec"></td>
+                                        <td class="font-mono" id="diamex-daterec"></td>
+                                        <td id="diamex-description" class="max-w-xs truncate" title=""></td>
+                                        <td class="text-right text-success font-bold" id="diamex-in"></td>
+                                        <td class="text-right text-error font-bold" id="diamex-out"></td>
+                                        <td class="font-mono" id="diamex-cat"></td>
+                                        <td id="diamex-pers"></td>
+                                        <td id="diamex-fournisseur"></td>
+                                        <td class="font-mono" id="diamex-activ"></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="alert alert-info mt-3">
+                            <i class="fas fa-info-circle mr-2"></i>
+                            <span class="text-xs">Vous pouvez modifier ces valeurs avant validation</span>
+                        </div>
+                    </div>
+
+                    <div class="mt-6 flex gap-2">
+                        <button class="btn btn-primary flex-1" onclick="ouvrirModalEdition()">
+                            <i class="fas fa-edit mr-2"></i>Modifier avant validation
+                        </button>
+                        <button class="btn btn-success flex-1" onclick="validerRetour()">
+                            <i class="fas fa-check mr-2"></i>Valider directement
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Liste des derniers tickets traités -->
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-list mr-2"></i>Derniers tickets traités (7 jours)
+                    <button class="btn btn-circle btn-ghost btn-xs" onclick="chargerDerniersTickets()">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </h2>
+                <div id="derniers-tickets-container">
+                    <div class="text-center py-8">
+                        <span class="loading loading-spinner loading-lg text-primary"></span>
+                        <p class="mt-2 text-base-content/70">Chargement...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tableaux des détails en attente de retour -->
+    <div class="mt-12">
+        <h2 class="text-2xl font-bold text-base-content mb-6">
+            <i class="fas fa-clipboard-list mr-3"></i>Tickets utilisés en attente de retour
+        </h2>
+
+        <!-- Tabs pour les 3 types -->
+        <div role="tablist" class="tabs tabs-boxed mb-4">
+            <input type="radio" name="attente_tabs" role="tab" class="tab" aria-label="Bons de livraison" checked onclick="showAttenteTab('livraisons')" />
+            <input type="radio" name="attente_tabs" role="tab" class="tab" aria-label="Avances" onclick="showAttenteTab('avances')" />
+            <input type="radio" name="attente_tabs" role="tab" class="tab" aria-label="Recettes" onclick="showAttenteTab('recettes')" />
+        </div>
+
+        <!-- Tableau Bons de livraison -->
+        <div id="tab-attente-livraisons" class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h3 class="card-title">
+                    <span class="badge badge-primary">📦</span>
+                    Bons de livraison (<span id="count-livraisons">0</span>)
+                </h3>
+                <div class="overflow-x-auto">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>N° Ticket</th>
+                                <th>Désignation</th>
+                                <th>Équipement</th>
+                                <th>Qté</th>
+                                <th>Montant</th>
+                                <th>Date</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-livraisons-attente">
+                            <tr>
+                                <td colspan="7" class="text-center py-4">
+                                    <span class="loading loading-spinner loading-sm"></span>
+                                    Chargement...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tableau Avances -->
+        <div id="tab-attente-avances" class="card bg-base-100 shadow-xl hidden">
+            <div class="card-body">
+                <h3 class="card-title">
+                    <span class="badge badge-info">💰</span>
+                    Avances (<span id="count-avances">0</span>)
+                </h3>
+                <div class="overflow-x-auto">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>N° Ticket</th>
+                                <th>Désignation</th>
+                                <th>Montant</th>
+                                <th>Employé</th>
+                                <th>Ouvrage</th>
+                                <th>Date</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-avances-attente">
+                            <tr>
+                                <td colspan="7" class="text-center py-4">
+                                    <span class="loading loading-spinner loading-sm"></span>
+                                    Chargement...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tableau Recettes -->
+        <div id="tab-attente-recettes" class="card bg-base-100 shadow-xl hidden">
+            <div class="card-body">
+                <h3 class="card-title">
+                    <span class="badge badge-warning">💵</span>
+                    Recettes / Paiements forfaitaires (<span id="count-recettes">0</span>)
+                </h3>
+                <div class="overflow-x-auto">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>N° Ticket</th>
+                                <th>Désignation</th>
+                                <th>Point d'eau</th>
+                                <th>Abonné</th>
+                                <th>Montant</th>
+                                <th>Employé</th>
+                                <th>Ouvrage</th>
+                                <th>Date</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-recettes-attente">
+                            <tr>
+                                <td colspan="9" class="text-center py-4">
+                                    <span class="loading loading-spinner loading-sm"></span>
+                                    Chargement...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal impact stock -->
+<dialog id="modal-stock" class="modal">
+    <div class="modal-box max-w-2xl">
+        <h3 class="font-bold text-lg mb-4 flex items-center">
+            <i class="fas fa-check-circle text-success mr-2"></i>
+            Bon de livraison traité avec succès
+        </h3>
+
+        <div class="alert alert-info mb-4">
+            <i class="fas fa-info-circle mr-2"></i>
+            <span>Retour confirmé - La sortie de stock a été effectuée lors de la livraison terrain</span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4 mb-6">
+            <div class="stat bg-base-200 rounded-lg">
+                <div class="stat-title">Équipement</div>
+                <div class="stat-value text-lg" id="stock-equipement"></div>
+                <div class="stat-desc" id="stock-fournisseur"></div>
+            </div>
+            <div class="stat bg-base-200 rounded-lg">
+                <div class="stat-title">Quantité livrée</div>
+                <div class="stat-value text-primary" id="stock-quantite"></div>
+            </div>
+        </div>
+
+        <div class="divider">État du stock</div>
+
+        <div class="stat bg-base-200 rounded-lg mb-6">
+            <div class="stat-title">Stock actuel</div>
+            <div class="stat-value text-2xl" id="stock-nouveau"></div>
+            <div class="stat-desc">unités disponibles (après livraison)</div>
+        </div>
+
+        <div class="modal-action">
+            <a id="btn-voir-fiche-stock" href="#" class="btn btn-primary">
+                <i class="fas fa-clipboard-list mr-2"></i>
+                Voir la fiche de stock
+            </a>
+            <button class="btn" onclick="fermerModalStock()">
+                <i class="fas fa-times mr-2"></i>
+                Fermer
+            </button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Modal édition ligne DiameX -->
+<dialog id="modal-edition-diamex" class="modal">
+    <div class="modal-box max-w-4xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-edit mr-2"></i>
+            Modifier la ligne DiameX avant validation
+        </h3>
+
+        <form id="form-edition-diamex" class="grid grid-cols-2 gap-4">
+            <!-- Journal - Liste déroulante -->
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text font-bold">Journal <span class="text-error">*</span></span>
+                </label>
+                <select id="edit-journal" class="select select-bordered select-sm" required>
+                    <option value="00PERS">00PERS</option>
+                    <!-- Options chargées dynamiquement -->
+                </select>
+            </div>
+
+            <!-- Rec - Verrouillé -->
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text font-bold">Rec <span class="text-xs text-gray-500">(verrouillé)</span></span>
+                </label>
+                <input type="number" id="edit-rec" class="input input-bordered input-sm bg-gray-100" value="0" readonly disabled>
+            </div>
+
+            <!-- In - Lecture seule -->
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text font-bold">In <span class="text-xs text-gray-500">(lecture seule)</span></span>
+                </label>
+                <input type="text" id="edit-in" class="input input-bordered input-sm bg-gray-100" readonly disabled>
+            </div>
+
+            <!-- Out - Lecture seule -->
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text font-bold">Out <span class="text-xs text-gray-500">(lecture seule)</span></span>
+                </label>
+                <input type="text" id="edit-out" class="input input-bordered input-sm bg-gray-100" readonly disabled>
+            </div>
+
+            <!-- Description - Col-span-2 -->
+            <div class="form-control col-span-2">
+                <label class="label"><span class="label-text font-bold">Description <span class="text-error">*</span></span></label>
+                <textarea id="edit-description" class="textarea textarea-bordered" rows="3" required></textarea>
+            </div>
+
+            <!-- Cat - Liste déroulante -->
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text font-bold">Cat (Compte) <span class="text-error">*</span></span>
+                </label>
+                <select id="edit-cat" class="select select-bordered select-sm" required>
+                    <option value="">Sélectionner un compte</option>
+                    <!-- Options chargées dynamiquement -->
+                </select>
+            </div>
+
+            <!-- PERS - Obligatoire si Journal = 00PERS -->
+            <div class="form-control">
+                <label class="label">
+                    <span class="label-text font-bold">PERS <span id="pers-required-label" class="text-xs text-error">(obligatoire)</span></span>
+                </label>
+                <input type="text" id="edit-pers" class="input input-bordered input-sm">
+            </div>
+
+            <!-- Fournisseur - Liste déroulante avec autocomplétion -->
+            <div class="form-control col-span-2">
+                <label class="label">
+                    <span class="label-text font-bold">Fournisseur</span>
+                </label>
+                <input type="text" id="edit-fournisseur-search" class="input input-bordered input-sm"
+                       placeholder="Rechercher par nom..." list="fournisseurs-datalist">
+                <datalist id="fournisseurs-datalist">
+                    <!-- Options chargées dynamiquement -->
+                </datalist>
+                <input type="hidden" id="edit-fournisseur" value="">
+            </div>
+
+            <!-- ACTIV - Liste déroulante -->
+            <div class="form-control col-span-2">
+                <label class="label">
+                    <span class="label-text font-bold">ACTIV (Programme)</span>
+                </label>
+                <select id="edit-activ" class="select select-bordered select-sm">
+                    <option value="">Sélectionner une base</option>
+                    <!-- Options chargées dynamiquement -->
+                </select>
+            </div>
+        </form>
+
+        <div class="modal-action">
+            <button class="btn btn-success" onclick="validerAvecModifications()">
+                <i class="fas fa-check mr-2"></i>
+                Valider avec ces modifications
+            </button>
+            <button class="btn" onclick="document.getElementById('modal-edition-diamex').close()">
+                <i class="fas fa-times mr-2"></i>
+                Annuler
+            </button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Toast de notification -->
+<div id="toast-container" class="toast toast-top toast-end hidden">
+    <div id="toast-message" class="alert">
+        <span id="toast-text"></span>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<!-- Bibliothèque pour scanner QR Code -->
+<script src="https://unpkg.com/@zxing/library@latest"></script>
+
+<script>
+let codeReader = null;
+let currentTicketData = null;
+
+// Fonctions de gestion du scanner
+function showScanner() {
+    document.getElementById('scanner-container').classList.remove('hidden');
+}
+
+function showManualInput() {
+    stopScanner();
+}
+
+async function startScanner() {
+    try {
+        codeReader = new ZXing.BrowserQRCodeReader();
+        const videoInputDevices = await codeReader.listVideoInputDevices();
+
+        if (videoInputDevices.length === 0) {
+            showToast('Aucune caméra détectée', 'error');
+            return;
+        }
+
+        // Utiliser la première caméra disponible (ou caméra arrière sur mobile)
+        const deviceId = videoInputDevices[0].deviceId;
+
+        await codeReader.decodeFromVideoDevice(deviceId, 'scanner-video', (result, err) => {
+            if (result) {
+                const numeroTicket = result.text;
+                console.log('QR Code scanné:', numeroTicket);
+                stopScanner();
+                rechercherTicketParNumero(numeroTicket);
+            }
+        });
+
+        document.getElementById('btn-start-scanner').classList.add('hidden');
+        document.getElementById('btn-stop-scanner').classList.remove('hidden');
+        showToast('Scanner démarré', 'success');
+    } catch (error) {
+        console.error('Erreur scanner:', error);
+        showToast('Erreur lors du démarrage du scanner', 'error');
+    }
+}
+
+function stopScanner() {
+    if (codeReader) {
+        codeReader.reset();
+        codeReader = null;
+    }
+    document.getElementById('btn-start-scanner').classList.remove('hidden');
+    document.getElementById('btn-stop-scanner').classList.add('hidden');
+}
+
+// Recherche de ticket (formulaire)
+function rechercherTicket(event) {
+    event.preventDefault();
+    const numeroTicket = document.getElementById('input-numero-ticket').value.trim();
+    if (numeroTicket) {
+        rechercherTicketParNumero(numeroTicket);
+    }
+}
+
+// API de recherche de ticket
+async function rechercherTicketParNumero(numeroTicket) {
+    try {
+        const response = await fetch('{% url "billing:api_scanner_ticket" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify({ numero_ticket: numeroTicket })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            currentTicketData = data.ticket;
+            // Stocker l'aperçu DiameX dans currentTicketData
+            currentTicketData.apercu_diamex = data.apercu_diamex;
+            afficherDetailsTicket(data.ticket);
+            afficherApercuDiameX(data.apercu_diamex);
+            showToast('Ticket trouvé', 'success');
+        } else {
+            showToast(data.error, 'error');
+            document.getElementById('ticket-details').classList.add('hidden');
+            document.getElementById('apercu-diamex').classList.add('hidden');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        showToast('Erreur lors de la recherche du ticket', 'error');
+    }
+}
+
+// Affichage des détails du ticket
+function afficherDetailsTicket(ticket) {
+    document.getElementById('ticket-numero').textContent = ticket.numero_ticket;
+    document.getElementById('ticket-designation').textContent = ticket.designation;
+    document.getElementById('ticket-quantite').textContent = ticket.quantite;
+    document.getElementById('ticket-pu').textContent = ticket.prix_unitaire.toLocaleString('fr-FR');
+    document.getElementById('ticket-montant').textContent = ticket.montant.toLocaleString('fr-FR');
+    document.getElementById('ticket-employe').textContent = ticket.employe || 'N/A';
+    document.getElementById('ticket-ouvrage').textContent = ticket.ouvrage || 'N/A';
+
+    // Badge de type
+    const badge = document.getElementById('ticket-type-badge');
+    if (ticket.type_ticket === 'livraison') {
+        badge.textContent = '📦 Bon de livraison';
+        badge.className = 'badge badge-lg badge-primary';
+        document.getElementById('ticket-fournisseur-div').classList.add('hidden');
+        document.getElementById('ticket-equipement-div').classList.remove('hidden');
+        document.getElementById('ticket-equipement').textContent = ticket.equipement || 'N/A';
+        document.getElementById('ticket-magasin-div').classList.remove('hidden');
+        document.getElementById('ticket-magasin').textContent = ticket.magasin || 'N/A';
+    } else if (ticket.type_ticket === 'avance') {
+        badge.textContent = '💰 Avance';
+        badge.className = 'badge badge-lg badge-info';
+        document.getElementById('ticket-fournisseur-div').classList.add('hidden');
+        document.getElementById('ticket-equipement-div').classList.add('hidden');
+        document.getElementById('ticket-magasin-div').classList.add('hidden');
+    } else if (ticket.type_ticket === 'recette') {
+        badge.textContent = '💵 Recette/Paiement';
+        badge.className = 'badge badge-lg badge-warning';
+        document.getElementById('ticket-point-eau-div').classList.remove('hidden');
+        document.getElementById('ticket-point-eau').textContent = ticket.point_eau || ticket.point_eau_nom || 'N/A';
+        document.getElementById('ticket-magasin-div').classList.add('hidden');
+    }
+
+    document.getElementById('ticket-details').classList.remove('hidden');
+}
+
+// Affichage de l'aperçu DiameX
+function afficherApercuDiameX(apercu) {
+    // Si pas d'aperçu (bon de livraison), ne rien afficher
+    if (!apercu) {
+        document.getElementById('apercu-diamex').classList.add('hidden');
+        document.getElementById('info-livraison').classList.remove('hidden');
+        return;
+    }
+
+    // Remplir les colonnes DiameX
+    document.getElementById('diamex-journal').textContent = apercu.journal || '00PERS';
+    document.getElementById('diamex-rec').textContent = apercu.rec || '0';
+    document.getElementById('diamex-daterec').textContent = apercu.date_rec || '';
+
+    const descriptionCell = document.getElementById('diamex-description');
+    descriptionCell.textContent = apercu.description || '';
+    descriptionCell.title = apercu.description || '';  // Tooltip pour voir le texte complet
+
+    document.getElementById('diamex-in').textContent = apercu.in ? apercu.in.toLocaleString('fr-FR') + ' Ar' : '-';
+    document.getElementById('diamex-out').textContent = apercu.out ? apercu.out.toLocaleString('fr-FR') + ' Ar' : '-';
+    document.getElementById('diamex-cat').textContent = apercu.cat || '';
+    document.getElementById('diamex-pers').textContent = apercu.pers || '';
+    document.getElementById('diamex-fournisseur').textContent = apercu.fournisseur || '';
+    document.getElementById('diamex-activ').textContent = apercu.activ || '';
+
+    // Masquer l'info livraison
+    document.getElementById('info-livraison').classList.add('hidden');
+    document.getElementById('apercu-diamex').classList.remove('hidden');
+}
+
+// Validation du retour
+async function validerRetour() {
+    if (!currentTicketData) {
+        showToast('Aucun ticket sélectionné', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch('{% url "billing:api_valider_retour_ticket" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify({
+                detail_id: currentTicketData.detail_id,
+                bon_livraison_id: currentTicketData.bon_livraison_id,
+                numero_ticket: currentTicketData.numero_ticket
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            // Si c'est une livraison avec impact stock, afficher modal détaillé
+            if (data.stock_impact) {
+                afficherModalStock(data.stock_impact);
+            } else {
+                // Pour recettes/avances, simple toast
+                showToast(data.message, 'success');
+
+                // Réinitialiser l'interface
+                document.getElementById('ticket-details').classList.add('hidden');
+                document.getElementById('apercu-diamex').classList.add('hidden');
+                document.getElementById('input-numero-ticket').value = '';
+                currentTicketData = null;
+
+                // Recharger la page après 2 secondes
+                setTimeout(() => {
+                    window.location.reload();
+                }, 2000);
+            }
+        } else {
+            // Afficher erreur avec détails si disponibles
+            let errorMsg = data.error || 'Erreur lors de la validation';
+
+            // Si des détails de validation sont présents, les afficher
+            if (data.details && Array.isArray(data.details) && data.details.length > 0) {
+                errorMsg += '\n\nChamps manquants :\n';
+                data.details.forEach(detail => {
+                    errorMsg += '• ' + detail + '\n';
+                });
+
+                // Ajouter le message d'aide
+                if (data.message) {
+                    errorMsg += '\n' + data.message;
+                }
+            }
+
+            showToast(errorMsg, 'error');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        showToast('Erreur lors de la validation du retour', 'error');
+    }
+}
+
+// Toast de notification
+function showToast(message, type = 'info') {
+    const toastContainer = document.getElementById('toast-container');
+    const toastMessage = document.getElementById('toast-message');
+    const toastText = document.getElementById('toast-text');
+
+    toastText.textContent = message;
+
+    if (type === 'success') {
+        toastMessage.className = 'alert alert-success';
+    } else if (type === 'error') {
+        toastMessage.className = 'alert alert-error';
+    } else {
+        toastMessage.className = 'alert alert-info';
+    }
+
+    toastContainer.classList.remove('hidden');
+
+    setTimeout(() => {
+        toastContainer.classList.add('hidden');
+    }, 4000);
+}
+
+// Gestion des tabs en attente
+function showAttenteTab(tabName) {
+    // Masquer tous les tableaux
+    document.getElementById('tab-attente-livraisons').classList.add('hidden');
+    document.getElementById('tab-attente-avances').classList.add('hidden');
+    document.getElementById('tab-attente-recettes').classList.add('hidden');
+
+    // Afficher le tableau demandé
+    document.getElementById(`tab-attente-${tabName}`).classList.remove('hidden');
+}
+
+// Charger les détails en attente de retour
+async function chargerDetailsEnAttente() {
+    try {
+        const response = await fetch('{% url "billing:api_details_en_attente_retour" %}');
+        const data = await response.json();
+
+        if (data.success) {
+            // Mettre à jour les compteurs
+            document.getElementById('count-livraisons').textContent = data.total.livraisons;
+            document.getElementById('count-avances').textContent = data.total.avances;
+            document.getElementById('count-recettes').textContent = data.total.recettes;
+
+            // Remplir le tableau des livraisons avec regroupement Mois → Employé
+            const tbodyLivraisons = document.getElementById('table-livraisons-attente');
+            if (data.livraisons.length === 0) {
+                tbodyLivraisons.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-base-content/50">Aucun bon de livraison en attente</td></tr>';
+            } else {
+                // Regrouper par mois → employé
+                const groupesLivraisons = {};
+                data.livraisons.forEach(item => {
+                    const moisKey = item.annee_mois || 'Sans date';
+                    const employeKey = item.employe || 'Sans employé';
+
+                    if (!groupesLivraisons[moisKey]) groupesLivraisons[moisKey] = {};
+                    if (!groupesLivraisons[moisKey][employeKey]) groupesLivraisons[moisKey][employeKey] = [];
+
+                    groupesLivraisons[moisKey][employeKey].push(item);
+                });
+
+                // Construire le HTML
+                let html = '';
+                const moisTries = Object.keys(groupesLivraisons).sort().reverse();
+
+                moisTries.forEach(moisKey => {
+                    const employes = groupesLivraisons[moisKey];
+                    const moisDisplay = data.livraisons.find(i => i.annee_mois === moisKey)?.mois_annee_display || moisKey;
+
+                    // Ligne de regroupement MOIS
+                    html += `<tr class="bg-primary text-primary-content font-bold">
+                        <td colspan="7" class="py-3"><i class="fas fa-calendar-alt mr-2"></i>${moisDisplay}</td>
+                    </tr>`;
+
+                    Object.keys(employes).sort().forEach(employeKey => {
+                        const items = employes[employeKey];
+
+                        // Ligne de regroupement EMPLOYÉ
+                        html += `<tr class="bg-secondary text-secondary-content font-semibold">
+                            <td colspan="7" class="py-2 pl-8"><i class="fas fa-user mr-2"></i>${employeKey} (${items.length} ticket${items.length > 1 ? 's' : ''})</td>
+                        </tr>`;
+
+                        // Lignes de tickets
+                        items.forEach(item => {
+                            html += `<tr class="hover:bg-base-200">
+                                <td class="pl-16 font-mono text-xs">${item.numero_ticket || 'N/A'}</td>
+                                <td>${item.designation}</td>
+                                <td>${item.equipement || '-'}</td>
+                                <td class="text-center">${item.quantite}</td>
+                                <td class="text-right">${item.montant.toLocaleString('fr-FR')} Ar</td>
+                                <td class="text-xs">${item.date_planning}</td>
+                                <td>
+                                    <button class="btn btn-xs btn-success" onclick="preFillTicket('${item.numero_ticket}')">
+                                        <i class="fas fa-arrow-right"></i>
+                                    </button>
+                                </td>
+                            </tr>`;
+                        });
+                    });
+                });
+
+                tbodyLivraisons.innerHTML = html;
+            }
+
+            // Remplir le tableau des avances avec regroupement Mois → Employé → Ouvrage
+            const tbodyAvances = document.getElementById('table-avances-attente');
+            if (data.avances.length === 0) {
+                tbodyAvances.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-base-content/50">Aucune avance en attente</td></tr>';
+            } else {
+                // Regrouper par mois → employé → ouvrage
+                const groupesAvances = {};
+                data.avances.forEach(item => {
+                    const moisKey = item.annee_mois || 'Sans date';
+                    const employeKey = item.employe || 'Sans employé';
+                    const ouvrageKey = item.ouvrage || 'Sans ouvrage';
+
+                    if (!groupesAvances[moisKey]) groupesAvances[moisKey] = {};
+                    if (!groupesAvances[moisKey][employeKey]) groupesAvances[moisKey][employeKey] = {};
+                    if (!groupesAvances[moisKey][employeKey][ouvrageKey]) groupesAvances[moisKey][employeKey][ouvrageKey] = [];
+
+                    groupesAvances[moisKey][employeKey][ouvrageKey].push(item);
+                });
+
+                // Construire le HTML
+                let html = '';
+                const moisTries = Object.keys(groupesAvances).sort().reverse();
+
+                moisTries.forEach(moisKey => {
+                    const employes = groupesAvances[moisKey];
+                    const moisDisplay = data.avances.find(i => i.annee_mois === moisKey)?.mois_annee_display || moisKey;
+
+                    // Ligne de regroupement MOIS
+                    html += `<tr class="bg-primary text-primary-content font-bold">
+                        <td colspan="7" class="py-3"><i class="fas fa-calendar-alt mr-2"></i>${moisDisplay}</td>
+                    </tr>`;
+
+                    Object.keys(employes).sort().forEach(employeKey => {
+                        const ouvrages = employes[employeKey];
+
+                        // Ligne de regroupement EMPLOYÉ
+                        html += `<tr class="bg-secondary text-secondary-content font-semibold">
+                            <td colspan="7" class="py-2 pl-8"><i class="fas fa-user mr-2"></i>${employeKey}</td>
+                        </tr>`;
+
+                        Object.keys(ouvrages).sort().forEach(ouvrageKey => {
+                            const items = ouvrages[ouvrageKey];
+
+                            // Ligne de regroupement OUVRAGE
+                            html += `<tr class="bg-base-200 font-medium">
+                                <td colspan="7" class="py-2 pl-16"><i class="fas fa-building mr-2"></i>${ouvrageKey} (${items.length} ticket${items.length > 1 ? 's' : ''})</td>
+                            </tr>`;
+
+                            // Lignes de tickets
+                            items.forEach(item => {
+                                html += `<tr class="hover:bg-base-200">
+                                    <td class="pl-20 font-mono text-xs">${item.numero_ticket || 'N/A'}</td>
+                                    <td>${item.designation}</td>
+                                    <td class="text-right">${item.montant.toLocaleString('fr-FR')} Ar</td>
+                                    <td class="text-xs text-base-content/50">${item.employe}</td>
+                                    <td class="text-xs text-base-content/50">${item.ouvrage}</td>
+                                    <td class="text-xs">${item.date_planning}</td>
+                                    <td>
+                                        <button class="btn btn-xs btn-success" onclick="preFillTicket('${item.numero_ticket}')">
+                                            <i class="fas fa-arrow-right"></i>
+                                        </button>
+                                    </td>
+                                </tr>`;
+                            });
+                        });
+                    });
+                });
+
+                tbodyAvances.innerHTML = html;
+            }
+
+            // Remplir le tableau des recettes avec regroupement Mois → Ouvrage
+            const tbodyRecettes = document.getElementById('table-recettes-attente');
+            if (data.recettes.length === 0) {
+                tbodyRecettes.innerHTML = '<tr><td colspan="9" class="text-center py-4 text-base-content/50">Aucune recette en attente</td></tr>';
+            } else {
+                // Regrouper par mois → ouvrage
+                const groupesRecettes = {};
+                data.recettes.forEach(item => {
+                    const moisKey = item.annee_mois || 'Sans date';
+                    const ouvrageKey = item.ouvrage || 'Sans ouvrage';
+
+                    if (!groupesRecettes[moisKey]) groupesRecettes[moisKey] = {};
+                    if (!groupesRecettes[moisKey][ouvrageKey]) groupesRecettes[moisKey][ouvrageKey] = [];
+
+                    groupesRecettes[moisKey][ouvrageKey].push(item);
+                });
+
+                // Construire le HTML
+                let html = '';
+                const moisTries = Object.keys(groupesRecettes).sort().reverse();
+
+                moisTries.forEach(moisKey => {
+                    const ouvrages = groupesRecettes[moisKey];
+                    const moisDisplay = data.recettes.find(i => i.annee_mois === moisKey)?.mois_annee_display || moisKey;
+
+                    // Ligne de regroupement MOIS
+                    html += `<tr class="bg-primary text-primary-content font-bold">
+                        <td colspan="9" class="py-3"><i class="fas fa-calendar-alt mr-2"></i>${moisDisplay}</td>
+                    </tr>`;
+
+                    Object.keys(ouvrages).sort().forEach(ouvrageKey => {
+                        const items = ouvrages[ouvrageKey];
+
+                        // Ligne de regroupement OUVRAGE
+                        html += `<tr class="bg-secondary text-secondary-content font-semibold">
+                            <td colspan="9" class="py-2 pl-8"><i class="fas fa-building mr-2"></i>${ouvrageKey} (${items.length} ticket${items.length > 1 ? 's' : ''})</td>
+                        </tr>`;
+
+                        // Lignes de tickets
+                        items.forEach(item => {
+                            html += `<tr class="hover:bg-base-200">
+                                <td class="pl-16 font-mono text-xs">${item.numero_ticket || 'N/A'}</td>
+                                <td>${item.designation}</td>
+                                <td>${item.point_eau || '-'}</td>
+                                <td>${item.point_eau_nom || '-'}</td>
+                                <td class="text-right">${item.montant.toLocaleString('fr-FR')} Ar</td>
+                                <td>${item.employe}</td>
+                                <td class="text-xs text-base-content/50">${item.ouvrage}</td>
+                                <td class="text-xs">${item.date_planning}</td>
+                                <td>
+                                    <button class="btn btn-xs btn-success" onclick="preFillTicket('${item.numero_ticket}')">
+                                        <i class="fas fa-arrow-right"></i>
+                                    </button>
+                                </td>
+                            </tr>`;
+                        });
+                    });
+                });
+
+                tbodyRecettes.innerHTML = html;
+            }
+        }
+    } catch (error) {
+        console.error('Erreur chargement détails en attente:', error);
+    }
+}
+
+// Pré-remplir le numéro de ticket et basculer sur l'onglet saisie manuelle
+function preFillTicket(numeroTicket) {
+    // Basculer sur l'onglet saisie manuelle
+    const tabs = document.querySelectorAll('input[name="scan_tabs"]');
+    tabs[1].checked = true;  // Deuxième onglet (saisie manuelle)
+
+    // Remplir le champ
+    document.getElementById('input-numero-ticket').value = numeroTicket;
+
+    // Scroll vers le haut
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    // Focus sur le champ
+    setTimeout(() => {
+        document.getElementById('input-numero-ticket').focus();
+    }, 500);
+}
+
+// Afficher modal impact stock
+function afficherModalStock(stockData) {
+    // Remplir les données
+    document.getElementById('stock-equipement').textContent = stockData.equipement;
+    document.getElementById('stock-fournisseur').textContent = stockData.fournisseur ? `Fournisseur: ${stockData.fournisseur}` : '';
+
+    // Afficher la quantité livrée (pas "ajoutée" car c'est une confirmation)
+    const quantite = stockData.quantite_livree || stockData.quantite_ajoutee || 0;
+    document.getElementById('stock-quantite').textContent = quantite;
+
+    // Afficher le stock actuel (après la sortie lors de la livraison)
+    const stockActuel = stockData.stock_actuel || stockData.nouveau_stock || 0;
+    document.getElementById('stock-nouveau').textContent = stockActuel;
+
+    // Lien vers fiche de stock (si URL existe)
+    const btnFicheStock = document.getElementById('btn-voir-fiche-stock');
+    if (stockData.stock_id) {
+        btnFicheStock.href = `/stocks/fiche/${stockData.equipement_id}/`;
+        btnFicheStock.classList.remove('hidden');
+    } else {
+        btnFicheStock.classList.add('hidden');
+    }
+
+    // Ouvrir le modal
+    document.getElementById('modal-stock').showModal();
+}
+
+// Fermer modal et recharger
+function fermerModalStock() {
+    document.getElementById('modal-stock').close();
+
+    // Réinitialiser l'interface
+    document.getElementById('ticket-details').classList.add('hidden');
+    document.getElementById('apercu-diamex').classList.add('hidden');
+    document.getElementById('input-numero-ticket').value = '';
+    currentTicketData = null;
+
+    // Recharger la page
+    setTimeout(() => {
+        window.location.reload();
+    }, 500);
+}
+
+// Variables globales
+let apercuDiamexActuel = null;
+let listeJournaux = [];
+let listeFournisseurs = [];
+let listeBases = [];
+let listeComptes = [];
+
+// Charger les listes déroulantes au démarrage
+document.addEventListener('DOMContentLoaded', function() {
+    chargerListesModales();
+    chargerDerniersTickets();
+
+    // Gérer les changements de Journal pour PERS obligatoire
+    const selectJournal = document.getElementById('edit-journal');
+    if (selectJournal) {
+        selectJournal.addEventListener('change', function() {
+            const persInput = document.getElementById('edit-pers');
+            const persLabel = document.getElementById('pers-required-label');
+
+            if (this.value === '00PERS') {
+                persInput.required = true;
+                persLabel.classList.remove('hidden');
+                persInput.classList.add('input-error');
+            } else {
+                persInput.required = false;
+                persInput.value = ''; // Vider PERS si journal != 00PERS
+                persLabel.classList.add('hidden');
+                persInput.classList.remove('input-error');
+            }
+        });
+    }
+
+    // Autocomplétion fournisseur
+    const searchInput = document.getElementById('edit-fournisseur-search');
+    if (searchInput) {
+        // Fonction helper pour extraire l'idxls du texte formaté "Nom (1664)"
+        function findFournisseur(inputValue) {
+            const searchValue = inputValue.toLowerCase().trim();
+
+            // 1. Essayer d'extraire l'idxls depuis "(1664)"
+            const idxlsMatch = inputValue.match(/\((\d+)\)$/);
+            if (idxlsMatch) {
+                const idxls = parseInt(idxlsMatch[1]);
+                const fournisseur = listeFournisseurs.find(f => f.idxls === idxls);
+                if (fournisseur) return fournisseur;
+            }
+
+            // 2. Recherche par nom complet ou partiel
+            let fournisseur = listeFournisseurs.find(f =>
+                f.nom_fournisseur.toLowerCase() === searchValue
+            );
+            if (fournisseur) return fournisseur;
+
+            // 3. Recherche partielle (contains)
+            fournisseur = listeFournisseurs.find(f =>
+                f.nom_fournisseur.toLowerCase().includes(searchValue)
+            );
+            if (fournisseur) return fournisseur;
+
+            // 4. Recherche par idxls seul (si nombre)
+            if (!isNaN(searchValue)) {
+                fournisseur = listeFournisseurs.find(f =>
+                    f.idxls && f.idxls.toString() === searchValue
+                );
+                if (fournisseur) return fournisseur;
+            }
+
+            return null;
+        }
+
+        // Event listener pour la sélection depuis la datalist
+        searchInput.addEventListener('change', function() {
+            const fournisseur = findFournisseur(this.value);
+
+            if (fournisseur) {
+                document.getElementById('edit-fournisseur').value = fournisseur.idxls || '';
+                console.log('✅ Fournisseur sélectionné:', fournisseur.nom_fournisseur, 'idxls:', fournisseur.idxls);
+            } else {
+                document.getElementById('edit-fournisseur').value = '';
+                console.log('⚠️ Aucun fournisseur trouvé pour:', this.value);
+            }
+        });
+
+        // Event listener pour la frappe au clavier (autocomplétion en temps réel)
+        searchInput.addEventListener('input', function() {
+            const fournisseur = findFournisseur(this.value);
+
+            if (fournisseur) {
+                document.getElementById('edit-fournisseur').value = fournisseur.idxls || '';
+            }
+        });
+    }
+});
+
+// Charger toutes les listes déroulantes
+async function chargerListesModales() {
+    try {
+        // Charger journaux
+        const respJournaux = await fetch('{% url "billing:api_get_journaux" %}');
+        const dataJournaux = await respJournaux.json();
+        if (dataJournaux.success) {
+            listeJournaux = dataJournaux.journaux;
+            const selectJournal = document.getElementById('edit-journal');
+            selectJournal.innerHTML = '<option value="00PERS">00PERS</option>';
+            dataJournaux.journaux.forEach(j => {
+                if (j.code !== '00PERS') {
+                    const option = document.createElement('option');
+                    option.value = j.code;
+                    option.textContent = `${j.code} - ${j.libelle || ''}`;
+                    selectJournal.appendChild(option);
+                }
+            });
+        }
+
+        // Charger fournisseurs
+        const respFournisseurs = await fetch('{% url "billing:api_get_fournisseurs" %}');
+        const dataFournisseurs = await respFournisseurs.json();
+        if (dataFournisseurs.success) {
+            listeFournisseurs = dataFournisseurs.fournisseurs;
+            const datalist = document.getElementById('fournisseurs-datalist');
+            datalist.innerHTML = '';
+            dataFournisseurs.fournisseurs.forEach(f => {
+                const option = document.createElement('option');
+                option.value = `${f.nom_fournisseur} (${f.idxls || 'N/A'})`;
+                option.dataset.idxls = f.idxls || '';
+                datalist.appendChild(option);
+            });
+        }
+
+        // Charger bases
+        const respBases = await fetch('{% url "billing:api_get_bases" %}');
+        const dataBases = await respBases.json();
+        if (dataBases.success) {
+            listeBases = dataBases.bases;
+            const selectActiv = document.getElementById('edit-activ');
+            selectActiv.innerHTML = '<option value="">Sélectionner une base</option>';
+            dataBases.bases.forEach(b => {
+                const option = document.createElement('option');
+                option.value = b.prog_diamex;
+                option.textContent = `${b.prog_diamex} - ${b.nom_base || ''}`;
+                selectActiv.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error('Erreur chargement listes:', error);
+    }
+}
+
+// Charger les comptes selon la désignation
+async function chargerComptesDesignation(designationId) {
+    try {
+        const response = await fetch('{% url "billing:api_get_comptes_par_designation" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify({ designation_id: designationId })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            listeComptes = data.comptes;
+            const selectCat = document.getElementById('edit-cat');
+            selectCat.innerHTML = '<option value="">Sélectionner un compte</option>';
+            data.comptes.forEach(c => {
+                const option = document.createElement('option');
+                option.value = c.compte;
+                option.textContent = `${c.compte} - ${c.libelle || ''}`;
+                selectCat.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error('Erreur chargement comptes:', error);
+    }
+}
+
+// Ouvrir le modal d'édition
+async function ouvrirModalEdition() {
+    if (!currentTicketData || !currentTicketData.apercu_diamex) {
+        showToast('Aucune donnée DiameX à modifier', 'warning');
+        return;
+    }
+
+    const apercu = currentTicketData.apercu_diamex;
+    apercuDiamexActuel = apercu;
+
+    // Charger les comptes si designation_id disponible
+    if (currentTicketData.designation_id) {
+        await chargerComptesDesignation(currentTicketData.designation_id);
+    }
+
+    // Pré-remplir le formulaire
+    document.getElementById('edit-journal').value = apercu.journal || '00PERS';
+    document.getElementById('edit-rec').value = apercu.rec || 0;
+    document.getElementById('edit-in').value = apercu.in ? apercu.in.toLocaleString('fr-FR') + ' Ar' : '0 Ar';
+    document.getElementById('edit-out').value = apercu.out ? apercu.out.toLocaleString('fr-FR') + ' Ar' : '0 Ar';
+    document.getElementById('edit-description').value = apercu.description || '';
+    document.getElementById('edit-cat').value = apercu.cat || '';
+    document.getElementById('edit-pers').value = apercu.pers || '';
+    document.getElementById('edit-activ').value = apercu.activ || '';
+
+    // Fournisseur - trouver le nom à partir de l'IDxls
+    if (apercu.fournisseur) {
+        const fournisseur = listeFournisseurs.find(f => f.idxls && f.idxls.toString() === apercu.fournisseur);
+        if (fournisseur) {
+            document.getElementById('edit-fournisseur-search').value = `${fournisseur.nom_fournisseur} (${fournisseur.idxls})`;
+            document.getElementById('edit-fournisseur').value = fournisseur.idxls;
+        } else {
+            document.getElementById('edit-fournisseur').value = apercu.fournisseur;
+        }
+    }
+
+    // Gérer l'état de PERS selon le journal
+    const persInput = document.getElementById('edit-pers');
+    const persLabel = document.getElementById('pers-required-label');
+    if (apercu.journal === '00PERS') {
+        persInput.required = true;
+        persLabel.classList.remove('hidden');
+    } else {
+        persInput.required = false;
+        persLabel.classList.add('hidden');
+    }
+
+    // Ouvrir le modal
+    document.getElementById('modal-edition-diamex').showModal();
+}
+
+// Valider avec les modifications
+async function validerAvecModifications() {
+    if (!currentTicketData) {
+        showToast('Aucun ticket sélectionné', 'error');
+        return;
+    }
+
+    // Récupérer les valeurs modifiées
+    const modifications = {
+        journal: document.getElementById('edit-journal').value,
+        rec: parseInt(document.getElementById('edit-rec').value) || 0,
+        description: document.getElementById('edit-description').value,
+        cat: document.getElementById('edit-cat').value,
+        pers: document.getElementById('edit-pers').value,
+        fournisseur: document.getElementById('edit-fournisseur').value,
+        activ: document.getElementById('edit-activ').value
+    };
+
+    // Debug: Afficher les modifications dans la console
+    console.log('🔍 Modifications envoyées:', modifications);
+    console.log('🔍 Fournisseur (idxls):', modifications.fournisseur);
+
+    // === VALIDATION CÔTÉ CLIENT ===
+    const erreurs = [];
+
+    if (!modifications.journal || modifications.journal.trim() === '') {
+        erreurs.push('Journal comptable obligatoire');
+    }
+
+    if (!modifications.cat || modifications.cat.trim() === '') {
+        erreurs.push('Compte comptable (Cat) obligatoire');
+    }
+
+    if (!modifications.description || modifications.description.trim() === '') {
+        erreurs.push('Description obligatoire');
+    }
+
+    // Vérifier In ou Out
+    const inAmount = parseFloat(document.getElementById('edit-in').value) || 0;
+    const outAmount = parseFloat(document.getElementById('edit-out').value) || 0;
+    if (inAmount === 0 && outAmount === 0) {
+        erreurs.push('Montant obligatoire (In ou Out doit être > 0)');
+    }
+
+    // Si erreurs, afficher et arrêter
+    if (erreurs.length > 0) {
+        let msg = 'Veuillez compléter les champs obligatoires :\n\n';
+        erreurs.forEach(err => {
+            msg += '• ' + err + '\n';
+        });
+        showToast(msg, 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch('{% url "billing:api_valider_retour_ticket" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify({
+                detail_id: currentTicketData.detail_id,
+                bon_livraison_id: currentTicketData.bon_livraison_id,
+                numero_ticket: currentTicketData.numero_ticket,
+                modifications_diamex: modifications  // Envoyer les modifications
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            document.getElementById('modal-edition-diamex').close();
+            showToast(data.message || 'Ticket validé avec succès', 'success');
+
+            // Gérer le stock si c'est une livraison
+            if (data.stock_impact) {
+                setTimeout(() => {
+                    afficherModalStock(data.stock_impact);
+                }, 500);
+            } else {
+                // Recharger après 1.5s
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1500);
+            }
+        } else {
+            // Afficher erreur avec détails si disponibles
+            let errorMsg = data.error || 'Erreur lors de la validation';
+
+            // Si des détails de validation sont présents, les afficher
+            if (data.details && Array.isArray(data.details) && data.details.length > 0) {
+                errorMsg += '\n\nChamps manquants :\n';
+                data.details.forEach(detail => {
+                    errorMsg += '• ' + detail + '\n';
+                });
+
+                // Ajouter le message d'aide
+                if (data.message) {
+                    errorMsg += '\n' + data.message;
+                }
+            }
+
+            showToast(errorMsg, 'error');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        showToast('Erreur réseau', 'error');
+    }
+}
+
+// Charger les détails au chargement de la page
+document.addEventListener('DOMContentLoaded', function() {
+    chargerDetailsEnAttente();
+});
+
+// Fonctions pour les derniers tickets traités
+async function chargerDerniersTickets() {
+    const container = document.getElementById('derniers-tickets-container');
+    container.innerHTML = '<div class="text-center py-8"><span class="loading loading-spinner loading-lg text-primary"></span><p class="mt-2 text-base-content/70">Chargement...</p></div>';
+
+    try {
+        const response = await fetch('{% url "billing:api_derniers_tickets_traites" %}');
+        const data = await response.json();
+
+        if (!data.success) {
+            container.innerHTML = `<div class="alert alert-error"><i class="fas fa-exclamation-circle mr-2"></i>${data.error}</div>`;
+            return;
+        }
+
+        if (data.tickets.length === 0) {
+            container.innerHTML = '<p class="text-center py-8 text-base-content/50">Aucun ticket traité dans les 7 derniers jours</p>';
+            return;
+        }
+
+        let html = '<div class="space-y-4">';
+
+        data.tickets.forEach(groupe => {
+            // Badge pour statut exporté
+            const badgeExporte = groupe.nb_exportees > 0
+                ? `<span class="badge badge-success badge-sm ml-2">${groupe.nb_exportees} exporté(s)</span>`
+                : '';
+
+            // Badge pour statut en attente
+            const nbAttente = groupe.nb_lignes - groupe.nb_exportees;
+            const badgeAttente = nbAttente > 0
+                ? `<span class="badge badge-warning badge-sm ml-2">${nbAttente} en attente</span>`
+                : '';
+
+            html += `
+                <div class="card bg-base-200 shadow">
+                    <div class="card-body p-4">
+                        <div class="flex justify-between items-start">
+                            <div class="flex-1">
+                                <div class="flex items-center gap-2 mb-3">
+                                    <i class="fas fa-calendar-day text-primary"></i>
+                                    <span class="font-bold">${groupe.date_traitement_display}</span>
+                                    <span class="badge badge-info badge-sm">${groupe.nb_lignes} ticket(s)</span>
+                                    ${badgeExporte}
+                                    ${badgeAttente}
+                                </div>
+                                <div class="text-sm space-y-1">
+            `;
+
+            // Afficher les premiers tickets (max 5)
+            const maxTickets = 5;
+            groupe.lignes.slice(0, maxTickets).forEach(ticket => {
+                let badge = '';
+                if (ticket.type_ticket.includes('Bon')) {
+                    badge = '<span class="badge badge-primary badge-xs">📦 BL</span>';
+                } else if (ticket.type_ticket.includes('Avance')) {
+                    badge = '<span class="badge badge-info badge-xs">💰 Avance</span>';
+                } else if (ticket.type_ticket.includes('Recette')) {
+                    badge = '<span class="badge badge-warning badge-xs">💵 Recette</span>';
+                }
+
+                let statutBadge = '';
+                if (ticket.statut === 'exporte') {
+                    statutBadge = '<span class="badge badge-success badge-xs ml-2">✓ Exporté</span>';
+                } else if (ticket.statut === 'en_attente') {
+                    statutBadge = '<span class="badge badge-warning badge-xs ml-2">⏳ Attente</span>';
+                }
+
+                html += `
+                    <div class="pl-4 flex items-center gap-2">
+                        ${badge}
+                        <span class="font-mono text-xs">${ticket.numero_ticket || 'N/A'}</span>
+                        ${ticket.employe ? `<span class="text-base-content/70 text-xs">- ${ticket.employe}</span>` : ''}
+                        ${ticket.ouvrage ? `<span class="text-base-content/70 text-xs">- ${ticket.ouvrage}</span>` : ''}
+                        <span class="text-base-content/50 text-xs">- ${parseFloat(ticket.montant).toLocaleString('fr-FR')} Ar</span>
+                        ${statutBadge}
+                    </div>
+                `;
+            });
+
+            if (groupe.lignes.length > maxTickets) {
+                html += `<div class="pl-4 text-xs text-base-content/50">... et ${groupe.lignes.length - maxTickets} autre(s)</div>`;
+            }
+
+            html += `
+                                </div>
+                            </div>
+                            <div class="text-right">
+            `;
+
+            if (groupe.peut_annuler) {
+                html += `
+                                <button class="btn btn-error btn-xs" onclick="annulerTicketsDate('${groupe.date_traitement}', ${groupe.nb_lignes})">
+                                    <i class="fas fa-times-circle mr-1"></i>Annuler
+                                </button>
+                `;
+            } else {
+                html += `
+                                <div class="tooltip" data-tip="Impossible d'annuler : contient des tickets exportés">
+                                    <button class="btn btn-error btn-xs btn-disabled">
+                                        <i class="fas fa-lock mr-1"></i>Protégé
+                                    </button>
+                                </div>
+                `;
+            }
+
+            html += `
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+
+        html += '</div>';
+        container.innerHTML = html;
+
+    } catch (error) {
+        console.error('Erreur chargement derniers tickets:', error);
+        container.innerHTML = `<div class="alert alert-error"><i class="fas fa-exclamation-circle mr-2"></i>Erreur réseau: ${error.message}</div>`;
+    }
+}
+
+async function annulerTicketsDate(dateTraitement, nbTickets) {
+    if (!confirm(`⚠️ ATTENTION !\n\nVoulez-vous vraiment annuler tous les tickets traités à cette date ?\n\n📅 Date: ${dateTraitement}\n📄 ${nbTickets} ticket(s) concerné(s)\n\nCette action va :\n- Supprimer les lignes DiameX temporaires\n- Réinitialiser les tickets (ils réapparaîtront dans le tableau)\n\n⚠️ Les tickets exportés ne peuvent pas être annulés.\n\nContinuer ?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('{% url "billing:api_annuler_tickets_date" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                date_traitement: dateTraitement
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(`✓ ${data.message}`);
+
+            // Recharger les deux sections
+            chargerDerniersTickets();
+            chargerDetailsEnAttente();
+        } else {
+            alert(`❌ Erreur: ${data.error}`);
+        }
+
+    } catch (error) {
+        console.error('Erreur annulation tickets:', error);
+        alert(`❌ Erreur réseau: ${error.message}`);
+    }
+}
+</script>
+{% endblock %}

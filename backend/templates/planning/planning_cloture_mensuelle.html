@@ -1,0 +1,259 @@
+{% extends planning_shell_base_template %}
+{% load employee_grouping %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6 space-y-6">
+    <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+            <h1 class="text-3xl font-bold">Cloture mensuelle</h1>
+            <p class="text-sm text-base-content/70 mt-2">
+                Choisir pour chaque activite si elle est terminee, annulee ou reportee afin que le planning du mois corresponde au reel.
+            </p>
+        </div>
+        <a href="{% if next_url %}{{ next_url }}{% else %}{% url 'planning:dashboard' %}{% endif %}" class="btn btn-ghost">
+            <i class="fas fa-arrow-left mr-2"></i>Retour
+        </a>
+    </div>
+
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <h2 class="card-title">Choisir l'employe et le mois</h2>
+            <form method="get" class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                {% if next_url %}
+                <input type="hidden" name="next" value="{{ next_url }}">
+                {% endif %}
+                <div class="form-control md:col-span-2">
+                    <label class="label"><span class="label-text">Employe</span></label>
+                    <select name="employe" class="select select-bordered" required>
+                        {% grouped_employee_options employes selected_employe_id "Selectionner..." %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mois</span></label>
+                    <input type="month" name="mois" value="{{ mois_value }}" class="input input-bordered" required>
+                </div>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-search mr-2"></i>Afficher
+                </button>
+            </form>
+        </div>
+    </div>
+
+    {% if selected_employe %}
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+        <div class="stat bg-base-100 shadow rounded-lg">
+            <div class="stat-title">Employe</div>
+            <div class="stat-value text-lg">{{ selected_employe.nom_affichage }}</div>
+            <div class="stat-desc">{{ mois_value }}</div>
+        </div>
+        <div class="stat bg-base-100 shadow rounded-lg">
+            <div class="stat-title">Lignes du mois</div>
+            <div class="stat-value text-primary text-2xl">{{ month_summary.total }}</div>
+            <div class="stat-desc">Plannings a controler</div>
+        </div>
+        <div class="stat bg-base-100 shadow rounded-lg">
+            <div class="stat-title">Terminees</div>
+            <div class="stat-value text-success text-2xl">{{ month_summary.termine }}</div>
+            <div class="stat-desc">Reportees {{ month_summary.reporte }} | Annulees {{ month_summary.annule }}</div>
+        </div>
+        <div class="stat bg-base-100 shadow rounded-lg">
+            <div class="stat-title">En cours</div>
+            <div class="stat-value text-info text-2xl">{{ month_summary.en_cours }}</div>
+            <div class="stat-desc">Lignes encore a rapprocher</div>
+        </div>
+        <div class="stat bg-base-100 shadow rounded-lg">
+            <div class="stat-title">Bloquees</div>
+            <div class="stat-value text-warning text-2xl">{{ month_summary.bloquees }}</div>
+            <div class="stat-desc">Gerees ailleurs</div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+                <div>
+                    <h2 class="card-title">Mise a jour groupable</h2>
+                    <p class="text-sm text-base-content/70">
+                        Appliquer rapidement une meme decision sur plusieurs lignes, puis saisir une nouvelle date seulement pour les activites reportees.
+                    </p>
+                </div>
+                <div class="flex flex-wrap gap-3">
+                    <div class="form-control">
+                        <label class="label py-1"><span class="label-text text-xs">Decision a appliquer</span></label>
+                        <div class="join">
+                            <select id="bulk-status" class="select select-bordered join-item select-sm">
+                                <option value="">Choisir...</option>
+                                {% for value, label in closure_status_choices %}
+                                <option value="{{ value }}">{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                            <button type="button" class="btn btn-outline btn-sm join-item" onclick="applyBulkValue('statut')">Appliquer</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <form method="post" class="space-y-4 mt-4">
+                {% csrf_token %}
+                <input type="hidden" name="employe" value="{{ selected_employe_id }}">
+                <input type="hidden" name="mois" value="{{ mois_value }}">
+                {% if next_url %}
+                <input type="hidden" name="next" value="{{ next_url }}">
+                {% endif %}
+
+                <div class="flex flex-wrap gap-2 justify-end">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save mr-2"></i>Enregistrer la cloture mensuelle
+                    </button>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="table table-zebra">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Activite</th>
+                                <th>Ouvrage</th>
+                                <th>Etat actuel</th>
+                                <th>Decision</th>
+                                <th>Nouvelle date si report</th>
+                                <th>Validation</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for planning in monthly_plannings %}
+                            <tr {% if planning.is_blocked_activity %}class="bg-base-200/70"{% endif %}>
+                                <td>{{ planning.date|date:"d/m/Y" }}</td>
+                                <td>
+                                    <div class="font-medium">{{ planning.activity_label|default:planning.activite_display }}</div>
+                                    {% if planning.remarque %}
+                                    <div class="text-xs text-base-content/60">{{ planning.remarque|truncatechars:70 }}</div>
+                                    {% endif %}
+                                    {% if planning.is_blocked_activity %}
+                                    <div class="mt-1">
+                                        <span class="badge badge-warning badge-sm">Gere via autre module</span>
+                                    </div>
+                                    {% endif %}
+                                </td>
+                                <td>{{ planning.ouvrage.nom_ouvrage|default:"-" }}</td>
+                                <td>
+                                    <div class="flex flex-col gap-1">
+                                        <span class="badge {{ planning.status_badge_class }}">{{ planning.statut_display }}</span>
+                                        {% if planning.estvalide %}
+                                        <span class="badge badge-success">Valide</span>
+                                        {% else %}
+                                        <span class="badge badge-warning">En attente</span>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                                <td>
+                                    <select
+                                        name="statut_{{ planning.id }}"
+                                        class="select select-bordered select-sm min-w-[9rem]"
+                                        data-bulk-target="statut"
+                                        data-report-toggle="{{ planning.id }}"
+                                        {% if planning.is_blocked_activity %}disabled{% endif %}>
+                                        {% for value, label in closure_status_choices %}
+                                        <option value="{{ value }}" {% if planning.monthly_cloture_selected_status == value %}selected{% endif %}>{{ label }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </td>
+                                <td>
+                                    <input
+                                        type="date"
+                                        name="report_date_{{ planning.id }}"
+                                        value="{{ planning.report_date_input_value|default:'' }}"
+                                        class="input input-bordered input-sm min-w-[11rem]"
+                                        data-report-input="{{ planning.id }}"
+                                        placeholder="Obligatoire si reporte"
+                                        {% if planning.is_blocked_activity or planning.monthly_cloture_selected_status != 'reporte' %}disabled{% endif %}>
+                                </td>
+                                <td>
+                                    <span class="badge {% if planning.estvalide %}badge-success{% else %}badge-warning{% endif %}">
+                                        {% if planning.estvalide %}Valide{% else %}En attente{% endif %}
+                                    </span>
+                                </td>
+                                <td>
+                                    <a href="{% url 'planning:cloture_page' planning.id %}?next={{ request.get_full_path|urlencode }}" class="btn btn-ghost btn-xs text-info">
+                                        <i class="fas fa-arrow-up-right-from-square mr-1"></i>Detail
+                                    </a>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="8" class="text-center py-8 text-base-content/70">Aucun planning trouve pour cet employe sur ce mois.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                {% if monthly_plannings %}
+                <div class="flex flex-wrap gap-2 justify-end">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save mr-2"></i>Enregistrer la cloture mensuelle
+                    </button>
+                </div>
+                {% endif %}
+            </form>
+        </div>
+    </div>
+    {% else %}
+    <div class="alert alert-info">
+        <i class="fas fa-info-circle"></i>
+        <span>Selectionner un employe et un mois pour afficher la synthese mensuelle.</span>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function refreshReportDateState(statusSelect) {
+    if (!statusSelect) {
+        return;
+    }
+
+    const planningId = statusSelect.dataset.reportToggle;
+    const reportInput = document.querySelector(`[data-report-input="${planningId}"]`);
+    if (!reportInput) {
+        return;
+    }
+
+    const shouldEnable = !statusSelect.disabled && statusSelect.value === 'reporte';
+    reportInput.disabled = !shouldEnable;
+    reportInput.required = shouldEnable;
+
+    if (!shouldEnable) {
+        reportInput.value = '';
+    }
+}
+
+function applyBulkValue(target) {
+    const sourceId = 'bulk-status';
+    const source = document.getElementById(sourceId);
+    if (!source || !source.value) {
+        return;
+    }
+
+    document.querySelectorAll(`[data-bulk-target="${target}"]`).forEach((element) => {
+        if (!element.disabled) {
+            element.value = source.value;
+            if (target === 'statut') {
+                refreshReportDateState(element);
+            }
+        }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('[data-report-toggle]').forEach((selectElement) => {
+        refreshReportDateState(selectElement);
+        selectElement.addEventListener('change', () => refreshReportDateState(selectElement));
+    });
+});
+</script>
+{% endblock %}

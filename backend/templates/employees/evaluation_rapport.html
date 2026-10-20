@@ -1,0 +1,326 @@
+{% extends "base.html" %}
+{% load static humanize %}
+
+{% block title %}Rapport evaluation{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <style>
+        @media print {
+            body * {
+                visibility: hidden;
+            }
+            #reportContainer,
+            #reportContainer * {
+                visibility: visible;
+            }
+            #reportContainer {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+            }
+            .print-hidden {
+                display: none !important;
+            }
+        }
+    </style>
+    <div class="flex flex-wrap items-center justify-between gap-4 mb-6 print-hidden">
+        <div>
+            <h1 class="text-3xl font-bold">Rapport evaluation</h1>
+            <p class="text-base-content/70">
+                Selectionner un employe et les evaluations a imprimer
+            </p>
+        </div>
+        <button id="printBtn" class="btn btn-outline btn-primary print:hidden" disabled>
+            <i class="fas fa-print mr-2"></i>Imprimer
+        </button>
+    </div>
+
+    <div class="card bg-base-100 shadow mb-6 print:hidden print-hidden">
+        <div class="card-body">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Employe</span>
+                    </label>
+                    <select id="employeSelect" class="select select-bordered">
+                        <option value="">Selectionner...</option>
+                        {% for emp in employes %}
+                            <option value="{{ emp.id }}">{{ emp.surnom|default:emp.nom_complet }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control md:col-span-3">
+                    <label class="label">
+                        <span class="label-text">Evaluations disponibles</span>
+                    </label>
+                    <div id="evaluationsList" class="border border-base-300 rounded-lg p-3 space-y-2 max-h-64 overflow-y-auto">
+                        <div class="text-sm text-base-content/60">Selectionner un employe pour voir les evaluations.</div>
+                    </div>
+                </div>
+            </div>
+            <div class="flex flex-wrap items-center justify-between gap-4 mt-4">
+                <label class="cursor-pointer flex items-center gap-2">
+                    <input id="selectAllEvaluations" type="checkbox" class="checkbox checkbox-sm">
+                    <span class="text-sm">Tout selectionner</span>
+                </label>
+                <button id="loadBtn" class="btn btn-primary">Charger</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="reportContainer" class="space-y-6">
+        <div class="alert alert-info">
+            Selectionner un employe pour afficher le rapport.
+        </div>
+    </div>
+</div>
+
+<script>
+const loadBtn = document.getElementById('loadBtn');
+const printBtn = document.getElementById('printBtn');
+const employeSelect = document.getElementById('employeSelect');
+const evaluationsList = document.getElementById('evaluationsList');
+const selectAllEvaluations = document.getElementById('selectAllEvaluations');
+
+loadBtn.addEventListener('click', () => {
+    loadReport();
+});
+
+printBtn.addEventListener('click', () => {
+    window.print();
+});
+
+employeSelect.addEventListener('change', () => {
+    loadEvaluationsForEmploye();
+});
+
+selectAllEvaluations.addEventListener('change', (event) => {
+    const checked = event.target.checked;
+    document.querySelectorAll('input[name="evaluation_ids[]"]').forEach(input => {
+        input.checked = checked;
+    });
+});
+
+async function loadEvaluationsForEmploye() {
+    const employeId = employeSelect.value;
+    evaluationsList.innerHTML = '<div class="text-sm text-base-content/60">Chargement...</div>';
+    selectAllEvaluations.checked = false;
+
+    if (!employeId) {
+        evaluationsList.innerHTML = '<div class="text-sm text-base-content/60">Selectionner un employe pour voir les evaluations.</div>';
+        return;
+    }
+
+    try {
+        const response = await fetch(`/employes/api/evaluations/${employeId}/historique/`);
+        const data = await response.json();
+
+        if (!data.success) {
+            evaluationsList.innerHTML = '<div class="text-sm text-error">Erreur lors du chargement.</div>';
+            return;
+        }
+
+        if (!data.evaluations || data.evaluations.length === 0) {
+            evaluationsList.innerHTML = '<div class="text-sm text-base-content/60">Aucune evaluation disponible.</div>';
+            return;
+        }
+
+        evaluationsList.innerHTML = data.evaluations.map(ev => `
+            <label class="flex items-start gap-3 p-2 rounded-lg hover:bg-base-200 cursor-pointer">
+                <input type="checkbox" name="evaluation_ids[]" value="${ev.id}" class="checkbox checkbox-sm mt-1">
+                <div class="flex-1 text-sm">
+                    <div class="font-semibold">${formatDate(ev.date_evaluation)} - ${ev.evaluateur_nom || '-'}</div>
+                    <div class="text-base-content/70">Periode: ${formatDate(ev.periode_debut)} → ${formatDate(ev.periode_fin)}</div>
+                    <div class="text-base-content/70">Note: ${ev.note_totale}/${ev.note_maximale} (${ev.pourcentage}%)</div>
+                </div>
+            </label>
+        `).join('');
+    } catch (error) {
+        console.error('Erreur:', error);
+        evaluationsList.innerHTML = '<div class="text-sm text-error">Erreur lors du chargement.</div>';
+    }
+}
+
+async function loadReport() {
+    const employeId = employeSelect.value;
+    const selectedEvaluations = Array.from(
+        document.querySelectorAll('input[name="evaluation_ids[]"]:checked')
+    ).map(input => input.value);
+
+    if (!employeId) {
+        showReportMessage('Veuillez selectionner un employe.', 'alert-warning');
+        printBtn.disabled = true;
+        return;
+    }
+
+    if (selectedEvaluations.length === 0) {
+        showReportMessage('Veuillez selectionner au moins une evaluation.', 'alert-warning');
+        printBtn.disabled = true;
+        return;
+    }
+
+    const params = new URLSearchParams({
+        employe_id: employeId,
+        evaluation_ids: selectedEvaluations.join(',')
+    });
+
+    try {
+        showReportMessage('Chargement...', 'alert-info');
+        const response = await fetch(`/employes/api/evaluations/rapport/?${params}`);
+        const data = await response.json();
+
+        if (!data.success) {
+            showReportMessage(data.error || 'Erreur lors du chargement', 'alert-error');
+            printBtn.disabled = true;
+            return;
+        }
+
+        renderReport(data);
+    } catch (error) {
+        console.error('Erreur:', error);
+        showReportMessage('Erreur lors du chargement', 'alert-error');
+        printBtn.disabled = true;
+    }
+}
+
+function renderReport(data) {
+    const container = document.getElementById('reportContainer');
+    const ficheCount = data.fiches_poste ? data.fiches_poste.length : 0;
+
+    if (!data.fiches_poste || data.fiches_poste.length === 0) {
+        showReportMessage('Aucune evaluation trouvee pour la selection.', 'alert-warning');
+        printBtn.disabled = true;
+        return;
+    }
+
+    const header = `
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <div class="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                        <h2 class="text-2xl font-semibold">${data.employe.nom}</h2>
+                        <p class="text-base-content/70">Poste: ${data.employe.poste}</p>
+                        <p class="text-base-content/70">Evaluations: ${data.nb_evaluations}</p>
+                    </div>
+                    <div class="text-sm">
+                        <span class="badge badge-outline">Fiches: ${ficheCount}</span>
+                    </div>
+                </div>
+                <div class="mt-3 text-sm text-base-content/70">
+                    Notes: 0 = Non acquis, 1 = En cours, 2 = Maitrise
+                </div>
+            </div>
+        </div>
+    `;
+
+    const totalsTable = `
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h3 class="text-lg font-semibold">Notes totales par evaluateur</h3>
+                <div class="overflow-x-auto mt-3">
+                    <table class="table table-zebra w-full">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Evaluateur</th>
+                                <th>Note totale</th>
+                                <th>Pourcentage</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.evaluations.map(ev => `
+                                <tr>
+                                    <td class="whitespace-nowrap">${ev.date_evaluation}</td>
+                                    <td>${ev.evaluateur}${ev.est_auto_evaluation ? ' <span class="badge badge-ghost badge-sm ml-2">Auto</span>' : ''}</td>
+                                    <td>${ev.note_totale}/${ev.note_maximale}</td>
+                                    <td>${ev.pourcentage}%</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    `;
+
+    const developmentRows = data.evaluations
+        .filter(ev => ev.besoins_formation || ev.perspectives_evolution || ev.commentaire_general)
+        .map(ev => `
+            <div class="card bg-base-100 shadow">
+                <div class="card-body">
+                    <h3 class="text-lg font-semibold">Formation et progression - ${ev.date_evaluation}</h3>
+                    <p class="text-sm text-base-content/70">Evaluateur: ${ev.evaluateur}${ev.est_auto_evaluation ? ' (Auto)' : ''}</p>
+                    ${ev.commentaire_general ? `<div class="mt-3"><div class="font-semibold">Commentaire general</div><p class="whitespace-pre-line text-sm">${ev.commentaire_general}</p></div>` : ''}
+                    ${ev.besoins_formation ? `<div class="mt-3"><div class="font-semibold">Besoins en formation identifies</div><p class="whitespace-pre-line text-sm">${ev.besoins_formation}</p></div>` : ''}
+                    ${ev.perspectives_evolution ? `<div class="mt-3"><div class="font-semibold">Perspectives d'evolution et axes de progression</div><p class="whitespace-pre-line text-sm">${ev.perspectives_evolution}</p></div>` : ''}
+                </div>
+            </div>
+        `).join('');
+
+    const developmentSection = developmentRows ? `
+        <div class="space-y-4">
+            <h3 class="text-xl font-semibold">Synthese formation et progression</h3>
+            ${developmentRows}
+        </div>
+    ` : '';
+
+    const ficheBlocks = data.fiches_poste.map(fiche => {
+        const rows = fiche.evaluations.map(ev => {
+            const badgeClass = ev.note === 2 ? 'badge-success' : ev.note === 1 ? 'badge-warning' : 'badge-error';
+            const autoBadge = ev.est_auto_evaluation ? '<span class="badge badge-ghost badge-sm ml-2">Auto</span>' : '';
+            return `
+                <tr>
+                    <td class="whitespace-nowrap">${ev.date_evaluation}</td>
+                    <td>${ev.evaluateur}${autoBadge}</td>
+                    <td><span class="badge ${badgeClass}">${ev.note_label}</span></td>
+                    <td class="whitespace-pre-line">${ev.remarques || '-'}</td>
+                </tr>
+            `;
+        }).join('');
+
+        return `
+            <div class="card bg-base-100 shadow">
+                <div class="card-body">
+                    <h3 class="text-lg font-semibold">${fiche.tache}</h3>
+                    ${fiche.description ? `<p class="text-sm text-base-content/70">${fiche.description}</p>` : ''}
+                    ${fiche.outils ? `<p class="text-sm text-base-content/70">Outils: ${fiche.outils}</p>` : ''}
+                    <div class="overflow-x-auto mt-4">
+                        <table class="table table-zebra w-full">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Evaluateur</th>
+                                    <th>Note</th>
+                                    <th>Remarques</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${rows || '<tr><td colspan="4">Aucune evaluation pour cette fiche.</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    container.innerHTML = header + totalsTable + developmentSection + ficheBlocks;
+    printBtn.disabled = false;
+}
+
+function showReportMessage(message, alertClass) {
+    const container = document.getElementById('reportContainer');
+    container.innerHTML = `<div class="alert ${alertClass}">${message}</div>`;
+}
+
+function formatDate(dateStr) {
+    if (!dateStr) {
+        return '-';
+    }
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('fr-FR');
+}
+</script>
+{% endblock %}

@@ -1,0 +1,106 @@
+{% comment %}
+Modale de détail des tuiles « Encaissé (caissière) » et « Écart encaissé / pointé ».
+   Attend stats_global.encaisse_details : liste de lignes {periode, ouvrage, point_eau, idxls, reference,
+   montant, date_encaissement, pointe, numero}. Ouverture : ouvrirDetailsEncaisse('passes'|'en_cours', 'encaisse'|'ecart').
+{% endcomment %}
+{{ stats_global.encaisse_details|json_script:"encaisse-details-data" }}
+
+<dialog id="modal-encaisse-details" class="modal">
+    <div class="modal-box w-11/12 max-w-6xl">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" aria-label="Fermer">✕</button>
+        </form>
+        <h3 class="font-bold text-lg" id="enc-modal-titre"></h3>
+        <p class="text-sm text-base-content/70 mb-3" id="enc-modal-sous-titre"></p>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3" id="enc-modal-resume"></div>
+
+        <input type="search" id="enc-modal-recherche" class="input input-bordered input-sm w-full mb-3"
+               placeholder="Filtrer : ouvrage, point d'eau, IDXLS, n° DiameX...">
+
+        <div class="overflow-x-auto max-h-[55vh]">
+            <table class="table table-sm table-pin-rows">
+                <thead>
+                    <tr>
+                        <th>Point d'eau</th><th>IDXLS</th><th>Facture</th>
+                        <th class="text-right">Montant (Ar)</th><th>Encaissé le</th><th>Pointage</th>
+                    </tr>
+                </thead>
+                <tbody id="enc-modal-corps"></tbody>
+            </table>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>fermer</button></form>
+</dialog>
+
+<script>
+(function () {
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+    const fmt = n => Math.round(Number(n || 0)).toLocaleString('fr-FR');
+    let lignes = [];
+    try { lignes = JSON.parse(document.getElementById('encaisse-details-data').textContent) || []; } catch (e) { lignes = []; }
+    let contexte = {periode: 'passes', mode: 'encaisse'};
+
+    function selection() {
+        const q = (document.getElementById('enc-modal-recherche').value || '').trim().toLowerCase();
+        return lignes.filter(l => l.periode === contexte.periode)
+            .filter(l => contexte.mode === 'encaisse' || !l.pointe)
+            .filter(l => !q || [l.ouvrage, l.point_eau, l.idxls, l.numero, l.reference].join(' ').toLowerCase().includes(q));
+    }
+
+    function carte(titre, valeur, classe) {
+        return `<div class="rounded-lg border border-base-300 p-2"><div class="text-xs opacity-70">${titre}</div><div class="font-bold ${classe || ''}">${valeur}</div></div>`;
+    }
+
+    function rendre() {
+        const periodeLabel = contexte.periode === 'passes' ? 'Mois passés' : 'Mois en cours';
+        document.getElementById('enc-modal-titre').textContent = contexte.mode === 'encaisse'
+            ? `Encaissé par la caissière · ${periodeLabel}`
+            : `Écart encaissé / pointé · ${periodeLabel}`;
+        document.getElementById('enc-modal-sous-titre').textContent = contexte.mode === 'encaisse'
+            ? 'Toutes les factures de la période encaissées par la caissière, pointées ou non.'
+            : 'Factures encaissées par la caissière et pas encore pointées par la compta.';
+
+        const toutes = lignes.filter(l => l.periode === contexte.periode);
+        const totalEnc = toutes.reduce((s, l) => s + l.montant, 0);
+        const totalPointe = toutes.filter(l => l.pointe).reduce((s, l) => s + l.montant, 0);
+        document.getElementById('enc-modal-resume').innerHTML =
+            carte('Encaissé', fmt(totalEnc) + ' Ar', 'text-info') +
+            carte('Pointé', fmt(totalPointe) + ' Ar', 'text-success') +
+            carte('Écart (à pointer)', fmt(totalEnc - totalPointe) + ' Ar', (totalEnc - totalPointe) > 0 ? 'text-warning' : 'text-success') +
+            carte('Factures', `${toutes.length} (dont ${toutes.filter(l => !l.pointe).length} à pointer)`);
+
+        const vues = selection();
+        const parOuvrage = new Map();
+        vues.forEach(l => { if (!parOuvrage.has(l.ouvrage)) parOuvrage.set(l.ouvrage, []); parOuvrage.get(l.ouvrage).push(l); });
+        const corps = document.getElementById('enc-modal-corps');
+        if (!vues.length) {
+            corps.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/50 py-6">Aucune facture pour cette sélection</td></tr>';
+            return;
+        }
+        corps.innerHTML = [...parOuvrage.entries()].sort((a, b) => a[0].localeCompare(b[0], 'fr')).map(([ouvrage, items]) => {
+            const sous = items.reduce((s, l) => s + l.montant, 0);
+            const entete = `<tr class="bg-base-200 font-semibold"><td colspan="3">${esc(ouvrage)} <span class="badge badge-ghost badge-sm ml-2">${items.length}</span></td><td class="text-right font-mono">${fmt(sous)}</td><td colspan="2"></td></tr>`;
+            const lignesHtml = items.sort((a, b) => a.point_eau.localeCompare(b.point_eau, 'fr', {numeric: true})).map(l => `<tr>
+                <td class="pl-6">${esc(l.point_eau)}</td>
+                <td>${esc(l.idxls)}</td>
+                <td>${esc(l.reference)}</td>
+                <td class="text-right font-mono">${fmt(l.montant)}</td>
+                <td>${l.date_encaissement ? esc(l.date_encaissement) : '<span class="opacity-40">-</span>'}</td>
+                <td>${l.pointe
+                    ? `<span class="badge badge-success badge-sm" title="N° DiameX ${esc(l.numero)}">Pointé${l.numero ? ' · ' + esc(l.numero) : ''}</span>`
+                    : '<span class="badge badge-warning badge-sm">À pointer</span>'}</td>
+            </tr>`).join('');
+            return entete + lignesHtml;
+        }).join('');
+    }
+
+    document.getElementById('enc-modal-recherche').addEventListener('input', rendre);
+    window.ouvrirDetailsEncaisse = function (periode, mode) {
+        contexte = {periode: periode, mode: mode};
+        document.getElementById('enc-modal-recherche').value = '';
+        rendre();
+        document.getElementById('modal-encaisse-details').showModal();
+    };
+})();
+</script>

@@ -1,0 +1,638 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Notes Hydria{% endblock %}
+
+{% block content %}
+<div class="px-4 py-6 space-y-4">
+    <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+            <h1 class="text-3xl font-bold">Notes Hydria</h1>
+            <p class="text-base-content/70">Pages, sous-pages, sujets métier et liens vers les données Hydria.</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <a href="{% url 'notes:workspace' %}" class="btn btn-ghost btn-sm">Réinitialiser</a>
+            <a href="{% url 'notes:workspace' %}?favorites=1" class="btn btn-outline btn-sm">Mes favoris</a>
+            <a href="{% url 'notes:workspace' %}?archive=1" class="btn btn-outline btn-sm">Archives</a>
+        </div>
+    </div>
+
+    <form method="get" class="card bg-base-100 shadow">
+        <div class="card-body p-4 grid grid-cols-1 md:grid-cols-6 gap-3">
+            <input type="search" name="q" value="{{ filters.q }}" class="input input-bordered" placeholder="Titre, contenu, tag, entité...">
+            <select name="tag" class="select select-bordered">
+                <option value="">Tous les sujets</option>
+                {% for tag in all_tags %}
+                <option value="{{ tag.slug }}" {% if filters.tag == tag.slug %}selected{% endif %}>{{ tag.name }}</option>
+                {% endfor %}
+            </select>
+            <select name="note_type" class="select select-bordered">
+                <option value="">Tous les types</option>
+                {% for value, label in note_type_choices %}
+                <option value="{{ value }}" {% if filters.note_type == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <select name="entity_type" class="select select-bordered">
+                <option value="">Toutes les entités</option>
+                {% for entity_type in entity_type_choices %}
+                <option value="{{ entity_type }}" {% if filters.entity_type == entity_type %}selected{% endif %}>{{ entity_type }}</option>
+                {% endfor %}
+            </select>
+            <select name="creator" class="select select-bordered">
+                <option value="">Tous les créateurs</option>
+                {% for creator in creators %}
+                <option value="{{ creator.created_by_id }}" {% if filters.creator == creator.created_by_id|stringformat:'s' %}selected{% endif %}>{{ creator.created_by__username }}</option>
+                {% endfor %}
+            </select>
+            <div class="flex gap-2">
+                <button type="submit" class="btn btn-primary flex-1">Filtrer</button>
+                <label class="label cursor-pointer gap-2 px-2">
+                    <input type="checkbox" name="favorites" value="1" class="checkbox checkbox-sm" {% if filters.favorites %}checked{% endif %}>
+                    <span class="label-text">Favoris</span>
+                </label>
+                <label class="label cursor-pointer gap-2 px-2">
+                    <input type="checkbox" name="open_actions" value="1" class="checkbox checkbox-sm" {% if filters.open_actions %}checked{% endif %}>
+                    <span class="label-text">Actions ouvertes</span>
+                </label>
+            </div>
+        </div>
+    </form>
+
+    <div class="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)_320px] gap-4 items-start">
+        <aside class="card bg-base-100 shadow sticky top-4">
+            <div class="card-body p-4 space-y-4">
+                <div>
+                    <div class="flex items-center justify-between mb-2">
+                        <h2 class="font-semibold">Arborescence</h2>
+                        <a href="#note-editor" class="btn btn-primary btn-xs">Nouvelle note</a>
+                    </div>
+                    <div class="space-y-1 max-h-[28rem] overflow-auto">
+                        {% for note, depth in notes_tree %}
+                        <a href="{% url 'notes:workspace' %}?note_id={{ note.id }}" class="block rounded-lg px-3 py-2 text-sm {% if selected_note_payload and selected_note_payload.note.id == note.id %}bg-primary text-primary-content{% else %}hover:bg-base-200{% endif %}" style="margin-left: {{ depth|add:0 }}rem; padding-left: calc(0.75rem + {{ depth }} * 0.75rem);">
+                            <div class="font-medium truncate">{{ note.title }}</div>
+                            <div class="text-xs opacity-70">{{ note.get_note_type_display }} • {{ note.updated_at|date:"d/m/Y" }}</div>
+                        </a>
+                        {% empty %}
+                        <div class="text-sm text-base-content/60">Aucune note accessible.</div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="font-semibold mb-2">Récentes</h3>
+                    <div class="space-y-2">
+                        {% for note in recent_notes %}
+                        <a href="{% url 'notes:workspace' %}?note_id={{ note.id }}" class="block text-sm hover:text-primary">{{ note.title }}</a>
+                        {% empty %}
+                        <div class="text-sm text-base-content/60">Aucune note récente.</div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="font-semibold mb-2">Favoris</h3>
+                    <div class="space-y-2">
+                        {% for note in favorite_notes %}
+                        <a href="{% url 'notes:workspace' %}?note_id={{ note.id }}" class="block text-sm hover:text-primary">{{ note.title }}</a>
+                        {% empty %}
+                        <div class="text-sm text-base-content/60">Aucun favori.</div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="font-semibold mb-2">Sujets</h3>
+                    <div class="flex flex-wrap gap-2">
+                        {% for tag in all_tags %}
+                        <a href="{% url 'notes:workspace' %}?tag={{ tag.slug }}" class="badge badge-outline" style="border-color: {{ tag.color }}; color: {{ tag.color }};">{{ tag.name }}</a>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div>
+                    <h3 class="font-semibold mb-2">Modèles</h3>
+                    <div class="space-y-2">
+                        {% for note in template_notes %}
+                        <form method="post" action="{% url 'notes:create_from_template' note.id %}">
+                            {% csrf_token %}
+                            <button type="submit" class="text-left w-full rounded-lg border border-base-300 px-3 py-2 text-sm hover:bg-base-200">
+                                <div class="font-medium">{{ note.title }}</div>
+                                <div class="text-xs text-base-content/60">{{ note.get_note_type_display }}</div>
+                            </button>
+                        </form>
+                        {% empty %}
+                        <div class="text-sm text-base-content/60">Aucun modèle.</div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <section class="card bg-base-100 shadow" id="note-editor">
+            <div class="card-body p-4">
+                <div class="flex items-start justify-between gap-3 mb-4">
+                    <div>
+                        <h2 class="text-xl font-semibold">
+                            {% if selected_note_payload %}Modifier la note{% else %}Créer une note{% endif %}
+                        </h2>
+                        <p class="text-sm text-base-content/70">Version 1: pages, blocs, sujets, liens Hydria et recherche simple.</p>
+                    </div>
+                    {% if selected_note_payload %}
+                    <div class="flex gap-2">
+                        <form method="post" action="{% url 'notes:toggle_favorite' selected_note_payload.note.id %}">
+                            {% csrf_token %}
+                            <button class="btn btn-outline btn-sm" type="submit">Favori</button>
+                        </form>
+                        <form method="post" action="{% url 'notes:archive_note' selected_note_payload.note.id %}">
+                            {% csrf_token %}
+                            <button class="btn btn-outline btn-sm" type="submit">Archiver</button>
+                        </form>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <form method="post" action="{% if selected_note_payload %}{% url 'notes:update_note' selected_note_payload.note.id %}{% else %}{% url 'notes:create_note' %}{% endif %}" class="space-y-4" id="noteForm" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    <input type="hidden" id="content_json" name="content_json">
+                    <input type="hidden" id="linked_entities_json" name="linked_entities_json">
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div class="form-control md:col-span-2">
+                            <label class="label"><span class="label-text">Titre</span></label>
+                            <input type="text" name="title" class="input input-bordered" value="{% if selected_note_payload %}{{ selected_note_payload.note.title }}{% endif %}" required>
+                        </div>
+                        <div class="form-control">
+                            <label class="label"><span class="label-text">Parent</span></label>
+                            <select name="parent_id" class="select select-bordered">
+                                <option value="">Racine</option>
+                                {% for note, depth in notes_tree %}
+                                <option value="{{ note.id }}" {% if selected_note_payload and selected_note_payload.note.parent_id == note.id %}selected{% endif %}>
+                                    {% if depth > 0 %}{{ depth }}. {% endif %}{{ note.title }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="form-control">
+                            <label class="label"><span class="label-text">Type</span></label>
+                            <select name="note_type" class="select select-bordered">
+                                {% for value, label in note_type_choices %}
+                                <option value="{{ value }}" {% if selected_note_payload and selected_note_payload.note.note_type == value %}selected{% elif not selected_note_payload and value == 'note' %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="form-control">
+                            <label class="label"><span class="label-text">Visibilité</span></label>
+                            <select name="visibility" class="select select-bordered">
+                                {% for value, label in visibility_choices %}
+                                <option value="{{ value }}" {% if selected_note_payload and selected_note_payload.note.visibility == value %}selected{% elif not selected_note_payload and value == 'private' %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="form-control">
+                            <label class="label"><span class="label-text">Statut</span></label>
+                            <select name="status" class="select select-bordered">
+                                {% for value, label in status_choices %}
+                                <option value="{{ value }}" {% if selected_note_payload and selected_note_payload.note.status == value %}selected{% elif not selected_note_payload and value == 'active' %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="form-control">
+                            <label class="label"><span class="label-text">Base visible</span></label>
+                            <select name="shared_with_base_id" class="select select-bordered">
+                                <option value="">Aucune</option>
+                                {% for base in bases %}
+                                <option value="{{ base.id }}" {% if selected_note_payload and selected_note_payload.note.shared_with_base_id == base.id %}selected{% endif %}>{{ base.nom_base }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="form-control">
+                            <label class="label"><span class="label-text">Rôle visible</span></label>
+                            <input type="text" name="visible_role_name" class="input input-bordered" value="{% if selected_note_payload %}{{ selected_note_payload.note.visible_role_name }}{% endif %}" placeholder="Ex: Agent de recouvrement">
+                        </div>
+                        <div class="form-control md:col-span-2">
+                            <label class="label"><span class="label-text">Sujets / tags</span></label>
+                            <input type="text" name="tags" class="input input-bordered" value="{% if selected_note_payload %}{{ selected_note_payload.tags_csv }}{% endif %}" placeholder="Recouvrement, Réparation, Urgence">
+                        </div>
+                        <div class="form-control md:col-span-2">
+                            <label class="label cursor-pointer justify-start gap-3">
+                                <input type="checkbox" name="is_template" class="checkbox checkbox-sm" {% if selected_note_payload and selected_note_payload.note.is_template %}checked{% endif %}>
+                                <span class="label-text">Utiliser cette note comme modèle réutilisable</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="rounded-xl border border-base-300 p-3 bg-base-200/50">
+                        <div class="flex flex-wrap gap-2 mb-3">
+                            <button type="button" class="btn btn-sm btn-outline" onclick="insertPresetBlock('heading_1', '/titre')">/titre</button>
+                            <button type="button" class="btn btn-sm btn-outline" onclick="insertPresetBlock('checklist', '/checklist')">/checklist</button>
+                            <button type="button" class="btn btn-sm btn-outline" onclick="insertPresetBlock('action', '/action')">/action</button>
+                            <button type="button" class="btn btn-sm btn-outline" onclick="insertPresetBlock('decision', '/decision')">/decision</button>
+                            <button type="button" class="btn btn-sm btn-outline" onclick="insertPresetBlock('table', '/tableau')">/tableau</button>
+                            <button type="button" class="btn btn-sm btn-outline" onclick="insertPresetBlock('image', '/image')">/image</button>
+                            <button type="button" class="btn btn-sm btn-outline" onclick="insertPresetBlock('file', '/fichier')">/fichier</button>
+                            <button type="button" class="btn btn-sm btn-outline" onclick="insertHydriaLinkBlock('ouvrage')">/lien-ouvrage</button>
+                            <button type="button" class="btn btn-sm btn-outline" onclick="insertHydriaLinkBlock('abonne')">/lien-abonne</button>
+                            <button type="button" class="btn btn-sm btn-outline" onclick="insertHydriaLinkBlock('reparation')">/lien-reparation</button>
+                            <button type="button" class="btn btn-sm btn-outline" onclick="insertHydriaLinkBlock('recouvrement')">/lien-recouvrement</button>
+                        </div>
+                        <div id="blocksEditor" class="space-y-3"></div>
+                        <button type="button" class="btn btn-ghost btn-sm mt-3" onclick="addBlock()">+ Ajouter un bloc</button>
+                    </div>
+
+                    <div class="rounded-xl border border-base-300 p-3">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="font-semibold">Liens Hydria</h3>
+                            <button type="button" class="btn btn-outline btn-xs" onclick="addLinkedEntityRow()">Ajouter un lien</button>
+                        </div>
+                        <div id="linkedEntitiesEditor" class="space-y-3"></div>
+                    </div>
+
+                    <div class="rounded-xl border border-base-300 p-3 space-y-3">
+                        <div>
+                            <h3 class="font-semibold">Pièces jointes</h3>
+                            <p class="text-sm text-base-content/60">Ajoutez des fichiers à conserver avec la note.</p>
+                        </div>
+                        <input type="file" name="attachments" class="file-input file-input-bordered w-full" multiple>
+                    </div>
+
+                    <div class="flex flex-wrap justify-end gap-2">
+                        {% if not selected_note_payload %}
+                        <label class="label cursor-pointer gap-2">
+                            <input type="checkbox" name="mark_favorite" class="checkbox checkbox-sm">
+                            <span class="label-text">Ajouter aux favoris</span>
+                        </label>
+                        {% endif %}
+                        <button type="submit" class="btn btn-primary">Enregistrer</button>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+        <aside class="card bg-base-100 shadow sticky top-4">
+            <div class="card-body p-4 space-y-4">
+                <div>
+                    <h2 class="font-semibold mb-2">Contexte Hydria</h2>
+                    {% if selected_note_payload %}
+                    <div class="space-y-2">
+                        {% for link in selected_note_payload.resolved_links %}
+                        <div class="rounded-lg border border-base-300 p-3">
+                            <div class="text-xs uppercase tracking-wide text-base-content/60">{{ link.entity_type }}</div>
+                            {% if link.url %}
+                            <a href="{{ link.url }}" class="link link-primary font-medium">{{ link.label }}</a>
+                            {% else %}
+                            <div class="font-medium">{{ link.label }}</div>
+                            {% endif %}
+                            <div class="text-xs text-base-content/60">{{ link.entity_id }}</div>
+                        </div>
+                        {% empty %}
+                        <div class="text-sm text-base-content/60">Aucune entité liée.</div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div class="text-sm text-base-content/60">Sélectionnez une note pour voir son contexte.</div>
+                    {% endif %}
+                </div>
+
+                <div>
+                    <h3 class="font-semibold mb-2">Métadonnées</h3>
+                    {% if selected_note_payload %}
+                    <div class="space-y-2 text-sm">
+                        <div><span class="text-base-content/60">Créée par:</span> {{ selected_note_payload.note.created_by|default:"-" }}</div>
+                        <div><span class="text-base-content/60">Mise à jour:</span> {{ selected_note_payload.note.updated_at|date:"d/m/Y H:i" }}</div>
+                        <div><span class="text-base-content/60">Visibilité:</span> {{ selected_note_payload.note.get_visibility_display }}</div>
+                        <div><span class="text-base-content/60">Version(s):</span> {{ selected_note_payload.versions|length }}</div>
+                    </div>
+                    {% else %}
+                    <div class="text-sm text-base-content/60">Aucune métadonnée à afficher.</div>
+                    {% endif %}
+                </div>
+
+                <div>
+                    <h3 class="font-semibold mb-2">Historique</h3>
+                    {% if selected_note_payload %}
+                    <div class="space-y-2 max-h-72 overflow-auto">
+                        {% for version in selected_note_payload.versions %}
+                        <div class="rounded-lg bg-base-200 p-3 text-sm">
+                            <div class="font-medium">{{ version.title }}</div>
+                            <div class="text-xs text-base-content/60">{{ version.created_at|date:"d/m/Y H:i" }}{% if version.saved_by %} • {{ version.saved_by }}{% endif %}</div>
+                            {% if version.content_text %}
+                            <div class="mt-2 text-xs text-base-content/80 whitespace-pre-line">{{ version.content_text|truncatechars:220 }}</div>
+                            {% endif %}
+                            <form method="post" action="{% url 'notes:restore_version' version.id %}" class="mt-2">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-ghost btn-xs">Restaurer cette version</button>
+                            </form>
+                        </div>
+                        {% empty %}
+                        <div class="text-sm text-base-content/60">Aucune version sauvegardée.</div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div class="text-sm text-base-content/60">Aucun historique.</div>
+                    {% endif %}
+                </div>
+
+                <div>
+                    <h3 class="font-semibold mb-2">Pièces jointes</h3>
+                    {% if selected_note_payload %}
+                    <div class="space-y-2">
+                        {% for attachment in selected_note_payload.attachments %}
+                        <div class="rounded-lg border border-base-300 p-3 text-sm">
+                            <div class="flex items-start justify-between gap-2">
+                                <a href="{{ attachment.file.url }}" target="_blank" rel="noopener" class="block min-w-0 hover:text-primary">
+                                    <div class="font-medium break-all">{{ attachment.label|default:"Fichier" }}</div>
+                                    <div class="text-xs text-base-content/60">
+                                        {% if attachment.uploaded_by %}{{ attachment.uploaded_by }} • {% endif %}{{ attachment.created_at|date:"d/m/Y H:i" }}
+                                    </div>
+                                </a>
+                                <form method="post" action="{% url 'notes:delete_attachment' attachment.id %}">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-ghost btn-xs text-error">Supprimer</button>
+                                </form>
+                            </div>
+                        </div>
+                        {% empty %}
+                        <div class="text-sm text-base-content/60">Aucune pièce jointe.</div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div class="text-sm text-base-content/60">Sélectionnez une note pour voir les fichiers.</div>
+                    {% endif %}
+                </div>
+
+                <div>
+                    <h3 class="font-semibold mb-2">Actions</h3>
+                    {% if selected_note_payload %}
+                    <div class="space-y-2 mb-3">
+                        {% for task in selected_note_payload.tasks %}
+                        <div class="rounded-lg border border-base-300 p-3 text-sm">
+                            <div class="flex items-start justify-between gap-2">
+                                <div>
+                                    <div class="font-medium">{{ task.title }}</div>
+                                    {% if task.description %}<div class="text-base-content/70">{{ task.description }}</div>{% endif %}
+                                    <div class="text-xs text-base-content/60 mt-1">
+                                        {{ task.get_status_display }}
+                                        {% if task.assignee %} • {{ task.assignee }}{% endif %}
+                                        {% if task.due_date %} • échéance {{ task.due_date|date:"d/m/Y" }}{% endif %}
+                                    </div>
+                                </div>
+                                <form method="post" action="{% url 'notes:update_task_status' task.id %}" class="flex gap-2 items-center">
+                                    {% csrf_token %}
+                                    <select name="status" class="select select-bordered select-xs">
+                                        {% for value, label in task.STATUS_CHOICES %}
+                                        <option value="{{ value }}" {% if task.status == value %}selected{% endif %}>{{ label }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <button type="submit" class="btn btn-ghost btn-xs">OK</button>
+                                </form>
+                            </div>
+                        </div>
+                        {% empty %}
+                        <div class="text-sm text-base-content/60">Aucune action.</div>
+                        {% endfor %}
+                    </div>
+                    <form method="post" action="{% url 'notes:create_task' selected_note_payload.note.id %}" class="space-y-2 rounded-lg bg-base-200 p-3">
+                        {% csrf_token %}
+                        <input type="text" name="title" class="input input-bordered input-sm w-full" placeholder="Titre de l'action" required>
+                        <textarea name="description" class="textarea textarea-bordered textarea-sm w-full" rows="2" placeholder="Description"></textarea>
+                        <div class="grid grid-cols-1 gap-2">
+                            <select name="assignee_id" class="select select-bordered select-sm">
+                                <option value="">Aucun responsable</option>
+                                {% for employee in employees %}
+                                <option value="{{ employee.user_id }}">{{ employee.surnom|default:employee.nom_employe }}</option>
+                                {% endfor %}
+                            </select>
+                            <input type="date" name="due_date" class="input input-bordered input-sm">
+                            <select name="status" class="select select-bordered select-sm">
+                                <option value="todo">À faire</option>
+                                <option value="in_progress">En cours</option>
+                                <option value="done">Terminé</option>
+                                <option value="cancelled">Annulé</option>
+                            </select>
+                            <input type="text" name="entity_type" class="input input-bordered input-sm" placeholder="entity_type lié (optionnel)">
+                            <input type="text" name="entity_id" class="input input-bordered input-sm" placeholder="entity_id lié (optionnel)">
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-sm w-full">Ajouter une action</button>
+                    </form>
+                    {% else %}
+                    <div class="text-sm text-base-content/60">Sélectionnez une note pour gérer les actions.</div>
+                    {% endif %}
+                </div>
+
+                <div>
+                    <h3 class="font-semibold mb-2">Décisions</h3>
+                    {% if selected_note_payload %}
+                    <div class="space-y-2 mb-3">
+                        {% for decision in selected_note_payload.decisions %}
+                        <div class="rounded-lg border border-base-300 p-3 text-sm">
+                            <div class="font-medium">{{ decision.decision_text }}</div>
+                            {% if decision.context %}<div class="text-base-content/70 mt-1">Contexte: {{ decision.context }}</div>{% endif %}
+                            {% if decision.justification %}<div class="text-base-content/70">Justification: {{ decision.justification }}</div>{% endif %}
+                            <div class="text-xs text-base-content/60 mt-1">
+                                {{ decision.get_status_display }}
+                                {% if decision.responsible %} • {{ decision.responsible }}{% endif %}
+                                {% if decision.date_decided %} • {{ decision.date_decided|date:"d/m/Y" }}{% endif %}
+                            </div>
+                        </div>
+                        {% empty %}
+                        <div class="text-sm text-base-content/60">Aucune décision.</div>
+                        {% endfor %}
+                    </div>
+                    <form method="post" action="{% url 'notes:create_decision' selected_note_payload.note.id %}" class="space-y-2 rounded-lg bg-base-200 p-3">
+                        {% csrf_token %}
+                        <textarea name="decision_text" class="textarea textarea-bordered textarea-sm w-full" rows="2" placeholder="Décision prise" required></textarea>
+                        <textarea name="context" class="textarea textarea-bordered textarea-sm w-full" rows="2" placeholder="Contexte"></textarea>
+                        <textarea name="justification" class="textarea textarea-bordered textarea-sm w-full" rows="2" placeholder="Justification"></textarea>
+                        <div class="grid grid-cols-1 gap-2">
+                            <select name="responsible_id" class="select select-bordered select-sm">
+                                <option value="">Aucun responsable</option>
+                                {% for employee in employees %}
+                                <option value="{{ employee.user_id }}">{{ employee.surnom|default:employee.nom_employe }}</option>
+                                {% endfor %}
+                            </select>
+                            <input type="date" name="decision_date" class="input input-bordered input-sm">
+                            <select name="status" class="select select-bordered select-sm">
+                                <option value="draft">Brouillon</option>
+                                <option value="approved">Approuvée</option>
+                                <option value="rejected">Rejetée</option>
+                                <option value="implemented">Mise en oeuvre</option>
+                            </select>
+                            <input type="text" name="entity_type" class="input input-bordered input-sm" placeholder="entity_type lié (optionnel)">
+                            <input type="text" name="entity_id" class="input input-bordered input-sm" placeholder="entity_id lié (optionnel)">
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-sm w-full">Ajouter une décision</button>
+                    </form>
+                    {% else %}
+                    <div class="text-sm text-base-content/60">Sélectionnez une note pour gérer les décisions.</div>
+                    {% endif %}
+                </div>
+
+                <div>
+                    <h3 class="font-semibold mb-2">Commentaires</h3>
+                    {% if selected_note_payload %}
+                    <div class="space-y-2 mb-3 max-h-64 overflow-auto">
+                        {% for comment in selected_note_payload.comments %}
+                        <div class="rounded-lg bg-base-200 p-3 text-sm">
+                            <div class="text-xs text-base-content/60 mb-1">{{ comment.author }} • {{ comment.created_at|date:"d/m/Y H:i" }}</div>
+                            <div>{{ comment.content|linebreaksbr }}</div>
+                        </div>
+                        {% empty %}
+                        <div class="text-sm text-base-content/60">Aucun commentaire.</div>
+                        {% endfor %}
+                    </div>
+                    <form method="post" action="{% url 'notes:create_comment' selected_note_payload.note.id %}" class="space-y-2 rounded-lg bg-base-200 p-3">
+                        {% csrf_token %}
+                        <textarea name="content" class="textarea textarea-bordered textarea-sm w-full" rows="3" placeholder="Ajouter un commentaire" required></textarea>
+                        <button type="submit" class="btn btn-primary btn-sm w-full">Commenter</button>
+                    </form>
+                    {% else %}
+                    <div class="text-sm text-base-content/60">Sélectionnez une note pour voir les commentaires.</div>
+                    {% endif %}
+                </div>
+            </div>
+        </aside>
+    </div>
+</div>
+
+{% if selected_note_payload %}
+    {{ selected_note_payload.blocks|json_script:"initial-blocks" }}
+    {{ selected_note_payload.resolved_links|json_script:"initial-links" }}
+{% else %}
+    <script id="initial-blocks" type="application/json">[]</script>
+    <script id="initial-links" type="application/json">[]</script>
+{% endif %}
+{{ prefill_entity|json_script:"prefill-entity" }}
+
+<script>
+const initialBlocks = JSON.parse(document.getElementById('initial-blocks')?.textContent || '[]');
+const initialLinksElement = document.getElementById('initial-links');
+const initialLinks = initialLinksElement ? JSON.parse(initialLinksElement.textContent || '[]') : [];
+const prefillEntity = JSON.parse(document.getElementById('prefill-entity')?.textContent || '{}');
+
+const blockTypeLabels = {
+    paragraph: 'Paragraphe',
+    heading_1: 'Titre',
+    bulleted_list: 'Liste à puces',
+    numbered_list: 'Liste numérotée',
+    checklist: 'Checklist',
+    quote: 'Citation',
+    divider: 'Séparateur',
+    table: 'Tableau simple',
+    image: 'Image',
+    file: 'Fichier joint',
+    action: 'Bloc action',
+    decision: 'Bloc décision',
+    hydria_link: 'Lien Hydria',
+};
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+function buildBlockRow(block = {}) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'rounded-xl border border-base-300 bg-base-100 p-3 space-y-2';
+    wrapper.innerHTML = `
+        <div class="flex flex-wrap items-center gap-2">
+            <select class="select select-bordered select-sm block-type">
+                ${Object.entries(blockTypeLabels).map(([value, label]) => `<option value="${value}" ${block.type === value ? 'selected' : ''}>${label}</option>`).join('')}
+            </select>
+            <label class="label cursor-pointer gap-2 ${block.type === 'checklist' ? '' : 'hidden'} checklist-toggle">
+                <input type="checkbox" class="checkbox checkbox-sm block-checked" ${block.checked ? 'checked' : ''}>
+                <span class="label-text">Coché</span>
+            </label>
+            <button type="button" class="btn btn-ghost btn-xs ml-auto remove-block">Supprimer</button>
+        </div>
+        <textarea class="textarea textarea-bordered w-full block-text" rows="3" placeholder="Contenu du bloc...">${escapeHtml(block.text || '')}</textarea>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-2 hydria-meta ${block.type === 'hydria_link' ? '' : 'hidden'}">
+            <input type="text" class="input input-bordered input-sm block-entity-type" placeholder="entity_type" value="${escapeHtml(block.meta?.entity_type || '')}">
+            <input type="text" class="input input-bordered input-sm block-entity-id" placeholder="entity_id" value="${escapeHtml(block.meta?.entity_id || '')}">
+            <input type="text" class="input input-bordered input-sm block-entity-label" placeholder="label" value="${escapeHtml(block.meta?.label || '')}">
+        </div>
+    `;
+    wrapper.querySelector('.remove-block').addEventListener('click', () => {
+        wrapper.remove();
+    });
+    wrapper.querySelector('.block-type').addEventListener('change', (event) => {
+        const type = event.target.value;
+        wrapper.querySelector('.hydria-meta').classList.toggle('hidden', type !== 'hydria_link');
+        wrapper.querySelector('.checklist-toggle').classList.toggle('hidden', type !== 'checklist');
+    });
+    return wrapper;
+}
+
+function addBlock(block = {}) {
+    document.getElementById('blocksEditor').appendChild(buildBlockRow(block));
+}
+
+function insertPresetBlock(type, text) {
+    addBlock({type, text});
+}
+
+function insertHydriaLinkBlock(entityType) {
+    addBlock({
+        type: 'hydria_link',
+        text: '',
+        meta: {entity_type: entityType, entity_id: '', label: ''}
+    });
+}
+
+function buildLinkedEntityRow(entity = {}) {
+    const row = document.createElement('div');
+    row.className = 'grid grid-cols-1 md:grid-cols-3 gap-2';
+    row.innerHTML = `
+        <input type="text" class="input input-bordered linked-entity-type" placeholder="entity_type" value="${escapeHtml(entity.entity_type || '')}">
+        <input type="text" class="input input-bordered linked-entity-id" placeholder="entity_id" value="${escapeHtml(entity.entity_id || '')}">
+        <div class="flex gap-2">
+            <input type="text" class="input input-bordered flex-1 linked-entity-label" placeholder="label" value="${escapeHtml(entity.label || '')}">
+            <button type="button" class="btn btn-ghost btn-sm remove-linked-entity">×</button>
+        </div>
+    `;
+    row.querySelector('.remove-linked-entity').addEventListener('click', () => row.remove());
+    return row;
+}
+
+function addLinkedEntityRow(entity = {}) {
+    document.getElementById('linkedEntitiesEditor').appendChild(buildLinkedEntityRow(entity));
+}
+
+function syncEditorToHiddenFields() {
+    const blocks = Array.from(document.querySelectorAll('#blocksEditor > div')).map((row, index) => ({
+        id: `block-${index + 1}`,
+        type: row.querySelector('.block-type').value,
+        text: row.querySelector('.block-text').value,
+        checked: row.querySelector('.block-checked')?.checked || false,
+        meta: {
+            entity_type: row.querySelector('.block-entity-type')?.value || '',
+            entity_id: row.querySelector('.block-entity-id')?.value || '',
+            label: row.querySelector('.block-entity-label')?.value || '',
+        }
+    }));
+    const linkedEntities = Array.from(document.querySelectorAll('#linkedEntitiesEditor > div')).map((row) => ({
+        entity_type: row.querySelector('.linked-entity-type').value.trim(),
+        entity_id: row.querySelector('.linked-entity-id').value.trim(),
+        label: row.querySelector('.linked-entity-label').value.trim(),
+    })).filter((item) => item.entity_type && item.entity_id);
+    document.getElementById('content_json').value = JSON.stringify(blocks);
+    document.getElementById('linked_entities_json').value = JSON.stringify(linkedEntities);
+}
+
+document.getElementById('noteForm').addEventListener('submit', syncEditorToHiddenFields);
+
+if (initialBlocks.length) {
+    initialBlocks.forEach(addBlock);
+} else {
+    addBlock({type: 'paragraph', text: ''});
+}
+
+if (initialLinks.length) {
+    initialLinks.forEach(addLinkedEntityRow);
+} else if (prefillEntity.entity_type && prefillEntity.entity_id) {
+    addLinkedEntityRow(prefillEntity);
+}
+</script>
+{% endblock %}

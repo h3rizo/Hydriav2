@@ -1,0 +1,3135 @@
+{% extends logistics_shell_base_template|default:"base.html" %}
+{% load humanize %}
+
+{% block title %}Gestion des Véhicules - HydrIA{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <!-- Header avec actions -->
+    <div class="flex flex-col md:flex-row md:justify-between md:items-center gap-3 mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">🏍️ Gestion du Parc de Véhicules</h1>
+            <p class="text-base-content/70 mt-1">Motos, voitures, affectations, relevés et réparations</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <button onclick="openCreateVehiculeModal()" class="btn btn-primary btn-sm md:btn-md w-full md:w-auto">
+                <i class="fas fa-motorcycle mr-2"></i>Nouveau Véhicule
+            </button>
+            <a href="{% url 'inventory:recap_mensuel_carburant' %}" class="btn btn-accent btn-sm md:btn-md w-full md:w-auto">
+                <i class="fas fa-chart-line mr-2"></i>Récap Mensuel
+            </a>
+        </div>
+    </div>
+
+    <div class="tabs tabs-boxed mb-6">
+        <a class="tab tab-active" href="{% url 'inventory:gestion_vehicules' %}">
+            <i class="fas fa-motorcycle mr-2"></i>Parc véhicules
+        </a>
+        <a class="tab" href="{% url 'inventory:vehicules_carnets_scans' %}">
+            <i class="fas fa-file-upload mr-2"></i>Scans carnets
+        </a>
+        <a class="tab" href="{% url 'inventory:vehicules_carnets_suivi' %}">
+            <i class="fas fa-table mr-2"></i>Suivi matriciel
+        </a>
+    </div>
+
+    <!-- Statistiques rapides -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div class="stat bg-primary text-primary-content rounded-lg shadow">
+            <div class="stat-figure text-base-content/70">
+                <i class="fas fa-motorcycle text-4xl opacity-70"></i>
+            </div>
+            <div class="stat-title text-primary-content/70">Total véhicules</div>
+            <div class="stat-value">{{ total_vehicules }}</div>
+        </div>
+
+        <div class="stat bg-success text-success-content rounded-lg shadow">
+            <div class="stat-figure text-base-content/70">
+                <i class="fas fa-check-circle text-4xl opacity-70"></i>
+            </div>
+            <div class="stat-title text-success-content/70">Actifs</div>
+            <div class="stat-value">{{ vehicules_actifs }}</div>
+        </div>
+
+        <div class="stat bg-info text-info-content rounded-lg shadow">
+            <div class="stat-figure text-base-content/70">
+                <i class="fas fa-user-tie text-4xl opacity-70"></i>
+            </div>
+            <div class="stat-title text-info-content/70">Affectés</div>
+            <div class="stat-value" id="stat-affectes">{{ vehicules_affectes }}</div>
+        </div>
+
+        <div class="stat bg-warning text-warning-content rounded-lg shadow">
+            <div class="stat-figure text-base-content/70">
+                <i class="fas fa-tools text-4xl opacity-70"></i>
+            </div>
+            <div class="stat-title text-warning-content/70">Disponibles</div>
+            <div class="stat-value" id="stat-disponibles">{{ vehicules_disponibles }}</div>
+        </div>
+    </div>
+
+    {% if achats_carburant_non_relie_rows %}
+    <div class="mb-6">
+        <div class="alert alert-warning shadow">
+            <div>
+                <i class="fas fa-link-slash mr-2"></i>
+                <span>{{ achats_carburant_non_relie_rows|length }} achats carburant non pointés compta</span>
+            </div>
+        </div>
+        <div class="overflow-x-auto mt-2">
+            <table class="table table-xs">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Véhicule</th>
+                        <th>Employé</th>
+                        <th>Litres</th>
+                        <th>Montant</th>
+                        <th>Candidats compta</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in achats_carburant_non_relie_rows %}
+                    {% with u=row.usage %}
+                    <tr>
+                        <td>{{ u.date_utilisation|date:"d/m/Y" }}</td>
+                        <td>{{ u.vehicule.nom_complet|default:"-" }}</td>
+                        <td>{{ u.employe.nom_complet|default:"-" }}</td>
+                        <td>{{ u.quantite }}</td>
+                        <td>{{ u.montant|default:"-" }}</td>
+                        <td>
+                            <div class="flex flex-wrap gap-1">
+                                {% for candidate in row.candidates %}
+                                    <button type="button"
+                                            class="btn btn-xs {% if candidate.matched_plate %}btn-success{% else %}btn-outline{% endif %} carburant-pointer-btn"
+                                            data-usage-id="{{ u.id }}"
+                                            data-entry-id="{{ candidate.id }}">
+                                        {{ candidate.date|date:"d/m" }} · {{ candidate.montant|floatformat:0|intcomma }} Ar
+                                        {% if candidate.matched_plate %}· plaque{% endif %}
+                                    </button>
+                                {% empty %}
+                                    <span class="text-base-content/50">Aucun candidat</span>
+                                {% endfor %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endwith %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="card bg-base-100 shadow-xl mb-6">
+        <div class="card-body">
+            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                <h2 class="card-title">
+                    <i class="fas fa-gas-pump text-error mr-2"></i>
+                    Analyse carburant par véhicule
+                </h2>
+                <form method="GET" class="flex flex-wrap items-end gap-2">
+                    <div class="text-sm text-base-content/60 mr-2">
+                        Période : du {{ carburant_analyse_since|date:"d/m/Y" }} au {{ carburant_analyse_until|date:"d/m/Y" }}
+                    </div>
+                    <select name="analyse_mois" class="select select-bordered select-sm min-w-[12rem]">
+                        {% for month_num, month_label in month_choices %}
+                            <option value="{{ month_num }}" {% if analyse_mois == month_num %}selected{% endif %}>{{ month_label }}</option>
+                        {% endfor %}
+                    </select>
+                    <select name="analyse_annee" class="select select-bordered select-sm min-w-[7rem]">
+                        {% for y in analyse_years_available %}
+                            <option value="{{ y }}" {% if analyse_annee == y %}selected{% endif %}>{{ y }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" class="btn btn-sm btn-outline">Filtrer</button>
+                </form>
+            </div>
+
+            {% if vehicules_carburant_analyse %}
+            <div class="overflow-x-auto mt-4">
+                <table class="table table-zebra w-full">
+                    <thead>
+                        <tr>
+                            <th>Véhicule</th>
+                            <th>Affectation</th>
+                            <th class="text-right">Litres</th>
+                            <th class="text-right">Montant</th>
+                            <th class="text-right">Pleins</th>
+                            <th class="text-right">Pleins compta</th>
+                            <th class="text-right">Distance entre pleins</th>
+                            <th class="text-right">Coût/L</th>
+                            <th class="text-right">Rendement (L/100 km)</th>
+                            <th class="text-right">Rendement compta</th>
+                            <th>Dernier carburant</th>
+                            <th>Analyse</th>
+                            <th>Détail</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in vehicules_carburant_analyse %}
+                        <tr>
+                            <td class="font-semibold">
+                                {{ row.vehicule.immatriculation }}
+                                <div class="text-xs text-base-content/60">{{ row.vehicule.marque }} {{ row.vehicule.modele }}</div>
+                            </td>
+                            <td>
+                                {% with employe=row.vehicule.employe_actuel %}
+                                    {% if employe %}
+                                        <span class="badge badge-info badge-sm">{{ employe.surnom|default:employe.nom_complet }}</span>
+                                    {% else %}
+                                        <span class="text-base-content/50">Non affecté</span>
+                                    {% endif %}
+                                {% endwith %}
+                            </td>
+                            <td class="text-right font-mono">{{ row.litres_total|floatformat:2 }}</td>
+                            <td class="text-right font-mono">{{ row.montant_total|floatformat:0|intcomma }} Ar</td>
+                            <td class="text-right">{{ row.nb_pleins }}</td>
+                            <td class="text-right">{{ row.compta_direct_count|default:0 }}</td>
+                            <td class="text-right font-mono">{{ row.distance_total|floatformat:0|intcomma }} km</td>
+                            <td class="text-right font-mono">
+                                {% if row.cout_par_litre is not None %}
+                                    {{ row.cout_par_litre|floatformat:0|intcomma }} Ar
+                                {% else %}
+                                    <span class="text-base-content/40">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-right font-mono">
+                                {% if row.litres_100km is not None %}
+                                    {{ row.litres_100km|floatformat:2 }}
+                                {% else %}
+                                    <span class="text-base-content/40">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-right font-mono">
+                                {% if row.compta_direct_100km is not None %}
+                                    {{ row.compta_direct_100km|floatformat:2 }}
+                                {% else %}
+                                    <span class="text-base-content/40">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if row.last_carburant_date %}
+                                    <div>{{ row.last_carburant_date|date:"d/m/Y" }}</div>
+                                    <div class="text-xs text-base-content/60">{{ row.last_source_type }}{% if row.last_employe_nom %} · {{ row.last_employe_nom }}{% endif %}</div>
+                                {% else %}
+                                    <span class="text-base-content/40">Aucun</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if row.litres_100km is not None and row.litres_100km > 12 %}
+                                    <span class="badge badge-warning">{{ row.analyse_message }}</span>
+                                {% elif row.litres_100km is not None and row.litres_100km <= 7 %}
+                                    <span class="badge badge-success">{{ row.analyse_message }}</span>
+                                {% elif row.litres_total > 0 %}
+                                    <span class="badge badge-info">{{ row.analyse_message }}</span>
+                                {% else %}
+                                    <span class="badge badge-ghost">{{ row.analyse_message }}</span>
+                                {% endif %}
+                                {% if row.compta_direct_count %}
+                                    <div class="text-xs text-base-content/60 mt-1">{{ row.compta_direct_count }} ligne(s) compta direct véhicule</div>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <button type="button"
+                                        class="btn btn-xs btn-outline carburant-analyse-detail-btn"
+                                        data-details="{{ row.details_json|urlencode }}">
+                                    Voir
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center text-base-content/50 py-8">
+                Aucune donnée carburant disponible pour l'analyse.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <dialog id="carburantAnalyseDetailsModal" class="modal">
+        <div class="modal-box"
+             style="width: min(96vw, 1600px); max-width: 1600px; min-height: 70vh;">
+            <form method="dialog">
+                <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+            </form>
+            <h3 class="font-bold text-lg" id="carburantAnalyseDetailsTitle">Détail carburant</h3>
+            <div class="text-sm text-base-content/60 mt-1" id="carburantAnalyseDetailsPeriod"></div>
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 mt-4">
+                <div>
+                    <h4 class="font-semibold mb-2">Lignes compta</h4>
+                    <div class="overflow-x-auto max-h-[60vh]">
+                        <table class="table table-sm table-zebra">
+                            <thead>
+                                <tr class="bg-base-300">
+                                    <th>Date</th>
+                                    <th>Compte</th>
+                                    <th>Détail</th>
+                                    <th>Libellé</th>
+                                    <th class="text-right">Litres</th>
+                                    <th class="text-right">Montant</th>
+                                </tr>
+                            </thead>
+                            <tbody id="carburantAnalyseComptaBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div>
+                    <h4 class="font-semibold mb-2">Lignes saisies utilisateur</h4>
+                    <div class="overflow-x-auto max-h-[60vh]">
+                        <table class="table table-sm table-zebra">
+                            <thead>
+                                <tr class="bg-base-300">
+                                    <th>Date</th>
+                                    <th>Source</th>
+                                    <th>Employé</th>
+                                    <th>Notes</th>
+                                    <th class="text-right">Litres</th>
+                                    <th class="text-right">Montant</th>
+                                </tr>
+                            </thead>
+                            <tbody id="carburantAnalyseUserBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Tabs pour différentes vues -->
+    <div class="overflow-x-auto pb-2 scrollbar-hide">
+        <div role="tablist" class="tabs tabs-boxed flex-nowrap whitespace-nowrap inline-flex min-w-max mb-2">
+        <a role="tab" class="tab tab-active tab-sm md:tab-md" onclick="switchTab('vehicules')">
+            <i class="fas fa-motorcycle mr-2"></i>Véhicules
+        </a>
+        <a role="tab" class="tab tab-sm md:tab-md" onclick="switchTab('affectations')">
+            <i class="fas fa-users mr-2"></i>Affectations
+        </a>
+        <a role="tab" class="tab tab-sm md:tab-md" onclick="switchTab('releves')">
+            <i class="fas fa-tachometer-alt mr-2"></i>Relevés Compteur
+        </a>
+        <a role="tab" class="tab tab-sm md:tab-md" onclick="switchTab('reparations')">
+            <i class="fas fa-wrench mr-2"></i>Réparations
+        </a>
+        <a role="tab" class="tab tab-sm md:tab-md" onclick="switchTab('pieces')">
+            <i class="fas fa-toolbox mr-2"></i>Pièces
+        </a>
+        <a role="tab" class="tab tab-sm md:tab-md" onclick="switchTab('utilisations-perso')">
+            <i class="fas fa-user-shield mr-2"></i>Utilisations perso
+        </a>
+    </div>
+
+    <!-- Tab Content: Véhicules -->
+    <div id="tab-vehicules">
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-motorcycle text-primary mr-2"></i>
+                    Liste des Véhicules
+                </h2>
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mt-2">
+                    <div class="text-sm text-base-content/60">
+                        Vue : basculez entre tableau et cartes (mobile)
+                    </div>
+                    <div class="join">
+                        <button type="button" id="vehicules-view-table" class="btn btn-sm join-item">Tableau</button>
+                        <button type="button" id="vehicules-view-cards" class="btn btn-sm join-item">Cartes</button>
+                    </div>
+                </div>
+
+                {% if vehicules_groupes %}
+                    {% for groupe in vehicules_groupes %}
+                        <div class="collapse collapse-arrow bg-base-200 mb-4">
+                            <input type="checkbox" class="peer" checked>
+                            <div class="collapse-title text-lg font-semibold flex items-center gap-2">
+                                <i class="fas fa-warehouse text-base-content/70"></i>
+                                <span>{{ groupe.base }}</span>
+                                <span class="text-sm text-base-content/60">({{ groupe.vehicules|length }})</span>
+                            </div>
+                            <div class="collapse-content">
+                                <div class="vehicules-view-table overflow-x-auto mt-2">
+                                    <table class="table table-zebra w-full">
+                                        <thead>
+                                            <tr>
+                                                <th>Photo</th>
+                                                <th>Type</th>
+                                                <th>Immatriculation</th>
+                                                <th>Marque / Modèle</th>
+                                                <th>Mise en circulation</th>
+                                                <th>Carte grise</th>
+                                                <th>Affecté à</th>
+                                                <th>Index actuel</th>
+                                                <th>Planifiée</th>
+                                                <th>Statut</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for vehicule in groupe.vehicules %}
+                                            <tr>
+                                                <td>
+                                                    {% if vehicule.photo %}
+                                                    <div class="avatar">
+                                                        <div class="mask mask-squircle w-10 h-10">
+                                                            <img src="{{ vehicule.photo.url }}" alt="Photo" />
+                                                        </div>
+                                                    </div>
+                                                    {% else %}
+                                                    <div class="avatar placeholder">
+                                                        <div class="bg-base-300 text-base-content/40 mask mask-squircle w-10 h-10 border border-base-content/10">
+                                                            <i class="fas fa-camera text-lg"></i>
+                                                        </div>
+                                                    </div>
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    <span class="badge badge-sm">{{ vehicule.get_type_vehicule_display }}</span>
+                                                </td>
+                                                <td class="font-bold">{{ vehicule.immatriculation }}</td>
+                                                <td>{{ vehicule.marque }} {{ vehicule.modele }}</td>
+                                                <td>{{ vehicule.date_mise_circulation|date:"d/m/Y" }}</td>
+                                                <td>
+                                                    {% if vehicule.carte_grise %}
+                                                        <a href="{{ vehicule.carte_grise.url }}" target="_blank" class="link link-primary text-sm">
+                                                            <i class="fas fa-file-alt mr-1"></i>Voir
+                                                        </a>
+                                                    {% else %}
+                                                        <span class="text-base-content/50">-</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    {% with employe=vehicule.employe_actuel %}
+                                                        {% if employe %}
+                                                            <span class="badge badge-info">{{ employe.surnom|default:employe.nom_complet }}</span>
+                                                        {% else %}
+                                                            <span class="text-base-content/50">-</span>
+                                                        {% endif %}
+                                                    {% endwith %}
+                                                </td>
+                                                <td class="font-mono">
+                                                    {{ vehicule.index_compteur_actuel|floatformat:0|intcomma }} km
+                                                    {% if not vehicule.compteur_fonctionnel %}
+                                                        <span class="badge badge-warning badge-xs">⚠️ HS</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    {% if vehicule.has_reparation_planifiee %}
+                                                        <span class="badge badge-warning badge-sm">Oui</span>
+                                                    {% else %}
+                                                        <span class="text-base-content/50">-</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    {% if vehicule.actif %}
+                                                        <span class="badge badge-success">Actif</span>
+                                                    {% else %}
+                                                        <span class="badge badge-error">Inactif</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    <div class="flex flex-wrap gap-1">
+                                                        <a href="{% url 'inventory:details_vehicule' vehicule.id %}"
+                                                           class="btn btn-ghost btn-xs"
+                                                           title="Détails">
+                                                            <i class="fas fa-eye"></i>
+                                                        </a>
+                                                        <button type="button"
+                                                                onclick="openEditVehiculeModal(this)"
+                                                                class="btn btn-ghost btn-xs text-primary"
+                                                                title="Modifier"
+                                                                data-id="{{ vehicule.id }}"
+                                                                data-update-url="{% url 'inventory:api_vehicule_update' vehicule.id %}"
+                                                                data-type="{{ vehicule.type_vehicule }}"
+                                                                data-immatriculation="{{ vehicule.immatriculation|escapejs }}"
+                                                                data-marque="{{ vehicule.marque|escapejs }}"
+                                                                data-modele="{{ vehicule.modele|escapejs }}"
+                                                                data-date="{{ vehicule.date_mise_circulation|date:'Y-m-d' }}"
+                                                                data-numero-chassis="{{ vehicule.numero_chassis|default_if_none:''|escapejs }}"
+                                                                data-couleur="{{ vehicule.couleur|default_if_none:''|escapejs }}"
+                                                                data-annee-fabrication="{{ vehicule.annee_fabrication|default_if_none:'' }}"
+                                                                data-compteur-fonctionnel="{{ vehicule.compteur_fonctionnel|yesno:'1,0' }}"
+                                                                data-actif="{{ vehicule.actif|yesno:'1,0' }}"
+                                                                 data-notes="{{ vehicule.notes|default_if_none:''|escapejs }}"
+                                                                 data-carte-grise-url="{% if vehicule.carte_grise %}{{ vehicule.carte_grise.url }}{% endif %}"
+                                                                 data-photo-url="{% if vehicule.photo %}{{ vehicule.photo.url }}{% endif %}">
+                                                            <i class="fas fa-pen"></i>
+                                                        </button>
+                                                        <button onclick="openAffectationModal('{{ vehicule.id }}', '{{ vehicule.immatriculation|escapejs }}')"
+                                                                class="btn btn-ghost btn-xs text-info"
+                                                                title="Affecter">
+                                                            <i class="fas fa-user-plus"></i>
+                                                        </button>
+                                                        <button onclick="openReleveModal('{{ vehicule.id }}', '{{ vehicule.immatriculation|escapejs }}', '{% if vehicule.employe_actuel %}{{ vehicule.employe_actuel.id }}{% endif %}')"
+                                                                class="btn btn-ghost btn-xs text-success"
+                                                                title="Nouveau relevé">
+                                                            <i class="fas fa-tachometer-alt"></i>
+                                                        </button>
+                                                        <button onclick="openReparationModal('{{ vehicule.id }}', '{{ vehicule.immatriculation|escapejs }}')"
+                                                                class="btn btn-ghost btn-xs text-warning"
+                                                                title="Nouvelle réparation">
+                                                            <i class="fas fa-wrench"></i>
+                                                        </button>
+                                                        <button onclick="deleteVehicule('{{ vehicule.id }}', '{{ vehicule.immatriculation|escapejs }}')"
+                                                                class="btn btn-ghost btn-xs text-error"
+                                                                title="Supprimer">
+                                                            <i class="fas fa-trash"></i>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="vehicules-view-cards mt-4 hidden">
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                                        {% for vehicule in groupe.vehicules %}
+                                        <div class="card bg-base-200">
+                                            <div class="card-body p-4">
+                                                {% if vehicule.photo %}
+                                                <div class="mb-3 aspect-video rounded-lg overflow-hidden bg-base-300">
+                                                    <img src="{{ vehicule.photo.url }}" alt="{{ vehicule.immatriculation }}" class="w-full h-full object-cover">
+                                                </div>
+                                                {% endif %}
+                                                <div class="flex items-start justify-between gap-2">
+                                                    <div>
+                                                        <div class="font-bold text-lg">{{ vehicule.immatriculation }}</div>
+                                                        <div class="text-sm text-base-content/70">{{ vehicule.marque }} {{ vehicule.modele }}</div>
+                                                    </div>
+                                                    <span class="badge badge-sm">{{ vehicule.get_type_vehicule_display }}</span>
+                                                </div>
+                                                <div class="mt-2 text-sm space-y-1">
+                                                    <div><span class="font-semibold">Mise en circulation :</span> {{ vehicule.date_mise_circulation|date:"d/m/Y" }}</div>
+                                                    <div>
+                                                        <span class="font-semibold">Carte grise :</span>
+                                                        {% if vehicule.carte_grise %}
+                                                            <a href="{{ vehicule.carte_grise.url }}" target="_blank" class="link link-primary text-sm">Voir</a>
+                                                        {% else %}
+                                                            <span class="text-base-content/50">-</span>
+                                                        {% endif %}
+                                                    </div>
+                                                    <div>
+                                                        <span class="font-semibold">Affecté à :</span>
+                                                        {% with employe=vehicule.employe_actuel %}
+                                                            {% if employe %}
+                                                                <span class="badge badge-info badge-sm">{{ employe.surnom|default:employe.nom_complet }}</span>
+                                                            {% else %}
+                                                                <span class="text-base-content/50">-</span>
+                                                            {% endif %}
+                                                        {% endwith %}
+                                                    </div>
+                                                    <div>
+                                                        <span class="font-semibold">Index :</span>
+                                                        <span class="font-mono">{{ vehicule.index_compteur_actuel|floatformat:0|intcomma }} km</span>
+                                                        {% if not vehicule.compteur_fonctionnel %}
+                                                            <span class="badge badge-warning badge-xs">⚠️ HS</span>
+                                                        {% endif %}
+                                                    </div>
+                                                    <div>
+                                                        <span class="font-semibold">Réparation planifiée :</span>
+                                                        {% if vehicule.has_reparation_planifiee %}
+                                                            <span class="badge badge-warning badge-sm">Oui</span>
+                                                        {% else %}
+                                                            <span class="text-base-content/50">-</span>
+                                                        {% endif %}
+                                                    </div>
+                                                    <div>
+                                                        <span class="font-semibold">Statut :</span>
+                                                        {% if vehicule.actif %}
+                                                            <span class="badge badge-success badge-sm">Actif</span>
+                                                        {% else %}
+                                                            <span class="badge badge-error badge-sm">Inactif</span>
+                                                        {% endif %}
+                                                    </div>
+                                                </div>
+                                                <div class="mt-3 flex flex-wrap gap-2">
+                                                    <a href="{% url 'inventory:details_vehicule' vehicule.id %}"
+                                                       class="btn btn-ghost btn-xs"
+                                                       title="Détails">
+                                                        <i class="fas fa-eye"></i>
+                                                    </a>
+                                                    <button type="button"
+                                                            onclick="openEditVehiculeModal(this)"
+                                                            class="btn btn-ghost btn-xs text-primary"
+                                                            title="Modifier"
+                                                            data-id="{{ vehicule.id }}"
+                                                            data-update-url="{% url 'inventory:api_vehicule_update' vehicule.id %}"
+                                                            data-type="{{ vehicule.type_vehicule }}"
+                                                            data-immatriculation="{{ vehicule.immatriculation|escapejs }}"
+                                                            data-marque="{{ vehicule.marque|escapejs }}"
+                                                            data-modele="{{ vehicule.modele|escapejs }}"
+                                                            data-date="{{ vehicule.date_mise_circulation|date:'Y-m-d' }}"
+                                                            data-numero-chassis="{{ vehicule.numero_chassis|default_if_none:''|escapejs }}"
+                                                            data-couleur="{{ vehicule.couleur|default_if_none:''|escapejs }}"
+                                                            data-annee-fabrication="{{ vehicule.annee_fabrication|default_if_none:'' }}"
+                                                            data-compteur-fonctionnel="{{ vehicule.compteur_fonctionnel|yesno:'1,0' }}"
+                                                            data-actif="{{ vehicule.actif|yesno:'1,0' }}"
+                                                             data-notes="{{ vehicule.notes|default_if_none:''|escapejs }}"
+                                                             data-carte-grise-url="{% if vehicule.carte_grise %}{{ vehicule.carte_grise.url }}{% endif %}"
+                                                             data-photo-url="{% if vehicule.photo %}{{ vehicule.photo.url }}{% endif %}">
+                                                        <i class="fas fa-pen"></i>
+                                                    </button>
+                                                    <button onclick="openAffectationModal('{{ vehicule.id }}', '{{ vehicule.immatriculation|escapejs }}')"
+                                                            class="btn btn-ghost btn-xs text-info"
+                                                            title="Affecter">
+                                                        <i class="fas fa-user-plus"></i>
+                                                    </button>
+                                                    <button onclick="openReleveModal('{{ vehicule.id }}', '{{ vehicule.immatriculation|escapejs }}', '{% if vehicule.employe_actuel %}{{ vehicule.employe_actuel.id }}{% endif %}')"
+                                                            class="btn btn-ghost btn-xs text-success"
+                                                            title="Nouveau relevé">
+                                                        <i class="fas fa-tachometer-alt"></i>
+                                                    </button>
+                                                    <button onclick="openReparationModal('{{ vehicule.id }}', '{{ vehicule.immatriculation|escapejs }}')"
+                                                            class="btn btn-ghost btn-xs text-warning"
+                                                            title="Nouvelle réparation">
+                                                        <i class="fas fa-wrench"></i>
+                                                    </button>
+                                                    <button onclick="deleteVehicule('{{ vehicule.id }}', '{{ vehicule.immatriculation|escapejs }}')"
+                                                            class="btn btn-ghost btn-xs text-error"
+                                                            title="Supprimer">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center text-base-content/50 py-8">
+                        Aucun véhicule enregistré
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab Content: Affectations -->
+    <div id="tab-affectations" class="tab-content hidden">
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-users text-info mr-2"></i>
+                    Affectations des Véhicules
+                </h2>
+
+                {% regroup affectations by base_group as affectations_groupes %}
+                {% if affectations_groupes %}
+                    <div class="mt-4 space-y-4">
+                        {% for groupe in affectations_groupes %}
+                            <div class="collapse collapse-arrow bg-base-200">
+                                <input type="checkbox" class="peer" checked>
+                                <div class="collapse-title text-lg font-semibold flex items-center gap-2">
+                                    <i class="fas fa-warehouse text-base-content/70"></i>
+                                    <span>{{ groupe.grouper }}</span>
+                                    <span class="text-sm text-base-content/60">({{ groupe.list|length }})</span>
+                                </div>
+                                <div class="collapse-content">
+                                    <div class="overflow-x-auto mt-2">
+                                        <table class="table table-zebra w-full">
+                                            <thead>
+                                                <tr>
+                                                    <th>Véhicule</th>
+                                                    <th>Employé</th>
+                                                    <th>Date début</th>
+                                                    <th>Date fin</th>
+                                                    <th>Statut</th>
+                                                    <th>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {% for affectation in groupe.list %}
+                                                <tr>
+                                                    <td class="font-semibold">
+                                                        {{ affectation.vehicule.immatriculation }}
+                                                        <span class="text-base-content/60 text-sm">({{ affectation.vehicule.marque }} {{ affectation.vehicule.modele }})</span>
+                                                    </td>
+                                                    <td>
+                                                        <span class="badge badge-info">
+                                                            {{ affectation.employe.surnom|default:affectation.employe.nom_complet }}
+                                                        </span>
+                                                    </td>
+                                                    <td>{{ affectation.date_debut|date:"d/m/Y" }}</td>
+                                                    <td>
+                                                        {% if affectation.date_fin %}
+                                                            {{ affectation.date_fin|date:"d/m/Y" }}
+                                                        {% else %}
+                                                            <span class="text-base-content/50">-</span>
+                                                        {% endif %}
+                                                    </td>
+                                                    <td>
+                                                        {% if affectation.est_active %}
+                                                            <span class="badge badge-success">Active</span>
+                                                        {% else %}
+                                                            <span class="badge badge-ghost">Terminée</span>
+                                                        {% endif %}
+                                                    </td>
+                                                    <td>
+                                                        {% if is_directeur_user or user.is_superuser %}
+                                                            <button
+                                                                onclick="deleteAffectation('{{ affectation.id }}', '{{ affectation.vehicule.immatriculation|escapejs }}', '{{ affectation.employe.surnom|default:affectation.employe.nom_complet|escapejs }}')"
+                                                                class="btn btn-ghost btn-xs text-error"
+                                                                title="Supprimer l'affectation">
+                                                                <i class="fas fa-trash"></i>
+                                                            </button>
+                                                        {% else %}
+                                                            <span class="text-base-content/40">-</span>
+                                                        {% endif %}
+                                                    </td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center text-base-content/50 py-8">
+                        Aucune affectation enregistrée
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab Content: Relevés -->
+    <div id="tab-releves" class="tab-content hidden">
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-tachometer-alt text-success mr-2"></i>
+                    Relevés de Compteur
+                </h2>
+
+                {% regroup releves by base_group as releves_groupes %}
+                {% if releves_groupes %}
+                    <div class="mt-4 space-y-4">
+                        {% for groupe in releves_groupes %}
+                            <div class="collapse collapse-arrow bg-base-200">
+                                <input type="checkbox" class="peer" checked>
+                                <div class="collapse-title text-lg font-semibold flex items-center gap-2">
+                                    <i class="fas fa-warehouse text-base-content/70"></i>
+                                    <span>{{ groupe.grouper }}</span>
+                                    <span class="text-sm text-base-content/60">({{ groupe.list|length }})</span>
+                                </div>
+                                <div class="collapse-content">
+                                    <div class="overflow-x-auto mt-2">
+                                        <table class="table table-zebra w-full">
+                                            <thead>
+                                                <tr>
+                                                    <th>Date</th>
+                                                    <th>Véhicule</th>
+                                                    <th>Employé</th>
+                                                    <th>Distance</th>
+                                                    <th>Index</th>
+                                                    <th>Trajet</th>
+                                                    <th>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {% for releve in groupe.list %}
+                                                <tr>
+                                                    <td>{{ releve.date_releve|date:"d/m/Y" }}</td>
+                                                    <td class="font-semibold">
+                                                        {{ releve.vehicule.immatriculation }}
+                                                    </td>
+                                                    <td>
+                                                        {% if releve.employe %}
+                                                            <span class="badge badge-info">
+                                                                {{ releve.employe.surnom|default:releve.employe.nom_complet }}
+                                                            </span>
+                                                        {% else %}
+                                                            <span class="text-base-content/50">-</span>
+                                                        {% endif %}
+                                                    </td>
+                                                    <td class="font-mono">{{ releve.distance_parcourue|floatformat:0|intcomma }} km</td>
+                                                    <td>
+                                                        {% if releve.index_compteur %}
+                                                            {{ releve.index_compteur|floatformat:0|intcomma }} km
+                                                        {% else %}
+                                                            <span class="badge badge-warning badge-xs">HS</span>
+                                                        {% endif %}
+                                                    </td>
+                                                    <td>
+                                                        {{ releve.lieu_depart|default:"-" }} → {{ releve.lieu_arrivee|default:"-" }}
+                                                    </td>
+                                                    <td>
+                                                        {% if is_directeur_user or user.is_superuser %}
+                                                            <button
+                                                                onclick="deleteReleve('{{ releve.id }}', '{{ releve.vehicule.immatriculation|escapejs }}', '{{ releve.date_releve|date:"d/m/Y"|escapejs }}')"
+                                                                class="btn btn-ghost btn-xs text-error"
+                                                                title="Supprimer le relevé">
+                                                                <i class="fas fa-trash"></i>
+                                                            </button>
+                                                        {% else %}
+                                                            <span class="text-base-content/40">-</span>
+                                                        {% endif %}
+                                                    </td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center text-base-content/50 py-8">
+                        Aucun relevé enregistré
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab Content: Réparations -->
+    <div id="tab-reparations" class="tab-content hidden">
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-wrench text-warning mr-2"></i>
+                    Réparations et Entretiens
+                </h2>
+
+                {% regroup reparations by base_group as reparations_groupes %}
+                {% if reparations_groupes %}
+                    <div class="mt-4 space-y-4">
+                        {% for groupe in reparations_groupes %}
+                            <div class="collapse collapse-arrow bg-base-200">
+                                <input type="checkbox" class="peer" checked>
+                                <div class="collapse-title text-lg font-semibold flex items-center gap-2">
+                                    <i class="fas fa-warehouse text-base-content/70"></i>
+                                    <span>{{ groupe.grouper }}</span>
+                                    <span class="text-sm text-base-content/60">({{ groupe.list|length }})</span>
+                                </div>
+                                <div class="collapse-content">
+                                    <div class="overflow-x-auto mt-2">
+                                        <table class="table table-zebra w-full">
+                                            <thead>
+                                                <tr>
+                                                    <th>Véhicule</th>
+                                                    <th>Libellé</th>
+                                                    <th>Date prévue</th>
+                                                    <th>Date réparation</th>
+                                                    <th>Statut</th>
+                                                    <th>Action</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {% for rep in groupe.list %}
+                                                <tr>
+                                                    <td class="font-semibold">{{ rep.vehicule.immatriculation }}</td>
+                                                    <td>{{ rep.libelle }}</td>
+                                                    <td>
+                                                        {% if rep.date_prevue %}
+                                                            {{ rep.date_prevue|date:"d/m/Y" }}
+                                                        {% else %}
+                                                            <span class="text-base-content/50">-</span>
+                                                        {% endif %}
+                                                    </td>
+                                                    <td>
+                                                        {% if rep.date_reparation %}
+                                                            {{ rep.date_reparation|date:"d/m/Y" }}
+                                                        {% else %}
+                                                            <span class="text-base-content/50">-</span>
+                                                        {% endif %}
+                                                    </td>
+                                                    <td>
+                                                        <span class="badge badge-ghost">{{ rep.get_statut_display }}</span>
+                                                    </td>
+                                                    <td>
+                                                        <a href="{% url 'inventory:reparation_planifiee_detail' rep.id %}"
+                                                           class="btn btn-ghost btn-xs"
+                                                           title="Détails">
+                                                            <i class="fas fa-eye"></i>
+                                                        </a>
+                                                        {% if is_directeur_user or user.is_superuser %}
+                                                            <button
+                                                                onclick="deleteReparation('{{ rep.id }}', '{{ rep.vehicule.immatriculation|escapejs }}', '{{ rep.libelle|escapejs }}')"
+                                                                class="btn btn-ghost btn-xs text-error"
+                                                                title="Supprimer la réparation">
+                                                                <i class="fas fa-trash"></i>
+                                                            </button>
+                                                        {% endif %}
+                                                    </td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center text-base-content/50 py-8">
+                        Aucune réparation enregistrée
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab Content: Pièces -->
+    <div id="tab-commandes-groupees" class="tab-content hidden">
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                    <h2 class="card-title">
+                        <i class="fas fa-layer-group text-primary mr-2"></i>
+                        Commandes groupées par base et désignation
+                    </h2>
+                    <a href="{% url 'inventory:purchases_list' %}?statut=commande" target="_blank" class="btn btn-sm btn-outline">
+                        <i class="fas fa-list mr-2"></i>Voir commandes achats
+                    </a>
+                </div>
+
+                {% if commandes_reparations_groupes %}
+                    <div class="mt-4 space-y-4">
+                        {% for groupe in commandes_reparations_groupes %}
+                            <div class="collapse collapse-arrow bg-base-200">
+                                <input type="checkbox" class="peer" checked>
+                                <div class="collapse-title text-lg font-semibold flex items-center gap-2">
+                                    <i class="fas fa-warehouse text-base-content/70"></i>
+                                    <span>{{ groupe.base }}</span>
+                                    <span class="text-sm text-base-content/60">({{ groupe.count }})</span>
+                                </div>
+                                <div class="collapse-content">
+                                    <div class="overflow-x-auto mt-2">
+                                        <table class="table table-zebra w-full">
+                                            <thead>
+                                                <tr>
+                                                    <th>Désignation</th>
+                                                    <th>Quantité totale</th>
+                                                    <th>Fournisseur(s)</th>
+                                                    <th>Véhicules</th>
+                                                    <th>Réparations</th>
+                                                    <th>Références</th>
+                                                    <th class="text-right">Montant estimé</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {% for item in groupe.items %}
+                                                <tr>
+                                                    <td class="font-semibold">{{ item.designation_nom }}</td>
+                                                    <td class="font-mono">
+                                                        {{ item.quantite_totale|floatformat:"-2"|intcomma }}{% if item.unite %} {{ item.unite }}{% endif %}
+                                                    </td>
+                                                    <td>
+                                                        {% if item.fournisseurs %}
+                                                            <div class="flex flex-wrap gap-1">
+                                                                {% for fournisseur in item.fournisseurs %}
+                                                                    <span class="badge badge-outline">{{ fournisseur }}</span>
+                                                                {% endfor %}
+                                                            </div>
+                                                        {% else %}
+                                                            <span class="text-base-content/50">-</span>
+                                                        {% endif %}
+                                                    </td>
+                                                    <td><div class="text-sm">{{ item.vehicules|join:", " }}</div></td>
+                                                    <td><div class="text-sm">{{ item.reparations|join:", " }}</div></td>
+                                                    <td><div class="text-sm">{{ item.references|join:", " }}</div></td>
+                                                    <td class="text-right font-mono">{{ item.montant_total|floatformat:0|intcomma }} Ar</td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center text-base-content/50 py-8">
+                        Aucune commande de réparation Ã  regrouper
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div id="tab-pieces" class="tab-content hidden">
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body space-y-6">
+                <h2 class="card-title">
+                    <i class="fas fa-toolbox text-warning mr-2"></i>
+                    Pièces véhicules
+                </h2>
+
+                <div>
+                    <h3 class="text-lg font-semibold mb-2">Achats de pièces</h3>
+                    {% regroup achats_pieces by base_group as achats_groupes %}
+                    {% if achats_groupes %}
+                        <div class="space-y-4">
+                            {% for groupe in achats_groupes %}
+                                <div class="collapse collapse-arrow bg-base-200">
+                                    <input type="checkbox" class="peer" checked>
+                                    <div class="collapse-title text-lg font-semibold flex items-center gap-2">
+                                        <i class="fas fa-warehouse text-base-content/70"></i>
+                                        <span>{{ groupe.grouper }}</span>
+                                        <span class="text-sm text-base-content/60">({{ groupe.list|length }})</span>
+                                    </div>
+                                    <div class="collapse-content">
+                                        <div class="overflow-x-auto mt-2">
+                                            <table class="table table-zebra w-full">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Date</th>
+                                                        <th>Référence</th>
+                                                        <th>Désignation</th>
+                                                        <th>Quantité</th>
+                                                        <th>Prix unitaire</th>
+                                                        <th>Statut</th>
+                                                        <th>Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {% for item in groupe.list %}
+                                                    <tr>
+                                                        <td>{{ item.purchase.purchase_date|date:"d/m/Y" }}</td>
+                                                        <td>{{ item.purchase.purchase_number }}</td>
+                                                        <td>{{ item.designation.nom }}</td>
+                                                        <td class="font-mono">{{ item.quantity_ordered|floatformat:0|intcomma }}</td>
+                                                        <td class="font-mono">{{ item.unit_price|floatformat:0|intcomma }} Ar</td>
+                                                        <td>
+                                                            <span class="badge badge-ghost">{{ item.purchase.get_purchase_status_display }}</span>
+                                                        </td>
+                                                        <td>
+                                                            {% if is_directeur_user or user.is_superuser %}
+                                                                <button
+                                                                    onclick="deleteAchatPiece('{{ item.id }}', '{{ item.purchase.purchase_number|escapejs }}', '{{ item.designation.nom|escapejs }}')"
+                                                                    class="btn btn-ghost btn-xs text-error"
+                                                                    title="Supprimer la ligne d'achat">
+                                                                    <i class="fas fa-trash"></i>
+                                                                </button>
+                                                            {% else %}
+                                                                <span class="text-base-content/40">-</span>
+                                                            {% endif %}
+                                                        </td>
+                                                    </tr>
+                                                    {% endfor %}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="text-center text-base-content/50 py-6">
+                            Aucun achat de pièces
+                        </div>
+                    {% endif %}
+                </div>
+
+                <div>
+                    <h3 class="text-lg font-semibold mb-2">Utilisations de pièces</h3>
+                    {% regroup utilisations_pieces by base_group as utilisations_groupes %}
+                    {% if utilisations_groupes %}
+                        <div class="space-y-4">
+                            {% for groupe in utilisations_groupes %}
+                                <div class="collapse collapse-arrow bg-base-200">
+                                    <input type="checkbox" class="peer" checked>
+                                    <div class="collapse-title text-lg font-semibold flex items-center gap-2">
+                                        <i class="fas fa-warehouse text-base-content/70"></i>
+                                        <span>{{ groupe.grouper }}</span>
+                                        <span class="text-sm text-base-content/60">({{ groupe.list|length }})</span>
+                                    </div>
+                                    <div class="collapse-content">
+                                        <div class="overflow-x-auto mt-2">
+                                            <table class="table table-zebra w-full">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Date</th>
+                                                        <th>Véhicule</th>
+                                                        <th>Pièce</th>
+                                                        <th>Quantité</th>
+                                                        <th>Magasin</th>
+                                                        <th>Employé</th>
+                                                        <th>Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {% for utilisation in groupe.list %}
+                                                    <tr>
+                                                        <td>{{ utilisation.date_utilisation|date:"d/m/Y" }}</td>
+                                                        <td class="font-semibold">{{ utilisation.vehicule.immatriculation }}</td>
+                                                        <td>{{ utilisation.designation.nom }}</td>
+                                                        <td class="font-mono">{{ utilisation.quantite|floatformat:0|intcomma }}</td>
+                                                        <td>{{ utilisation.magasin.nom_magasin|default:"-" }}</td>
+                                                        <td>
+                                                            {% if utilisation.employe %}
+                                                                <span class="badge badge-info">
+                                                                    {{ utilisation.employe.surnom|default:utilisation.employe.nom_complet }}
+                                                                </span>
+                                                            {% else %}
+                                                                <span class="text-base-content/50">-</span>
+                                                            {% endif %}
+                                                        </td>
+                                                        <td>
+                                                            {% if is_directeur_user or user.is_superuser %}
+                                                                <button
+                                                                    onclick="deleteUtilisationPiece('{{ utilisation.id }}', '{{ utilisation.vehicule.immatriculation|escapejs }}', '{{ utilisation.designation.nom|escapejs }}')"
+                                                                    class="btn btn-ghost btn-xs text-error"
+                                                                    title="Supprimer l'utilisation">
+                                                                    <i class="fas fa-trash"></i>
+                                                                </button>
+                                                            {% else %}
+                                                                <span class="text-base-content/40">-</span>
+                                                            {% endif %}
+                                                        </td>
+                                                    </tr>
+                                                    {% endfor %}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="text-center text-base-content/50 py-6">
+                            Aucune utilisation de pièces
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    </div>
+
+    <!-- Tab Content: Utilisations personnelles -->
+    <div id="tab-utilisations-perso" class="tab-content hidden">
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                    <h2 class="card-title">
+                        <i class="fas fa-user-shield text-secondary mr-2"></i>
+                        Utilisations personnelles
+                    </h2>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="openUtilisationPersoModal()">
+                        <i class="fas fa-plus mr-2"></i>Nouvelle demande
+                    </button>
+                </div>
+
+                <div class="overflow-x-auto mt-4">
+                    <table class="table table-zebra w-full">
+                        <thead>
+                            <tr>
+                                <th>Véhicule</th>
+                                <th>Employé</th>
+                                <th>Période</th>
+                                <th>Statut</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% if utilisations_perso %}
+                                {% for u in utilisations_perso %}
+                                    <tr>
+                                        <td class="font-semibold">{{ u.vehicule.immatriculation }}</td>
+                                        <td>{{ u.employe.nom_complet }}</td>
+                                        <td>{{ u.date_debut|date:"d/m/Y" }} → {{ u.date_fin|date:"d/m/Y" }}</td>
+                                        <td><span class="badge badge-ghost">{{ u.get_statut_display }}</span></td>
+                                        <td>
+                                            <div class="flex flex-wrap gap-1">
+                                                <a href="{% url 'inventory:utilisation_perso_pdf' u.id %}" class="btn btn-ghost btn-xs" title="PDF">
+                                                    <i class="fas fa-print"></i>
+                                                </a>
+                                                {% if is_directeur_user and u.statut == 'demande' %}
+                                                    <button class="btn btn-ghost btn-xs text-success" onclick="decideUtilisationPerso('{{ u.id }}', true)">Approuver</button>
+                                                    <button class="btn btn-ghost btn-xs text-error" onclick="decideUtilisationPerso('{{ u.id }}', false)">Refuser</button>
+                                                {% endif %}
+                                                {% if current_employe_id and u.employe_id == current_employe_id %}
+                                                    {% if u.statut == 'approuvee' %}
+                                                        <button class="btn btn-ghost btn-xs text-info" onclick="openPersoCarburantModal('{{ u.id }}', 'avant')">Carburant avant</button>
+                                                    {% elif u.statut == 'en_cours' %}
+                                                        <button class="btn btn-ghost btn-xs text-warning" onclick="openPersoCarburantModal('{{ u.id }}', 'apres')">Retour + carburant</button>
+                                                    {% endif %}
+                                                {% endif %}
+                                                {% if is_chef_user and u.statut == 'retour_soumis' %}
+                                                    <button class="btn btn-ghost btn-xs text-primary" onclick="validerRetourPerso('{{ u.id }}')">Valider retour</button>
+                                                {% endif %}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            {% else %}
+                                <tr><td colspan="5" class="text-center text-base-content/60">Aucune demande</td></tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Demande utilisation perso -->
+    <dialog id="utilisationPersoModal" class="modal">
+        <div class="modal-box w-11/12 max-w-xl">
+            <h3 class="font-bold text-lg mb-4">Nouvelle demande d'utilisation perso</h3>
+            <form id="formUtilisationPerso" class="space-y-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Véhicule *</span></label>
+                    <select name="vehicule_id" class="select select-bordered" required>
+                        <option value="">-- Sélectionner --</option>
+                        {% for v in vehicules %}
+                            <option value="{{ v.id }}">{{ v.immatriculation }} - {{ v.marque }} {{ v.modele }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% if request.user.is_staff %}
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Employé</span></label>
+                    <select name="employe_id" class="select select-bordered">
+                        <option value="">-- Utiliser l'employé connecté --</option>
+                        {% for e in employes %}
+                            <option value="{{ e.id }}">{{ e.nom_complet }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Date début *</span></label>
+                        <input type="date" name="date_debut" class="input input-bordered" required>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Date fin *</span></label>
+                        <input type="date" name="date_fin" class="input input-bordered" required>
+                    </div>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Motif</span></label>
+                    <textarea name="motif" class="textarea textarea-bordered"></textarea>
+                </div>
+                <div class="form-control">
+                    <label class="label cursor-pointer justify-start gap-3">
+                        <input type="checkbox" name="regles_acceptees" class="checkbox checkbox-primary">
+                        <span class="label-text">J'accepte les règles d'utilisation</span>
+                    </label>
+                </div>
+                <div class="form-control">
+                    <label class="label cursor-pointer justify-start gap-3">
+                        <input type="checkbox" name="casque_obligatoire" class="checkbox checkbox-primary">
+                        <span class="label-text">Casque obligatoire pour conducteur et passagers</span>
+                    </label>
+                </div>
+                <div class="modal-action">
+                    <button type="button" class="btn" onclick="document.getElementById('utilisationPersoModal').close()">Annuler</button>
+                    <button type="submit" class="btn btn-primary">Créer</button>
+                </div>
+            </form>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <!-- Modal: Carburant utilisation perso -->
+    <dialog id="utilisationPersoCarburantModal" class="modal">
+        <div class="modal-box w-11/12 max-w-xl">
+            <h3 class="font-bold text-lg mb-4" id="persoCarburantTitle">Carburant</h3>
+            <form id="formUtilisationPersoCarburant" class="space-y-4">
+                <input type="hidden" id="perso-usage-id" name="usage_id">
+                <input type="hidden" id="perso-usage-mode" name="mode">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Source carburant</span></label>
+                    <select name="carburant_source_type" id="perso_carburant_source_type" class="select select-bordered" onchange="toggleCarburantSourcePerso()">
+                        <option value="">-- Sélectionner --</option>
+                        <option value="achat">Achat fournisseur</option>
+                        <option value="stock">Stock magasin</option>
+                    </select>
+                </div>
+                <div id="perso-carburant-achat-fields" class="form-control hidden">
+                    <label class="label"><span class="label-text">Achat carburant (optionnel)</span></label>
+                    <select name="carburant_purchase_item_id" class="select select-bordered">
+                        <option value="">-- Non relié (par défaut) --</option>
+                        {% for item in achats_carburant %}
+                            <option value="{{ item.id }}">{{ item.designation.nom }} - {{ item.purchase.purchase_number }}</option>
+                        {% endfor %}
+                    </select>
+                    <p class="text-xs text-base-content/70 mt-1">Si l'achat compta n'est pas encore saisi, laissez vide.</p>
+                </div>
+                <div id="perso-carburant-stock-fields" class="grid grid-cols-2 gap-4 hidden">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Magasin</span></label>
+                        <select name="carburant_magasin_id" class="select select-bordered">
+                            <option value="">-- Sélectionner --</option>
+                            {% for m in magasins %}
+                                <option value="{{ m.id }}">{{ m.nom_magasin }}{% if m.base %} ({{ m.base.nom_base }}){% endif %}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Carburant</span></label>
+                        <select name="carburant_designation_id" class="select select-bordered">
+                            <option value="">-- Sélectionner --</option>
+                            {% for d in carburant_designations %}
+                                <option value="{{ d.id }}">{{ d.nom }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Quantité (L)</span></label>
+                        <input type="number" name="carburant_quantite" class="input input-bordered" step="0.01" min="0">
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Montant (Ar)</span></label>
+                        <input type="number" name="carburant_montant" class="input input-bordered" step="0.01" min="0">
+                    </div>
+                </div>
+                <div class="modal-action">
+                    <button type="button" class="btn" onclick="document.getElementById('utilisationPersoCarburantModal').close()">Annuler</button>
+                    <button type="submit" class="btn btn-primary">Enregistrer</button>
+                </div>
+            </form>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <!-- Modal: Créer Véhicule -->
+    <dialog id="createVehiculeModal" class="modal">
+    <div class="modal-box w-11/12 max-w-3xl max-h-[85vh] overflow-y-auto">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-motorcycle text-primary mr-2"></i>Nouveau Véhicule
+        </h3>
+
+        <form id="formCreateVehicule" class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Type -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Type de véhicule *</span></label>
+                    <select name="type_vehicule" class="select select-bordered" required>
+                        <option value="">-- Sélectionner --</option>
+                        <option value="voiture">Voiture</option>
+                        <option value="moto">Moto</option>
+                    </select>
+                </div>
+
+                <!-- Immatriculation -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Immatriculation *</span></label>
+                    <input type="text" name="immatriculation" class="input input-bordered" required
+                           placeholder="Ex: 1234 TAA">
+                </div>
+
+                <!-- Marque -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Marque *</span></label>
+                    <select name="marque" class="select select-bordered" required>
+                        <option value="">-- Sélectionner --</option>
+                        <option value="KAWASAKI">KAWASAKI</option>
+                        <option value="HONDA">HONDA</option>
+                        <option value="YAMAHA">YAMAHA</option>
+                        <option value="TOYOTA">TOYOTA</option>
+                    </select>
+                </div>
+
+                <!-- Modèle -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Modèle *</span></label>
+                    <select name="modele" class="select select-bordered" required>
+                        <option value="">-- Sélectionner --</option>
+                        <option value="KLX150">KLX150</option>
+                        <option value="XL125">XL125</option>
+                        <option value="CRUX">CRUX</option>
+                        <option value="XTZ125">XTZ125</option>
+                        <option value="LAND CRUISER">LAND CRUISER</option>
+                        <option value="HILUX">HILUX</option>
+                    </select>
+                </div>
+
+                <!-- Date mise en circulation -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Date de mise en circulation *</span></label>
+                    <input type="date" name="date_mise_circulation" class="input input-bordered" required>
+                </div>
+
+                <!-- Année fabrication -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Année de fabrication</span></label>
+                    <input type="number" name="annee_fabrication" class="input input-bordered"
+                           placeholder="Ex: 2020" min="1950" max="2099">
+                </div>
+
+                <!-- Numéro châssis -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Numéro de châssis</span></label>
+                    <input type="text" name="numero_chassis" class="input input-bordered"
+                           placeholder="Ex: JTDXXX...">
+                </div>
+
+                <!-- Couleur -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Couleur</span></label>
+                    <select name="couleur" class="select select-bordered">
+                        <option value="">-- Sélectionner --</option>
+                        <option value="Noir">Noir</option>
+                        <option value="Bleu">Bleu</option>
+                        <option value="Blanc">Blanc</option>
+                        <option value="Rouge">Rouge</option>
+                        <option value="Vert">Vert</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Carte grise / carte rose (photo ou scan)</span></label>
+                <input type="file" name="carte_grise" class="file-input file-input-bordered"
+                       accept="image/*,application/pdf">
+                <span class="text-xs text-base-content/60 mt-1">Formats acceptés : images ou PDF.</span>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Photo du véhicule</span></label>
+                <div class="flex flex-col gap-2">
+                    <input type="file" name="photo" class="file-input file-input-bordered"
+                           accept="image/*" capture="environment" onchange="previewImage(this, 'create-photo-preview-img', 'create-photo-preview-container')">
+                    <div id="create-photo-preview-container" class="hidden mt-2">
+                        <img id="create-photo-preview-img" class="w-32 aspect-video object-cover rounded-lg border border-base-300 shadow-sm">
+                    </div>
+                    <span class="text-xs text-base-content/60">Capturez une photo avec l'appareil ou choisissez un fichier.</span>
+                </div>
+            </div>
+
+            <!-- Compteur fonctionnel -->
+            <div class="form-control">
+                <label class="label cursor-pointer justify-start gap-4">
+                    <input type="checkbox" name="compteur_fonctionnel" class="checkbox checkbox-primary" checked>
+                    <span class="label-text">Compteur kilométrique fonctionnel</span>
+                </label>
+            </div>
+
+            <!-- Notes -->
+            <div class="form-control">
+                <label class="label"><span class="label-text">Notes</span></label>
+                <textarea name="notes" class="textarea textarea-bordered h-20"
+                          placeholder="Notes ou observations..."></textarea>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('createVehiculeModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal: Modifier Véhicule -->
+<dialog id="editVehiculeModal" class="modal">
+    <div class="modal-box w-11/12 max-w-3xl max-h-[85vh] overflow-y-auto">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-pen text-primary mr-2"></i>Modifier Véhicule
+        </h3>
+
+        <form id="formEditVehicule" class="space-y-4" data-update-url="">
+            <input type="hidden" id="edit-vehicule-id" name="vehicule_id">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Type -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Type de véhicule *</span></label>
+                    <select name="type_vehicule" class="select select-bordered" required>
+                        <option value="">-- Sélectionner --</option>
+                        <option value="voiture">Voiture</option>
+                        <option value="moto">Moto</option>
+                    </select>
+                </div>
+
+                <!-- Immatriculation -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Immatriculation *</span></label>
+                    <input type="text" name="immatriculation" class="input input-bordered" required>
+                </div>
+
+                <!-- Marque -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Marque *</span></label>
+                    <select name="marque" class="select select-bordered" required>
+                        <option value="">-- Sélectionner --</option>
+                        <option value="KAWASAKI">KAWASAKI</option>
+                        <option value="HONDA">HONDA</option>
+                        <option value="YAMAHA">YAMAHA</option>
+                        <option value="TOYOTA">TOYOTA</option>
+                    </select>
+                </div>
+
+                <!-- Modèle -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Modèle *</span></label>
+                    <select name="modele" class="select select-bordered" required>
+                        <option value="">-- Sélectionner --</option>
+                        <option value="KLX150">KLX150</option>
+                        <option value="XL125">XL125</option>
+                        <option value="CRUX">CRUX</option>
+                        <option value="XTZ125">XTZ125</option>
+                        <option value="LAND CRUISER">LAND CRUISER</option>
+                        <option value="HILUX">HILUX</option>
+                    </select>
+                </div>
+
+                <!-- Date mise en circulation -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Date de mise en circulation *</span></label>
+                    <input type="date" name="date_mise_circulation" class="input input-bordered" required>
+                </div>
+
+                <!-- Année fabrication -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Année de fabrication</span></label>
+                    <input type="number" name="annee_fabrication" class="input input-bordered"
+                           min="1950" max="2099">
+                </div>
+
+                <!-- Numéro châssis -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Numéro de châssis</span></label>
+                    <input type="text" name="numero_chassis" class="input input-bordered">
+                </div>
+
+                <!-- Couleur -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Couleur</span></label>
+                    <select name="couleur" class="select select-bordered">
+                        <option value="">-- Sélectionner --</option>
+                        <option value="Noir">Noir</option>
+                        <option value="Bleu">Bleu</option>
+                        <option value="Blanc">Blanc</option>
+                        <option value="Rouge">Rouge</option>
+                        <option value="Vert">Vert</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Carte grise / carte rose (photo ou scan)</span></label>
+                <input type="file" name="carte_grise" class="file-input file-input-bordered"
+                       accept="image/*,application/pdf">
+                <div id="edit-carte-grise-current" class="text-xs text-base-content/60 mt-1"></div>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Photo du véhicule</span></label>
+                <div id="edit-photo-container" class="space-y-2">
+                    <div id="edit-photo-preview" class="hidden">
+                        <div class="relative w-48 aspect-video bg-base-300 rounded-lg overflow-hidden">
+                            <img id="edit-photo-img" src="" alt="Photo véhicule" class="w-full h-full object-cover">
+                            <button type="button" onclick="markPhotoForDeletion()" 
+                                    class="btn btn-circle btn-error btn-xs absolute top-1 right-1" title="Supprimer">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <input type="file" name="photo" class="file-input file-input-bordered w-full"
+                           accept="image/*" capture="environment" onchange="previewImage(this, 'edit-photo-img', 'edit-photo-preview')">
+                    <input type="hidden" name="delete_photo" id="edit-delete-photo" value="0">
+                    <span class="text-xs text-base-content/60">Capturez une nouvelle photo pour remplacer l'actuelle.</span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label cursor-pointer justify-start gap-4">
+                        <input type="checkbox" name="compteur_fonctionnel" class="checkbox checkbox-primary">
+                        <span class="label-text">Compteur kilométrique fonctionnel</span>
+                    </label>
+                </div>
+                <div class="form-control">
+                    <label class="label cursor-pointer justify-start gap-4">
+                        <input type="checkbox" name="actif" class="checkbox checkbox-success">
+                        <span class="label-text">Véhicule actif</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Notes</span></label>
+                <textarea name="notes" class="textarea textarea-bordered h-20"></textarea>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('editVehiculeModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save mr-2"></i>Mettre à jour
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal: Affecter Véhicule -->
+<dialog id="affectationModal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-user-plus text-info mr-2"></i>Affecter un véhicule
+        </h3>
+        <p class="text-sm text-base-content/70 mb-4">Véhicule: <span id="affectation-vehicule-nom" class="font-bold"></span></p>
+
+        <form id="formAffectation" class="space-y-4">
+            <input type="hidden" id="affectation-vehicule-id" name="vehicule_id">
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Employé *</span></label>
+                <select name="employe_id" class="select select-bordered" required>
+                    <option value="">-- Sélectionner --</option>
+                    {% for employe in employes %}
+                        <option value="{{ employe.id }}">{{ employe.nom_complet }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Date de début *</span></label>
+                <input type="date" name="date_debut" class="input input-bordered" required>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Notes</span></label>
+                <textarea name="notes" class="textarea textarea-bordered h-16"
+                          placeholder="Notes..."></textarea>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('affectationModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-info">
+                    <i class="fas fa-save mr-2"></i>Affecter
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal: Relevé Compteur -->
+<dialog id="releveModal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-tachometer-alt text-success mr-2"></i>Nouveau Relevé
+        </h3>
+        <p class="text-sm text-base-content/70 mb-4">Véhicule: <span id="releve-vehicule-nom" class="font-bold"></span></p>
+
+        <form id="formReleve" class="space-y-4">
+            <input type="hidden" id="releve-vehicule-id" name="vehicule_id">
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Date du relevé *</span></label>
+                <input type="date" name="date_releve" class="input input-bordered" required>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Employé</span></label>
+                <select name="employe_id" class="select select-bordered">
+                    <option value="">-- Sélectionner --</option>
+                    {% for employe in employes %}
+                        <option value="{{ employe.id }}">{{ employe.nom_complet }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-control">
+                <label class="label cursor-pointer justify-start gap-4">
+                    <input type="checkbox" id="saisie_manuelle" name="saisie_manuelle" class="checkbox checkbox-warning"
+                           onchange="toggleSaisieManuelle()">
+                    <span class="label-text">Compteur en panne (saisie manuelle)</span>
+                </label>
+            </div>
+
+            <div id="index-field" class="form-control">
+                <label class="label"><span class="label-text">Index compteur (km)</span></label>
+                <input type="number" name="index_compteur" class="input input-bordered"
+                       step="0.01" min="0" placeholder="Ex: 125000">
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Distance parcourue (km) *</span></label>
+                <input type="number" name="distance_parcourue" class="input input-bordered" required
+                       step="0.01" min="0" placeholder="Ex: 150">
+            </div>
+
+            <div class="divider">Carburant (optionnel)</div>
+            <div class="form-control">
+                <label class="label"><span class="label-text">Source carburant</span></label>
+                <select name="carburant_source_type" id="carburant_source_type" class="select select-bordered" onchange="toggleCarburantSource()">
+                    <option value="">-- Aucun --</option>
+                    <option value="achat">Achat fournisseur</option>
+                    <option value="stock">Stock magasin</option>
+                </select>
+            </div>
+
+            <div id="carburant-achat-fields" class="form-control hidden">
+                <label class="label"><span class="label-text">Achat carburant (optionnel)</span></label>
+                <select name="carburant_purchase_item_id" class="select select-bordered">
+                    <option value="">-- Non relié (par défaut) --</option>
+                    {% for item in achats_carburant %}
+                        <option value="{{ item.id }}">
+                            {{ item.designation.nom }} - {{ item.purchase.purchase_number }}{% if item.purchase.fournisseur %} ({{ item.purchase.fournisseur.nom_fournisseur }}){% endif %}
+                        </option>
+                    {% endfor %}
+                </select>
+                <p class="text-xs text-base-content/70 mt-1">Si l'achat compta n'est pas encore saisi, laissez vide.</p>
+            </div>
+
+            <div id="carburant-stock-fields" class="grid grid-cols-2 gap-4 hidden">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Magasin</span></label>
+                    <select name="carburant_magasin_id" class="select select-bordered">
+                        <option value="">-- Sélectionner --</option>
+                        {% for m in magasins %}
+                            <option value="{{ m.id }}">{{ m.nom_magasin }}{% if m.base %} ({{ m.base.nom_base }}){% endif %}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Carburant</span></label>
+                    <select name="carburant_designation_id" class="select select-bordered">
+                        <option value="">-- Sélectionner --</option>
+                        {% for d in carburant_designations %}
+                            <option value="{{ d.id }}">{{ d.nom }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Quantité (L)</span></label>
+                    <input type="number" name="carburant_quantite" class="input input-bordered" step="0.01" min="0">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Montant (Ar)</span></label>
+                    <input type="number" name="carburant_montant" class="input input-bordered" step="0.01" min="0">
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Lieu de départ</span></label>
+                    <input type="text" name="lieu_depart" id="releve-lieu-depart" class="input input-bordered"
+                           list="villagesList" placeholder="Ex: Antananarivo">
+                    <button type="button" class="btn btn-xs btn-ghost mt-1" onclick="fillFromGPS('depart')">
+                        <i class="fas fa-location-crosshairs mr-1"></i>Utiliser GPS
+                    </button>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Lieu d'arrivée</span></label>
+                    <input type="text" name="lieu_arrivee" id="releve-lieu-arrivee" class="input input-bordered"
+                           list="villagesList" placeholder="Ex: Ambanja">
+                    <button type="button" class="btn btn-xs btn-ghost mt-1" onclick="fillFromGPS('arrivee')">
+                        <i class="fas fa-location-crosshairs mr-1"></i>Utiliser GPS
+                    </button>
+                </div>
+            </div>
+
+            <datalist id="villagesList"></datalist>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Photo tableau de bord (index compteur)</span></label>
+                <div class="flex flex-col md:flex-row gap-2">
+                    <input type="file" id="photo-compteur-input" name="photo_compteur" accept="image/*" capture="environment" class="file-input file-input-bordered flex-1">
+                    <button type="button" class="btn btn-info" onclick="openPhotoCompteurCamera()">
+                        <i class="fas fa-camera mr-2"></i>Prendre photo
+                    </button>
+                </div>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Notes</span></label>
+                <textarea name="notes" class="textarea textarea-bordered h-16"></textarea>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('releveModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-success">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal: Réparation -->
+<dialog id="reparationModal" class="modal">
+    <div class="modal-box w-11/12 max-w-2xl max-h-[85vh] overflow-y-auto">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-wrench text-warning mr-2"></i>Nouvelle Réparation
+        </h3>
+        <p class="text-sm text-base-content/70 mb-4">Véhicule: <span id="reparation-vehicule-nom" class="font-bold"></span></p>
+
+        <form id="formReparation" class="space-y-4">
+            <input type="hidden" id="reparation-vehicule-id" name="vehicule_id">
+            <input type="hidden" id="reparation-id" name="reparation_id">
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Réparation planifiée</span></label>
+                <select id="reparation-planifiee-select"
+                        class="select select-bordered"
+                        data-detail-url-template="{% url 'inventory:api_reparation_planifiee_detail' '00000000-0000-0000-0000-000000000000' %}"
+                        onchange="loadPlanifiedRepair()">
+                    <option value="">-- Aucune --</option>
+                    {% for rep in reparations %}
+                        {% if rep.statut != 'terminee' and rep.statut != 'annulee' %}
+                            <option value="{{ rep.id }}">
+                                {{ rep.vehicule.immatriculation }} - {{ rep.libelle }}{% if rep.date_prevue %} ({{ rep.date_prevue|date:"d/m/Y" }}){% endif %}
+                            </option>
+                        {% endif %}
+                    {% endfor %}
+                </select>
+                <span class="text-xs text-base-content/60 mt-1">Sélectionner une réparation planifiée pour pré-remplir.</span>
+            </div>
+
+              <div class="form-control">
+                  <label class="label"><span class="label-text">Mode *</span></label>
+                  <div class="flex flex-wrap gap-4">
+                      <label class="label cursor-pointer justify-start gap-3">
+                          <input type="radio" name="mode" value="valider" class="radio radio-primary" checked onchange="updateReparationMode()">
+                          <span class="label-text">Valider la réparation</span>
+                      </label>
+                      <label class="label cursor-pointer justify-start gap-3">
+                          <input type="radio" name="mode" value="planifier" class="radio radio-primary" onchange="updateReparationMode()">
+                          <span class="label-text">Planifier + commander des pièces</span>
+                      </label>
+                  </div>
+              </div>
+
+              <div class="form-control">
+                  <label class="label"><span class="label-text">Fournisseur (mécanicien)</span></label>
+                  <select name="fournisseur_id" class="select select-bordered">
+                      <option value="">-- Sélectionner --</option>
+                      {% for fournisseur in fournisseurs_mecaniciens %}
+                          <option value="{{ fournisseur.id }}">{{ fournisseur.nom_fournisseur }}</option>
+                      {% endfor %}
+                  </select>
+              </div>
+
+              <div id="section-planification" class="space-y-4 hidden">
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div class="form-control">
+                          <label class="label"><span class="label-text">Date prévue *</span></label>
+                          <input type="date" name="date_prevue" class="input input-bordered">
+                      </div>
+                  </div>
+
+                  <div class="form-control">
+                      <label class="label"><span class="label-text">Libellé *</span></label>
+                      <input type="text" name="libelle" class="input input-bordered" required
+                             placeholder="Ex: Vidange + Filtre">
+                  </div>
+
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div class="form-control">
+                          <label class="label"><span class="label-text">Magasin</span></label>
+                          <select name="magasin_id" class="select select-bordered">
+                              <option value="">-- Sélectionner --</option>
+                              {% for magasin in magasins %}
+                                  <option value="{{ magasin.id }}">{{ magasin.nom_magasin }}</option>
+                              {% endfor %}
+                          </select>
+                      </div>
+                  </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Demandeur</span></label>
+                        <select name="ordered_by_id" class="select select-bordered">
+                            <option value="">-- Sélectionner --</option>
+                            {% for employe in employes %}
+                                <option value="{{ employe.id }}">{{ employe.surnom|default:employe.nom_complet }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Notes commande</span></label>
+                        <input type="text" name="purchase_notes" class="input input-bordered" placeholder="Notes liées à la commande">
+                    </div>
+                </div>
+
+                <div class="form-control">
+                    <div class="flex items-center justify-between">
+                        <label class="label"><span class="label-text">Pièces à commander</span></label>
+                        <div class="flex gap-2">
+                            <a href="{% url 'inventory:purchases_list' %}?statut=commande" target="_blank" class="btn btn-sm btn-outline">
+                                <i class="fas fa-list mr-2"></i>Voir commandes
+                            </a>
+                            <button type="button" class="btn btn-sm btn-outline" onclick="addPieceCommandeRow()">
+                                <i class="fas fa-plus mr-2"></i>Ajouter
+                            </button>
+                        </div>
+                    </div>
+                    <div id="pieces-commande-container" class="space-y-2"></div>
+                </div>
+            </div>
+
+            <div id="section-validation" class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Date *</span></label>
+                        <input type="date" name="date_reparation" class="input input-bordered" required>
+                    </div>
+
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Type *</span></label>
+                        <select name="type_reparation" class="select select-bordered" required>
+                            <option value="entretien">Entretien</option>
+                            <option value="reparation">Réparation</option>
+                            <option value="revision">Révision</option>
+                            <option value="depannage">Dépannage</option>
+                            <option value="autre">Autre</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Libellé *</span></label>
+                    <input type="text" name="libelle" class="input input-bordered" required
+                           placeholder="Ex: Vidange + Filtre">
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Description détaillée</span></label>
+                    <textarea name="description" class="textarea textarea-bordered h-20"></textarea>
+                </div>
+
+                  <input type="hidden" name="nom_mecanicien" value="">
+                  <input type="hidden" name="garage" value="">
+
+                  <input type="hidden" name="pieces_utilisees" id="pieces-utilisees-hidden">
+
+                  <div class="form-control">
+                      <div class="flex items-center justify-between">
+                          <label class="label"><span class="label-text">Pièces utilisées (détail)</span></label>
+                          <div class="flex gap-2">
+                              <button type="button" class="btn btn-sm btn-outline" onclick="addPieceUtiliseeRow()">
+                                  <i class="fas fa-plus mr-2"></i>Ajouter
+                              </button>
+                          </div>
+                      </div>
+                      <div id="pieces-utilisees-container" class="space-y-2"></div>
+                      <span class="text-xs text-base-content/60">Les pièces saisies ici sont enregistrées dans le champ "Pièces utilisées".</span>
+                  </div>
+
+                <div class="grid grid-cols-3 gap-4">
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Coût pièces (Ar)</span></label>
+                        <input type="number" name="cout_pieces" class="input input-bordered"
+                               step="0.01" min="0" placeholder="0">
+                    </div>
+
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Main d'œuvre (Ar)</span></label>
+                        <input type="number" name="cout_main_oeuvre" class="input input-bordered"
+                               step="0.01" min="0" placeholder="0">
+                    </div>
+
+                    <div class="form-control">
+                        <label class="label"><span class="label-text">Index compteur (km)</span></label>
+                        <input type="number" name="index_compteur" class="input input-bordered"
+                               step="0.01" min="0">
+                    </div>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Notes</span></label>
+                    <textarea name="notes" class="textarea textarea-bordered h-16"></textarea>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="document.getElementById('reparationModal').close()">Annuler</button>
+                <button type="submit" class="btn btn-warning">
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+          <template id="piece-commande-template">
+              <div class="piece-commande-row grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
+                <div class="form-control md:col-span-2">
+                    <label class="label"><span class="label-text">Pièce</span></label>
+                    <select class="select select-bordered piece-designation">
+                        <option value="">-- Sélectionner --</option>
+                        {% for designation in pieces_designations %}
+                            <option value="{{ designation.id }}">{{ designation.nom }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Quantité</span></label>
+                    <input type="number" min="0" step="0.01" class="input input-bordered piece-quantite" placeholder="0">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Prix unitaire</span></label>
+                    <div class="flex gap-2">
+                        <input type="number" min="0" step="0.01" class="input input-bordered piece-prix" placeholder="0">
+                        <button type="button" class="btn btn-ghost text-error" onclick="removePieceRow(this)">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+              </div>
+          </template>
+          <template id="piece-utilisee-template">
+              <div class="piece-utilisee-row grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
+                  <div class="form-control md:col-span-2">
+                      <label class="label"><span class="label-text">Pièce</span></label>
+                      <select class="select select-bordered piece-utilisee-designation">
+                          <option value="">-- Sélectionner --</option>
+                          {% for designation in pieces_designations %}
+                              <option value="{{ designation.id }}">{{ designation.nom }}</option>
+                          {% endfor %}
+                      </select>
+                  </div>
+                  <div class="form-control">
+                      <label class="label"><span class="label-text">Quantité</span></label>
+                      <input type="number" min="0" step="0.01" class="input input-bordered piece-utilisee-quantite" placeholder="0">
+                  </div>
+                  <div class="form-control">
+                      <label class="label"><span class="label-text">Prix unitaire</span></label>
+                      <div class="flex gap-2">
+                          <input type="number" min="0" step="0.01" class="input input-bordered piece-utilisee-prix" placeholder="0">
+                          <button type="button" class="btn btn-ghost text-error" onclick="removePieceUtiliseeRow(this)">
+                              <i class="fas fa-trash"></i>
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          </template>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script id="lastArriveeByVehicule" type="application/json">{{ last_arrivee_by_vehicule_json|safe }}</script>
+<script>
+const VEHICULES_VIEW_KEY = 'vehicules_view_mode';
+
+function setVehiculesView(view) {
+    const showCards = view === 'cards';
+    document.querySelectorAll('.vehicules-view-table').forEach((el) => {
+        el.classList.toggle('hidden', showCards);
+    });
+    document.querySelectorAll('.vehicules-view-cards').forEach((el) => {
+        el.classList.toggle('hidden', !showCards);
+    });
+    const btnTable = document.getElementById('vehicules-view-table');
+    const btnCards = document.getElementById('vehicules-view-cards');
+    if (btnTable) btnTable.classList.toggle('btn-active', !showCards);
+    if (btnCards) btnCards.classList.toggle('btn-active', showCards);
+    try {
+        localStorage.setItem(VEHICULES_VIEW_KEY, view);
+    } catch (e) {
+        // ignore storage issues
+    }
+}
+
+function initVehiculesView() {
+    const btnTable = document.getElementById('vehicules-view-table');
+    const btnCards = document.getElementById('vehicules-view-cards');
+    if (btnTable) btnTable.addEventListener('click', () => setVehiculesView('table'));
+    if (btnCards) btnCards.addEventListener('click', () => setVehiculesView('cards'));
+
+    let preferred = null;
+    try {
+        preferred = localStorage.getItem(VEHICULES_VIEW_KEY);
+    } catch (e) {
+        preferred = null;
+    }
+    if (!preferred) {
+        preferred = window.innerWidth < 768 ? 'cards' : 'table';
+    }
+    setVehiculesView(preferred);
+}
+
+function ensureCommandesGroupeesTabButton() {
+    const tabList = document.querySelector('[role="tablist"].tabs');
+    if (!tabList || document.getElementById('tab-button-commandes-groupees')) {
+        return;
+    }
+    const button = document.createElement('a');
+    button.id = 'tab-button-commandes-groupees';
+    button.setAttribute('role', 'tab');
+    button.className = 'tab tab-sm md:tab-md';
+    button.href = '#';
+    button.innerHTML = '<i class="fas fa-layer-group mr-2"></i>Commandes groupées';
+    button.addEventListener('click', function(event) {
+        event.preventDefault();
+        switchTab('commandes-groupees');
+    });
+    const piecesButton = Array.from(tabList.querySelectorAll('.tab')).find((tab) => tab.getAttribute('onclick') === "switchTab('pieces')");
+    if (piecesButton) {
+        tabList.insertBefore(button, piecesButton);
+    } else {
+        tabList.appendChild(button);
+    }
+}
+
+// Gestion des tabs
+function switchTab(tab) {
+    // Masquer tous les contenus de tabs
+    document.getElementById('tab-vehicules').style.display = 'none';
+    document.getElementById('tab-affectations').style.display = 'none';
+    document.getElementById('tab-releves').style.display = 'none';
+    document.getElementById('tab-reparations').style.display = 'none';
+    document.getElementById('tab-commandes-groupees').style.display = 'none';
+    document.getElementById('tab-pieces').style.display = 'none';
+    document.getElementById('tab-utilisations-perso').style.display = 'none';
+
+    // Désactiver tous les tabs
+    const tabs = document.querySelectorAll('[role="tablist"] .tab');
+    tabs.forEach(t => t.classList.remove('tab-active'));
+
+    // Activer le tab sélectionné par son nom
+    tabs.forEach((t, index) => {
+        const tabName = ['vehicules', 'affectations', 'releves', 'reparations', 'commandes-groupees', 'pieces', 'utilisations-perso'][index];
+        if (tabName === tab) {
+            t.classList.add('tab-active');
+        }
+    });
+
+    // Afficher le contenu du tab sélectionné
+    const tabContent = document.getElementById('tab-' + tab);
+    if (tabContent) {
+        tabContent.style.display = 'block';
+    }
+
+    // Charger le contenu si nécessaire
+    if (tab !== 'vehicules') {
+        // TODO: Charger dynamiquement le contenu via AJAX
+        console.log('Chargement du tab:', tab);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    initVehiculesView();
+    ensureCommandesGroupeesTabButton();
+});
+
+// Ouvrir modal edition vehicule
+function openEditVehiculeModal(button) {
+    const form = document.getElementById('formEditVehicule');
+    const modal = document.getElementById('editVehiculeModal');
+    if (!form || !modal) return;
+    form.reset();
+
+    const dataset = button && button.dataset ? button.dataset : {};
+    const setVal = (selector, value) => {
+        const el = form.querySelector(selector);
+        if (el) el.value = value || '';
+    };
+
+    document.getElementById('edit-vehicule-id').value = dataset.id || '';
+    form.dataset.updateUrl = dataset.updateUrl || '';
+    setVal('select[name="type_vehicule"]', dataset.type || '');
+    setVal('input[name="immatriculation"]', dataset.immatriculation || '');
+    setVal('select[name="marque"]', dataset.marque || '');
+    setVal('select[name="modele"]', dataset.modele || '');
+    setVal('input[name="date_mise_circulation"]', dataset.date || '');
+    setVal('input[name="numero_chassis"]', dataset.numeroChassis || '');
+    setVal('select[name="couleur"]', dataset.couleur || '');
+    setVal('input[name="annee_fabrication"]', dataset.anneeFabrication || '');
+
+    const compteur = form.querySelector('input[name="compteur_fonctionnel"]');
+    if (compteur) compteur.checked = dataset.compteurFonctionnel === '1';
+    const actif = form.querySelector('input[name="actif"]');
+    if (actif) actif.checked = dataset.actif === '1';
+    const notes = form.querySelector('textarea[name="notes"]');
+    if (notes) notes.value = dataset.notes || '';
+
+    const carteInfo = document.getElementById('edit-carte-grise-current');
+    if (carteInfo) {
+        if (dataset.carteGriseUrl) {
+            carteInfo.innerHTML = `<a href="${dataset.carteGriseUrl}" target="_blank" class="link link-primary text-sm">Voir le fichier actuel</a>`;
+        } else {
+            carteInfo.textContent = 'Aucun fichier';
+        }
+    }
+
+    const photoPreview = document.getElementById('edit-photo-preview');
+    const photoImg = document.getElementById('edit-photo-img');
+    const deletePhotoInput = document.getElementById('edit-delete-photo');
+    if (photoPreview && photoImg && deletePhotoInput) {
+        deletePhotoInput.value = '0';
+        if (dataset.photoUrl) {
+            photoImg.src = dataset.photoUrl;
+            photoPreview.classList.remove('hidden');
+        } else {
+            photoImg.src = '';
+            photoPreview.classList.add('hidden');
+        }
+    }
+
+    modal.showModal();
+}
+
+function markPhotoForDeletion() {
+    const preview = document.getElementById('edit-photo-preview');
+    const input = document.getElementById('edit-delete-photo');
+    if (preview && input) {
+        preview.classList.add('hidden');
+        input.value = '1';
+    }
+}
+
+// Ouvrir modal création véhicule
+function openCreateVehiculeModal() {
+    document.getElementById('formCreateVehicule').reset();
+    document.getElementById('createVehiculeModal').showModal();
+}
+
+// Ouvrir modal affectation
+function openAffectationModal(vehiculeId, immatriculation) {
+    document.getElementById('affectation-vehicule-id').value = vehiculeId;
+    document.getElementById('affectation-vehicule-nom').textContent = immatriculation;
+    document.getElementById('formAffectation').reset();
+
+    // Date par défaut: aujourd'hui
+    const today = new Date().toISOString().split('T')[0];
+    document.querySelector('#formAffectation input[name="date_debut"]').value = today;
+
+    document.getElementById('affectationModal').showModal();
+}
+
+const lastArriveeByVehicule = JSON.parse(
+    document.getElementById('lastArriveeByVehicule')?.textContent || '{}'
+);
+
+// Ouvrir modal relevé
+function openReleveModal(vehiculeId, immatriculation, employeId) {
+    document.getElementById('releve-vehicule-id').value = vehiculeId;
+    document.getElementById('releve-vehicule-nom').textContent = immatriculation;
+    document.getElementById('formReleve').reset();
+
+    // Date par défaut: aujourd'hui
+    const today = new Date().toISOString().split('T')[0];
+    document.querySelector('#formReleve input[name="date_releve"]').value = today;
+    if (employeId) {
+        const employeSelect = document.querySelector('#formReleve select[name="employe_id"]');
+        if (employeSelect) employeSelect.value = employeId;
+    }
+    const lastArrivee = lastArriveeByVehicule[vehiculeId] || '';
+    if (lastArrivee) {
+        const departInput = document.getElementById('releve-lieu-depart');
+        if (departInput && !departInput.value) {
+            departInput.value = lastArrivee;
+        }
+    }
+    toggleCarburantSource();
+
+    document.getElementById('releveModal').showModal();
+}
+
+// Ouvrir modal réparation
+function openReparationModal(vehiculeId, immatriculation) {
+    document.getElementById('reparation-vehicule-id').value = vehiculeId;
+    document.getElementById('reparation-vehicule-nom').textContent = immatriculation;
+    document.getElementById('formReparation').reset();
+    document.getElementById('reparation-id').value = '';
+    const planSelect = document.getElementById('reparation-planifiee-select');
+    if (planSelect) planSelect.value = '';
+    const planifierRadio = document.querySelector('input[name="mode"][value="planifier"]');
+    if (planifierRadio) planifierRadio.disabled = false;
+    document.getElementById('pieces-commande-container').innerHTML = '';
+    const piecesUtilisees = document.getElementById('pieces-utilisees-container');
+    if (piecesUtilisees) piecesUtilisees.innerHTML = '';
+
+    // Date par défaut: aujourd'hui
+    const today = new Date().toISOString().split('T')[0];
+    document.querySelector('#formReparation input[name="date_reparation"]').value = today;
+    const datePrevue = document.querySelector('#formReparation input[name="date_prevue"]');
+    if (datePrevue) datePrevue.value = today;
+    updateReparationMode();
+
+    document.getElementById('reparationModal').showModal();
+}
+
+async function deleteVehicule(vehiculeId, immatriculation) {
+    if (!confirm(`Supprimer le véhicule "${immatriculation}" ?\n\nCette action est réservée au Directeur et ne fonctionne que si le véhicule n'a aucun historique.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/stocks/vehicules/api/${vehiculeId}/delete/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({})
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            alert(data.message || 'Véhicule supprimé');
+            window.location.reload();
+            return;
+        }
+
+        if (data.details) {
+            const resume = Object.entries(data.details)
+                .filter(([, count]) => Number(count) > 0)
+                .map(([label, count]) => `${label}: ${count}`)
+                .join('\n');
+            alert(`${data.error}\n\n${resume}`);
+            return;
+        }
+
+        alert(data.error || 'Suppression impossible');
+    } catch (error) {
+        console.error('Erreur suppression véhicule:', error);
+        alert('Erreur réseau lors de la suppression du véhicule');
+    }
+}
+
+async function deleteAffectation(affectationId, immatriculation, employeNom) {
+    if (!confirm(`Supprimer l'affectation du véhicule "${immatriculation}" à "${employeNom}" ?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/stocks/vehicules/api/affectation/${affectationId}/delete/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({})
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            alert(data.message || 'Affectation supprimée');
+            window.location.reload();
+            return;
+        }
+
+        alert(data.error || 'Suppression impossible');
+    } catch (error) {
+        console.error('Erreur suppression affectation:', error);
+        alert('Erreur réseau lors de la suppression de l\'affectation');
+    }
+}
+
+async function deleteReparation(reparationId, immatriculation, libelle) {
+    if (!confirm(`Supprimer la réparation "${libelle}" du véhicule "${immatriculation}" ?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/stocks/vehicules/api/reparations/${reparationId}/delete/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({})
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            alert(data.message || 'Réparation supprimée');
+            window.location.reload();
+            return;
+        }
+
+        alert(data.error || 'Suppression impossible');
+    } catch (error) {
+        console.error('Erreur suppression réparation:', error);
+        alert('Erreur réseau lors de la suppression de la réparation');
+    }
+}
+
+async function deleteReleve(releveId, immatriculation, dateLabel) {
+    if (!confirm(`Supprimer le relevé du véhicule "${immatriculation}" du ${dateLabel} ?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/stocks/vehicules/api/releves/${releveId}/delete/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({})
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            alert(data.message || 'Relevé supprimé');
+            window.location.reload();
+            return;
+        }
+
+        alert(data.error || 'Suppression impossible');
+    } catch (error) {
+        console.error('Erreur suppression relevé:', error);
+        alert('Erreur réseau lors de la suppression du relevé');
+    }
+}
+
+async function deleteAchatPiece(purchaseItemId, purchaseNumber, designationNom) {
+    if (!confirm(`Supprimer la ligne d'achat "${designationNom}" de la commande "${purchaseNumber}" ?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/stocks/vehicules/api/pieces/achats/${purchaseItemId}/delete/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({})
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            alert(data.message || 'Ligne d\'achat supprimée');
+            window.location.reload();
+            return;
+        }
+
+        alert(data.error || 'Suppression impossible');
+    } catch (error) {
+        console.error('Erreur suppression achat pièce:', error);
+        alert('Erreur réseau lors de la suppression de la ligne d\'achat');
+    }
+}
+
+async function deleteUtilisationPiece(utilisationId, immatriculation, designationNom) {
+    if (!confirm(`Supprimer l'utilisation de "${designationNom}" pour le véhicule "${immatriculation}" ?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/stocks/vehicules/api/pieces/utilisations/${utilisationId}/delete/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({})
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            alert(data.message || 'Utilisation supprimée');
+            window.location.reload();
+            return;
+        }
+
+        alert(data.error || 'Suppression impossible');
+    } catch (error) {
+        console.error('Erreur suppression utilisation pièce:', error);
+        alert('Erreur réseau lors de la suppression de l\'utilisation');
+    }
+}
+
+// Mode planification/validation
+function updateReparationMode() {
+    const mode = document.querySelector('input[name="mode"]:checked')?.value || 'valider';
+    const sectionPlanif = document.getElementById('section-planification');
+    const sectionValid = document.getElementById('section-validation');
+    const datePrevue = document.querySelector('#formReparation input[name="date_prevue"]');
+    const dateRep = document.querySelector('#formReparation input[name="date_reparation"]');
+    const typeRep = document.querySelector('#formReparation select[name="type_reparation"]');
+
+    const toggleSectionFields = (section, enabled) => {
+        if (!section) return;
+        section.classList.toggle('hidden', !enabled);
+        section.querySelectorAll('input, select, textarea').forEach((el) => {
+            el.disabled = !enabled;
+        });
+    };
+
+    if (mode === 'planifier') {
+        toggleSectionFields(sectionPlanif, true);
+        toggleSectionFields(sectionValid, false);
+        if (datePrevue) datePrevue.required = true;
+        if (dateRep) dateRep.required = false;
+        if (typeRep) typeRep.required = false;
+        if (sectionPlanif && document.querySelectorAll('#pieces-commande-container .piece-commande-row').length === 0) {
+            addPieceCommandeRow();
+        }
+    } else {
+        toggleSectionFields(sectionPlanif, false);
+        toggleSectionFields(sectionValid, true);
+        if (datePrevue) datePrevue.required = false;
+        if (dateRep) dateRep.required = true;
+        if (typeRep) typeRep.required = true;
+        if (sectionValid && document.querySelectorAll('#pieces-utilisees-container .piece-utilisee-row').length === 0) {
+            addPieceUtiliseeRow();
+        }
+    }
+}
+
+function addPieceCommandeRow() {
+    const container = document.getElementById('pieces-commande-container');
+    const template = document.getElementById('piece-commande-template');
+    if (!container || !template) return;
+    const clone = template.content.cloneNode(true);
+    container.appendChild(clone);
+    const rows = container.querySelectorAll('.piece-commande-row');
+    return rows[rows.length - 1] || null;
+}
+
+function removePieceRow(button) {
+    const row = button.closest('.piece-commande-row');
+    if (row) row.remove();
+}
+
+function addPieceUtiliseeRow() {
+    const container = document.getElementById('pieces-utilisees-container');
+    const template = document.getElementById('piece-utilisee-template');
+    if (!container || !template) return;
+    const clone = template.content.cloneNode(true);
+    container.appendChild(clone);
+    const rows = container.querySelectorAll('.piece-utilisee-row');
+    return rows[rows.length - 1] || null;
+}
+
+function removePieceUtiliseeRow(button) {
+    const row = button.closest('.piece-utilisee-row');
+    if (row) row.remove();
+}
+
+async function loadPlanifiedRepair() {
+    const select = document.getElementById('reparation-planifiee-select');
+    if (!select) return;
+    const repId = select.value;
+    const planifierRadio = document.querySelector('input[name="mode"][value="planifier"]');
+
+    if (!repId) {
+        document.getElementById('reparation-id').value = '';
+        if (planifierRadio) planifierRadio.disabled = false;
+        updateReparationMode();
+        return;
+    }
+
+    const template = select.dataset.detailUrlTemplate || '';
+    const url = template.replace('00000000-0000-0000-0000-000000000000', repId);
+
+    try {
+        const response = await fetch(url);
+        const result = await response.json();
+        if (!result.success) {
+            alert('Erreur: ' + (result.error || 'Détail réparation introuvable'));
+            return;
+        }
+
+        const rep = result.reparation || {};
+        document.getElementById('reparation-id').value = rep.id || repId;
+
+        const setVal = (selector, value) => {
+            const el = document.querySelector(selector);
+            if (el) el.value = value || '';
+        };
+
+        setVal('#formReparation input[name="date_prevue"]', rep.date_prevue || '');
+        setVal('#formReparation select[name="type_reparation"]', rep.type_reparation || 'reparation');
+        setVal('#formReparation input[name="libelle"]', rep.libelle || '');
+        setVal('#formReparation textarea[name="description"]', rep.description || '');
+        setVal('#formReparation textarea[name="notes"]', rep.notes || '');
+
+        const purchase = result.purchase || {};
+        setVal('#formReparation select[name="fournisseur_id"]', purchase.fournisseur_id || '');
+        setVal('#formReparation select[name="magasin_id"]', purchase.magasin_id || '');
+        setVal('#formReparation select[name="ordered_by_id"]', purchase.ordered_by_id || '');
+        setVal('#formReparation input[name="purchase_notes"]', purchase.notes || '');
+
+        const piecesContainer = document.getElementById('pieces-commande-container');
+        if (piecesContainer) piecesContainer.innerHTML = '';
+        (result.pieces_commande || []).forEach((piece) => {
+            const row = addPieceCommandeRow();
+            if (!row) return;
+            const designation = row.querySelector('.piece-designation');
+            const quantite = row.querySelector('.piece-quantite');
+            const prix = row.querySelector('.piece-prix');
+            if (designation) designation.value = piece.designation_id || '';
+            if (quantite) quantite.value = piece.quantite || '';
+            if (prix) prix.value = piece.unit_price || '';
+        });
+
+        const piecesUtilisees = document.getElementById('pieces-utilisees-container');
+        if (piecesUtilisees) piecesUtilisees.innerHTML = '';
+        (result.pieces_commande || []).forEach((piece) => {
+            const row = addPieceUtiliseeRow();
+            if (!row) return;
+            const designation = row.querySelector('.piece-utilisee-designation');
+            const quantite = row.querySelector('.piece-utilisee-quantite');
+            const prix = row.querySelector('.piece-utilisee-prix');
+            if (designation) designation.value = piece.designation_id || '';
+            if (quantite) quantite.value = piece.quantite || '';
+            if (prix) prix.value = piece.unit_price || '';
+        });
+
+        const dateRep = document.querySelector('#formReparation input[name="date_reparation"]');
+        if (dateRep && !dateRep.value) {
+            dateRep.value = new Date().toISOString().split('T')[0];
+        }
+
+        const validerRadio = document.querySelector('input[name="mode"][value="valider"]');
+        if (validerRadio) validerRadio.checked = true;
+        if (planifierRadio) planifierRadio.disabled = true;
+        updateReparationMode();
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+}
+
+// Toggle saisie manuelle
+function toggleSaisieManuelle() {
+    const isManuel = document.getElementById('saisie_manuelle').checked;
+    const indexField = document.querySelector('#formReleve input[name="index_compteur"]');
+
+    if (isManuel) {
+        indexField.disabled = true;
+        indexField.value = '';
+        indexField.required = false;
+    } else {
+        indexField.disabled = false;
+        indexField.required = false;
+    }
+}
+
+function toggleCarburantSource() {
+    const source = document.getElementById('carburant_source_type')?.value;
+    document.getElementById('carburant-achat-fields')?.classList.toggle('hidden', source !== 'achat');
+    document.getElementById('carburant-stock-fields')?.classList.toggle('hidden', source !== 'stock');
+}
+
+function toggleCarburantSourcePerso() {
+    const source = document.getElementById('perso_carburant_source_type')?.value;
+    document.getElementById('perso-carburant-achat-fields')?.classList.toggle('hidden', source !== 'achat');
+    document.getElementById('perso-carburant-stock-fields')?.classList.toggle('hidden', source !== 'stock');
+}
+
+let villagesFetchTimeout = null;
+function fetchVillages(query) {
+    if (!query || query.length < 2) {
+        const list = document.getElementById('villagesList');
+        if (list) list.innerHTML = '';
+        return;
+    }
+    clearTimeout(villagesFetchTimeout);
+    villagesFetchTimeout = setTimeout(async () => {
+        try {
+            const res = await fetch(`/geography/api/all-villages/?q=${encodeURIComponent(query)}`);
+            const data = await res.json();
+            const list = document.getElementById('villagesList');
+            if (!list) return;
+            list.innerHTML = '';
+            (data || []).forEach((v) => {
+                const label = `${v.nom_village} (${v.fokontany__nom_fokontany || ''} - ${v.fokontany__commune__nom_commune || ''})`.trim();
+                const opt = document.createElement('option');
+                opt.value = label.replace(' ( - )', '');
+                list.appendChild(opt);
+            });
+        } catch (e) {
+            console.error('Erreur villages:', e);
+        }
+    }, 250);
+}
+
+function setupVillageAutocomplete() {
+    const departInput = document.getElementById('releve-lieu-depart');
+    const arriveeInput = document.getElementById('releve-lieu-arrivee');
+    [departInput, arriveeInput].forEach((input) => {
+        if (!input) return;
+        input.addEventListener('input', (e) => fetchVillages(e.target.value));
+        input.addEventListener('focus', (e) => fetchVillages(e.target.value));
+    });
+}
+
+async function fillFromGPS(target) {
+    if (!navigator.geolocation) {
+        alert('GPS non disponible sur cet appareil.');
+        return;
+    }
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+        try {
+            const res = await fetch('/geography/api/villages-proximite/', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+                body: JSON.stringify({
+                    latitude: pos.coords.latitude,
+                    longitude: pos.coords.longitude
+                })
+            });
+            const data = await res.json();
+            if (!data.success || !data.villages || data.villages.length === 0) {
+                alert('Aucun village trouvé à moins de 1 km.');
+                return;
+            }
+            const v = data.villages[0];
+            const label = `${v.nom} (${v.fokontany || ''} - ${v.commune || ''})`.trim();
+            const input = target === 'arrivee'
+                ? document.getElementById('releve-lieu-arrivee')
+                : document.getElementById('releve-lieu-depart');
+            if (input) input.value = label.replace(' ( - )', '');
+        } catch (e) {
+            console.error('Erreur GPS:', e);
+            alert('Erreur GPS: ' + e.message);
+        }
+    }, (err) => {
+        alert('GPS indisponible: ' + err.message);
+    }, { enableHighAccuracy: true, timeout: 8000 });
+}
+
+function openPhotoCompteurCamera() {
+    const input = document.getElementById('photo-compteur-input');
+    if (!input) return;
+    input.setAttribute('capture', 'environment');
+    input.click();
+}
+
+function openUtilisationPersoModal() {
+    document.getElementById('formUtilisationPerso').reset();
+    document.getElementById('utilisationPersoModal').showModal();
+}
+
+function openPersoCarburantModal(usageId, mode) {
+    document.getElementById('formUtilisationPersoCarburant').reset();
+    document.getElementById('perso-usage-id').value = usageId;
+    document.getElementById('perso-usage-mode').value = mode;
+    document.getElementById('persoCarburantTitle').textContent = mode === 'avant' ? 'Carburant avant utilisation' : 'Retour + carburant';
+    toggleCarburantSourcePerso();
+    document.getElementById('utilisationPersoCarburantModal').showModal();
+}
+
+async function decideUtilisationPerso(usageId, avis) {
+    const commentaire = prompt('Commentaire (optionnel):') || '';
+    const response = await fetch(`/stocks/vehicules/api/utilisation-perso/${usageId}/decision/`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+        body: JSON.stringify({ avis: avis, commentaire: commentaire })
+    });
+    const result = await response.json();
+    if (result.success) {
+        location.reload();
+    } else {
+        alert('Erreur: ' + result.error);
+    }
+}
+
+async function validerRetourPerso(usageId) {
+    const commentaire = prompt('Commentaire (optionnel):') || '';
+    const response = await fetch(`/stocks/vehicules/api/utilisation-perso/${usageId}/valider-retour/`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+        body: JSON.stringify({ commentaire: commentaire })
+    });
+    const result = await response.json();
+    if (result.success) {
+        location.reload();
+    } else {
+        alert('Erreur: ' + result.error);
+    }
+}
+
+// Soumission formulaire création véhicule
+document.getElementById('formCreateVehicule').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(this);
+    formData.set('compteur_fonctionnel', this.querySelector('input[name="compteur_fonctionnel"]')?.checked ? '1' : '0');
+
+    try {
+        const response = await fetch('{% url "inventory:api_vehicule_create" %}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert('✓ ' + result.message);
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+});
+
+// Soumission formulaire edition vehicule
+document.getElementById('formEditVehicule').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(this);
+    const compteurInput = this.querySelector('input[name="compteur_fonctionnel"]');
+    const actifInput = this.querySelector('input[name="actif"]');
+    formData.set('compteur_fonctionnel', compteurInput ? (compteurInput.checked ? '1' : '0') : '0');
+    formData.set('actif', actifInput ? (actifInput.checked ? '1' : '0') : '0');
+
+    const updateUrl = this.dataset.updateUrl;
+    if (!updateUrl) {
+        alert('Erreur: URL de mise à jour manquante');
+        return;
+    }
+
+    try {
+        const response = await fetch(updateUrl, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert('✓ ' + result.message);
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+});
+
+// Soumission formulaire affectation
+document.getElementById('formAffectation').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(this);
+    const data = {};
+    formData.forEach((value, key) => data[key] = value);
+
+    // Ajouter l'ID du véhicule
+    data.vehicule_id = document.getElementById('affectation-vehicule-id').value;
+
+    try {
+        const response = await fetch('{% url "inventory:api_affectation_create" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert('✓ ' + result.message);
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+});
+
+// Soumission formulaire relevé
+document.getElementById('formReleve').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(this);
+    formData.set('vehicule_id', document.getElementById('releve-vehicule-id').value);
+    if (!formData.has('saisie_manuelle')) {
+        formData.set('saisie_manuelle', '');
+    }
+
+    try {
+        const response = await fetch('{% url "inventory:api_releve_create" %}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert('✓ ' + result.message);
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+});
+
+// Soumission formulaire utilisation perso
+document.getElementById('formUtilisationPerso').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const formData = new FormData(this);
+    const data = {};
+    formData.forEach((value, key) => {
+        if (key === 'regles_acceptees' || key === 'casque_obligatoire') {
+            data[key] = formData.get(key) === 'on';
+        } else {
+            data[key] = value;
+        }
+    });
+
+    try {
+        const response = await fetch('/stocks/vehicules/api/utilisation-perso/create/', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+            body: JSON.stringify(data)
+        });
+        const result = await response.json();
+        if (result.success) {
+            document.getElementById('utilisationPersoModal').close();
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        alert('Erreur réseau: ' + error.message);
+    }
+});
+
+// Soumission carburant usage perso
+document.getElementById('formUtilisationPersoCarburant').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const formData = new FormData(this);
+    const data = {};
+    formData.forEach((value, key) => data[key] = value);
+
+    const usageId = document.getElementById('perso-usage-id').value;
+    const mode = document.getElementById('perso-usage-mode').value;
+    const url = mode === 'avant'
+        ? `/stocks/vehicules/api/utilisation-perso/${usageId}/carburant-avant/`
+        : `/stocks/vehicules/api/utilisation-perso/${usageId}/retour/`;
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+            body: JSON.stringify(data)
+        });
+        const result = await response.json();
+        if (result.success) {
+            document.getElementById('utilisationPersoCarburantModal').close();
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        alert('Erreur réseau: ' + error.message);
+    }
+});
+
+document.addEventListener('click', async function(event) {
+    const button = event.target.closest('.carburant-pointer-btn');
+    if (!button) return;
+
+    const usageId = button.dataset.usageId;
+    const entryId = button.dataset.entryId;
+    if (!usageId || !entryId) return;
+
+    button.disabled = true;
+    try {
+        const response = await fetch(`/stocks/vehicules/api/carburant/${usageId}/pointer-compta/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify({ entry_id: entryId })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Erreur de pointage');
+        }
+        window.location.reload();
+    } catch (error) {
+        alert(error.message || 'Erreur de pointage');
+        button.disabled = false;
+    }
+});
+
+function openCarburantAnalyseDetails(payload) {
+    let data = null;
+    try {
+        data = JSON.parse(decodeURIComponent(payload));
+    } catch (error) {
+        console.error('Erreur lecture détail carburant:', error);
+        alert('Impossible d’ouvrir le détail.');
+        return;
+    }
+
+    document.getElementById('carburantAnalyseDetailsTitle').textContent = `Détail carburant - ${data.vehicule || ''}`;
+    document.getElementById('carburantAnalyseDetailsPeriod').textContent = data.periode || '';
+
+    const comptaBody = document.getElementById('carburantAnalyseComptaBody');
+    const userBody = document.getElementById('carburantAnalyseUserBody');
+    if (!comptaBody || !userBody) return;
+
+    const comptaEntries = Array.isArray(data.compta_entries) ? data.compta_entries : [];
+    const userEntries = Array.isArray(data.user_entries) ? data.user_entries : [];
+
+    comptaBody.innerHTML = comptaEntries.length
+        ? comptaEntries.map((row) => `
+            <tr>
+                <td>${row.date || '-'}</td>
+                <td>${row.compte || '-'}</td>
+                <td class="max-w-xs whitespace-normal break-words">${row.detail || '-'}</td>
+                <td class="max-w-md whitespace-normal break-words">${row.description || '-'}</td>
+                <td class="text-right">${Number(row.litres || 0).toFixed(2)}</td>
+                <td class="text-right">${Number(row.montant || 0).toLocaleString('fr-FR')} Ar</td>
+            </tr>
+        `).join('')
+        : '<tr><td colspan="6" class="text-center text-base-content/50">Aucune ligne compta pour ce véhicule.</td></tr>';
+
+    userBody.innerHTML = userEntries.length
+        ? userEntries.map((row) => `
+            <tr>
+                <td>${row.date || '-'}</td>
+                <td>${row.source || '-'}</td>
+                <td>${row.employe || '-'}</td>
+                <td class="max-w-md whitespace-normal break-words">${row.notes || '-'}</td>
+                <td class="text-right">${Number(row.quantite || 0).toFixed(2)}</td>
+                <td class="text-right">${Number(row.montant || 0).toLocaleString('fr-FR')} Ar</td>
+            </tr>
+        `).join('')
+        : '<tr><td colspan="6" class="text-center text-base-content/50">Aucune ligne saisie utilisateur pour ce véhicule.</td></tr>';
+
+    document.getElementById('carburantAnalyseDetailsModal')?.showModal();
+}
+
+document.addEventListener('click', function(event) {
+    const button = event.target.closest('.carburant-analyse-detail-btn');
+    if (!button) return;
+    openCarburantAnalyseDetails(button.dataset.details || '{}');
+});
+
+// Soumission formulaire réparation
+document.getElementById('formReparation').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(this);
+    const data = {};
+    formData.forEach((value, key) => data[key] = value);
+
+    data.vehicule_id = document.getElementById('reparation-vehicule-id').value;
+    data.mode = document.querySelector('input[name="mode"]:checked')?.value || 'valider';
+
+    if (data.mode === 'valider') {
+        const piecesUtilisees = [];
+        let totalPieces = 0;
+        document.querySelectorAll('#pieces-utilisees-container .piece-utilisee-row').forEach((row) => {
+            const designationId = row.querySelector('.piece-utilisee-designation')?.value;
+            const quantite = parseFloat(row.querySelector('.piece-utilisee-quantite')?.value || '0');
+            const unitPrice = parseFloat(row.querySelector('.piece-utilisee-prix')?.value || '0');
+            if (designationId && quantite > 0) {
+                piecesUtilisees.push({
+                    designation_id: designationId,
+                    quantite,
+                    unit_price: unitPrice
+                });
+                totalPieces += quantite * (unitPrice || 0);
+            }
+        });
+        if (piecesUtilisees.length > 0) {
+            data.pieces_utilisees = piecesUtilisees.map((p) => `#${p.designation_id} x${p.quantite} (PU ${p.unit_price})`).join(', ');
+            if (!data.cout_pieces || data.cout_pieces === '') {
+                data.cout_pieces = totalPieces.toFixed(2);
+            }
+        }
+    }
+
+    const piecesCommande = [];
+    document.querySelectorAll('#pieces-commande-container .piece-commande-row').forEach((row) => {
+        const designationId = row.querySelector('.piece-designation')?.value;
+        const quantite = row.querySelector('.piece-quantite')?.value;
+        const unitPrice = row.querySelector('.piece-prix')?.value;
+        if (designationId && quantite && Number(quantite) > 0) {
+            piecesCommande.push({
+                designation_id: designationId,
+                quantite: quantite,
+                unit_price: unitPrice || 0
+            });
+        }
+    });
+    data.pieces_commande = piecesCommande;
+
+    try {
+        const response = await fetch('{% url "inventory:api_reparation_create" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert('✓ ' + result.message);
+            location.reload();
+        } else {
+            alert('Erreur: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        alert('Erreur réseau: ' + error.message);
+    }
+});
+
+// Helper pour récupérer le CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+function previewImage(input, imgId, containerId) {
+    const file = input.files[0];
+    const container = document.getElementById(containerId);
+    const img = document.getElementById(imgId);
+    if (file && container && img) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            img.src = e.target.result;
+            container.classList.remove('hidden');
+        }
+        reader.readAsDataURL(file);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    setupVillageAutocomplete();
+});
+</script>
+{% endblock %}

@@ -1,0 +1,806 @@
+{% extends "accounting/base.html" %}
+{% load humanize %}
+
+{% block title %}Analyse des coûts par commune{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+{{ analyse|json_script:"analyse-data" }}
+<div class="max-w-[1500px] mx-auto p-4 space-y-4" id="app"
+     data-api="{% url 'accounting:api_analyse_couts_communes' %}"
+     data-api-detail="{% url 'accounting:api_analyse_couts_communes_detail' %}">
+
+    <div class="flex flex-wrap items-center justify-between gap-2">
+        <div>
+            <h1 class="text-2xl font-bold">
+                <i class="fas fa-city text-primary mr-2"></i>Analyse des coûts par commune
+            </h1>
+            <p class="text-sm opacity-70" id="periode-label"></p>
+            <p class="text-xs opacity-50" id="periode-recettes-label"></p>
+            <p class="text-xs opacity-50">Astuce : cliquez une valeur du tableau ou une barre du graphique pour voir le détail du calcul.</p>
+            <p class="text-xs opacity-50">Score de criticité : 60&nbsp;% ratio charges/recettes + 40&nbsp;% taux d'impayés, comparés entre les communes du résultat affiché (triées de la plus problématique à la plus saine par défaut).</p>
+        </div>
+        <div class="text-right text-sm">
+            <div>Dépenses totales : <span class="font-bold" id="tot-depenses"></span></div>
+            <div>Recette réalisée : <span class="font-bold text-success" id="tot-realise"></span></div>
+            <div>Recette prévue : <span class="font-bold text-info" id="tot-prevue"></span></div>
+            <a href="{% url 'accounting:analyse_couts_ouvrages' %}" class="link link-primary text-xs">
+                <i class="fas fa-arrow-right-arrow-left mr-1"></i>Voir le détail par ouvrage
+            </a>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow">
+        <div class="card-body gap-4">
+            <h2 class="card-title text-base"><i class="fas fa-sliders mr-2"></i>Modélisation</h2>
+            <div class="flex flex-wrap items-end gap-3">
+                <label class="form-control">
+                    <span class="label-text text-xs mb-1">Base</span>
+                    <select id="base" class="select select-bordered select-sm w-48">
+                        <option value="">Toutes les bases (Soakoja)</option>
+                        {% for b in bases %}
+                        <option value="{{ b.id }}" {% if base_selected == b.id|stringformat:'s' %}selected{% endif %}>{{ b.nom_base }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="form-control">
+                    <span class="label-text text-xs mb-1">Région</span>
+                    <select id="geo-region" class="select select-bordered select-sm w-44">
+                        <option value="">Toutes</option>
+                        {% for r in geo.regions %}
+                        <option value="{{ r.id }}" {% if region_selected == r.id %}selected{% endif %}>{{ r.nom }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="form-control">
+                    <span class="label-text text-xs mb-1">District</span>
+                    <select id="geo-district" class="select select-bordered select-sm w-44">
+                        <option value="">Tous</option>
+                        {% for d in geo.districts %}
+                        <option value="{{ d.id }}" data-region="{{ d.region_id }}" {% if district_selected == d.id %}selected{% endif %}>{{ d.nom }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="form-control">
+                    <span class="label-text text-xs mb-1">Commune</span>
+                    <select id="geo-commune" class="select select-bordered select-sm w-44">
+                        <option value="">Toutes</option>
+                        {% for c in geo.communes %}
+                        <option value="{{ c.id }}" data-district="{{ c.district_id }}" {% if commune_selected == c.id %}selected{% endif %}>{{ c.nom }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+            </div>
+            <div class="grid md:grid-cols-2 gap-4">
+                <div>
+                    <label class="label"><span class="label-text">Clé de répartition α —
+                        <span id="alpha-val">50</span>% jours de planning /
+                        <span id="alpha-inv">50</span>% points d'eau publics</span></label>
+                    <input type="range" id="alpha" min="0" max="100" value="50" class="range range-primary range-sm" />
+                    <div class="flex justify-between text-xs opacity-60 px-1"><span>100% points d'eau</span><span>100% planning</span></div>
+                </div>
+                <div class="grid grid-cols-2 gap-x-4">
+                    <label class="label cursor-pointer gap-2 justify-start"><input type="checkbox" class="checkbox checkbox-sm poste" data-k="inc_salaires" checked /><span class="label-text">Salaires / charges</span></label>
+                    <label class="label cursor-pointer gap-2 justify-start"><input type="checkbox" class="checkbox checkbox-sm poste" data-k="inc_salaires_hierarchie" checked /><span class="label-text">↳ dont via la hiérarchie</span></label>
+                    <label class="label cursor-pointer gap-2 justify-start"><input type="checkbox" class="checkbox checkbox-sm poste" data-k="inc_vehicules" checked /><span class="label-text">Véhicules</span></label>
+                    <label class="label cursor-pointer gap-2 justify-start"><input type="checkbox" class="checkbox checkbox-sm poste" data-k="inc_vehicules_hierarchie" checked /><span class="label-text">↳ dont via la hiérarchie</span></label>
+                    <label class="label cursor-pointer gap-2 justify-start"><input type="checkbox" class="checkbox checkbox-sm poste" data-k="inc_ouvrage_direct" checked /><span class="label-text">Dépenses ouvrage (libellé)</span></label>
+                    <label class="label cursor-pointer gap-2 justify-start"><input type="checkbox" class="checkbox checkbox-sm poste" data-k="inc_pieces" checked /><span class="label-text">Pièces planning</span></label>
+                    <label class="label cursor-pointer gap-2 justify-start"><input type="checkbox" class="checkbox checkbox-sm poste" data-k="repartir_non_affecte" /><span class="label-text">Répartir les non-affectés</span></label>
+                </div>
+            </div>
+            <div class="alert alert-warning py-2 text-xs" id="non-affecte-box"></div>
+        </div>
+    </div>
+
+    <div id="progress-wrap" hidden>
+        <div class="flex items-center gap-2 text-xs opacity-70 mb-1">
+            <span class="loading loading-spinner loading-xs text-primary"></span>
+            <span id="progress-label">Application du filtre… lecture des lignes DiameX et du planning</span>
+            <span id="progress-pct" class="ml-auto tabular-nums font-semibold"></span>
+        </div>
+        <progress id="progress-bar" class="progress progress-primary w-full" value="0" max="100"></progress>
+    </div>
+
+    <div class="grid lg:grid-cols-2 gap-4">
+        <div class="card bg-base-100 shadow"><div class="card-body">
+            <h2 class="card-title text-base">Dépenses par catégorie (top 20 communes)</h2>
+            <canvas id="chart-depenses" height="240"></canvas>
+        </div></div>
+        <div class="card bg-base-100 shadow"><div class="card-body">
+            <h2 class="card-title text-base">Marge vs écart recette (réalisée − prévue)</h2>
+            <canvas id="chart-scatter" height="240"></canvas>
+        </div></div>
+    </div>
+
+    <div class="grid lg:grid-cols-2 gap-4">
+        <div class="card bg-base-100 shadow"><div class="card-body">
+            <h2 class="card-title text-base">Distribution des communes par tranche de score</h2>
+            <canvas id="chart-histo-score" height="220"></canvas>
+            <p class="text-xs opacity-50 mt-1" id="histo-sans-historique-note"></p>
+        </div></div>
+        <div class="card bg-base-100 shadow"><div class="card-body">
+            <h2 class="card-title text-base">Répartition par niveau de risque</h2>
+            <canvas id="chart-sante" height="220"></canvas>
+        </div></div>
+        <div class="card bg-base-100 shadow"><div class="card-body">
+            <h2 class="card-title text-base">Top 15 des communes les plus critiques</h2>
+            <canvas id="chart-top-critique" height="280"></canvas>
+        </div></div>
+        <div class="card bg-base-100 shadow"><div class="card-body">
+            <h2 class="card-title text-base">Ratio de charges vs taux d'impayés</h2>
+            <canvas id="chart-ratio-impaye" height="220"></canvas>
+        </div></div>
+    </div>
+
+    <div class="card bg-base-100 shadow"><div class="card-body">
+        <div class="flex items-center gap-2 mb-2">
+            <input id="search" type="search" placeholder="Rechercher une commune…" class="input input-bordered input-sm w-64" />
+            <span class="text-xs opacity-60" id="row-count"></span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="table table-xs table-zebra">
+                <thead><tr>
+                    <th>Commune</th>
+                    <th class="text-center sortable" data-sort="score_criticite" title="0 = saine, 100 = très problématique (maivoas). 60% ratio charges + 40% taux d'impayés, relatif aux communes affichées.">Score</th>
+                    <th class="text-right sortable" data-sort="taux_recouvrement" title="Recettes encaissées / recettes facturées">Tx recouvr.</th>
+                    <th class="text-right sortable" data-sort="ratio_charges" title="Dépenses / recettes encaissées — &gt;1 = déficitaire en trésorerie réelle">Ratio charges</th>
+                    <th class="text-right sortable" data-sort="impayes" title="Recettes facturées − recettes encaissées">Impayés</th>
+                    <th class="text-right sortable" data-sort="taux_impayes" title="Impayés / recettes facturées">Tx impayés</th>
+                    <th class="text-right">Ouvrages</th>
+                    <th class="text-right">PE pub.</th>
+                    <th class="text-right sortable" data-sort="salaires_direct" data-col="salaires_direct">Sal. direct</th>
+                    <th class="text-right sortable" data-sort="salaires_hierarchie" data-col="salaires_hierarchie">Sal. hiér.</th>
+                    <th class="text-right sortable" data-sort="vehicules_direct" data-col="vehicules_direct">Véh. direct</th>
+                    <th class="text-right sortable" data-sort="vehicules_hierarchie" data-col="vehicules_hierarchie">Véh. hiér.</th>
+                    <th class="text-right sortable" data-sort="ouvrage_direct" data-col="ouvrage_direct">Ouvrage</th>
+                    <th class="text-right sortable" data-sort="pieces_planning" data-col="pieces_planning">Pièces</th>
+                    <th class="text-right sortable" data-sort="total">Dépense tot.</th>
+                    <th class="text-right sortable" data-sort="recette_realisee" data-col="recette_realisee">Rec. réelle</th>
+                    <th class="text-right sortable" data-sort="recette_prevue" data-col="recette_prevue">Rec. facturées</th>
+                    <th class="text-right sortable" data-sort="marge">Marge</th>
+                    <th class="text-right sortable" data-sort="ecart_recette">Écart rec.</th>
+                    <th class="text-right sortable" data-sort="penibilite_pct">Pénib.</th>
+                </tr></thead>
+                <tbody id="tbody"></tbody>
+            </table>
+        </div>
+    </div></div>
+
+    <div class="card bg-base-100 shadow"><div class="card-body">
+        <h2 class="card-title text-base"><i class="fas fa-circle-info mr-2"></i>Comprendre les indicateurs</h2>
+        <div class="grid md:grid-cols-2 gap-4 text-sm mt-2">
+            <div>
+                <h3 class="font-semibold mb-1">Recettes facturées, encaissées, impayés</h3>
+                <p class="opacity-80">Recettes facturées = ce qui aurait dû être payé sur la période (relevés + tarif
+                    forfaitaire estimé) = recettes encaissées + impayés. Les impayés sont donc simplement la partie
+                    facturée qui n'a pas (encore) été réellement encaissée (source DiameX).</p>
+            </div>
+            <div>
+                <h3 class="font-semibold mb-1">Taux de recouvrement</h3>
+                <p class="opacity-80"><code>recettes encaissées ÷ recettes facturées</code>. Proche de 100&nbsp;% :
+                    la commune est bien payée. Proche de 0&nbsp;% : la quasi-totalité de la facturation reste impayée.</p>
+            </div>
+            <div>
+                <h3 class="font-semibold mb-1">Ratio de charges</h3>
+                <p class="opacity-80"><code>dépenses ÷ recettes encaissées</code>. Au-dessus de ×1 (100&nbsp;%),
+                    la commune coûte plus qu'elle ne rapporte réellement en trésorerie : elle est déficitaire. À ×0,
+                    aucune dépense n'a été engagée sur la période.</p>
+            </div>
+            <div>
+                <h3 class="font-semibold mb-1">Taux d'impayés</h3>
+                <p class="opacity-80"><code>impayés ÷ recettes facturées</code>. Complémentaire du taux de
+                    recouvrement (recouvrement + impayés = 100&nbsp;% de la facturation).</p>
+            </div>
+            <div class="md:col-span-2">
+                <h3 class="font-semibold mb-1">Score de criticité (0 = saine, 100 = très problématique / « maivoas »)</h3>
+                <p class="opacity-80"><code>score = 60&nbsp;% × rang(ratio de charges) + 40&nbsp;% × rang(taux d'impayés)</code>,
+                    le rang de chaque commune étant calculé <strong>par rapport aux autres communes du résultat affiché
+                    actuellement</strong> (pas un seuil universel) — une commune isolée au comportement extrême ne peut
+                    donc pas fausser l'échelle des autres. Une commune sans aucune dépense ni recette sur la période
+                    (jamais mouvementée) n'a pas de score (badge « N/D »). Code couleur : <span class="badge badge-success badge-xs">vert &lt; 33</span>
+                    <span class="badge badge-warning badge-xs">orange 33-66</span>
+                    <span class="badge badge-error badge-xs">rouge &gt; 66</span>.</p>
+            </div>
+        </div>
+        <div class="divider my-2"></div>
+        <h3 class="font-semibold text-sm mb-2">Exemples concrets, calculés sur le résultat actuellement affiché dans le tableau</h3>
+        <div id="explications-dynamiques" class="grid md:grid-cols-3 gap-3"></div>
+    </div></div>
+</div>
+
+<dialog id="detail-modal" class="modal">
+  <div class="modal-box max-w-5xl">
+    <form method="dialog"><button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button></form>
+    <h3 class="font-bold text-lg" id="dm-title">Détail</h3>
+    <p class="text-sm opacity-70 mt-1" id="dm-sub"></p>
+    <div class="alert alert-info text-xs my-3" id="dm-methode"></div>
+    <div class="flex items-center gap-2 text-sm mb-2">
+        <span>Total : <span class="font-bold" id="dm-total"></span> · <span id="dm-count"></span> ligne(s) · <span id="dm-groupcount"></span> compte(s)</span>
+        <button type="button" id="dm-toggle-all" class="btn btn-xs ml-auto">Tout déplier</button>
+    </div>
+    <div class="overflow-x-auto max-h-[60vh]">
+        <table class="table table-xs table-pin-rows">
+            <thead><tr><th>Date</th><th>Source</th><th>Libellé</th><th class="text-right">Montant brut</th><th class="text-right">Facteur</th><th class="text-right">Imputé</th><th>Note</th></tr></thead>
+            <tbody id="dm-body"></tbody>
+        </table>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const app = document.getElementById('app');
+    const API = app.dataset.api;
+    const API_DETAIL = app.dataset.apiDetail;
+    let state = JSON.parse(document.getElementById('analyse-data').textContent);
+    let sortKey = 'score_criticite', sortDir = -1;
+    let chartDep = null, chartScatter = null, chartHisto = null, chartSante = null, chartTop = null, chartRatioImpaye = null;
+
+    const DEP_KEYS = ['salaires_direct', 'salaires_hierarchie', 'vehicules_direct', 'vehicules_hierarchie', 'ouvrage_direct', 'pieces_planning'];
+    const CAT_LABEL = {
+        salaires_direct: 'Sal. direct', salaires_hierarchie: 'Sal. hiérarchie',
+        vehicules_direct: 'Véh. direct', vehicules_hierarchie: 'Véh. hiérarchie',
+        ouvrage_direct: 'Ouvrage (libellé)', pieces_planning: 'Pièces planning',
+        recette_realisee: 'Recette réalisée', recette_prevue: 'Recette prévue',
+    };
+    const kAr = (v) => Math.round(v / 1000).toLocaleString('fr-FR') + ' K Ar';
+    const fmt = (v) => {
+        if (v == null) return '—';
+        if (Math.abs(v) < 0.5) return '';
+        return kAr(v);
+    };
+    const fmt0 = (v) => (v == null ? '—' : kAr(v));
+    const fmtPct = (v) => (v == null ? '—' : v.toFixed(0) + ' %');
+    const fmtFac = (v) => (v == null ? '' : (v <= 1 ? (v * 100).toFixed(1) + ' %' : '×' + v));
+    const fmtRatio = (v, infini) => (infini ? '∞' : (v == null ? '—' : v.toFixed(2) + '×'));
+    function scoreBadge(score) {
+        if (score == null) return '<span class="badge badge-ghost badge-xs">N/D</span>';
+        const cls = score > 66 ? 'badge-error' : (score >= 33 ? 'badge-warning' : 'badge-success');
+        return `<span class="badge ${cls} badge-sm font-mono">${score.toFixed(0)}</span>`;
+    }
+    function scoreTitle(r) {
+        if (r.sans_historique) return 'Commune sans historique sur la période (aucune dépense ni recette) : indicateurs non calculés.';
+        return 'Recouvrement ' + fmtPct(r.taux_recouvrement) + ' · Ratio charges ' + fmtRatio(r.ratio_charges, r.ratio_charges_infini) +
+            ' · Impayés ' + fmt0(r.impayes) + ' (' + fmtPct(r.taux_impayes) + ') · Rec. facturées ' + fmt0(r.recettes_facturees);
+    }
+    // Couleurs alignées sur le thème DaisyUI actif (mode sombre/clair) et sur scoreBadge()
+    // Le canvas 2D ne résout PAS var() tel quel (contrairement au CSS normal) : il faut passer
+    // par un élément DOM réel pour obtenir la couleur calculée (ce thème utilise l'espace oklch).
+    function resolveThemeColor(expr) {
+        const el = document.createElement('div');
+        el.style.cssText = 'display:none';
+        el.style.color = expr;
+        document.body.appendChild(el);
+        const resolved = getComputedStyle(el).color;
+        document.body.removeChild(el);
+        return resolved;
+    }
+    // Phrase en langage naturel décrivant les indicateurs d'une commune, pour les exemples dynamiques
+    function phraseExemple(r) {
+        let phrase = 'Sur ' + fmt0(r.recettes_facturees) + ' facturés, ' + fmtPct(r.taux_recouvrement) + ' ont été encaissés';
+        phrase += r.impayes > 0.5 ? (' (' + fmt0(r.impayes) + ' d\'impayés, soit ' + fmtPct(r.taux_impayes) + ').') : ' — aucun impayé.';
+        phrase += ' ';
+        if (r.ratio_charges_infini) {
+            phrase += 'Des dépenses ont été engagées alors qu\'aucune recette n\'a été encaissée : ratio de charges infini.';
+        } else if (r.ratio_charges === 0) {
+            phrase += 'Aucune dépense n\'a été engagée sur la période.';
+        } else {
+            phrase += 'Ses dépenses représentent ' + fmtRatio(r.ratio_charges, false) + ' de ses recettes encaissées' +
+                (r.ratio_charges > 1 ? ' — déficitaire en trésorerie réelle.' : '.');
+        }
+        return phrase;
+    }
+    function renderExplications(rows, libelleSingulier) {
+        const box = document.getElementById('explications-dynamiques');
+        if (!box) return;
+        const avecScore = rows.filter(r => r.score_criticite != null).sort((a, b) => a.score_criticite - b.score_criticite);
+        if (!avecScore.length) {
+            box.innerHTML = '<div class="alert col-span-full text-sm">Aucune ' + libelleSingulier +
+                ' avec un historique exploitable dans le résultat actuel — essayez d\'élargir les filtres.</div>';
+            return;
+        }
+        const sain = avecScore[0];
+        const critique = avecScore[avecScore.length - 1];
+        let inter = null;
+        if (avecScore.length >= 3) {
+            inter = avecScore.reduce((best, r) =>
+                Math.abs(r.score_criticite - 50) < Math.abs(best.score_criticite - 50) ? r : best);
+            if (inter === sain || inter === critique) inter = null;
+        }
+        const cartes = [['alert-success', '🟢 La plus saine', sain]];
+        if (inter) cartes.push(['alert-warning', '🟠 Cas intermédiaire', inter]);
+        cartes.push(['alert-error', '🔴 La plus problématique (maivoas)', critique]);
+        box.innerHTML = cartes.map(([cls, titre, r]) => `
+            <div class="alert ${cls} flex-col items-start text-xs gap-1">
+                <div class="font-semibold text-sm">${titre} — ${(r.ouvrage_nom || r.commune_nom).replace(/</g, '&lt;')}</div>
+                <div>Score : <span class="font-mono font-bold">${r.score_criticite.toFixed(0)}</span> / 100</div>
+                <div>${phraseExemple(r)}</div>
+            </div>`).join('');
+    }
+
+    function params() {
+        const p = new URLSearchParams();
+        p.set('alpha', (document.getElementById('alpha').value / 100).toFixed(2));
+        p.set('base', document.getElementById('base').value || '');
+        p.set('region', document.getElementById('geo-region').value || '');
+        p.set('district', document.getElementById('geo-district').value || '');
+        p.set('commune', document.getElementById('geo-commune').value || '');
+        document.querySelectorAll('.poste').forEach(cb => p.set(cb.dataset.k, cb.checked ? '1' : '0'));
+        return p;
+    }
+
+    function cascadeGeo() {
+        const regionSel = document.getElementById('geo-region');
+        const districtSel = document.getElementById('geo-district');
+        const communeSel = document.getElementById('geo-commune');
+        const region = regionSel.value;
+        Array.from(districtSel.options).forEach(o => {
+            if (!o.value) return;
+            o.hidden = region && o.dataset.region !== region;
+        });
+        if (region && districtSel.value && districtSel.selectedOptions[0].hidden) districtSel.value = '';
+        const district = districtSel.value;
+        Array.from(communeSel.options).forEach(o => {
+            if (!o.value) return;
+            o.hidden = district && o.dataset.district !== district;
+        });
+        if (district && communeSel.value && communeSel.selectedOptions[0].hidden) communeSel.value = '';
+    }
+
+    let reqSeq = 0, progTimer = null;
+    const PHASES = [
+        'Lecture des lignes DiameX (salaires, véhicules, ouvrage)…',
+        'Rattachement employés / conducteurs → ouvrages…',
+        'Ventilation selon la clé de répartition…',
+        'Recettes, consolidation par ouvrage puis par commune…',
+    ];
+    function startProgress() {
+        const wrap = document.getElementById('progress-wrap');
+        const bar = document.getElementById('progress-bar');
+        const pct = document.getElementById('progress-pct');
+        const lbl = document.getElementById('progress-label');
+        wrap.hidden = false;
+        let v = 0;
+        bar.value = 0; pct.textContent = '0 %';
+        clearInterval(progTimer);
+        progTimer = setInterval(() => {
+            v += Math.max(0.4, (95 - v) * 0.07);
+            if (v > 95) v = 95;
+            bar.value = v; pct.textContent = Math.round(v) + ' %';
+            lbl.textContent = PHASES[Math.min(PHASES.length - 1, Math.floor(v / 25))];
+        }, 110);
+    }
+    function endProgress() {
+        const wrap = document.getElementById('progress-wrap');
+        const bar = document.getElementById('progress-bar');
+        const pct = document.getElementById('progress-pct');
+        clearInterval(progTimer);
+        bar.value = 100; pct.textContent = '100 %';
+        setTimeout(() => { wrap.hidden = true; }, 300);
+    }
+    function setControlsDisabled(on) {
+        ['alpha', 'base', 'search'].forEach(id => { document.getElementById(id).disabled = on; });
+        document.querySelectorAll('.poste').forEach(cb => cb.disabled = on);
+    }
+
+    async function refresh() {
+        const my = ++reqSeq;
+        startProgress();
+        setControlsDisabled(true);
+        try {
+            const res = await fetch(API + '?' + params().toString());
+            const data = await res.json();
+            if (my !== reqSeq) return;
+            state = data;
+            render();
+        } catch (e) {
+            if (my === reqSeq) document.getElementById('progress-label').textContent = 'Erreur : ' + e.message;
+        } finally {
+            if (my === reqSeq) { setControlsDisabled(false); endProgress(); }
+        }
+    }
+    function sorted() {
+        return [...state.lignes_communes].sort((a, b) => {
+            let va = DEP_KEYS.includes(sortKey) ? a.depenses[sortKey] : a[sortKey];
+            let vb = DEP_KEYS.includes(sortKey) ? b.depenses[sortKey] : b[sortKey];
+            va = va == null ? -Infinity : va; vb = vb == null ? -Infinity : vb;
+            return (va - vb) * sortDir;
+        });
+    }
+
+    function groupLignesParCompte(lignes) {
+        const groupes = new Map();
+        (lignes || []).forEach(l => {
+            const key = l.compte_code || l.reference || 'Autres';
+            if (!groupes.has(key)) {
+                const label = l.compte_code
+                    ? (l.compte_code + (l.compte_nom ? ' — ' + l.compte_nom : ''))
+                    : (l.reference || 'Autres');
+                groupes.set(key, { key, label, lignes: [], sous_total: 0 });
+            }
+            const g = groupes.get(key);
+            g.lignes.push(l);
+            g.sous_total += l.montant_impute || 0;
+        });
+        const liste = Array.from(groupes.values());
+        liste.forEach(g => g.lignes.sort((a, b) => (b.montant_impute || 0) - (a.montant_impute || 0)));
+        liste.sort((a, b) => Math.abs(b.sous_total) - Math.abs(a.sous_total));
+        return liste;
+    }
+
+    let dmAllExpanded = false;
+    function renderGroupes(groupes) {
+        const esc = (s) => (s || '').replace(/</g, '&lt;');
+        document.getElementById('dm-groupcount').textContent = groupes.length;
+        if (!groupes.length) {
+            document.getElementById('dm-body').innerHTML =
+                '<tr><td colspan="7" class="text-center opacity-60 py-4">Aucune ligne élémentaire.</td></tr>';
+            return;
+        }
+        document.getElementById('dm-body').innerHTML = groupes.map((g, gi) => {
+            const gid = 'dmg-' + gi;
+            const lignesHtml = g.lignes.map(l => `
+                <tr class="${gid} hidden text-xs" data-grp="${gid}">
+                    <td class="whitespace-nowrap pl-6">${l.date || '—'}</td>
+                    <td class="whitespace-nowrap">${esc(l.reference)}</td>
+                    <td>${esc(l.libelle)}</td>
+                    <td class="text-right">${fmt(l.montant_brut)}</td>
+                    <td class="text-right">${fmtFac(l.facteur)}</td>
+                    <td class="text-right font-semibold">${fmt(l.montant_impute)}</td>
+                    <td class="opacity-70">${esc(l.note)}</td>
+                </tr>`).join('');
+            return `
+                <tr class="bg-base-200 cursor-pointer hover:bg-base-300 group-toggle" data-grp="${gid}">
+                    <td colspan="2" class="font-semibold"><i class="fas fa-chevron-right chevron mr-2 text-xs"></i>${esc(g.label)}</td>
+                    <td class="text-xs opacity-60">${g.lignes.length} ligne${g.lignes.length > 1 ? 's' : ''}</td>
+                    <td></td><td></td>
+                    <td class="text-right font-bold">${fmt0(g.sous_total)}</td>
+                    <td></td>
+                </tr>
+                ${lignesHtml}`;
+        }).join('');
+
+        document.querySelectorAll('.group-toggle').forEach(tr => tr.addEventListener('click', () => {
+            const gid = tr.dataset.grp;
+            const rows = document.querySelectorAll('tr[data-grp="' + gid + '"]:not(.group-toggle)');
+            const nowHidden = rows[0] ? rows[0].classList.toggle('hidden') : true;
+            rows.forEach(r => r.classList.toggle('hidden', nowHidden));
+            const chevron = tr.querySelector('.chevron');
+            if (chevron) {
+                chevron.classList.toggle('fa-chevron-right', nowHidden);
+                chevron.classList.toggle('fa-chevron-down', !nowHidden);
+            }
+        }));
+    }
+
+    async function openDetail(communeId, communeNom, categorie) {
+        const dlg = document.getElementById('detail-modal');
+        document.getElementById('dm-title').textContent = communeNom + ' — ' + (CAT_LABEL[categorie] || categorie);
+        document.getElementById('dm-sub').textContent = 'Chargement…';
+        document.getElementById('dm-methode').textContent = '';
+        document.getElementById('dm-total').textContent = '';
+        document.getElementById('dm-count').textContent = '';
+        document.getElementById('dm-groupcount').textContent = '';
+        document.getElementById('dm-body').innerHTML = '';
+        dmAllExpanded = false;
+        document.getElementById('dm-toggle-all').textContent = 'Tout déplier';
+        dlg.showModal();
+        const p = params();
+        p.set('commune_id', communeId);
+        p.set('categorie', categorie);
+        const res = await fetch(API_DETAIL + '?' + p.toString());
+        const d = await res.json();
+        document.getElementById('dm-sub').textContent =
+            'Période ' + d.periode.debut + ' → ' + d.periode.fin + ' · α = ' + (d.alpha * 100).toFixed(0) + '% · ' +
+            d.nb_ouvrages + ' ouvrage(s) de la commune';
+        document.getElementById('dm-methode').textContent = d.methode || '';
+        document.getElementById('dm-total').textContent = fmt0(d.total);
+        document.getElementById('dm-count').textContent = d.nb_lignes;
+        renderGroupes(groupLignesParCompte(d.lignes));
+    }
+
+    function render() {
+        const t = state.totaux_communes || state.totaux;
+        document.getElementById('tot-depenses').textContent = fmt0(t.depenses);
+        document.getElementById('tot-realise').textContent = fmt0(t.recette_realisee);
+        document.getElementById('tot-prevue').textContent = fmt0(t.recette_prevue);
+        const baseSel = document.getElementById('base');
+        const baseLbl = baseSel.value ? baseSel.options[baseSel.selectedIndex].text : 'Soakoja (toutes bases)';
+        document.getElementById('periode-label').textContent =
+            'Période : ' + state.periode.debut + ' → ' + state.periode.fin +
+            ' (12 derniers mois complets) — ' + baseLbl + ' · montants en milliers d\'Ariary (K Ar)';
+        document.getElementById('periode-recettes-label').textContent =
+            'Recettes (réel + prévu) jusqu\'au ' + state.periode_recettes.fin +
+            ' seulement — le dernier mois complet est aussi exclu (paiements/relevés souvent encore en retard).';
+
+        const na = state.non_affecte;
+        document.getElementById('non-affecte-box').textContent =
+            'Non affecté (toutes communes) : ' + fmt0(na.total) + '  —  salaires ' + fmt0(na.salaires) + ', véhicules ' + fmt0(na.vehicules) +
+            ', ouvrage ' + fmt0(na.ouvrage_direct) + ', pièces ' + fmt0(na.pieces_planning) +
+            (na.reparti ? '  (redistribué au prorata)' : '');
+
+        const TOGGLE_COLS = [...DEP_KEYS, 'recette_realisee', 'recette_prevue'];
+        TOGGLE_COLS.forEach(key => {
+            const show = state.lignes_communes.some(r => {
+                const v = DEP_KEYS.includes(key) ? r.depenses[key] : r[key];
+                return Math.abs(v || 0) >= 0.5;
+            });
+            document.querySelectorAll('[data-col="' + key + '"]').forEach(el => el.classList.toggle('hidden', !show));
+        });
+
+        const term = (document.getElementById('search').value || '').trim().toLowerCase();
+        let rows = sorted();
+        if (term) rows = rows.filter(r => r.commune_nom.toLowerCase().includes(term));
+        document.getElementById('row-count').textContent =
+            rows.length + ' / ' + state.lignes_communes.length + ' commune' + (state.lignes_communes.length > 1 ? 's' : '');
+
+        const totals = state.lignes_communes.map(r => r.depenses.total);
+        const maxT = Math.max(...totals, 0), minT = Math.min(...totals, 0);
+        const tbody = document.getElementById('tbody');
+        tbody.innerHTML = rows.map(r => {
+            let badge = '';
+            if (r.depenses.total === maxT && maxT > 0) badge = ' <span class="badge badge-error badge-xs">+ chère</span>';
+            else if (r.depenses.total === minT) badge = ' <span class="badge badge-success badge-xs">- chère</span>';
+            const cell = (key, val) =>
+                `<td class="text-right cursor-pointer hover:underline" data-col="${key}" data-cid="${r.commune_id}" data-nom="${r.commune_nom.replace(/"/g, '&quot;')}" data-cat="${key}">${fmt(val)}</td>`;
+            return `<tr>
+                <td class="font-medium">${r.commune_nom}${badge}
+                    <div class="text-xs opacity-50 font-normal">${r.district_nom} · ${r.region_nom}</div>
+                </td>
+                <td class="text-center" title="${scoreTitle(r).replace(/"/g, '&quot;')}">${scoreBadge(r.score_criticite)}</td>
+                <td class="text-right">${fmtPct(r.taux_recouvrement)}</td>
+                <td class="text-right">${fmtRatio(r.ratio_charges, r.ratio_charges_infini)}</td>
+                <td class="text-right">${fmt(r.impayes)}</td>
+                <td class="text-right">${fmtPct(r.taux_impayes)}</td>
+                <td class="text-right">${r.nb_ouvrages}</td>
+                <td class="text-right">${r.pe_public}</td>
+                ${cell('salaires_direct', r.depenses.salaires_direct)}
+                ${cell('salaires_hierarchie', r.depenses.salaires_hierarchie)}
+                ${cell('vehicules_direct', r.depenses.vehicules_direct)}
+                ${cell('vehicules_hierarchie', r.depenses.vehicules_hierarchie)}
+                ${cell('ouvrage_direct', r.depenses.ouvrage_direct)}
+                ${cell('pieces_planning', r.depenses.pieces_planning)}
+                <td class="text-right font-bold">${fmt(r.depenses.total)}</td>
+                ${cell('recette_realisee', r.recette_realisee)}
+                ${cell('recette_prevue', r.recette_prevue)}
+                <td class="text-right ${r.marge >= 0 ? 'text-success' : 'text-error'}">${fmt(r.marge)}</td>
+                <td class="text-right ${r.ecart_recette >= 0 ? 'text-success' : 'text-error'}">${fmt(r.ecart_recette)}</td>
+                <td class="text-right">${fmtPct(r.penibilite_pct)}</td>
+            </tr>`;
+        }).join('');
+        tbody.querySelectorAll('td[data-cat]').forEach(td => td.addEventListener('click', () =>
+            openDetail(td.dataset.cid, td.dataset.nom, td.dataset.cat)));
+
+        renderCharts(rows);
+        renderChartsCriticite(rows);
+        renderExplications(rows, 'commune');
+    }
+
+    function renderCharts(rows) {
+        const top = rows.slice(0, 20);
+        const labels = top.map(r => r.commune_nom);
+        const ids = top.map(r => r.commune_id);
+        const ds = (key) => ({ label: CAT_LABEL[key], data: top.map(r => r.depenses[key]), _cat: key });
+        if (chartDep) chartDep.destroy();
+        chartDep = new Chart(document.getElementById('chart-depenses'), {
+            type: 'bar',
+            data: { labels, datasets: DEP_KEYS.map(ds) },
+            options: {
+                responsive: true,
+                scales: {
+                    x: { stacked: true },
+                    y: { stacked: true, ticks: { callback: (v) => Math.round(v / 1000).toLocaleString('fr-FR') + ' K' } },
+                },
+                plugins: {
+                    legend: { position: 'bottom' },
+                    tooltip: { callbacks: { label: (c) => `${c.dataset.label} : ${fmt0(c.parsed.y)}` } },
+                },
+                onClick: (evt, els) => {
+                    if (!els.length) return;
+                    const el = els[0];
+                    const cat = chartDep.data.datasets[el.datasetIndex]._cat;
+                    openDetail(ids[el.index], labels[el.index], cat);
+                },
+            },
+        });
+
+        if (chartScatter) chartScatter.destroy();
+        chartScatter = new Chart(document.getElementById('chart-scatter'), {
+            type: 'scatter',
+            data: { datasets: [{ label: 'Communes', data: rows.map(r => ({ x: r.marge, y: r.ecart_recette, nom: r.commune_nom, cid: r.commune_id })) }] },
+            options: {
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: (c) => `${c.raw.nom} — marge ${fmt0(c.raw.x)}, écart ${fmt0(c.raw.y)}` } },
+                },
+                scales: {
+                    x: { title: { display: true, text: 'Marge (réel − dépenses)' } },
+                    y: { title: { display: true, text: 'Écart recette (réel − prévu)' } },
+                },
+                onClick: (evt, els) => {
+                    if (!els.length) return;
+                    const raw = chartScatter.data.datasets[0].data[els[0].index];
+                    openDetail(raw.cid, raw.nom, 'recette_realisee');
+                },
+            },
+        });
+    }
+
+    function filtrerParNom(nom) {
+        document.getElementById('search').value = nom;
+        render();
+    }
+
+    function renderChartsCriticite(rows) {
+        // Couleurs résolues une fois par rendu (s'adapte au thème clair/sombre actif)
+        const themeColors = {
+            sain: resolveThemeColor('oklch(var(--su))'),
+            attention: resolveThemeColor('oklch(var(--wa))'),
+            critique: resolveThemeColor('oklch(var(--er))'),
+            muted: resolveThemeColor('oklch(var(--bc) / 0.25)'),
+        };
+        const scoreColor = (score) => {
+            if (score == null) return themeColors.muted;
+            return score > 66 ? themeColors.critique : (score >= 33 ? themeColors.attention : themeColors.sain);
+        };
+
+        // --- Distribution par tranche de score (10 tranches de 10 points) --- //
+        const bins = Array.from({ length: 10 }, (_, i) => ({ min: i * 10, max: i * 10 + 10, count: 0 }));
+        let sansHistorique = 0;
+        rows.forEach(r => {
+            if (r.score_criticite == null) { sansHistorique++; return; }
+            bins[Math.min(9, Math.floor(r.score_criticite / 10))].count++;
+        });
+        document.getElementById('histo-sans-historique-note').textContent = sansHistorique
+            ? sansHistorique + ' commune' + (sansHistorique > 1 ? 's' : '') + ' sans historique sur la période (score non calculé), exclue' +
+              (sansHistorique > 1 ? 's' : '') + ' de ce graphique.'
+            : '';
+        if (chartHisto) chartHisto.destroy();
+        chartHisto = new Chart(document.getElementById('chart-histo-score'), {
+            type: 'bar',
+            data: {
+                labels: bins.map(b => b.min + '-' + (b.max >= 100 ? 100 : b.max - 1)),
+                datasets: [{
+                    label: 'Nombre de communes',
+                    data: bins.map(b => b.count),
+                    backgroundColor: bins.map(b => scoreColor((b.min + b.max) / 2)),
+                }],
+            },
+            options: {
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: (c) => c.parsed.y + ' commune' + (c.parsed.y > 1 ? 's' : '') } },
+                },
+                scales: {
+                    x: { title: { display: true, text: 'Score de criticité' } },
+                    y: { title: { display: true, text: 'Nombre de communes' }, ticks: { precision: 0 } },
+                },
+            },
+        });
+
+        // --- Répartition par niveau de risque --- //
+        let nbSain = 0, nbAttention = 0, nbCritique = 0;
+        rows.forEach(r => {
+            if (r.score_criticite == null) return;
+            if (r.score_criticite > 66) nbCritique++;
+            else if (r.score_criticite >= 33) nbAttention++;
+            else nbSain++;
+        });
+        if (chartSante) chartSante.destroy();
+        chartSante = new Chart(document.getElementById('chart-sante'), {
+            type: 'doughnut',
+            data: {
+                labels: ['Saine (< 33)', 'À surveiller (33-66)', 'Critique (> 66)', 'Sans historique'],
+                datasets: [{
+                    data: [nbSain, nbAttention, nbCritique, sansHistorique],
+                    backgroundColor: [themeColors.sain, themeColors.attention, themeColors.critique, themeColors.muted],
+                }],
+            },
+            options: {
+                plugins: {
+                    legend: { position: 'bottom' },
+                    tooltip: { callbacks: { label: (c) => `${c.label} : ${c.parsed} commune${c.parsed > 1 ? 's' : ''}` } },
+                },
+            },
+        });
+
+        // --- Top 15 des communes les plus critiques --- //
+        const top15 = rows.filter(r => r.score_criticite != null)
+            .sort((a, b) => b.score_criticite - a.score_criticite).slice(0, 15);
+        if (chartTop) chartTop.destroy();
+        chartTop = new Chart(document.getElementById('chart-top-critique'), {
+            type: 'bar',
+            data: {
+                labels: top15.map(r => r.commune_nom),
+                datasets: [{ label: 'Score', data: top15.map(r => r.score_criticite), backgroundColor: top15.map(r => scoreColor(r.score_criticite)) }],
+            },
+            options: {
+                indexAxis: 'y',
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: (c) => 'Score ' + c.parsed.x.toFixed(0) + ' / 100' } },
+                },
+                scales: { x: { min: 0, max: 100, title: { display: true, text: 'Score de criticité' } } },
+                onClick: (evt, els) => {
+                    if (!els.length) return;
+                    filtrerParNom(top15[els[0].index].commune_nom);
+                },
+            },
+        });
+
+        // --- Ratio de charges vs taux d'impayés (les deux composantes du score) --- //
+        const avecScore = rows.filter(r => r.score_criticite != null);
+        const ratiosFinis = avecScore.filter(r => !r.ratio_charges_infini).map(r => r.ratio_charges);
+        const capRatio = ratiosFinis.length ? Math.max(...ratiosFinis) * 1.2 || 1 : 2;
+        const points = avecScore.map(r => ({
+            x: r.ratio_charges_infini ? capRatio : r.ratio_charges,
+            y: r.taux_impayes,
+            nom: r.commune_nom,
+            infini: r.ratio_charges_infini,
+        }));
+        if (chartRatioImpaye) chartRatioImpaye.destroy();
+        chartRatioImpaye = new Chart(document.getElementById('chart-ratio-impaye'), {
+            type: 'scatter',
+            data: { datasets: [{ label: 'Communes', data: points, backgroundColor: avecScore.map(r => scoreColor(r.score_criticite)) }] },
+            options: {
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: (c) => `${c.raw.nom} — ratio ${c.raw.infini ? '∞' : c.raw.x.toFixed(2) + '×'}, impayés ${c.raw.y.toFixed(0)} %`,
+                        },
+                    },
+                },
+                scales: {
+                    x: { title: { display: true, text: 'Ratio de charges (dépenses / recettes encaissées) — les ∞ sont ramenés au bord droit' } },
+                    y: { title: { display: true, text: "Taux d'impayés (%)" }, min: 0, max: 100 },
+                },
+                onClick: (evt, els) => {
+                    if (!els.length) return;
+                    filtrerParNom(chartRatioImpaye.data.datasets[0].data[els[0].index].nom);
+                },
+            },
+        });
+    }
+
+    const alpha = document.getElementById('alpha');
+    alpha.addEventListener('input', () => {
+        document.getElementById('alpha-val').textContent = alpha.value;
+        document.getElementById('alpha-inv').textContent = 100 - alpha.value;
+    });
+    let deb;
+    alpha.addEventListener('change', () => { clearTimeout(deb); deb = setTimeout(refresh, 120); });
+    document.querySelectorAll('.poste').forEach(cb => cb.addEventListener('change', refresh));
+    document.getElementById('base').addEventListener('change', refresh);
+    document.getElementById('geo-region').addEventListener('change', () => { cascadeGeo(); refresh(); });
+    document.getElementById('geo-district').addEventListener('change', () => { cascadeGeo(); refresh(); });
+    document.getElementById('geo-commune').addEventListener('change', refresh);
+    cascadeGeo();
+    document.getElementById('dm-toggle-all').addEventListener('click', () => {
+        dmAllExpanded = !dmAllExpanded;
+        document.querySelectorAll('tr[data-grp]:not(.group-toggle)').forEach(r => r.classList.toggle('hidden', !dmAllExpanded));
+        document.querySelectorAll('.group-toggle .chevron').forEach(c => {
+            c.classList.toggle('fa-chevron-right', !dmAllExpanded);
+            c.classList.toggle('fa-chevron-down', dmAllExpanded);
+        });
+        document.getElementById('dm-toggle-all').textContent = dmAllExpanded ? 'Tout replier' : 'Tout déplier';
+    });
+    let sdeb;
+    document.getElementById('search').addEventListener('input', () => { clearTimeout(sdeb); sdeb = setTimeout(render, 150); });
+    document.querySelectorAll('.sortable').forEach(th => th.addEventListener('click', () => {
+        const k = th.dataset.sort;
+        if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = -1; }
+        render();
+    }));
+
+    render();
+})();
+</script>
+{% endblock %}

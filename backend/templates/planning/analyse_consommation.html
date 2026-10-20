@@ -1,0 +1,2298 @@
+{% extends planning_shell_base_template %}
+{% load static %}
+{% load l10n %}
+{% load humanize %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_head %}
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="{% static 'js/multi_dropdown_filter.js' %}"></script>
+{% endblock %}
+
+{% block content %}
+<div class="container mx-auto p-4 space-y-4">
+    <!-- En-tÃªte -->
+    <div class="flex justify-between items-center">
+        <h1 class="text-2xl font-bold">
+            <i class="fas fa-chart-line text-primary mr-2"></i>
+            Analyse de la Consommation d'Eau {{ annee_filter }}
+        </h1>
+        <a href="{% url 'planning:analyse_consommation_comparatif' %}?{{ request.GET.urlencode }}" class="btn btn-outline btn-primary btn-sm">
+            <i class="fas fa-grip mr-2"></i>Comparatif ouvrages
+        </a>
+    </div>
+
+    <!-- Statistiques globales - Ligne 1 -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4" id="statsContainer">
+        <!-- Population totale -->
+        <div class="stat bg-base-100 shadow rounded-lg">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-users text-3xl"></i>
+            </div>
+            <div class="stat-title">Population totale</div>
+            <div class="stat-value text-primary text-2xl" id="stat-population">{{ population_totale|default:"0" }}</div>
+            <div class="stat-desc"><span id="stat-nb-bp">{{ nb_bp|default:"0" }}</span> BP + <span id="stat-nb-autres"></span> autres</div>
+        </div>
+
+        <!-- Volume annuel -->
+        <div class="stat bg-base-100 shadow rounded-lg">
+            <div class="stat-figure text-info">
+                <i class="fas fa-tint text-3xl"></i>
+            </div>
+            <div class="stat-title">Volume annuel</div>
+            <div class="stat-value text-info text-2xl" id="stat-volume">{{ volume_total_annuel|floatformat:0 }}</div>
+            <div class="stat-desc">m³ sur <span id="stat-nb-releves">{{ nb_releves_total }}</span> relevés</div>
+        </div>
+
+        <div class="stat bg-base-100 shadow rounded-lg">
+            <div class="stat-figure text-secondary">
+                <i class="fas fa-money-bill-wave text-3xl"></i>
+            </div>
+            <div class="stat-title">Montant facturé annuel</div>
+            <div class="stat-value text-secondary text-2xl" id="stat-montant">{{ montant_total_annuel|floatformat:0|intcomma }}</div>
+            <div class="stat-desc">kAr</div>
+        </div>
+
+        <!-- Consommation/hab/jour -->
+        <div class="stat bg-base-100 shadow rounded-lg">
+            <div class="stat-figure text-success">
+                <i class="fas fa-tachometer-alt text-3xl"></i>
+            </div>
+            <div class="stat-title">Conso. moyenne/hab/jour</div>
+            <div class="stat-value text-success text-2xl" id="stat-conso-hab">{{ conso_hab_jour_annuelle|floatformat:1 }}</div>
+            <div class="stat-desc">litres par habitant par jour sur <span id="stat-jours-couverts">{{ nb_jours_couverts }}</span> jours couverts</div>
+        </div>
+
+        <!-- Moyenne annuelle -->
+        <div class="stat bg-base-100 shadow rounded-lg">
+            <div class="stat-figure text-warning">
+                <i class="fas fa-chart-bar text-3xl"></i>
+            </div>
+            <div class="stat-title">Moyenne par relevé</div>
+            <div class="stat-value text-warning text-2xl" id="stat-moyenne">{{ moyenne_annuelle|floatformat:1 }}</div>
+            <div class="stat-desc">m³</div>
+        </div>
+
+        <!-- Médiane annuelle -->
+        <div class="stat bg-base-100 shadow rounded-lg">
+            <div class="stat-figure text-secondary">
+                <i class="fas fa-chart-area text-3xl"></i>
+            </div>
+            <div class="stat-title">Médiane annuelle</div>
+            <div class="stat-value text-secondary text-2xl" id="stat-mediane">{{ mediane_annuelle|floatformat:1 }}</div>
+            <div class="stat-desc">m³</div>
+        </div>
+    </div>
+
+    <!-- Statistiques globales - Ligne 2 (Ouvrages, Villages, Cartes Sociales) -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+        <!-- Ouvrages -->
+        <div class="stat bg-base-100 shadow rounded-lg">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-water text-3xl"></i>
+            </div>
+            <div class="stat-title">Ouvrages</div>
+            <div class="stat-value text-primary text-2xl" id="stat-nb-ouvrages">{{ nb_ouvrages|default:"0" }}</div>
+            <div class="stat-desc">Ouvrages sélectionnés</div>
+        </div>
+
+        <!-- Villages desservis -->
+        <div class="stat bg-base-100 shadow rounded-lg">
+            <div class="stat-figure text-success">
+                <i class="fas fa-map-marked-alt text-3xl"></i>
+            </div>
+            <div class="stat-title">Villages desservis</div>
+            <div class="stat-value text-success text-2xl" id="stat-nb-villages">{{ nb_villages_desservis|default:"0" }}</div>
+            <div class="stat-desc">Villages avec points d'eau</div>
+        </div>
+
+        <!-- Cartes sociales -->
+        <div class="stat bg-base-100 shadow rounded-lg">
+            <div class="stat-figure text-warning">
+                <i class="fas fa-id-card text-3xl"></i>
+            </div>
+            <div class="stat-title">Cartes sociales</div>
+            <div class="stat-value text-warning text-2xl" id="stat-nb-cartes">{{ nb_cartes_sociales|default:"0" }}</div>
+            <div class="stat-desc">
+                <span id="stat-pop-cartes">{{ population_cartes_sociales|default:"0" }}</span> hab (<span id="stat-ratio-cartes">{{ ratio_population_cartes_sociales|default:"0" }}</span>%)
+            </div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 gap-4">
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h3 class="card-title text-lg">
+                    <i class="fas fa-chart-column mr-2"></i>Répartition des BP
+                </h3>
+                <p class="text-sm text-base-content/70">
+                    Classement des BP selon leur consommation moyenne mensuelle. Les étiquettes affichent le nombre de BP et leur poids dans l'ensemble analysé.
+                </p>
+                <div class="text-sm text-base-content/70 mt-2">
+                    BP analysés: <span class="font-semibold text-primary" id="bp-analyses-total">{{ nb_bp_analyses|default:"0" }}</span>
+                </div>
+                <div class="h-80">
+                    <canvas id="chartBpTranches"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Répartition population -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <!-- Répartition nombre -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h3 class="card-title text-lg">
+                    <i class="fas fa-users-cog mr-2"></i>Répartition par type
+                </h3>
+                <div class="grid grid-cols-2 gap-3 mt-4">
+                    <!-- BP -->
+                    <div class="stats shadow">
+                        <div class="stat p-3">
+                            <div class="stat-title text-xs">BP</div>
+                            <div class="stat-value text-info text-2xl"><span id="pop-bp">{{ population_bp }}</span></div>
+                            <div class="stat-desc text-xs">
+                                <span id="pop-nb-bp">{{ nb_bp }}</span> BP Ã— 4 - <span id="pop-bp-pct">{{ pct_bp }}</span>%
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Cartes Sociales -->
+                    <div class="stats shadow">
+                        <div class="stat p-3">
+                            <div class="stat-title text-xs">Cartes Sociales</div>
+                            <div class="stat-value text-2xl" style="color: rgb(236, 72, 153);"><span id="pop-cartes-sociales">{{ population_cartes_sociales }}</span></div>
+                            <div class="stat-desc text-xs">
+                                <span id="pop-nb-cartes-sociales">{{ nb_cartes_sociales }}</span> cartes - <span id="pop-cartes-sociales-pct">{{ pct_cartes_sociales }}</span>%
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Kiosques (hors CS) -->
+                    <div class="stats shadow">
+                        <div class="stat p-3">
+                            <div class="stat-title text-xs">Kiosques (hors CS)</div>
+                            <div class="stat-value text-success text-2xl"><span id="pop-kiosques">{{ population_kiosques_volume }}</span></div>
+                            <div class="stat-desc text-xs">
+                                <span id="pop-nb-kiosques">{{ nb_kiosques_volume }}</span> pts - <span id="pop-kiosques-pct">{{ pct_kiosques }}</span>%
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- BI Volume -->
+                    <div class="stats shadow">
+                        <div class="stat p-3">
+                            <div class="stat-title text-xs">BI Volume</div>
+                            <div class="stat-value text-warning text-2xl"><span id="pop-bi-volume">{{ population_bi_volume }}</span></div>
+                            <div class="stat-desc text-xs">
+                                <span id="pop-nb-bi-volume">{{ nb_bi_volume }}</span> pts - <span id="pop-bi-pct">{{ pct_bi }}</span>%
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- BF + BI Forfait -->
+                    <div class="stats shadow">
+                        <div class="stat p-3">
+                            <div class="stat-title text-xs">BF + BI Forf.</div>
+                            <div class="stat-value text-2xl"><span id="pop-bf-bi">{{ population_bf_bi_forfait }}</span></div>
+                            <div class="stat-desc text-xs">
+                                <span id="pop-nb-bf-bi">{{ nb_bf_bi_forfait }}</span> pts - <span id="pop-bf-bi-pct">{{ pct_bf_bi }}</span>%
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Total -->
+                    <div class="stats shadow">
+                        <div class="stat p-3">
+                            <div class="stat-title text-xs">Total</div>
+                            <div class="stat-value text-primary text-2xl"><span id="pop-total">{{ population_totale }}</span></div>
+                            <div class="stat-desc text-xs">
+                                100%
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Graphique pourcentage avec barres de progression -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h3 class="card-title text-lg">
+                    <i class="fas fa-percentage mr-2"></i>Pourcentages par type
+                </h3>
+                <div class="flex flex-col gap-3 mt-4">
+                    <!-- BP -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-info font-semibold">BP</span>
+                            <span class="badge badge-info"><span id="pop-bp-pct-bar">{{ pct_bp }}</span>%</span>
+                        </div>
+                        <progress class="progress progress-info w-full" id="progress-bp" value="{{ pct_bp }}" max="100"></progress>
+                    </div>
+
+                    <!-- Cartes Sociales -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="font-semibold" style="color: rgb(236, 72, 153);">Cartes Sociales</span>
+                            <span class="badge" style="background-color: rgb(236, 72, 153); color: white;"><span id="pop-cartes-sociales-pct-bar">{{ pct_cartes_sociales }}</span>%</span>
+                        </div>
+                        <progress class="progress w-full" id="progress-cartes" value="{{ pct_cartes_sociales }}" max="100"
+                                  style="--progress-color: rgb(236, 72, 153);"></progress>
+                        <style>
+                            #progress-cartes::-webkit-progress-value { background-color: rgb(236, 72, 153); }
+                            #progress-cartes::-moz-progress-bar { background-color: rgb(236, 72, 153); }
+                        </style>
+                    </div>
+
+                    <!-- Kiosques (hors CS) -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-success font-semibold">Kiosques (hors CS)</span>
+                            <span class="badge badge-success"><span id="pop-kiosques-pct-bar">{{ pct_kiosques }}</span>%</span>
+                        </div>
+                        <progress class="progress progress-success w-full" id="progress-kiosques" value="{{ pct_kiosques }}" max="100"></progress>
+                    </div>
+
+                    <!-- BI Volume -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-warning font-semibold">BI Volume</span>
+                            <span class="badge badge-warning"><span id="pop-bi-pct-bar">{{ pct_bi }}</span>%</span>
+                        </div>
+                        <progress class="progress progress-warning w-full" id="progress-bi" value="{{ pct_bi }}" max="100"></progress>
+                    </div>
+
+                    <!-- BF + BI Forfait -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="font-semibold">BF + BI Forf.</span>
+                            <span class="badge badge-ghost"><span id="pop-bf-bi-pct-bar">{{ pct_bf_bi }}</span>%</span>
+                        </div>
+                        <progress class="progress w-full" id="progress-bf-bi" value="{{ pct_bf_bi }}" max="100"></progress>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-filter mr-2"></i>
+                Filtres
+            </h2>
+            <form method="GET" id="consommation-filters-form" class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                <!-- Année -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Année</span></label>
+                    <select name="annee" class="select select-bordered">
+                        <option value="2023" {% if annee_filter == "2023" %}selected{% endif %}>2023</option>
+                        <option value="2024" {% if annee_filter == "2024" %}selected{% endif %}>2024</option>
+                        <option value="2025" {% if annee_filter == "2025" %}selected{% endif %}>2025</option>
+                        <option value="2026" {% if annee_filter == "2026" %}selected{% endif %}>2026</option>
+                    </select>
+                </div>
+
+                <!-- Organisation -->
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Organisation</span></label>
+                    <select name="organisation" class="select select-bordered">
+                        <option value="all" {% if organisation_filter == "all" %}selected{% endif %}>Toutes les organisations</option>
+                        {% for organisation in organisations %}
+                        <option value="{{ organisation.id }}" {% if organisation_filter == organisation.id|stringformat:"s" %}selected{% endif %}>
+                            {{ organisation.nom_organisation }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-earth-africa text-secondary mr-1"></i>
+                            Régions
+                        </span>
+                    </label>
+                    <details class="dropdown w-full" id="regionsDropdown">
+                        <summary class="select select-bordered w-full flex items-center"><span id="regionsSummary" class="truncate">Toutes les régions</span></summary>
+                        <div class="dropdown-content z-30 bg-base-100 rounded-box shadow-lg border border-base-300 w-full min-w-64 p-2 mt-1">
+                            <input type="search" id="regionsFilter" placeholder="Rechercher…" class="input input-bordered input-sm w-full mb-2" autocomplete="off">
+                            <div class="flex gap-2 mb-2">
+                                <button type="button" class="btn btn-xs" id="regionsCheckVisible">Cocher les visibles</button>
+                                <button type="button" class="btn btn-xs btn-ghost" id="regionsUncheckAll">Tout décocher</button>
+                            </div>
+                            <ul class="max-h-64 overflow-y-auto">
+                                {% for region in regions %}
+                                <li data-name="{{ region.nom_region|lower }}">
+                                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                                        <input type="checkbox" name="regions" value="{{ region.id }}" class="checkbox checkbox-sm multi-cb"
+                                               data-label="{{ region.nom_region }}"
+                                               {% if region.id|stringformat:"s" in regions_ids %}checked{% endif %}>
+                                        <span class="label-text">{{ region.nom_region }}</span>
+                                    </label>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </details>
+                </div>
+
+                <!-- Districts -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-map text-accent mr-1"></i>
+                            Districts
+                        </span>
+                    </label>
+                    <details class="dropdown w-full" id="districtsDropdown">
+                        <summary class="select select-bordered w-full flex items-center"><span id="districtsSummary" class="truncate">Tous les districts</span></summary>
+                        <div class="dropdown-content z-30 bg-base-100 rounded-box shadow-lg border border-base-300 w-full min-w-64 p-2 mt-1">
+                            <input type="search" id="districtsFilter" placeholder="Rechercher…" class="input input-bordered input-sm w-full mb-2" autocomplete="off">
+                            <div class="flex gap-2 mb-2">
+                                <button type="button" class="btn btn-xs" id="districtsCheckVisible">Cocher les visibles</button>
+                                <button type="button" class="btn btn-xs btn-ghost" id="districtsUncheckAll">Tout décocher</button>
+                            </div>
+                            <ul class="max-h-64 overflow-y-auto">
+                                {% for district in districts %}
+                                <li data-name="{{ district.nom_district|lower }}">
+                                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                                        <input type="checkbox" name="districts" value="{{ district.id }}" class="checkbox checkbox-sm multi-cb"
+                                               data-label="{{ district.nom_district }}"
+                                               {% if district.id|stringformat:"s" in districts_ids %}checked{% endif %}>
+                                        <span class="label-text">{{ district.nom_district }}</span>
+                                    </label>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </details>
+                </div>
+
+                <!-- Communes -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-map-marked-alt text-success mr-1"></i>
+                            Communes
+                        </span>
+                    </label>
+                    <details class="dropdown w-full" id="communesDropdown">
+                        <summary class="select select-bordered w-full flex items-center"><span id="communesSummary" class="truncate">Toutes les communes</span></summary>
+                        <div class="dropdown-content z-30 bg-base-100 rounded-box shadow-lg border border-base-300 w-full min-w-64 p-2 mt-1">
+                            <input type="search" id="communesFilter" placeholder="Rechercher…" class="input input-bordered input-sm w-full mb-2" autocomplete="off">
+                            <div class="flex gap-2 mb-2">
+                                <button type="button" class="btn btn-xs" id="communesCheckVisible">Cocher les visibles</button>
+                                <button type="button" class="btn btn-xs btn-ghost" id="communesUncheckAll">Tout décocher</button>
+                            </div>
+                            <ul class="max-h-64 overflow-y-auto">
+                                {% for commune in communes %}
+                                <li data-name="{{ commune.nom_commune|lower }}">
+                                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                                        <input type="checkbox" name="communes" value="{{ commune.id }}" class="checkbox checkbox-sm multi-cb"
+                                               data-label="{{ commune.nom_commune }}"
+                                               {% if commune.id|stringformat:"s" in communes_ids %}checked{% endif %}>
+                                        <span class="label-text">{{ commune.nom_commune }}</span>
+                                    </label>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </details>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-home text-info mr-1"></i>
+                            Villages
+                        </span>
+                    </label>
+                    <details class="dropdown w-full" id="villagesDropdown">
+                        <summary class="select select-bordered w-full flex items-center"><span id="villagesSummary" class="truncate">Tous les villages</span></summary>
+                        <div class="dropdown-content z-30 bg-base-100 rounded-box shadow-lg border border-base-300 w-full min-w-64 p-2 mt-1">
+                            <input type="search" id="villagesFilter" placeholder="Rechercher…" class="input input-bordered input-sm w-full mb-2" autocomplete="off">
+                            <div class="flex gap-2 mb-2">
+                                <button type="button" class="btn btn-xs" id="villagesCheckVisible">Cocher les visibles</button>
+                                <button type="button" class="btn btn-xs btn-ghost" id="villagesUncheckAll">Tout décocher</button>
+                            </div>
+                            <ul class="max-h-64 overflow-y-auto">
+                                {% for village in villages %}
+                                <li data-name="{{ village.nom_village|lower }}">
+                                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                                        <input type="checkbox" name="villages" value="{{ village.id }}" class="checkbox checkbox-sm multi-cb"
+                                               data-label="{{ village.nom_village }}"
+                                               {% if village.id|stringformat:"s" in villages_ids %}checked{% endif %}>
+                                        <span class="label-text">{{ village.nom_village }}</span>
+                                    </label>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </details>
+                </div>
+
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-draw-polygon text-accent mr-1"></i>
+                            Parcelles
+                        </span>
+                    </label>
+                    <details class="dropdown w-full" id="parcellesDropdown">
+                        <summary class="select select-bordered w-full flex items-center"><span id="parcellesSummary" class="truncate">Toutes les parcelles</span></summary>
+                        <div class="dropdown-content z-30 bg-base-100 rounded-box shadow-lg border border-base-300 w-full min-w-64 p-2 mt-1">
+                            <input type="search" id="parcellesFilter" placeholder="Rechercher…" class="input input-bordered input-sm w-full mb-2" autocomplete="off">
+                            <div class="flex gap-2 mb-2">
+                                <button type="button" class="btn btn-xs" id="parcellesCheckVisible">Cocher les visibles</button>
+                                <button type="button" class="btn btn-xs btn-ghost" id="parcellesUncheckAll">Tout décocher</button>
+                            </div>
+                            <ul class="max-h-64 overflow-y-auto">
+                                {% for parcelle in parcelles %}
+                                <li data-name="{{ parcelle.reference_parcelle|default:parcelle.id|stringformat:'s'|lower }}">
+                                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                                        <input type="checkbox" name="parcelles" value="{{ parcelle.id }}" class="checkbox checkbox-sm multi-cb"
+                                               data-label="{{ parcelle.reference_parcelle|default:parcelle.id }}"
+                                               {% if parcelle.id|stringformat:"s" in parcelles_ids %}checked{% endif %}>
+                                        <span class="label-text">{{ parcelle.reference_parcelle|default:parcelle.id }}</span>
+                                    </label>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </details>
+                </div>
+
+                <!-- Ouvrages -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-water text-primary mr-1"></i>
+                            Ouvrages
+                        </span>
+                    </label>
+                    <details class="dropdown w-full" id="ouvragesDropdown">
+                        <summary class="select select-bordered w-full flex items-center"><span id="ouvragesSummary" class="truncate">Tous les ouvrages</span></summary>
+                        <div class="dropdown-content z-30 bg-base-100 rounded-box shadow-lg border border-base-300 w-full min-w-64 p-2 mt-1">
+                            <input type="search" id="ouvragesFilter" placeholder="Rechercher…" class="input input-bordered input-sm w-full mb-2" autocomplete="off">
+                            <div class="flex gap-2 mb-2">
+                                <button type="button" class="btn btn-xs" id="ouvragesCheckVisible">Cocher les visibles</button>
+                                <button type="button" class="btn btn-xs btn-ghost" id="ouvragesUncheckAll">Tout décocher</button>
+                            </div>
+                            <ul class="max-h-64 overflow-y-auto">
+                                {% for ouvrage in ouvrages %}
+                                <li data-name="{{ ouvrage.nom_ouvrage|lower }}">
+                                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                                        <input type="checkbox" name="ouvrages" value="{{ ouvrage.id }}" class="checkbox checkbox-sm multi-cb"
+                                               data-label="{{ ouvrage.nom_ouvrage }}"
+                                               {% if ouvrage.id|stringformat:"s" in ouvrages_ids %}checked{% endif %}>
+                                        <span class="label-text">{{ ouvrage.nom_ouvrage }}</span>
+                                    </label>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </details>
+                </div>
+
+                <!-- Types de points d'eau -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text font-semibold">
+                            <i class="fas fa-map-marker-alt text-info mr-1"></i>
+                            Types de points d'eau
+                        </span>
+                    </label>
+                    <details class="dropdown w-full" id="typesPeDropdown">
+                        <summary class="select select-bordered w-full flex items-center"><span id="typesPeSummary" class="truncate">Tous les types</span></summary>
+                        <div class="dropdown-content z-30 bg-base-100 rounded-box shadow-lg border border-base-300 w-full min-w-64 p-2 mt-1">
+                            <input type="search" id="typesPeFilter" placeholder="Rechercher…" class="input input-bordered input-sm w-full mb-2" autocomplete="off">
+                            <div class="flex gap-2 mb-2">
+                                <button type="button" class="btn btn-xs" id="typesPeCheckVisible">Cocher les visibles</button>
+                                <button type="button" class="btn btn-xs btn-ghost" id="typesPeUncheckAll">Tout décocher</button>
+                            </div>
+                            <ul class="max-h-64 overflow-y-auto">
+                                {% for type_pe in types_pe %}
+                                <li data-name="{{ type_pe.nom_type|lower }}">
+                                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                                        <input type="checkbox" name="types_pe" value="{{ type_pe.id }}" class="checkbox checkbox-sm multi-cb"
+                                               data-label="{{ type_pe.nom_type }}"
+                                               {% if type_pe.id|stringformat:"s" in types_pe_ids %}checked{% endif %}>
+                                        <span class="label-text">{{ type_pe.nom_type }}</span>
+                                    </label>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </details>
+                </div>
+
+                <!-- Modalité de paiement -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Modalité de paiement</span>
+                        <span class="label-text-alt">
+                            <i class="fas fa-info-circle text-info"></i>
+                        </span>
+                    </label>
+                    <select name="modalite_paiement" class="select select-bordered">
+                        <option value="">Au volume (par défaut)</option>
+                        <option value="au_volume" {% if modalite_paiement_filter == "au_volume" %}selected{% endif %}>Au volume uniquement</option>
+                        <option value="forfaitaire" {% if modalite_paiement_filter == "forfaitaire" %}selected{% endif %}>Forfaitaire</option>
+                        <option value="mixte" {% if modalite_paiement_filter == "mixte" %}selected{% endif %}>Mixte</option>
+                    </select>
+                    <label class="label">
+                        <span class="label-text-alt text-warning">
+                            <i class="fas fa-exclamation-triangle mr-1"></i>Forfaitaire = pas de relevés volumétriques
+                        </span>
+                    </label>
+                </div>
+
+                <!-- Boutons -->
+                <div class="form-control flex flex-row gap-2 items-end">
+                    <button type="submit" class="btn btn-primary flex-1">
+                        <i class="fas fa-filter mr-2"></i>Filtrer
+                    </button>
+                    <a href="{% url 'planning:analyse_consommation' %}" class="btn btn-ghost flex-1">
+                        <i class="fas fa-redo mr-2"></i>Réinitialiser
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Graphiques -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <!-- Graphique volumes mensuels -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-chart-bar text-info mr-2"></i>
+                    Volumes consommés par mois
+                </h2>
+                <div class="h-80">
+                    <canvas id="chartVolumes"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Graphique consommation par habitant -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <i class="fas fa-chart-line text-success mr-2"></i>
+                    Consommation par habitant par jour
+                </h2>
+                <div class="h-80">
+                    <canvas id="chartConsoHab"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-sack-dollar text-secondary mr-2"></i>
+                Montants facturés par mois
+            </h2>
+            <div class="h-80">
+                <canvas id="chartMontants"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Interprétation des graphiques -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-lightbulb mr-2"></i>
+                Interprétation des données
+            </h2>
+            <div id="interpretation-donnees" class="space-y-3 text-sm leading-6"></div>
+            <div class="alert alert-base-200 mt-4">
+                <div>
+                    <p id="interpretation-synthese"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Graphique données météo (pluviométrie) -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-cloud-rain text-info mr-2"></i>
+                Données Météo - Pluviométrie
+                <span class="badge badge-info badge-sm ml-2" id="villages-count">0 villages</span>
+            </h2>
+            <div class="alert alert-info mt-2">
+                <i class="fas fa-info-circle"></i>
+                <span class="text-sm">
+                    Les données météo sont récupérées automatiquement pour les villages concernés par les filtres sélectionnés.
+                    Les précipitations sont agrégées par mois et peuventêtre corrélées Ã  la consommation d'eau.
+                </span>
+            </div>
+            <div class="h-80 mt-4">
+                <canvas id="chartMeteo"></canvas>
+            </div>
+            <div class="text-center mt-2 text-sm text-base-content/70" id="meteo-info">
+                <i class="fas fa-database mr-1"></i>
+                <span id="total-mesures">0 mesures</span> pour l'année <span id="annee-meteo">{{ annee_filter }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Graphique nombre de points d'eau par mois et par type -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-map-marker-alt text-primary mr-2"></i>
+                Nombre de Points d'Eau Actifs par Mois
+                <span class="badge badge-primary badge-sm ml-2" id="nb-types-pe">0 types</span>
+            </h2>
+            <div class="alert alert-info mt-2">
+                <i class="fas fa-info-circle"></i>
+                <span class="text-sm">
+                    Nombre de points d'eau ayant au moins un relevé dans le mois, regroupés par type.
+                    Les données sont empilées pour montrer la composition du parc de points d'eau actifs.
+                </span>
+            </div>
+            <div class="h-80 mt-4">
+                <canvas id="chartPointsEauParMois"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Consommation par point d'eau : moyenne et médiane par type (kiosques : par type d'abonné) -->
+    <div class="card bg-base-100 shadow" id="section-conso-par-pe">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-faucet-drip text-primary mr-2"></i>
+                Consommation par point d'eau : moyenne et médiane
+                <span class="badge badge-ghost badge-sm ml-2">par type de point d'eau · kiosques par type d'abonné</span>
+            </h2>
+            <div class="alert alert-info mt-2">
+                <i class="fas fa-info-circle"></i>
+                <span class="text-sm">
+                    Pour chaque point d'eau, on retient son volume mensuel moyen sur les mois où il a consommé ; la moyenne et la
+                    médiane portent ensuite sur l'ensemble des points d'eau du type. Un écart important entre moyenne et médiane
+                    signale quelques gros consommateurs qui tirent la moyenne vers le haut.
+                    Les kiosques sont aussi détaillés en <strong>particuliers</strong> et <strong>boutiques</strong>.
+                </span>
+            </div>
+            {% if stats_pe_segments %}
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+                <div>
+                    <p class="text-sm font-semibold mb-1">Moyenne et médiane par point d'eau (m³/mois)</p>
+                    <div class="h-80"><canvas id="chartConsoPeSegments"></canvas></div>
+                </div>
+                <div>
+                    <div class="flex items-center justify-between mb-1">
+                        <p class="text-sm font-semibold">Évolution mensuelle par point d'eau (m³)</p>
+                        <select id="selectConsoPeStat" class="select select-bordered select-xs">
+                            <option value="mediane">Médiane</option>
+                            <option value="moyenne">Moyenne</option>
+                        </select>
+                    </div>
+                    <div class="h-80"><canvas id="chartConsoPeMensuel"></canvas></div>
+                </div>
+            </div>
+            <div class="overflow-x-auto mt-4">
+                <table class="table table-zebra table-sm">
+                    <thead>
+                        <tr class="bg-base-200">
+                            <th>Type de point d'eau</th>
+                            <th class="text-center">Points d'eau</th>
+                            <th class="text-center">Moyenne (m³/mois)</th>
+                            <th class="text-center">Médiane (m³/mois)</th>
+                            <th class="text-center">Minimum</th>
+                            <th class="text-center">Maximum</th>
+                            <th class="text-center">Volume total (m³)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for s in stats_pe_segments %}
+                        <tr {% if s.agregat %}class="font-semibold bg-base-200/60"{% endif %}>
+                            <td>{% if s.sous_segment %}<span class="pl-4">↳ </span>{% endif %}{{ s.label }}</td>
+                            <td class="text-center">{{ s.nb_points_eau|intcomma }}</td>
+                            <td class="text-center">{{ s.moyenne|floatformat:2 }}</td>
+                            <td class="text-center">{{ s.mediane|floatformat:2 }}</td>
+                            <td class="text-center">{{ s.minimum|floatformat:2 }}</td>
+                            <td class="text-center">{{ s.maximum|floatformat:2 }}</td>
+                            <td class="text-center">{{ s.volume_total|floatformat:2|intcomma }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-center text-base-content/50 py-6">Aucun point d'eau avec consommation pour ces filtres.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if stats_pe_segments %}
+    <script>
+    document.addEventListener('DOMContentLoaded', function () {
+        if (typeof Chart === 'undefined') return;
+        const donnees = {{ stats_pe_segments_json|safe }};
+        // Les lignes agrégées (« Kiosque, tous abonnés ») restent dans le tableau seulement : pas de double compte dans les graphiques
+        const segments = donnees.segments.filter(s => !s.agregat);
+        const palette = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#0d9488', '#ea580c', '#db2777', '#475569', '#65a30d'];
+        const couleur = i => palette[i % palette.length];
+        const nf = v => Number(v || 0).toLocaleString('fr-FR', {maximumFractionDigits: 2});
+
+        new Chart(document.getElementById('chartConsoPeSegments').getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: segments.map(s => s.label),
+                datasets: [
+                    {label: 'Moyenne', data: segments.map(s => s.moyenne), backgroundColor: 'rgba(37, 99, 235, 0.75)'},
+                    {label: 'Médiane', data: segments.map(s => s.mediane), backgroundColor: 'rgba(245, 158, 11, 0.85)'},
+                ],
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {tooltip: {callbacks: {
+                    label: c => ` ${c.dataset.label} : ${nf(c.parsed.y)} m³/mois`,
+                    afterBody: items => ` ${segments[items[0].dataIndex].nb_points_eau} point(s) d'eau`,
+                }}},
+                scales: {y: {beginAtZero: true, title: {display: true, text: 'm³ par point d\'eau et par mois'}}},
+            },
+        });
+
+        const nbMois = donnees.nb_mois_visibles || donnees.labels_mois.length;
+        const labelsMois = donnees.labels_mois.slice(0, nbMois);
+        const choix = document.getElementById('selectConsoPeStat');
+        const graphMensuel = new Chart(document.getElementById('chartConsoPeMensuel').getContext('2d'), {
+            type: 'line',
+            data: {labels: labelsMois, datasets: []},
+            options: {
+                responsive: true, maintainAspectRatio: false, spanGaps: true,
+                plugins: {tooltip: {callbacks: {label: c => ` ${c.dataset.label} : ${nf(c.parsed.y)} m³`}}},
+                scales: {y: {beginAtZero: true, title: {display: true, text: 'm³ par point d\'eau'}}},
+            },
+        });
+        function majMensuel() {
+            const cle = choix.value === 'moyenne' ? 'mensuel_moyenne' : 'mensuel_mediane';
+            graphMensuel.data.datasets = segments.map((s, i) => ({
+                label: s.label,
+                data: s[cle].slice(0, nbMois).map(v => v > 0 ? v : null),
+                borderColor: couleur(i), backgroundColor: couleur(i), tension: 0.25, borderWidth: 2, pointRadius: 3,
+            }));
+            graphMensuel.update();
+        }
+        choix.addEventListener('change', majMensuel);
+        majMensuel();
+    });
+    </script>
+    {% endif %}
+
+    <!-- Kiosques à faible consommation : « BP déguisés » -->
+    <div class="card bg-base-100 shadow" id="section-kiosques-bp-deguises">
+        <div class="card-body">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+                <h2 class="card-title">
+                    <i class="fas fa-user-secret text-warning mr-2"></i>
+                    Kiosques à faible consommation (« BP déguisés »)
+                    <span class="badge badge-warning badge-sm ml-2">{{ kiosques_bp_deguises|length }} kiosque{{ kiosques_bp_deguises|length|pluralize }}</span>
+                </h2>
+                <div class="flex flex-wrap items-center gap-2 text-sm">
+                    <label class="flex items-center gap-2">Seuil
+                        <input type="number" min="0" step="1" id="seuilKiosqueBp" value="{{ seuil_kiosque_bp|floatformat:"-2"|unlocalize }}" class="input input-bordered input-sm w-20">
+                        m³/mois
+                    </label>
+                    <select id="filtreInstitutionnel" class="select select-bordered select-sm" aria-label="Branchements institutionnels">
+                        <option value="tous" {% if filtre_institutionnel == 'tous' %}selected{% endif %}>Institutionnels : inclus</option>
+                        <option value="non" {% if filtre_institutionnel == 'non' %}selected{% endif %}>Hors institutionnels (écoles, blocs sanitaires…)</option>
+                        <option value="oui" {% if filtre_institutionnel == 'oui' %}selected{% endif %}>Institutionnels seulement</option>
+                    </select>
+                    <button type="button" class="btn btn-sm btn-primary" id="btnSeuilKiosqueBp"><i class="fas fa-filter mr-1"></i>Appliquer</button>
+                    <a href="{% url 'planning:kiosques_a_reclasser' %}?annee={{ annee_filter }}&amp;seuil={{ seuil_kiosque_bp|floatformat:"-2"|unlocalize }}" class="btn btn-sm btn-warning" title="Page de rappel : changer le type de point d'eau de ces kiosques"><i class="fas fa-bell mr-1"></i>Reclasser</a>
+                    {% if kiosques_bp_deguises %}<button type="button" class="btn btn-sm btn-outline" id="btnCsvKiosquesBp"><i class="fas fa-file-csv mr-1"></i>Exporter CSV</button>{% endif %}
+                </div>
+            </div>
+            <div class="alert alert-info mt-2">
+                <i class="fas fa-info-circle"></i>
+                <span class="text-sm">
+                    Kiosques dont la consommation moyenne est inférieure à <strong>{{ seuil_kiosque_bp|floatformat:"-2" }} m³ par mois</strong> :
+                    ils consomment comme un branchement privé et sont probablement des BP enregistrés comme kiosques.
+                    Moyenne = volume de l'année ÷ jours couverts par les relevés × 30,44 (indépendante des mois partiels) ; les filtres de la page s'appliquent.
+                    {% if nb_kiosques_institutionnels %}<strong>{{ nb_kiosques_institutionnels }}</strong> de cette liste {{ nb_kiosques_institutionnels|pluralize:"est un branchement institutionnel,sont des branchements institutionnels" }} (école, bloc sanitaire…), normalement peu consommateurs : ils ne sont pas des BP déguisés.{% endif %}
+                </span>
+            </div>
+            {% if kiosques_bp_deguises %}
+            <div class="overflow-x-auto mt-4">
+                <table class="table table-zebra table-sm">
+                    <thead>
+                        <tr class="bg-base-200">
+                            <th>#</th>
+                            <th>Point d'eau</th>
+                            <th>IDXLS</th>
+                            <th>Ouvrage</th>
+                            <th>Village · Commune</th>
+                            <th>Type d'abonné</th>
+                            <th class="text-center">Institutionnel</th>
+                            <th class="text-center">Moyenne (m³/mois)</th>
+                            <th class="text-center">Mois relevés</th>
+                            <th class="text-center">Volume {{ annee_filter }} (m³)</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for k in kiosques_bp_deguises %}
+                        <tr>
+                            <td>{{ forloop.counter }}</td>
+                            <td class="font-semibold">{{ k.nom }}</td>
+                            <td class="font-mono text-xs">{{ k.idxls|default:"-" }}</td>
+                            <td>{{ k.ouvrage }}</td>
+                            <td class="text-xs">{{ k.village|default:"-" }}{% if k.commune %} · {{ k.commune }}{% endif %}</td>
+                            <td>{% if k.type_abonne == 'Non renseigné' %}<span class="badge badge-error badge-sm">Non renseigné</span>{% else %}<span class="badge badge-ghost badge-sm">{{ k.type_abonne }}</span>{% endif %}</td>
+                            <td class="text-center">{% if k.institutionnel %}<span class="badge badge-info badge-sm">Oui</span>{% else %}<span class="opacity-40">-</span>{% endif %}</td>
+                            <td class="text-center"><span class="badge badge-warning">{{ k.moyenne|floatformat:2 }}</span></td>
+                            <td class="text-center">{{ k.nb_mois }}</td>
+                            <td class="text-center">{{ k.volume_total|floatformat:2|intcomma }}</td>
+                            <td class="text-right">{% if k.ouvrage_id %}<a class="btn btn-xs btn-ghost" href="/organisations/points-eau/{{ k.ouvrage_id }}/" target="_blank" rel="noopener" title="Ouvrir la liste des points d'eau de l'ouvrage"><i class="fas fa-arrow-up-right-from-square"></i></a>{% endif %}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {{ kiosques_bp_deguises|json_script:"data-kiosques-bp" }}
+            {% else %}
+            <p class="text-center text-base-content/50 py-6">Aucun kiosque sous {{ seuil_kiosque_bp|floatformat:"-2" }} m³ par mois pour ces filtres.</p>
+            {% endif %}
+        </div>
+    </div>
+    <script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const seuil = document.getElementById('seuilKiosqueBp');
+        document.getElementById('btnSeuilKiosqueBp').addEventListener('click', function () {
+            const url = new URL(window.location.href);
+            url.searchParams.set('seuil_kiosque', seuil.value || '10');
+            url.searchParams.set('institutionnel', document.getElementById('filtreInstitutionnel').value);
+            window.location.href = url.toString();
+        });
+        document.getElementById('filtreInstitutionnel').addEventListener('change', function () {
+            document.getElementById('btnSeuilKiosqueBp').click();
+        });
+        seuil.addEventListener('keydown', function (e) { if (e.key === 'Enter') document.getElementById('btnSeuilKiosqueBp').click(); });
+        const csv = document.getElementById('btnCsvKiosquesBp');
+        if (!csv) return;
+        csv.addEventListener('click', function () {
+            const lignes = JSON.parse(document.getElementById('data-kiosques-bp').textContent);
+            const entetes = ['Point d\'eau', 'IDXLS', 'Ouvrage', 'Village', 'Commune', 'Type d\'abonné', 'Institutionnel', 'Moyenne m3/mois', 'Mois relevés', 'Volume total m3'];
+            const cellule = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+            const corps = lignes.map(l => [l.nom, l.idxls, l.ouvrage, l.village, l.commune, l.type_abonne, l.institutionnel ? 'Oui' : 'Non',
+                String(l.moyenne).replace('.', ','), l.nb_mois, String(l.volume_total).replace('.', ',')].map(cellule).join(';'));
+            const blob = new Blob(['\ufeff' + [entetes.map(cellule).join(';')].concat(corps).join('\r\n')], {type: 'text/csv;charset=utf-8'});
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'kiosques_faible_consommation.csv';
+            a.click();
+            URL.revokeObjectURL(a.href);
+        });
+    });
+    </script>
+
+    <!-- Tableau détaillé par mois -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-table mr-2"></i>
+                Détails mensuels
+            </h2>
+            <div class="overflow-x-auto mt-4">
+                <table class="table table-zebra table-sm">
+                    <thead>
+                        <tr class="bg-base-200">
+                            <th>Mois</th>
+                            <th class="text-center">Volume total (m³)</th>
+                            <th class="text-center">Montant facturé (kAr)</th>
+                            <th class="text-center">Nb relevés</th>
+                            <th class="text-center">Moyenne (m³)</th>
+                            <th class="text-center">Médiane (m³)</th>
+                            <th class="text-center">Conso/hab/jour (L)</th>
+                            <th class="text-center">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for stat in stats_par_mois %}
+                        {% if stat.nb_releves > 0 %}
+                        <tr>
+                            <td class="font-semibold">{{ stat.mois_nom }}</td>
+                            <td class="text-center">{{ stat.volume_total|floatformat:2|intcomma }}</td>
+                            <td class="text-center">{% widthratio stat.montant_total 1000 1 %}</td>
+                            <td class="text-center">
+                                <span class="badge badge-ghost">{{ stat.nb_releves|intcomma }}</span>
+                            </td>
+                            <td class="text-center">{{ stat.moyenne|floatformat:2 }}</td>
+                            <td class="text-center">{{ stat.mediane|floatformat:2 }}</td>
+                            <td class="text-center">
+                                <span class="badge badge-success">{{ stat.conso_hab_jour|floatformat:1 }}</span>
+                            </td>
+                            <td class="text-center">
+                                <button onclick="voirDetailsPointsEau({{ stat.mois_numero }}, '{{ stat.mois_nom }}')"
+                                        class="btn btn-sm btn-ghost btn-primary">
+                                    <i class="fas fa-eye mr-1"></i>Détails
+                                </button>
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                    </tbody>
+                    <tfoot>
+                        <tr class="bg-base-200 font-bold">
+                            <td>TOTAL / MOYENNE ANNUELLE</td>
+                            <td class="text-center">{{ volume_total_annuel|floatformat:2|intcomma }}</td>
+                            <td class="text-center">{% widthratio montant_total_annuel 1000 1 %}</td>
+                            <td class="text-center">
+                                <span class="badge badge-primary">{{ nb_releves_total|intcomma }}</span>
+                            </td>
+                            <td class="text-center">{{ moyenne_annuelle|floatformat:2 }}</td>
+                            <td class="text-center">{{ mediane_annuelle|floatformat:2 }}</td>
+                            <td class="text-center">
+                                <span class="badge badge-success badge-lg">{{ conso_hab_jour_annuelle|floatformat:1 }}</span>
+                            </td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Informations sur les indicateurs -->
+    <div class="alert alert-info">
+        <i class="fas fa-info-circle text-2xl"></i>
+        <div>
+            <h3 class="font-bold">Calculs et hypothese</h3>
+            <ul class="list-disc list-inside text-sm mt-2">
+                <li><strong>Population BP :</strong> Chaque Branchement Privé (BP) alimente 4 personnes</li>
+                <li><strong>Population autres :</strong> Les Kiosques et Bornes alimentent le reste de la population des parcelles</li>
+                <li><strong>Consommation/hab/jour :</strong> (Volume mensuel en litres) / Population / Jours dans le mois</li>
+                <li><strong>Moyenne :</strong> Somme des consommations / Nombre de relevés</li>
+                <li><strong>Médiane :</strong> Valeur centrale de la distribution des consommations (50e percentile)</li>
+                <li><strong>Référence OMS :</strong> 50-100 litres/hab/jour pour les besoins de base</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Modal détails points d'eau par mois -->
+    <dialog id="modal-details-points-eau" class="modal">
+        <div class="modal-box max-w-7xl w-[96vw] lg:w-[92vw]">
+            <form method="dialog">
+                <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">âœ•</button>
+            </form>
+            <h3 class="font-bold text-lg mb-4">
+                <i class="fas fa-tint text-info mr-2"></i>
+                Détails des consommations - <span id="modal-mois-titre"></span>
+            </h3>
+
+            <div id="modal-details-contenu">
+                <div class="flex justify-center items-center py-8">
+                    <span class="loading loading-spinner loading-lg text-primary"></span>
+                </div>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+</div>
+{% endblock content %}
+
+{% block extra_js %}
+<script>
+// Fonction pour formater les nombres avec séparateurs de milliers
+function formatNumber(num, decimals = 0) {
+    const formatted = new Intl.NumberFormat('fr-FR', {
+        useGrouping: true,
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+    }).format(Number(num));
+
+    // Remplace l'espace fine insécable par un espace normal plus visible dans le tableau
+    return formatted.replace(/\u202f/g, ' ');
+}
+
+function getPointEauTypeMeta(typeName) {
+    const t = (typeName || '').toUpperCase();
+    if (t.includes('BP') || (t.includes('BRANCHEMENT') && t.includes('PRIV'))) {
+        return { icon: 'fa-house', label: 'BP', badge: 'badge-info' };
+    }
+    if (t.includes('KIOSQUE')) {
+        return { icon: 'fa-faucet-drip', label: 'Kiosque', badge: 'badge-warning' };
+    }
+    if (t.includes('BI') || t.includes('BF') || t.includes('BORNE') || t.includes('ROBINET')) {
+        return { icon: 'fa-faucet', label: 'BI/BF', badge: 'badge-success' };
+    }
+    return { icon: 'fa-circle-dot', label: 'Point d\'eau', badge: 'badge-ghost' };
+}
+
+function buildMetricBar(value, reference, colorClass = 'bg-primary') {
+    const safeReference = reference > 0 ? reference : 1;
+    const percent = Math.max(0, Math.min(100, (value / safeReference) * 100));
+    return `
+        <div class="space-y-1">
+            <progress class="progress ${colorClass} w-full" value="${percent}" max="100"></progress>
+            <div class="text-[11px] opacity-70 flex justify-between gap-2">
+                <span>${formatNumber(value, 2)}</span>
+                <span>${Math.round(percent)}%</span>
+            </div>
+        </div>
+    `;
+}
+
+function calculateQuartiles(values) {
+    const data = (values || [])
+        .filter(v => Number(v) > 0)
+        .map(v => Number(v))
+        .sort((a, b) => a - b);
+
+    if (data.length === 0) {
+        return { q1: 0, q3: 0 };
+    }
+
+    const median = (arr) => {
+        const mid = Math.floor(arr.length / 2);
+        return arr.length % 2 === 0 ? (arr[mid - 1] + arr[mid]) / 2 : arr[mid];
+    };
+
+    const mid = Math.floor(data.length / 2);
+    const lower = data.slice(0, mid);
+    const upper = data.length % 2 === 0 ? data.slice(mid) : data.slice(mid + 1);
+
+    return {
+        q1: lower.length > 0 ? median(lower) : data[0],
+        q3: upper.length > 0 ? median(upper) : data[data.length - 1]
+    };
+}
+
+function buildInterpretationHtml(label, moyenne, mediane, q1, q3, unite) {
+    const ecartInterquartile = q3 - q1;
+    const moyenneMedianEcart = Math.abs(moyenne - mediane);
+    const dispersionFaible = ecartInterquartile <= Math.max(1, mediane * 0.25);
+    const centreEquilibre = moyenneMedianEcart <= Math.max(1, mediane * 0.1);
+    const q1Pct = mediane > 0 ? Math.round((q1 / mediane) * 100) : 0;
+    const q3Pct = mediane > 0 ? Math.round((q3 / mediane) * 100) : 0;
+
+    return {
+        blocks: `
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="alert alert-info">
+                    <div>
+                        <h3 class="font-bold">${label} - moyenne</h3>
+                        <p>La moyenne observée est <strong>${formatNumber(moyenne, 2)} ${unite}</strong>.</p>
+                    </div>
+                </div>
+                <div class="alert alert-secondary">
+                    <div>
+                        <h3 class="font-bold">${label} - médiane</h3>
+                        <p>La médiane est <strong>${formatNumber(mediane, 2)} ${unite}</strong>, c'est-à-dire la valeur qui coupe la série en deux: 50 % des valeurs sont en dessous et 50 % au-dessus.</p>
+                    </div>
+                </div>
+                <div class="alert alert-success">
+                    <div>
+                        <h3 class="font-bold">${label} - Q1</h3>
+                        <p>Le premier quartile Q1 est <strong>${formatNumber(q1, 2)} ${unite}</strong> (${q1Pct} % de la médiane). 25 % des valeurs sont en dessous.</p>
+                    </div>
+                </div>
+                <div class="alert alert-warning">
+                    <div>
+                        <h3 class="font-bold">${label} - Q3</h3>
+                        <p>Le troisième quartile Q3 est <strong>${formatNumber(q3, 2)} ${unite}</strong> (${q3Pct} % de la médiane). 75 % des valeurs sont en dessous.</p>
+                    </div>
+                </div>
+            </div>
+        `,
+        synthesis: dispersionFaible
+            ? `Les quartiles sont rapprochés (Q1 = ${formatNumber(q1, 2)} ${unite}, Q3 = ${formatNumber(q3, 2)} ${unite}), donc la distribution est peu dispersée.`
+            : `Les quartiles sont plus éloignés (Q1 = ${formatNumber(q1, 2)} ${unite}, Q3 = ${formatNumber(q3, 2)} ${unite}), donc la distribution est plus dispersée.`,
+        extra: centreEquilibre
+            ? `La moyenne (${formatNumber(moyenne, 2)} ${unite}) est proche de la médiane (${formatNumber(mediane, 2)} ${unite}), ce qui indique une répartition plutôt équilibrée.`
+            : `La moyenne (${formatNumber(moyenne, 2)} ${unite}) et la médiane (${formatNumber(mediane, 2)} ${unite}) sont différentes, ce qui suggère une distribution asymétrique.`
+    };
+}
+
+// Données initiales du serveur
+let currentData = {
+    population_totale: {{ population_totale|default:0|unlocalize }},
+    population_bp: {{ population_bp|default:0|unlocalize }},
+    population_kiosques_volume: {{ population_kiosques_volume|default:0|unlocalize }},
+    population_bi_volume: {{ population_bi_volume|default:0|unlocalize }},
+    population_bf_bi_forfait: {{ population_bf_bi_forfait|default:0|unlocalize }},
+    nb_bp: {{ nb_bp|default:0|unlocalize }},
+    nb_kiosques_volume: {{ nb_kiosques_volume|default:0|unlocalize }},
+    nb_bi_volume: {{ nb_bi_volume|default:0|unlocalize }},
+    nb_bf_bi_forfait: {{ nb_bf_bi_forfait|default:0|unlocalize }},
+    volume_total_annuel: {{ volume_total_annuel|default:0|unlocalize }},
+    montant_total_annuel: {{ montant_total_annuel|default:0|unlocalize }},
+    nb_releves_total: {{ nb_releves_total|default:0|unlocalize }},
+    nb_jours_couverts: {{ nb_jours_couverts|default:0|unlocalize }},
+    conso_hab_jour_annuelle: {{ conso_hab_jour_annuelle|default:0|unlocalize }},
+    moyenne_annuelle: {{ moyenne_annuelle|default:0|unlocalize }},
+    mediane_annuelle: {{ mediane_annuelle|default:0|unlocalize }},
+    nb_ouvrages: {{ nb_ouvrages|default:0|unlocalize }},
+    nb_villages_desservis: {{ nb_villages_desservis|default:0|unlocalize }},
+    nb_cartes_sociales: {{ nb_cartes_sociales|default:0|unlocalize }},
+    population_cartes_sociales: {{ population_cartes_sociales|default:0|unlocalize }},
+    nb_bp_analyses: {{ nb_bp_analyses|default:0|unlocalize }},
+    bp_tranche_moins_3: {{ bp_tranche_moins_3|default:0|unlocalize }},
+    bp_tranche_entre_3_10: {{ bp_tranche_entre_3_10|default:0|unlocalize }},
+    bp_tranche_plus_10: {{ bp_tranche_plus_10|default:0|unlocalize }},
+    bp_tranche_pct_moins_3: {{ bp_tranche_pct_moins_3|default:0|unlocalize }},
+    bp_tranche_pct_entre_3_10: {{ bp_tranche_pct_entre_3_10|default:0|unlocalize }},
+    bp_tranche_pct_plus_10: {{ bp_tranche_pct_plus_10|default:0|unlocalize }},
+    pct_bp: {{ pct_bp|default:0|unlocalize }},
+    pct_cartes_sociales: {{ pct_cartes_sociales|default:0|unlocalize }},
+    pct_kiosques: {{ pct_kiosques|default:0|unlocalize }},
+    pct_bi: {{ pct_bi|default:0|unlocalize }},
+    pct_bf_bi: {{ pct_bf_bi|default:0|unlocalize }},
+    graphique: {{ graphique_volumes_json|safe }}
+};
+
+// Fonction pour mettre Ã  jour les statistiques affichées
+function updateStats() {
+    // Stats principales
+    document.getElementById('stat-population').textContent = formatNumber(currentData.population_totale);
+    let nb_autres_total = currentData.nb_kiosques_volume + currentData.nb_bi_volume + currentData.nb_bf_bi_forfait;
+    document.getElementById('stat-nb-bp').textContent = formatNumber(currentData.nb_bp);
+    document.getElementById('stat-nb-autres').textContent = formatNumber(nb_autres_total);
+
+    document.getElementById('stat-volume').textContent = formatNumber(currentData.volume_total_annuel);
+    document.getElementById('stat-nb-releves').textContent = formatNumber(currentData.nb_releves_total);
+    document.getElementById('stat-montant').textContent = formatNumber(currentData.montant_total_annuel / 1000, 0);
+
+    document.getElementById('stat-conso-hab').textContent = formatNumber(currentData.conso_hab_jour_annuelle, 1);
+    document.getElementById('stat-jours-couverts').textContent = formatNumber(currentData.nb_jours_couverts, 0);
+    document.getElementById('stat-moyenne').textContent = formatNumber(currentData.moyenne_annuelle, 1);
+    document.getElementById('stat-mediane').textContent = formatNumber(currentData.mediane_annuelle, 1);
+
+    const bpAnalysesTotalEl = document.getElementById('bp-analyses-total');
+    if (bpAnalysesTotalEl) {
+        bpAnalysesTotalEl.textContent = formatNumber(currentData.nb_bp_analyses);
+    }
+
+    // Répartition population - Nombres
+    document.getElementById('pop-nb-bp').textContent = formatNumber(currentData.nb_bp);
+    document.getElementById('pop-bp').textContent = formatNumber(currentData.population_bp);
+    document.getElementById('pop-bp-pct').textContent = currentData.pct_bp;
+
+    document.getElementById('pop-nb-cartes-sociales').textContent = formatNumber(currentData.nb_cartes_sociales);
+    document.getElementById('pop-cartes-sociales').textContent = formatNumber(currentData.population_cartes_sociales);
+    document.getElementById('pop-cartes-sociales-pct').textContent = currentData.pct_cartes_sociales;
+
+    document.getElementById('pop-nb-kiosques').textContent = formatNumber(currentData.nb_kiosques_volume);
+    document.getElementById('pop-kiosques').textContent = formatNumber(currentData.population_kiosques_volume);
+    document.getElementById('pop-kiosques-pct').textContent = currentData.pct_kiosques;
+
+    document.getElementById('pop-nb-bi-volume').textContent = formatNumber(currentData.nb_bi_volume);
+    document.getElementById('pop-bi-volume').textContent = formatNumber(currentData.population_bi_volume);
+    document.getElementById('pop-bi-pct').textContent = currentData.pct_bi;
+
+    document.getElementById('pop-nb-bf-bi').textContent = formatNumber(currentData.nb_bf_bi_forfait);
+    document.getElementById('pop-bf-bi').textContent = formatNumber(currentData.population_bf_bi_forfait);
+    document.getElementById('pop-bf-bi-pct').textContent = currentData.pct_bf_bi;
+
+    document.getElementById('pop-total').textContent = formatNumber(currentData.population_totale);
+
+    // Répartition population - Barres de progression
+    document.getElementById('pop-bp-pct-bar').textContent = currentData.pct_bp;
+    document.getElementById('progress-bp').value = currentData.pct_bp;
+
+    document.getElementById('pop-cartes-sociales-pct-bar').textContent = currentData.pct_cartes_sociales;
+    document.getElementById('progress-cartes').value = currentData.pct_cartes_sociales;
+
+    document.getElementById('pop-kiosques-pct-bar').textContent = currentData.pct_kiosques;
+    document.getElementById('progress-kiosques').value = currentData.pct_kiosques;
+
+    document.getElementById('pop-bi-pct-bar').textContent = currentData.pct_bi;
+    document.getElementById('progress-bi').value = currentData.pct_bi;
+
+    document.getElementById('pop-bf-bi-pct-bar').textContent = currentData.pct_bf_bi;
+    document.getElementById('progress-bf-bi').value = currentData.pct_bf_bi;
+
+    // Stats Ouvrages, Villages, Cartes Sociales (ligne 2)
+    document.getElementById('stat-nb-ouvrages').textContent = formatNumber(currentData.nb_ouvrages || 0);
+    document.getElementById('stat-nb-villages').textContent = formatNumber(currentData.nb_villages_desservis || 0);
+    document.getElementById('stat-nb-cartes').textContent = formatNumber(currentData.nb_cartes_sociales || 0);
+    document.getElementById('stat-pop-cartes').textContent = formatNumber(currentData.population_cartes_sociales || 0);
+    document.getElementById('stat-ratio-cartes').textContent = formatNumber(currentData.ratio_population_cartes_sociales || 0, 0);
+}
+
+// Configuration commune des graphiques
+const commonOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+        legend: {
+            display: true,
+            position: 'top'
+        }
+    },
+    scales: {
+        y: {
+            beginAtZero: true,
+            ticks: {
+                callback: function(value) {
+                    return formatNumber(value, 0);
+                }
+            }
+        }
+    }
+};
+
+// Étiquettes de synthèse au-dessus des histogrammes et courbes mensuels.
+// Pour les séries empilées, on affiche le total du mois afin de rester lisible.
+const monthlyValueLabelsPlugin = {
+    id: 'monthlyValueLabels',
+    afterDatasetsDraw(chart) {
+        const values = chart.canvas.id === 'chartVolumes'
+            ? (currentData.graphique.volumes || [])
+            : (currentData.graphique.conso_hab || []);
+        const { ctx, scales } = chart;
+        ctx.save();
+        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bc') || '#334155';
+        ctx.font = '600 10px sans-serif';
+        ctx.textAlign = 'center';
+        values.forEach((rawValue, index) => {
+            const value = Number(rawValue || 0);
+            const x = scales.x.getPixelForValue(index);
+            const y = scales.y.getPixelForValue(value);
+            const label = formatNumber(value, chart.canvas.id === 'chartVolumes' ? 1 : 1);
+            ctx.fillText(label, x, Math.max(chart.chartArea.top + 10, y - 7));
+        });
+        ctx.restore();
+    }
+};
+
+// Graphique des volumes (empilé par type de point d'eau)
+let chartVolumes, chartConsoHab;
+const ctxVolumes = document.getElementById('chartVolumes').getContext('2d');
+
+// Préparer les datasets par type de point d'eau (sera mis Ã  jour dynamiquement)
+const volumeDatasets = [
+    {
+        label: 'BP',
+        data: currentData.graphique.volumes_bp || Array(12).fill(0),
+        backgroundColor: 'rgba(59, 130, 246, 0.7)',
+        borderColor: 'rgba(59, 130, 246, 1)',
+        borderWidth: 1,
+        stack: 'volumes'  // Stack pour les barres empilées
+    },
+    {
+        label: 'Kiosques - Cartes Sociales',
+        data: currentData.graphique.volumes_kiosques_cartes_sociales || Array(12).fill(0),
+        backgroundColor: 'rgba(236, 72, 153, 0.7)',  // Rose vif
+        borderColor: 'rgba(236, 72, 153, 1)',
+        borderWidth: 1,
+        stack: 'volumes'  // Stack pour les barres empilées
+    },
+    {
+        label: 'Kiosques - Hors Cartes',
+        data: currentData.graphique.volumes_kiosques_hors_cartes || Array(12).fill(0),
+        backgroundColor: 'rgba(34, 197, 94, 0.7)',  // Vert
+        borderColor: 'rgba(34, 197, 94, 1)',
+        borderWidth: 1,
+        stack: 'volumes'  // Stack pour les barres empilées
+    },
+    {
+        label: 'BI Vol.',
+        data: currentData.graphique.volumes_bi || Array(12).fill(0),
+        backgroundColor: 'rgba(251, 191, 36, 0.7)',
+        borderColor: 'rgba(251, 191, 36, 1)',
+        borderWidth: 1,
+        stack: 'volumes'  // Stack pour les barres empilées
+    },
+    {
+        label: 'BF + BI Forf.',
+        data: currentData.graphique.volumes_bf_bi || Array(12).fill(0),
+        backgroundColor: 'rgba(168, 85, 247, 0.7)',
+        borderColor: 'rgba(168, 85, 247, 1)',
+        borderWidth: 1,
+        stack: 'volumes'  // Stack pour les barres empilées
+    }
+];
+
+// Calculer moyenne et médiane des volumes (totaux empilés)
+const volumesTotaux = currentData.graphique.volumes || [];
+const volumesNonZero = volumesTotaux.filter(v => v > 0);  // Ignorer les mois sans données
+const moyenneVolumes = volumesNonZero.length > 0 ?
+    volumesNonZero.reduce((a, b) => a + b, 0) / volumesNonZero.length : 0;
+const quartilesVolumes = calculateQuartiles(volumesTotaux);
+
+// Médiane: trier et prendre la valeur du milieu
+const medianeVolumes = volumesNonZero.length > 0 ?
+    (() => {
+        const sorted = [...volumesNonZero].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+    })() : 0;
+
+// Ajouter les lignes de moyenne et médiane (NON empilées)
+volumeDatasets.push({
+    label: 'Moyenne',
+    data: Array(12).fill(moyenneVolumes),
+    type: 'line',
+    borderColor: 'rgba(239, 68, 68, 1)',
+    borderWidth: 2,
+    borderDash: [5, 5],
+    fill: false,
+    pointRadius: 0,
+    pointHoverRadius: 0,
+    stack: 'lines'  // Stack séparé pour ne pasêtre empilé
+});
+
+volumeDatasets.push({
+    label: 'Médiane',
+    data: Array(12).fill(medianeVolumes),
+    type: 'line',
+    borderColor: 'rgba(168, 85, 247, 1)',
+    borderWidth: 2,
+    borderDash: [10, 5],
+    fill: false,
+    pointRadius: 0,
+    pointHoverRadius: 0,
+    stack: 'lines'  // Stack séparé pour ne pasêtre empilé
+});
+
+volumeDatasets.push({
+    label: 'Q1',
+    data: Array(12).fill(quartilesVolumes.q1),
+    type: 'line',
+    borderColor: 'rgba(14, 165, 233, 1)',
+    borderWidth: 2,
+    borderDash: [2, 6],
+    fill: false,
+    pointRadius: 0,
+    pointHoverRadius: 0,
+    stack: 'lines'
+});
+
+volumeDatasets.push({
+    label: 'Q3',
+    data: Array(12).fill(quartilesVolumes.q3),
+    type: 'line',
+    borderColor: 'rgba(245, 158, 11, 1)',
+    borderWidth: 2,
+    borderDash: [2, 6],
+    fill: false,
+    pointRadius: 0,
+    pointHoverRadius: 0,
+    stack: 'lines'
+});
+
+chartVolumes = new Chart(ctxVolumes, {
+    type: 'bar',
+    data: {
+        labels: currentData.graphique.labels,
+        datasets: volumeDatasets
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {
+            mode: 'index',
+            intersect: false
+        },
+        plugins: {
+            legend: {
+                display: true,
+                position: 'top'
+            },
+            title: {
+                display: true,
+                text: 'Ã‰volution des volumes mensuels (empilé par type)'
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                ticks: {
+                    callback: function(value) {
+                        return formatNumber(value, 0);
+                    }
+                }
+            }
+        }
+    },
+    plugins: [monthlyValueLabelsPlugin]
+});
+
+// Graphique consommation par habitant (empilé par type de point d'eau)
+const ctxConsoHab = document.getElementById('chartConsoHab').getContext('2d');
+
+// Préparer les datasets par type de point d'eau (sera mis Ã  jour dynamiquement)
+const consoHabDatasets = [
+    {
+        label: 'BP',
+        data: currentData.graphique.conso_hab_bp || Array(12).fill(0),
+        backgroundColor: 'rgba(59, 130, 246, 0.5)',
+        borderColor: 'rgba(59, 130, 246, 1)',
+        borderWidth: 2,
+        fill: true,
+        tension: 0.4,
+        stack: 'conso'  // Stack pour les courbes empilées
+    },
+    {
+        label: 'Kiosques - Cartes Sociales',
+        data: currentData.graphique.conso_hab_kiosques_cartes_sociales || Array(12).fill(0),
+        backgroundColor: 'rgba(236, 72, 153, 0.5)',  // Rose
+        borderColor: 'rgba(236, 72, 153, 1)',
+        borderWidth: 2,
+        fill: true,
+        tension: 0.4,
+        stack: 'conso'  // Stack pour les courbes empilées
+    },
+    {
+        label: 'Kiosques - Hors Cartes',
+        data: currentData.graphique.conso_hab_kiosques_hors_cartes || Array(12).fill(0),
+        backgroundColor: 'rgba(34, 197, 94, 0.5)',  // Vert
+        borderColor: 'rgba(34, 197, 94, 1)',
+        borderWidth: 2,
+        fill: true,
+        tension: 0.4,
+        stack: 'conso'  // Stack pour les courbes empilées
+    },
+    {
+        label: 'BI Vol.',
+        data: currentData.graphique.conso_hab_bi || Array(12).fill(0),
+        backgroundColor: 'rgba(251, 191, 36, 0.5)',
+        borderColor: 'rgba(251, 191, 36, 1)',
+        borderWidth: 2,
+        fill: true,
+        tension: 0.4,
+        stack: 'conso'  // Stack pour les courbes empilées
+    },
+    {
+        label: 'BF + BI Forf.',
+        data: currentData.graphique.conso_hab_bf_bi || Array(12).fill(0),
+        backgroundColor: 'rgba(168, 85, 247, 0.5)',
+        borderColor: 'rgba(168, 85, 247, 1)',
+        borderWidth: 2,
+        fill: true,
+        tension: 0.4,
+        stack: 'conso'  // Stack pour les courbes empilées
+    }
+];
+
+// Calculer moyenne et médiane de la consommation/hab (totaux empilés)
+const consoHabTotale = currentData.graphique.conso_hab || [];
+const consoHabNonZero = consoHabTotale.filter(v => v > 0);  // Ignorer les mois sans données
+const moyenneConsoHab = consoHabNonZero.length > 0 ?
+    consoHabNonZero.reduce((a, b) => a + b, 0) / consoHabNonZero.length : 0;
+const quartilesConsoHab = calculateQuartiles(consoHabTotale);
+
+// Médiane: trier et prendre la valeur du milieu
+const medianeConsoHab = consoHabNonZero.length > 0 ?
+    (() => {
+        const sorted = [...consoHabNonZero].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+    })() : 0;
+
+// Ajouter les lignes de moyenne et médiane
+consoHabDatasets.push({
+    label: 'Moyenne',
+    data: Array(12).fill(moyenneConsoHab),
+    type: 'line',
+    borderColor: 'rgba(239, 68, 68, 1)',
+    borderWidth: 2,
+    borderDash: [5, 5],
+    fill: false,
+    pointRadius: 0,
+    pointHoverRadius: 0,
+    tension: 0
+});
+
+consoHabDatasets.push({
+    label: 'Médiane',
+    data: Array(12).fill(medianeConsoHab),
+    type: 'line',
+    borderColor: 'rgba(168, 85, 247, 1)',
+    borderWidth: 2,
+    borderDash: [10, 5],
+    fill: false,
+    pointRadius: 0,
+    pointHoverRadius: 0,
+    tension: 0
+});
+
+consoHabDatasets.push({
+    label: 'Q1',
+    data: Array(12).fill(quartilesConsoHab.q1),
+    type: 'line',
+    borderColor: 'rgba(14, 165, 233, 1)',
+    borderWidth: 2,
+    borderDash: [2, 6],
+    fill: false,
+    pointRadius: 0,
+    pointHoverRadius: 0,
+    tension: 0
+});
+
+consoHabDatasets.push({
+    label: 'Q3',
+    data: Array(12).fill(quartilesConsoHab.q3),
+    type: 'line',
+    borderColor: 'rgba(245, 158, 11, 1)',
+    borderWidth: 2,
+    borderDash: [2, 6],
+    fill: false,
+    pointRadius: 0,
+    pointHoverRadius: 0,
+    tension: 0
+});
+
+chartConsoHab = new Chart(ctxConsoHab, {
+    type: 'line',
+    data: {
+        labels: currentData.graphique.labels,
+        datasets: consoHabDatasets
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {
+            mode: 'index',
+            intersect: false
+        },
+        plugins: {
+            legend: {
+                display: true,
+                position: 'top'
+            },
+            title: {
+                display: true,
+                text: 'Consommation par habitant par jour (empilé par type)'
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                ticks: {
+                    callback: function(value) {
+                        return formatNumber(value, 1) + ' L';
+                    }
+                }
+            }
+        }
+    },
+    plugins: [monthlyValueLabelsPlugin]
+});
+
+const interpretationContainer = document.getElementById('interpretation-donnees');
+const interpretationSynthese = document.getElementById('interpretation-synthese');
+if (interpretationContainer && interpretationSynthese) {
+    const volumeInterpretation = buildInterpretationHtml(
+        'Volumes consommés',
+        moyenneVolumes,
+        medianeVolumes,
+        quartilesVolumes.q1,
+        quartilesVolumes.q3,
+        'm³'
+    );
+    const consoInterpretation = buildInterpretationHtml(
+        'Consommation par habitant',
+        moyenneConsoHab,
+        medianeConsoHab,
+        quartilesConsoHab.q1,
+        quartilesConsoHab.q3,
+        'L'
+    );
+
+    interpretationContainer.innerHTML = volumeInterpretation.blocks + consoInterpretation.blocks;
+    interpretationSynthese.innerHTML = `${volumeInterpretation.synthesis} ${volumeInterpretation.extra} ${consoInterpretation.synthesis} ${consoInterpretation.extra}`;
+}
+
+const bpLabelsPlugin = {
+    id: 'bpLabelsPlugin',
+    afterDatasetsDraw(chart) {
+        if (chart.canvas.id !== 'chartBpTranches') return;
+        const { ctx } = chart;
+        const percentages = currentData.graphique.bp_tranches_percentages || [];
+        const dataset = chart.data.datasets[0];
+        ctx.save();
+        ctx.fillStyle = '#1f2937';
+        ctx.font = '600 12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        chart.getDatasetMeta(0).data.forEach((bar, index) => {
+            const value = dataset.data[index] || 0;
+            const pct = percentages[index] || 0;
+            ctx.fillText(`${formatNumber(value)} (${formatNumber(pct, 1)}%)`, bar.x, bar.y - 6);
+        });
+        ctx.restore();
+    }
+};
+
+// Graphique météo (pluviométrie)
+let chartMeteo;
+const ctxMeteo = document.getElementById('chartMeteo').getContext('2d');
+chartMeteo = new Chart(ctxMeteo, {
+    type: 'bar',
+    data: {
+        labels: currentData.graphique.labels,
+        datasets: [
+            {
+                label: 'Précipitations (mm)',
+                data: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                backgroundColor: 'rgba(59, 130, 246, 0.6)',
+                borderColor: 'rgba(59, 130, 246, 1)',
+                borderWidth: 1,
+                yAxisID: 'y'
+            },
+            {
+                label: 'Température max (°C)',
+                data: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                type: 'line',
+                borderColor: 'rgba(239, 68, 68, 1)',
+                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                borderWidth: 2,
+                fill: false,
+                yAxisID: 'y1',
+                tension: 0.4
+            },
+            {
+                label: 'Température min (°C)',
+                data: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                type: 'line',
+                borderColor: 'rgba(96, 165, 250, 1)',
+                backgroundColor: 'rgba(96, 165, 250, 0.1)',
+                borderWidth: 2,
+                fill: false,
+                yAxisID: 'y1',
+                tension: 0.4
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                display: true,
+                position: 'top'
+            },
+            title: {
+                display: true,
+                text: 'Données météorologiques mensuelles'
+            }
+        },
+        scales: {
+            y: {
+                type: 'linear',
+                display: true,
+                position: 'left',
+                title: {
+                    display: true,
+                    text: 'Précipitations (mm)'
+                },
+                beginAtZero: true
+            },
+            y1: {
+                type: 'linear',
+                display: true,
+                position: 'right',
+                title: {
+                    display: true,
+                    text: 'Température (°C)'
+                },
+                grid: {
+                    drawOnChartArea: false
+                },
+                beginAtZero: false
+            }
+        }
+    }
+});
+
+// Fonction pour charger les données météo
+async function loadDonneesMeteo() {
+    try {
+        // Construire l'URL avec les mÃªmes filtres que la consommation
+        const params = new URLSearchParams(window.location.search);
+        const url = '{% url "planning:api_donnees_meteo" %}?' + params.toString();
+
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+
+        if (data.success) {
+            // Mettre Ã  jour le graphique météo
+            chartMeteo.data.datasets[0].data = data.donnees_meteo.precipitations;
+            chartMeteo.data.datasets[1].data = data.donnees_meteo.temperatures_max;
+            chartMeteo.data.datasets[2].data = data.donnees_meteo.temperatures_min;
+            chartMeteo.update();
+
+            // Mettre Ã  jour les informations
+            document.getElementById('villages-count').textContent = data.villages_count + ' village' + (data.villages_count > 1 ? 's' : '');
+            document.getElementById('total-mesures').textContent = data.total_mesures + ' mesure' + (data.total_mesures > 1 ? 's' : '');
+            document.getElementById('annee-meteo').textContent = data.annee;
+        }
+    } catch (error) {
+        console.error('Erreur lors du chargement des données météo:', error);
+    }
+}
+
+// Graphique nombre de points d'eau par mois et par type
+let chartPointsEauParMois;
+const ctxPointsEauParMois = document.getElementById('chartPointsEauParMois').getContext('2d');
+chartPointsEauParMois = new Chart(ctxPointsEauParMois, {
+    type: 'bar',
+    data: {
+        labels: ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'AoÃ»', 'Sep', 'Oct', 'Nov', 'Déc'],
+        datasets: []
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {
+            mode: 'index',
+            intersect: false
+        },
+        plugins: {
+            legend: {
+                display: true,
+                position: 'top'
+            },
+            title: {
+                display: true,
+                text: 'Répartition des points d\'eau actifs par type (empilé)'
+            }
+        },
+        scales: {
+            x: {
+                stacked: true
+            },
+            y: {
+                stacked: true,
+                beginAtZero: true,
+                title: {
+                    display: true,
+                    text: 'Nombre de points d\'eau'
+                }
+            }
+        }
+    }
+});
+
+let chartBpTranches;
+const ctxBpTranches = document.getElementById('chartBpTranches').getContext('2d');
+chartBpTranches = new Chart(ctxBpTranches, {
+    type: 'bar',
+    data: {
+        labels: currentData.graphique.bp_tranches_labels || ['Moins de 3 m³', 'Entre 3 et 10 m³', 'Plus de 10 m³'],
+        datasets: [{
+            label: 'Nombre de BP',
+            data: currentData.graphique.bp_tranches_counts || [0, 0, 0],
+            backgroundColor: [
+                'rgba(59, 130, 246, 0.7)',
+                'rgba(245, 158, 11, 0.7)',
+                'rgba(239, 68, 68, 0.7)'
+            ],
+            borderColor: [
+                'rgba(59, 130, 246, 1)',
+                'rgba(245, 158, 11, 1)',
+                'rgba(239, 68, 68, 1)'
+            ],
+            borderWidth: 1,
+            borderRadius: 8
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                display: false
+            },
+            title: {
+                display: true,
+                text: 'BP classés par consommation moyenne mensuelle'
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                ticks: {
+                    precision: 0
+                },
+                title: {
+                    display: true,
+                    text: 'Nombre de BP'
+                }
+            }
+        }
+    },
+    plugins: [bpLabelsPlugin]
+});
+
+let chartMontants;
+const ctxMontants = document.getElementById('chartMontants').getContext('2d');
+chartMontants = new Chart(ctxMontants, {
+    type: 'bar',
+    data: {
+        labels: currentData.graphique.labels,
+        datasets: [{
+            label: 'Montant facturé (kAr)',
+            data: (currentData.graphique.montants || Array(12).fill(0)).map(value => Number(value || 0) / 1000),
+            backgroundColor: 'rgba(168, 85, 247, 0.65)',
+            borderColor: 'rgba(168, 85, 247, 1)',
+            borderWidth: 1,
+            borderRadius: 8
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                display: false
+            },
+            title: {
+                display: true,
+                text: 'Évolution des montants facturés (kAr)'
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                ticks: {
+                    callback: function(value) {
+                        return formatNumber(value, 0) + ' kAr';
+                    }
+                }
+            }
+        }
+    }
+});
+
+function getCompletedMonthCount(year) {
+    const now = new Date();
+    if (year < now.getFullYear()) return 12;
+    if (year > now.getFullYear()) return 0;
+    return now.getMonth(); // Janvier = 0 : exclut toujours le mois en cours.
+}
+
+// Fonction pour charger les données de points d'eau par mois
+async function loadPointsEauParMois() {
+    try {
+        // Construire l'URL avec les mÃªmes filtres que la consommation
+        const params = new URLSearchParams(window.location.search);
+        const url = '{% url "planning:api_points_eau_par_mois" %}?' + params.toString();
+
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+
+        if (data.success) {
+            const selectedYear = Number(data.annee || params.get('annee') || new Date().getFullYear());
+            const serverLimit = Number(data.visible_month_count);
+            const visibleMonthCount = Number.isInteger(serverLimit)
+                ? Math.max(0, Math.min(12, serverLimit))
+                : getCompletedMonthCount(selectedYear);
+
+            // Double protection : même si une ancienne API renvoie encore douze
+            // mois, le navigateur coupe les libellés et toutes les séries.
+            chartPointsEauParMois.data.labels = (data.graphique.labels || []).slice(0, visibleMonthCount);
+            chartPointsEauParMois.data.datasets = (data.graphique.datasets || []).map(dataset => ({
+                ...dataset,
+                data: (dataset.data || []).slice(0, visibleMonthCount)
+            }));
+            chartPointsEauParMois.update();
+
+            // Mettre Ã  jour les informations
+            document.getElementById('nb-types-pe').textContent = data.nb_types + ' type' + (data.nb_types > 1 ? 's' : '');
+        }
+    } catch (error) {
+        console.error('Erreur lors du chargement des points d\'eau par mois:', error);
+    }
+}
+
+// Fonction pour mettre Ã  jour les graphiques
+function updateCharts() {
+    // Mettre Ã  jour le graphique des volumes
+    chartVolumes.data.labels = currentData.graphique.labels;
+
+    // Mettre Ã  jour les datasets par type de point d'eau
+    chartVolumes.data.datasets[0].data = currentData.graphique.volumes_bp || Array(12).fill(0);
+    chartVolumes.data.datasets[1].data = currentData.graphique.volumes_kiosques_cartes_sociales || Array(12).fill(0);
+    chartVolumes.data.datasets[2].data = currentData.graphique.volumes_kiosques_hors_cartes || Array(12).fill(0);
+    chartVolumes.data.datasets[3].data = currentData.graphique.volumes_bi || Array(12).fill(0);
+    chartVolumes.data.datasets[4].data = currentData.graphique.volumes_bf_bi || Array(12).fill(0);
+
+    // Recalculer et mettre Ã  jour les lignes de moyenne et médiane pour volumes
+    const volumesTotaux = currentData.graphique.volumes || [];
+    const volumesNonZero = volumesTotaux.filter(v => v > 0);
+    const moyenneVolumes = volumesNonZero.length > 0 ?
+        volumesNonZero.reduce((a, b) => a + b, 0) / volumesNonZero.length : 0;
+
+    const medianeVolumes = volumesNonZero.length > 0 ?
+        (() => {
+            const sorted = [...volumesNonZero].sort((a, b) => a - b);
+            const mid = Math.floor(sorted.length / 2);
+            return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+        })() : 0;
+
+    chartVolumes.data.datasets[5].data = Array(12).fill(moyenneVolumes);
+    chartVolumes.data.datasets[6].data = Array(12).fill(medianeVolumes);
+
+    chartVolumes.update();
+
+    // Mettre Ã  jour le graphique de consommation par habitant
+    chartConsoHab.data.labels = currentData.graphique.labels;
+
+    // Mettre Ã  jour les datasets par type de point d'eau
+    chartConsoHab.data.datasets[0].data = currentData.graphique.conso_hab_bp || Array(12).fill(0);
+    chartConsoHab.data.datasets[1].data = currentData.graphique.conso_hab_kiosques_cartes_sociales || Array(12).fill(0);
+    chartConsoHab.data.datasets[2].data = currentData.graphique.conso_hab_kiosques_hors_cartes || Array(12).fill(0);
+    chartConsoHab.data.datasets[3].data = currentData.graphique.conso_hab_bi || Array(12).fill(0);
+    chartConsoHab.data.datasets[4].data = currentData.graphique.conso_hab_bf_bi || Array(12).fill(0);
+
+    // Recalculer et mettre Ã  jour les lignes de moyenne et médiane pour conso/hab
+    const consoHabTotale = currentData.graphique.conso_hab || [];
+    const consoHabNonZero = consoHabTotale.filter(v => v > 0);
+    const moyenneConsoHab = consoHabNonZero.length > 0 ?
+        consoHabNonZero.reduce((a, b) => a + b, 0) / consoHabNonZero.length : 0;
+
+    const medianeConsoHab = consoHabNonZero.length > 0 ?
+        (() => {
+            const sorted = [...consoHabNonZero].sort((a, b) => a - b);
+            const mid = Math.floor(sorted.length / 2);
+            return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+        })() : 0;
+
+    chartConsoHab.data.datasets[5].data = Array(12).fill(moyenneConsoHab);
+    chartConsoHab.data.datasets[6].data = Array(12).fill(medianeConsoHab);
+
+    chartConsoHab.update();
+
+    chartBpTranches.data.labels = currentData.graphique.bp_tranches_labels || ['Moins de 3 m³', 'Entre 3 et 10 m³', 'Plus de 10 m³'];
+    chartBpTranches.data.datasets[0].data = currentData.graphique.bp_tranches_counts || [0, 0, 0];
+    chartBpTranches.update();
+
+    chartMontants.data.labels = currentData.graphique.labels;
+    chartMontants.data.datasets[0].data = (currentData.graphique.montants || Array(12).fill(0)).map(value => Number(value || 0) / 1000);
+    chartMontants.update();
+
+    // Recharger les données météo avec les nouveaux filtres
+    loadDonneesMeteo();
+
+    // Recharger les données de points d'eau par mois avec les nouveaux filtres
+    loadPointsEauParMois();
+}
+
+// Fonction pour afficher les détails des consommations par point d'eau d'un mois
+function voirDetailsPointsEau(moisNumero, moisNom) {
+    const modal = document.getElementById('modal-details-points-eau');
+    const modalTitre = document.getElementById('modal-mois-titre');
+    const modalContenu = document.getElementById('modal-details-contenu');
+
+    // Mettre le titre
+    modalTitre.textContent = moisNom + ' ' + '{{ annee_filter }}';
+
+    // Afficher le spinner
+    modalContenu.innerHTML = `
+        <div class="flex justify-center items-center py-8">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+        </div>
+    `;
+
+    // Ouvrir le modal
+    modal.showModal();
+
+    // Construire les paramètres de filtre depuis le formulaire
+    const form = document.getElementById('consommation-filters-form');
+    const formData = new FormData(form);
+    const params = new URLSearchParams();
+
+    // Ajouter le mois au format YYYY-MM
+    const moisStr = moisNumero.toString().padStart(2, '0');
+    params.append('mois', '{{ annee_filter }}-' + moisStr);
+
+    // Ajouter les autres filtres
+    formData.forEach((value, key) => {
+        if (value && value !== '') {
+            params.append(key, value);
+        }
+    });
+
+    // Appeler l'API
+    fetch(`{% url 'planning:api_details_points_eau_mois' %}?${params.toString()}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Construire le tableau
+                const totalNb = data.points_eau.reduce((acc, pe) => acc + Number(pe.nb_releves || 0), 0);
+                const totalMoyenne = data.points_eau.reduce((acc, pe) => acc + Number(pe.moyenne || 0), 0);
+                const totalMediane = data.points_eau.reduce((acc, pe) => acc + Number(pe.mediane || 0), 0);
+                const refNb = data.points_eau.length > 0 ? totalNb / data.points_eau.length : 0;
+                const refMoyenne = data.points_eau.length > 0 ? totalMoyenne / data.points_eau.length : 0;
+                const refMediane = data.points_eau.length > 0 ? totalMediane / data.points_eau.length : 0;
+
+                let html = `
+                    <div class="alert alert-info mb-4">
+                        <i class="fas fa-info-circle"></i>
+                        <span>${data.total} point(s) d'eau avec relevés</span>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                        <div class="card bg-base-200">
+                            <div class="card-body p-4">
+                                <div class="text-xs uppercase opacity-70">Moyenne sélection</div>
+                                <div class="text-lg font-bold">${formatNumber(refNb, 0)} relevés</div>
+                            </div>
+                        </div>
+                        <div class="card bg-base-200">
+                            <div class="card-body p-4">
+                                <div class="text-xs uppercase opacity-70">Moyenne consommation</div>
+                                <div class="text-lg font-bold">${formatNumber(refMoyenne, 2)} m³</div>
+                            </div>
+                        </div>
+                        <div class="card bg-base-200">
+                            <div class="card-body p-4">
+                                <div class="text-xs uppercase opacity-70">Médiane sélection</div>
+                                <div class="text-lg font-bold">${formatNumber(refMediane, 2)} m³</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="hidden md:block overflow-x-auto">
+                    <table class="table table-zebra table-sm">
+                        <thead>
+                            <tr class="bg-base-200">
+                                <th>IDxls</th>
+                                <th>Nom abonné</th>
+                                <th>Ouvrage</th>
+                                <th>Type</th>
+                                <th>Commune</th>
+                                <th class="text-right">Volume total (m³)</th>
+                                <th class="text-center">Nombre de relevés</th>
+                                <th class="text-right">Moyenne de consommation (m³)</th>
+                                <th class="text-right">Médiane (m³)</th>
+                                <th class="text-center">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+
+                data.points_eau.forEach(pe => {
+                    const meta = getPointEauTypeMeta(pe.type);
+                    html += `
+                        <tr>
+                            <td class="font-mono text-xs">${pe.idxls}</td>
+                            <td class="text-xs">
+                                <div class="flex items-center gap-2">
+                                    <i class="fas ${meta.icon} ${meta.badge.replace('badge-', 'text-')}" title="${meta.label}"></i>
+                                    <span>${pe.nom_abonne || '-'}</span>
+                                </div>
+                            </td>
+                            <td class="text-xs">${pe.ouvrage}</td>
+                            <td class="text-xs">${pe.type}</td>
+                            <td class="text-xs">${pe.commune || '-'}</td>
+                            <td class="text-right font-mono text-xs">${formatNumber(pe.volume_total, 2)}</td>
+                            <td class="text-center">
+                                <div class="space-y-1 min-w-36">
+                                    <div class="flex items-center justify-center gap-2">
+                                        <i class="fas ${meta.icon} ${meta.badge.replace('badge-', 'text-')}"></i>
+                                        <span class="badge badge-ghost badge-xs">${formatNumber(pe.nb_releves, 0)}</span>
+                                    </div>
+                                    ${buildMetricBar(Number(pe.nb_releves || 0), refNb, 'progress-primary')}
+                                </div>
+                            </td>
+                            <td class="text-right font-mono text-xs">
+                                <div class="space-y-1 min-w-40">
+                                    <div class="flex items-center justify-end gap-2">
+                                        <i class="fas ${meta.icon} ${meta.badge.replace('badge-', 'text-')}"></i>
+                                        <span>${formatNumber(pe.moyenne, 2)}</span>
+                                    </div>
+                                    ${buildMetricBar(Number(pe.moyenne || 0), refMoyenne, 'progress-success')}
+                                </div>
+                            </td>
+                            <td class="text-right font-mono text-xs">
+                                <div class="space-y-1 min-w-40">
+                                    <div class="flex items-center justify-end gap-2">
+                                        <i class="fas ${meta.icon} ${meta.badge.replace('badge-', 'text-')}"></i>
+                                        <span>${formatNumber(pe.mediane, 2)}</span>
+                                    </div>
+                                    ${buildMetricBar(Number(pe.mediane || 0), refMediane, 'progress-secondary')}
+                                </div>
+                            </td>
+                            <td class="text-center">
+                                <button
+                                    type="button"
+                                    class="btn btn-primary btn-xs"
+                                    onclick="window.location.href='{% url 'planning:analyse_par_point_eau' %}?point_eau=${pe.point_eau_id}'"
+                                >
+                                    Détails
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                });
+
+                html += `
+                        </tbody>
+                    </table>
+                    </div>
+
+                    <div class="md:hidden space-y-3">
+                `;
+
+                data.points_eau.forEach(pe => {
+                    const meta = getPointEauTypeMeta(pe.type);
+                    html += `
+                        <div class="card bg-base-100 shadow">
+                            <div class="card-body p-4 gap-3">
+                                <div class="flex items-start justify-between gap-3">
+                                    <div>
+                                        <div class="text-xs font-mono opacity-70">${pe.idxls}</div>
+                                        <div class="font-semibold flex items-center gap-2">
+                                            <i class="fas ${meta.icon} ${meta.badge.replace('badge-', 'text-')}"></i>
+                                            <span>${pe.nom_abonne || '-'}</span>
+                                        </div>
+                                        <div class="text-xs opacity-70">${pe.ouvrage} · ${pe.type}</div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        class="btn btn-primary btn-xs"
+                                        onclick="window.location.href='{% url 'planning:analyse_par_point_eau' %}?point_eau=${pe.point_eau_id}'"
+                                    >
+                                        Détails
+                                    </button>
+                                </div>
+
+                                <div class="grid grid-cols-1 gap-2 text-sm">
+                                    <div><span class="opacity-60">Volume total:</span> ${formatNumber(pe.volume_total, 2)} m³</div>
+                                    <div><span class="opacity-60">Nombre de relevés:</span> ${formatNumber(pe.nb_releves, 0)}</div>
+                                    <div><span class="opacity-60">Moyenne:</span> ${formatNumber(pe.moyenne, 2)} m³</div>
+                                    <div><span class="opacity-60">Médiane:</span> ${formatNumber(pe.mediane, 2)} m³</div>
+                                </div>
+
+                                <div class="space-y-2">
+                                    ${buildMetricBar(Number(pe.nb_releves || 0), refNb, 'progress-primary')}
+                                    ${buildMetricBar(Number(pe.moyenne || 0), refMoyenne, 'progress-success')}
+                                    ${buildMetricBar(Number(pe.mediane || 0), refMediane, 'progress-secondary')}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                html += `
+                    </div>
+                `;
+
+                modalContenu.innerHTML = html;
+            } else {
+                modalContenu.innerHTML = `
+                    <div class="alert alert-error">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <span>Erreur: ${data.error || 'Impossible de charger les données'}</span>
+                    </div>
+                `;
+            }
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            modalContenu.innerHTML = `
+                <div class="alert alert-error">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>Erreur réseau: ${error.message}</span>
+                </div>
+            `;
+        });
+}
+
+function initConsommationFilters() {
+    filterDropdowns.regions = initMultiDropdown('regions', { allLabel: 'Toutes les regions', plural: 'regions', onChange: updateCascadeFilters });
+    filterDropdowns.districts = initMultiDropdown('districts', { allLabel: 'Tous les districts', plural: 'districts', onChange: updateCascadeFilters });
+    filterDropdowns.communes = initMultiDropdown('communes', { allLabel: 'Toutes les communes', plural: 'communes', onChange: updateCascadeFilters });
+    filterDropdowns.villages = initMultiDropdown('villages', { allLabel: 'Tous les villages', plural: 'villages', onChange: updateCascadeFilters });
+    filterDropdowns.parcelles = initMultiDropdown('parcelles', { allLabel: 'Toutes les parcelles', plural: 'parcelles', onChange: updateCascadeFilters });
+    filterDropdowns.ouvrages = initMultiDropdown('ouvrages', { allLabel: 'Tous les ouvrages', plural: 'ouvrages', onChange: updateCascadeFilters });
+    filterDropdowns.typesPe = initMultiDropdown('typesPe', { allLabel: 'Tous les types', plural: 'types', onChange: updateCascadeFilters });
+}
+
+const filterDropdowns = {};
+
+function updateCascadeFilters() {
+    const params = new URLSearchParams();
+    params.append('annee', document.querySelector('select[name="annee"]')?.value || '{{ annee_filter }}');
+    params.append('modalite_paiement', document.querySelector('select[name="modalite_paiement"]')?.value || '');
+    params.append('organisation', document.querySelector('select[name="organisation"]')?.value || 'all');
+
+    const selectedRegions = filterDropdowns.regions ? filterDropdowns.regions.checked() : [];
+    const selectedDistricts = filterDropdowns.districts ? filterDropdowns.districts.checked() : [];
+    const selectedCommunes = filterDropdowns.communes ? filterDropdowns.communes.checked() : [];
+    const selectedVillages = filterDropdowns.villages ? filterDropdowns.villages.checked() : [];
+    const selectedParcelles = filterDropdowns.parcelles ? filterDropdowns.parcelles.checked() : [];
+    const selectedOuvrages = filterDropdowns.ouvrages ? filterDropdowns.ouvrages.checked() : [];
+    const selectedTypes = filterDropdowns.typesPe ? filterDropdowns.typesPe.checked() : [];
+
+    selectedRegions.forEach(id => params.append('regions', id));
+    selectedDistricts.forEach(id => params.append('districts', id));
+    selectedCommunes.forEach(id => params.append('communes', id));
+    selectedVillages.forEach(id => params.append('villages', id));
+    selectedParcelles.forEach(id => params.append('parcelles', id));
+    selectedOuvrages.forEach(id => params.append('ouvrages', id));
+    selectedTypes.forEach(id => params.append('types_pe', id));
+
+    fetch(`{% url 'planning:api_filtres_cascade_consommation' %}?${params.toString()}`)
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) return;
+            if (filterDropdowns.districts) filterDropdowns.districts.fill(data.districts || [], selectedDistricts, 'districts');
+            if (filterDropdowns.communes) filterDropdowns.communes.fill(data.communes || [], selectedCommunes, 'communes');
+            if (filterDropdowns.villages) filterDropdowns.villages.fill(data.villages || [], selectedVillages, 'villages');
+            if (filterDropdowns.parcelles) filterDropdowns.parcelles.fill(data.parcelles || [], selectedParcelles, 'parcelles');
+            if (filterDropdowns.ouvrages) filterDropdowns.ouvrages.fill(data.ouvrages || [], selectedOuvrages, 'ouvrages');
+            if (filterDropdowns.typesPe) filterDropdowns.typesPe.fill(data.types_pe || [], selectedTypes, 'types_pe');
+        })
+        .catch(error => {
+            console.error('Erreur lors du chargement des filtres en cascade:', error);
+        });
+}
+
+// Initialiser tout au chargement du DOM
+document.addEventListener('DOMContentLoaded', function() {
+    // Mettre a jour les statistiques avec separateurs de milliers
+    updateStats();
+
+    // Menus deroulants discrets (region / district / commune / village / parcelle / ouvrage / type)
+    initConsommationFilters();
+
+    const modaliteSelect = document.querySelector('select[name="modalite_paiement"]');
+    const organisationSelect = document.querySelector('select[name="organisation"]');
+    if (modaliteSelect) {
+        modaliteSelect.addEventListener('change', updateCascadeFilters);
+    }
+    if (organisationSelect) {
+        organisationSelect.addEventListener('change', updateCascadeFilters);
+    }
+
+    updateCascadeFilters();
+
+    // Decaler les appels API secondaires pour eviter une rafale de requetes
+    // au moment exact du rendu initial de la page.
+    setTimeout(() => {
+        loadDonneesMeteo();
+    }, 400);
+
+    setTimeout(() => {
+        loadPointsEauParMois();
+    }, 900);
+});
+</script>
+{% endblock extra_js %}

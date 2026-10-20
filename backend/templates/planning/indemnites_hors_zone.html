@@ -1,0 +1,323 @@
+﻿{% extends planning_shell_base_template %}
+{% load humanize %}
+{% load i18n %}
+{% load employee_grouping %}
+
+{% block title %}Indemnités Hors Zone{% endblock %}
+
+{% block content %}
+<style>
+@page {
+    margin: 12mm;
+}
+@media print {
+    .no-print {
+        display: none !important;
+    }
+    #printArea {
+        display: block !important;
+    }
+    body * {
+        visibility: hidden;
+    }
+    #printArea, #printArea * {
+        visibility: visible;
+    }
+    #printArea {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+    }
+    .facture-indemnite {
+        border: none !important;
+        box-shadow: none !important;
+    }
+}
+</style>
+
+<div class="space-y-6 no-print">
+    <div class="flex flex-wrap justify-between items-center gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">
+                <i class="fas fa-route mr-2 text-warning"></i>
+                Indemnités Hors Zone
+            </h1>
+            <p class="text-base-content/70 mt-1">
+                Sélectionnez les lignes de planning concernées pour imprimer la facture
+            </p>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <h2 class="card-title mb-4">
+                <i class="fas fa-filter mr-2 text-primary"></i>Filtres
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mois</span></label>
+                    <select id="filterMois" class="select select-bordered w-full">
+                        <option value="">Sélectionner</option>
+                        {% for m in mois_disponibles %}
+                            <option value="{{ m.value }}">{{ m.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Base</span></label>
+                    <select id="filterBase" class="select select-bordered w-full" onchange="onBaseChange()">
+                        <option value="">Toutes les bases</option>
+                        {% for base in bases %}
+                            <option value="{{ base.id }}" {% if default_base_id and default_base_id == base.id|stringformat:"s" %}selected{% endif %}>{{ base.nom_base }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Employé</span></label>
+                    <select id="filterEmploye" class="select select-bordered w-full">
+                        {% grouped_employee_options employes "" "Tous les employés" %}
+                    </select>
+                </div>
+                <div class="form-control justify-end">
+                    <label class="label"><span class="label-text">&nbsp;</span></label>
+                    <div class="flex gap-2">
+                        <button onclick="loadLignes()" class="btn btn-primary">
+                            <i class="fas fa-search"></i>
+                        </button>
+                        <button onclick="imprimerFactures()" class="btn btn-success" id="btnImprimer" disabled>
+                            <i class="fas fa-print mr-2"></i>Imprimer factures
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra table-sm">
+                    <thead>
+                        <tr>
+                            <th><input type="checkbox" id="selectAll" class="checkbox checkbox-sm" onchange="toggleSelectAll()"></th>
+                            <th>Date</th>
+                            <th>Employé</th>
+                            <th>Base</th>
+                            <th>Ouvrage</th>
+                            <th>Activité</th>
+                            <th>Remarque</th>
+                            <th class="text-right">Montant</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody">
+                        <tr>
+                            <td colspan="8" class="text-center py-8 text-base-content/50">
+                                Sélectionnez un mois et cliquez sur Rechercher
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<div id="printArea" class="hidden"></div>
+
+<script>
+let lignesData = [];
+
+function toggleSelectAll() {
+    const checked = document.getElementById('selectAll').checked;
+    document.querySelectorAll('.ligne-cb').forEach(cb => cb.checked = checked);
+    updateBtn();
+}
+
+function updateBtn() {
+    const selected = document.querySelectorAll('.ligne-cb:checked');
+    document.getElementById('btnImprimer').disabled = selected.length === 0;
+}
+
+function onBaseChange() {
+    const baseId = document.getElementById('filterBase').value;
+    const employeSelect = document.getElementById('filterEmploye');
+
+    employeSelect.value = '';
+
+    Array.from(employeSelect.options).forEach((option, index) => {
+        if (index === 0) return;
+
+        const optionBaseId = option.getAttribute('data-base-id');
+        if (!baseId) {
+            option.style.display = '';
+        } else if (optionBaseId === baseId) {
+            option.style.display = '';
+        } else {
+            option.style.display = 'none';
+        }
+    });
+}
+
+function loadLignes() {
+    const mois = document.getElementById('filterMois').value;
+    if (!mois) {
+        alert('Veuillez sélectionner un mois');
+        return;
+    }
+    const params = new URLSearchParams({
+        mois,
+        base_id: document.getElementById('filterBase').value || '',
+        employe_id: document.getElementById('filterEmploye').value || ''
+    });
+
+    fetch(`{% url 'planning:api_indemnites_hors_zone_list' %}?${params.toString()}`)
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) {
+                alert(data.error || 'Erreur');
+                return;
+            }
+            lignesData = data.lignes || [];
+            renderTable();
+        })
+        .catch(() => alert('Erreur réseau'));
+}
+
+function renderTable() {
+    const tbody = document.getElementById('tableBody');
+    if (lignesData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center py-6">Aucune ligne</td></tr>';
+        return;
+    }
+    tbody.innerHTML = lignesData.map((l, idx) => `
+        <tr>
+            <td><input type="checkbox" class="checkbox checkbox-sm ligne-cb" data-idx="${idx}" onchange="updateBtn()"></td>
+            <td>${formatDate(l.date)}</td>
+            <td>${l.employe_nom}</td>
+            <td>${l.employe_base}</td>
+            <td>${l.ouvrage}</td>
+            <td>${l.activite}</td>
+            <td>${l.remarque || '-'}</td>
+            <td class="text-right">${Number(l.montant).toLocaleString('fr-FR')} Ar</td>
+        </tr>
+    `).join('');
+}
+
+function formatDate(dateStr) {
+    const parts = dateStr.split('-');
+    if (parts.length !== 3) return dateStr;
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+function imprimerFactures() {
+    const selected = Array.from(document.querySelectorAll('.ligne-cb:checked')).map(cb => {
+        const idx = parseInt(cb.dataset.idx, 10);
+        const l = lignesData[idx];
+        return { planning_id: l.planning_id, employe_id: l.employe_id };
+    });
+
+    if (selected.length === 0) {
+        alert('Veuillez sélectionner au moins une ligne');
+        return;
+    }
+
+    fetch('{% url "planning:api_imprimer_facture_indemnite_hors_zone" %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({ selections: selected })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (!data.success) {
+            alert(data.error || 'Erreur');
+            return;
+        }
+        genererFactures(data.factures || []);
+    })
+    .catch(() => alert('Erreur réseau'));
+}
+
+function genererFactures(factures) {
+    const printArea = document.getElementById('printArea');
+    printArea.classList.remove('hidden');
+
+    printArea.innerHTML = factures.map(f => `
+        <div class="facture-indemnite" style="page-break-after: always; padding:16px; margin-bottom:16px;">
+            <div class="facture-header" style="text-align:center; margin-bottom:12px;">
+                ${f.organisation.logo ? `<img src="${f.organisation.logo}" style="max-height:60px;" />` : ''}
+                <h2 style="font-weight:bold;">${f.organisation.nom}</h2>
+                <h3>FACTURE D'INDEMNITÉ HORS ZONE</h3>
+            </div>
+            <div class="facture-info" style="margin-bottom:12px;">
+                <p><strong>Employé:</strong> ${f.employe.nom}</p>
+                <p><strong>Poste:</strong> ${f.employe.poste}</p>
+                <p><strong>Base:</strong> ${f.employe.base}</p>
+            </div>
+            <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr>
+                        <th style="border:1px solid #ccc; padding:4px;">Date</th>
+                        <th style="border:1px solid #ccc; padding:4px;">Activité</th>
+                        <th style="border:1px solid #ccc; padding:4px;">Ouvrage</th>
+                        <th style="border:1px solid #ccc; padding:4px;">Remarque</th>
+                        <th style="border:1px solid #ccc; padding:4px; text-align:right;">Montant</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${f.lignes.map(l => `
+                        <tr>
+                            <td style="border:1px solid #eee; padding:4px;">${l.date}</td>
+                            <td style="border:1px solid #eee; padding:4px;">${l.activite || 'N/A'}</td>
+                            <td style="border:1px solid #eee; padding:4px;">${l.ouvrage}</td>
+                            <td style="border:1px solid #eee; padding:4px;">${l.remarque || '-'}</td>
+                            <td style="border:1px solid #eee; padding:4px; text-align:right;">${Number(l.montant).toLocaleString('fr-FR')} Ar</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+            <div style="text-align:right; font-weight:bold; margin-top:8px;">TOTAL: ${Number(f.total).toLocaleString('fr-FR')} Ar</div>
+            <div style="display:flex; justify-content:space-between; margin-top:24px;">
+                <div style="text-align:center; width:45%;">
+                    <div style="border-top:1px solid #333; margin-top:32px;"></div>
+                    Signature employé
+                </div>
+                <div style="text-align:center; width:45%;">
+                    <div style="border-top:1px solid #333; margin-top:32px;"></div>
+                    Visa responsable
+                </div>
+            </div>
+        </div>
+    `).join('');
+
+    setTimeout(() => window.print(), 100);
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const moisSelect = document.getElementById('filterMois');
+    if (moisSelect) moisSelect.value = currentMonth;
+    onBaseChange();
+});
+</script>
+{% endblock %}

@@ -1,0 +1,428 @@
+{% extends admin_shell_base_template %}
+{% load static humanize %}
+{% load employee_grouping %}
+
+{% block title %}Positions GPS Employés - Hydria{% endblock %}
+
+{% block extra_css %}
+<!-- Pas de CSS spécifique pour cette page -->
+{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <!-- En-tête -->
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">📍 Positions GPS des Employés</h1>
+            <p class="text-base-content/70 mt-1">Suivi et analyse des positions géolocalisées lors des connexions</p>
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'employees:positions_gps_map' %}" class="btn btn-primary btn-sm">
+                <i class="fas fa-map-marked-alt mr-1"></i>Carte Interactive
+            </a>
+            <a href="{% url 'employees:employes_cascade' %}" class="btn btn-ghost btn-sm">
+                <i class="fas fa-arrow-left mr-1"></i>Retour
+            </a>
+        </div>
+    </div>
+
+    <!-- Statistiques globales -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 mb-6">
+        <div class="stats shadow bg-primary text-primary-content">
+            <div class="stat">
+                <div class="stat-title text-primary-content/70">Total Positions</div>
+                <div class="stat-value text-2xl">{{ stats.total_positions }}</div>
+            </div>
+        </div>
+        <div class="stats shadow bg-secondary text-secondary-content">
+            <div class="stat">
+                <div class="stat-title text-secondary-content/70">Employés</div>
+                <div class="stat-value text-2xl">{{ stats.total_employes }}</div>
+            </div>
+        </div>
+        <div class="stats shadow bg-error text-error-content">
+            <div class="stat">
+                <div class="stat-title text-error-content/70">Hors zone</div>
+                <div class="stat-value text-2xl">{{ stats.hors_zone }}</div>
+                <div class="stat-desc text-error-content/70">&gt; 10 km</div>
+            </div>
+        </div>
+        <div class="stats shadow bg-accent text-accent-content">
+            <div class="stat">
+                <div class="stat-title text-accent-content/70">Aujourd'hui</div>
+                <div class="stat-value text-2xl">{{ stats.positions_today }}</div>
+            </div>
+        </div>
+        <div class="stats shadow bg-info text-info-content">
+            <div class="stat">
+                <div class="stat-title text-info-content/70">Cette semaine</div>
+                <div class="stat-value text-2xl">{{ stats.positions_week }}</div>
+            </div>
+        </div>
+        <div class="stats shadow bg-success text-success-content">
+            <div class="stat">
+                <div class="stat-title text-success-content/70">Ce mois</div>
+                <div class="stat-value text-2xl">{{ stats.positions_month }}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Onglets (Tableau et Statistiques uniquement - Carte dans page dédiée) -->
+    <div role="tablist" class="tabs tabs-bordered mb-6">
+        <input type="radio" name="my_tabs" role="tab" class="tab" aria-label="📊 Tableau & Filtres" checked />
+        <div role="tabpanel" class="tab-content pt-6">
+            <!-- Filtres de recherche -->
+            <div class="card bg-base-100 shadow-xl mb-6">
+                <div class="card-body">
+                    <h2 class="card-title text-lg mb-4">
+                        <i class="fas fa-filter mr-2"></i>Filtres de recherche
+                    </h2>
+                    <form method="get" action="{% url 'employees:positions_gps_list' %}" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Recherche</span>
+                            </label>
+                            <input type="text" name="search" value="{{ search_query }}" placeholder="Surnom, poste, village..." class="input input-bordered" />
+                        </div>
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Date début</span>
+                            </label>
+                            <input type="date" name="date_debut" value="{{ date_debut }}" class="input input-bordered" />
+                        </div>
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Date fin</span>
+                            </label>
+                            <input type="date" name="date_fin" value="{{ date_fin }}" class="input input-bordered" />
+                        </div>
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Employé</span>
+                            </label>
+                            <select name="employe" class="select select-bordered">
+                                {% grouped_employee_options employes_list selected_employe "Tous les employés" %}
+                            </select>
+                        </div>
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Village proche</span>
+                            </label>
+                            <select name="village" class="select select-bordered">
+                                <option value="">Tous les villages</option>
+                                {% for village in villages_list %}
+                                <option value="{{ village.id }}" {% if selected_village == village.id|stringformat:"s" %}selected{% endif %}>
+                                    {{ village.nom_village }} ({{ village.fokontany.nom_fokontany }})
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Type connexion</span>
+                            </label>
+                            <select name="type_connexion" class="select select-bordered">
+                                <option value="">Tous les types</option>
+                                {% for type_code, type_label in types_connexion %}
+                                <option value="{{ type_code }}" {% if selected_type == type_code %}selected{% endif %}>
+                                    {{ type_label }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="form-control lg:col-span-3 flex flex-row gap-2 items-end">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-search mr-2"></i>Rechercher
+                            </button>
+                            <a href="{% url 'employees:positions_gps_list' %}" class="btn btn-ghost">
+                                <i class="fas fa-times mr-2"></i>Réinitialiser
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Tableau des positions -->
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body">
+                    <h2 class="card-title text-lg mb-4">
+                        <i class="fas fa-list mr-2"></i>Liste des positions ({{ stats.total_positions }} résultats, affichage limité à 100)
+                    </h2>
+                    <div class="overflow-x-auto">
+                        <table class="table table-zebra table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Date/Heure</th>
+                                    <th>Employé</th>
+                                    <th>Poste</th>
+                                    <th>Base</th>
+                                    <th>Durée connexion</th>
+                                    <th>Coordonnées GPS</th>
+                                    <th>Village proche</th>
+                                    <th>Distance (km)</th>
+                                    <th>Sur site?</th>
+                                    <th>Type</th>
+                                    <th>IP</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for position in positions %}
+                                <tr>
+                                    <td class="whitespace-nowrap">
+                                        <div class="flex flex-col">
+                                            <span class="font-semibold">{{ position.date_enregistrement|date:"d/m/Y" }}</span>
+                                            <span class="text-xs opacity-70">{{ position.date_enregistrement|time:"H:i:s" }}</span>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <span class="font-semibold">{{ position.employe.surnom|default:"-" }}</span>
+                                    </td>
+                                    <td>
+                                        {% if position.employe.poste %}
+                                        <span class="badge badge-sm badge-outline">{{ position.employe.poste.nom_poste }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if position.employe.base %}
+                                        <span class="text-sm">{{ position.employe.base.nom_base }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if position.duree_connexion %}
+                                            {% with total_seconds=position.duree_connexion.total_seconds hours=position.duree_connexion.total_seconds|divisibleby:3600 minutes=position.duree_connexion.total_seconds|divisibleby:60 %}
+                                                {% if total_seconds >= 3600 %}
+                                                    <span class="badge badge-success">{{ total_seconds|floatformat:0|slice:":1" }}h</span>
+                                                {% elif total_seconds >= 60 %}
+                                                    <span class="badge badge-info">{{ total_seconds|floatformat:0|slice:":2" }}min</span>
+                                                {% else %}
+                                                    <span class="badge badge-ghost">{{ total_seconds|floatformat:0 }}s</span>
+                                                {% endif %}
+                                            {% endwith %}
+                                        {% else %}
+                                        <span class="text-xs opacity-50">En cours...</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if position.latitude and position.longitude %}
+                                        <div class="flex flex-col text-xs font-mono">
+                                            <span>Lat: {{ position.latitude }}</span>
+                                            <span>Lon: {{ position.longitude }}</span>
+                                            {% if position.altitude %}
+                                            <span class="opacity-70">Alt: {{ position.altitude }}m</span>
+                                            {% endif %}
+                                        </div>
+                                        {% else %}
+                                        <span class="text-xs opacity-50">Non disponible</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if position.village_proche %}
+                                        <div class="flex flex-col">
+                                            <span class="font-semibold text-sm">{{ position.village_proche.nom_village }}</span>
+                                            <span class="text-xs opacity-70">{{ position.village_proche.fokontany.nom_fokontany }}</span>
+                                        </div>
+                                        {% else %}
+                                        <span class="text-xs opacity-50">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if position.distance_village %}
+                                            {% if position.est_hors_zone %}
+                                            <div class="tooltip" data-tip="Hors zone - Plus de 10 km du village le plus proche">
+                                                <span class="badge badge-error badge-sm gap-1">
+                                                    <i class="fas fa-exclamation-triangle"></i>
+                                                    {{ position.distance_village|floatformat:2 }} km
+                                                </span>
+                                            </div>
+                                            {% else %}
+                                            <span class="badge badge-info badge-sm">{{ position.distance_village|floatformat:2 }} km</span>
+                                            {% endif %}
+                                        {% else %}
+                                        <span class="text-xs opacity-50">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if position.est_sur_site == True %}
+                                        <div class="tooltip" data-tip="À {{ position.distance_equipement_proche|floatformat:0 }}m de {{ position.equipement_proche.nom_equipement|default:'l\'équipement' }}">
+                                            <span class="badge badge-success badge-sm gap-1">
+                                                <i class="fas fa-check-circle"></i> Oui
+                                            </span>
+                                        </div>
+                                        {% elif position.est_sur_site == False %}
+                                        <div class="tooltip" data-tip="{% if position.ouvrage_planifie %}{{ position.ouvrage_planifie.nom_ouvrage }} planifié{% if position.distance_equipement_proche %} - À {{ position.distance_equipement_proche|floatformat:0 }}m{% endif %}{% else %}Hors zone{% endif %}">
+                                            <span class="badge badge-error badge-sm gap-1">
+                                                <i class="fas fa-times-circle"></i> Non
+                                            </span>
+                                        </div>
+                                        {% elif position.est_sur_site == None %}
+                                        <div class="tooltip" data-tip="Pas de planning trouvé pour ce jour">
+                                            <span class="badge badge-ghost badge-sm gap-1">
+                                                <i class="fas fa-question-circle"></i> N/A
+                                            </span>
+                                        </div>
+                                        {% else %}
+                                        <span class="text-xs opacity-50">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if position.type_connexion == 'login' %}
+                                        <span class="badge badge-success badge-sm">Connexion</span>
+                                        {% elif position.type_connexion == 'manual' %}
+                                        <span class="badge badge-warning badge-sm">Manuel</span>
+                                        {% elif position.type_connexion == 'auto' %}
+                                        <span class="badge badge-info badge-sm">Auto</span>
+                                        {% else %}
+                                        <span class="badge badge-ghost badge-sm">{{ position.get_type_connexion_display }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <span class="text-xs font-mono">{{ position.adresse_ip|default:"-" }}</span>
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="9" class="text-center py-8 text-base-content/50">
+                                        <i class="fas fa-inbox text-4xl mb-2"></i>
+                                        <p>Aucune position GPS enregistrée</p>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <input type="radio" name="my_tabs" role="tab" class="tab" aria-label="📈 Statistiques" />
+        <div role="tabpanel" class="tab-content pt-6">
+            <!-- Statistiques détaillées -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Répartition par type -->
+                <div class="card bg-base-100 shadow-xl">
+                    <div class="card-body">
+                        <h2 class="card-title">
+                            <i class="fas fa-chart-pie mr-2"></i>Répartition par type de connexion
+                        </h2>
+                        <div class="space-y-2">
+                            {% for item in stats.by_type %}
+                            <div class="flex justify-between items-center p-3 bg-base-200 rounded-lg">
+                                <span class="font-semibold">{{ item.type_connexion }}</span>
+                                <span class="badge badge-primary badge-lg">{{ item.count }}</span>
+                            </div>
+                            {% empty %}
+                            <p class="text-base-content/50 text-center py-4">Aucune donnée</p>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Top employés -->
+                <div class="card bg-base-100 shadow-xl">
+                    <div class="card-body">
+                        <h2 class="card-title">
+                            <i class="fas fa-users mr-2"></i>Top 5 employés par connexions
+                        </h2>
+                        <div class="space-y-2">
+                            {% for item in stats.top_employes %}
+                            <div class="flex justify-between items-center p-3 bg-base-200 rounded-lg">
+                                <div>
+                                    <span class="font-semibold">{{ item.employe__surnom }}</span>
+                                    <p class="text-xs opacity-70">{{ item.employe__poste__nom_poste }}</p>
+                                </div>
+                                <span class="badge badge-secondary badge-lg">{{ item.count }}</span>
+                            </div>
+                            {% empty %}
+                            <p class="text-base-content/50 text-center py-4">Aucune donnée</p>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Top villages -->
+                <div class="card bg-base-100 shadow-xl">
+                    <div class="card-body">
+                        <h2 class="card-title">
+                            <i class="fas fa-map-marker-alt mr-2"></i>Top 5 villages les plus proches
+                        </h2>
+                        <div class="space-y-2">
+                            {% for item in stats.top_villages %}
+                            <div class="flex justify-between items-center p-3 bg-base-200 rounded-lg">
+                                <div>
+                                    <span class="font-semibold">{{ item.village_proche__nom_village }}</span>
+                                    <p class="text-xs opacity-70">{{ item.village_proche__fokontany__nom_fokontany }}</p>
+                                </div>
+                                <span class="badge badge-accent badge-lg">{{ item.count }}</span>
+                            </div>
+                            {% empty %}
+                            <p class="text-base-content/50 text-center py-4">Aucune donnée</p>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Distance moyenne -->
+                <div class="card bg-base-100 shadow-xl">
+                    <div class="card-body">
+                        <h2 class="card-title">
+                            <i class="fas fa-ruler mr-2"></i>Distance moyenne au village
+                        </h2>
+                        <div class="flex items-center justify-center py-8">
+                            <div class="text-center">
+                                <div class="text-5xl font-bold text-primary">
+                                    {% if stats.avg_distance %}
+                                    {{ stats.avg_distance }}
+                                    {% else %}
+                                    N/A
+                                    {% endif %}
+                                </div>
+                                <div class="text-xl text-base-content/70 mt-2">kilomètres</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Connexions par jour -->
+                <div class="card bg-base-100 shadow-xl lg:col-span-2">
+                    <div class="card-body">
+                        <h2 class="card-title">
+                            <i class="fas fa-calendar-alt mr-2"></i>Connexions des 7 derniers jours
+                        </h2>
+                        <div class="overflow-x-auto">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Nombre de connexions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for item in stats.by_day %}
+                                    <tr>
+                                        <td>{{ item.day|date:"d/m/Y" }}</td>
+                                        <td>
+                                            <div class="flex items-center gap-2">
+                                                <progress class="progress progress-info w-32" value="{{ item.count }}" max="{{ stats.positions_week }}"></progress>
+                                                <span class="badge badge-info">{{ item.count }}</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {% empty %}
+                                    <tr>
+                                        <td colspan="2" class="text-center py-4 text-base-content/50">Aucune donnée</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<!-- Pas de JavaScript spécifique - Carte dans page dédiée -->
+{% endblock %}

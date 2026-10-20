@@ -1,0 +1,739 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Capture de Données Terrain{% endblock %}
+
+{% block extra_css %}
+<style>
+    #map {
+        height: 300px;
+        width: 100%;
+        border-radius: 0.5rem;
+    }
+    .camera-preview {
+        width: 100%;
+        max-height: 300px;
+        object-fit: cover;
+        border-radius: 0.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <div class="mb-6">
+        <h1 class="text-3xl font-bold mb-2">
+            <i class="fas fa-map-marked-alt mr-3 text-primary"></i>
+            Capture de Données Terrain
+        </h1>
+        <p class="text-base-content/70">
+            Améliorez la qualité des données en complétant les informations manquantes sur le terrain
+        </p>
+    </div>
+
+    <!-- Étape 1: Géolocalisation -->
+    <div id="step-geolocation" class="card bg-base-100 shadow-xl mb-6">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-location-arrow mr-2 text-info"></i>
+                Étape 1 : Localisation
+            </h2>
+            <p class="text-sm text-base-content/70 mb-4">
+                Activez votre GPS pour trouver les villages à proximité
+            </p>
+
+            <button id="btn-geolocation" onclick="getGeolocation()" class="btn btn-info btn-lg w-full">
+                <i class="fas fa-crosshairs mr-2"></i>
+                Obtenir ma position GPS
+            </button>
+
+            <div id="geolocation-result" class="hidden mt-4">
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle"></i>
+                    <div>
+                        <div class="font-bold">Position GPS obtenue</div>
+                        <div class="text-sm">
+                            <strong>Latitude:</strong> <span id="user-lat"></span> |
+                            <strong>Longitude:</strong> <span id="user-lon"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="map" class="mt-4"></div>
+            </div>
+
+            <div id="geolocation-error" class="hidden mt-4">
+                <div class="alert alert-error">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span id="error-message"></span>
+                </div>
+            </div>
+
+            <div id="loading-villages" class="hidden mt-4">
+                <div class="flex items-center gap-3">
+                    <span class="loading loading-spinner loading-lg text-info"></span>
+                    <span>Recherche des villages à proximité...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Étape 2: Sélection du village -->
+    <div id="step-village" class="card bg-base-100 shadow-xl mb-6 hidden">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-map-pin mr-2 text-success"></i>
+                Étape 2 : Villages à proximité (< 1 km)
+            </h2>
+
+            <div id="villages-list" class="space-y-3"></div>
+
+            <div id="no-villages" class="hidden">
+                <div class="alert alert-warning">
+                    <i class="fas fa-info-circle"></i>
+                    <span>Aucun village trouvé dans un rayon de 1 km</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Étape 3: Champs à compléter -->
+    <div id="step-fields" class="card bg-base-100 shadow-xl mb-6 hidden">
+        <div class="card-body">
+            <h2 class="card-title">
+                <i class="fas fa-edit mr-2 text-warning"></i>
+                Étape 3 : Données à compléter
+            </h2>
+            <p class="text-sm text-base-content/70 mb-4">
+                <span id="selected-village-name" class="font-bold"></span> -
+                <span id="total-fields-count" class="badge badge-warning"></span> champs vides
+            </p>
+
+            <div id="loading-fields" class="hidden">
+                <div class="flex items-center gap-3">
+                    <span class="loading loading-spinner loading-lg text-warning"></span>
+                    <span>Chargement des données...</span>
+                </div>
+            </div>
+
+            <div id="fields-container" class="space-y-6"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Capture Photo -->
+<dialog id="modal-camera" class="modal">
+    <div class="modal-box max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">
+            <i class="fas fa-camera mr-2"></i>
+            Prendre une photo
+        </h3>
+
+        <div class="flex justify-center mb-4">
+            <div class="w-full max-w-sm">
+                <img id="camera-preview-img" class="camera-preview mb-3 hidden rounded-lg border border-base-300 shadow" />
+                <div id="camera-preview-placeholder" class="camera-preview mb-3 flex flex-col items-center justify-center gap-2 border-2 border-dashed border-base-300 rounded-lg text-base-content/60">
+                    <i class="fas fa-camera-retro text-4xl"></i>
+                    <span>Aucune photo sélectionnée</span>
+                </div>
+                <p id="camera-preview-size" class="text-center text-xs text-base-content/60 hidden"></p>
+            </div>
+        </div>
+
+        <input type="file" id="camera-file-input" accept="image/*" style="display:none;" onchange="handleCameraFileSelected(event)">
+
+        <div class="modal-action flex flex-wrap items-center justify-between gap-2">
+            <div class="flex flex-wrap gap-2">
+                <button type="button" onclick="capturePhotoForField()" class="btn btn-info btn-sm">
+                    <i class="fas fa-camera mr-2"></i>Prendre photo
+                </button>
+                <button type="button" onclick="selectPhotoForField()" class="btn btn-primary btn-sm">
+                    <i class="fas fa-folder-open mr-2"></i>Choisir fichier
+                </button>
+                <button type="button" onclick="clearCameraSelection()" class="btn btn-ghost btn-sm">
+                    <i class="fas fa-trash-alt mr-2"></i>Effacer
+                </button>
+            </div>
+            <div class="flex gap-2">
+                <button type="button" onclick="closeCamera()" class="btn btn-outline btn-sm">Annuler</button>
+                <button id="btn-save-camera" type="button" onclick="savePhoto()" class="btn btn-success btn-sm" disabled>
+                    <i class="fas fa-save mr-2"></i>Enregistrer
+                </button>
+            </div>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+<script>
+let userPosition = null;
+let selectedVillage = null;
+let currentFieldData = null;
+let map = null;
+let capturedPhotoData = null;
+let cameraCompressedSize = null;
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+function getGeolocation() {
+    const btn = document.getElementById('btn-geolocation');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="loading loading-spinner"></span> Obtention de la position...';
+
+    if (!navigator.geolocation) {
+        showError('La géolocalisation n\'est pas supportée par votre navigateur');
+        btn.disabled = false;
+        return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+        position => {
+            userPosition = {
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                altitude: position.coords.altitude
+            };
+
+            document.getElementById('user-lat').textContent = userPosition.latitude.toFixed(6);
+            document.getElementById('user-lon').textContent = userPosition.longitude.toFixed(6);
+
+            document.getElementById('geolocation-result').classList.remove('hidden');
+            document.getElementById('geolocation-error').classList.add('hidden');
+
+            // Initialiser la carte
+            initMap();
+
+            // Chercher les villages à proximité
+            findNearbyVillages();
+        },
+        error => {
+            let message = 'Erreur de géolocalisation';
+            switch(error.code) {
+                case error.PERMISSION_DENIED:
+                    message = 'Permission refusée. Veuillez autoriser l\'accès à votre position.';
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    message = 'Position non disponible.';
+                    break;
+                case error.TIMEOUT:
+                    message = 'Délai d\'attente dépassé.';
+                    break;
+            }
+            showError(message);
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-crosshairs mr-2"></i>Réessayer';
+        },
+        {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 0
+        }
+    );
+}
+
+function initMap() {
+    if (map) {
+        map.remove();
+    }
+
+    map = L.map('map').setView([userPosition.latitude, userPosition.longitude], 14);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    // Marqueur de la position de l'utilisateur
+    L.marker([userPosition.latitude, userPosition.longitude], {
+        icon: L.icon({
+            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
+            iconSize: [25, 41],
+            iconAnchor: [12, 41]
+        })
+    }).addTo(map)
+        .bindPopup('Votre position')
+        .openPopup();
+}
+
+async function findNearbyVillages() {
+    document.getElementById('loading-villages').classList.remove('hidden');
+
+    try {
+        const response = await fetch('{% url "geography:api_villages_proximite" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                latitude: userPosition.latitude,
+                longitude: userPosition.longitude
+            })
+        });
+
+        const data = await response.json();
+
+        document.getElementById('loading-villages').classList.add('hidden');
+
+        if (data.success && data.villages.length > 0) {
+            displayVillages(data.villages);
+            document.getElementById('step-village').classList.remove('hidden');
+
+            // Ajouter les marqueurs sur la carte
+            data.villages.forEach(village => {
+                L.marker([village.latitude, village.longitude], {
+                    icon: L.icon({
+                        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+                        iconSize: [25, 41],
+                        iconAnchor: [12, 41]
+                    })
+                }).addTo(map)
+                    .bindPopup(`${village.nom}<br><small>${village.distance}m</small>`);
+            });
+        } else {
+            document.getElementById('no-villages').classList.remove('hidden');
+            document.getElementById('step-village').classList.remove('hidden');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        showError('Erreur lors de la recherche des villages');
+        document.getElementById('loading-villages').classList.add('hidden');
+    }
+}
+
+function displayVillages(villages) {
+    const container = document.getElementById('villages-list');
+    container.innerHTML = '';
+
+    villages.forEach(village => {
+        const card = document.createElement('div');
+        card.className = 'card bg-base-200 cursor-pointer hover:bg-base-300 transition-colors';
+        card.onclick = () => selectVillage(village);
+        card.innerHTML = `
+            <div class="card-body p-4">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <h3 class="font-bold text-lg">${village.nom}</h3>
+                        <p class="text-sm text-base-content/70">
+                            ${village.fokontany ? village.fokontany : ''}
+                            ${village.commune ? '· ' + village.commune : ''}
+                            ${village.district ? '· ' + village.district : ''}
+                        </p>
+                    </div>
+                    <div class="text-right">
+                        <div class="badge badge-success">${village.distance}m</div>
+                    </div>
+                </div>
+            </div>
+        `;
+        container.appendChild(card);
+    });
+}
+
+async function selectVillage(village) {
+    selectedVillage = village;
+    document.getElementById('selected-village-name').textContent = village.nom;
+    document.getElementById('loading-fields').classList.remove('hidden');
+    document.getElementById('step-fields').classList.remove('hidden');
+
+    try {
+        const response = await fetch('{% url "geography:api_champs_vides" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                village_id: village.id
+            })
+        });
+
+        const data = await response.json();
+
+        document.getElementById('loading-fields').classList.add('hidden');
+
+        if (data.success) {
+            document.getElementById('total-fields-count').textContent = `${data.total_champs_vides} champs`;
+            displayFields(data);
+        } else {
+            showError(data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        showError('Erreur lors du chargement des données');
+        document.getElementById('loading-fields').classList.add('hidden');
+    }
+}
+
+function displayFields(data) {
+    const container = document.getElementById('fields-container');
+    container.innerHTML = '';
+
+    // Village
+    if (data.village.nb_champs_vides > 0) {
+        container.appendChild(createEntityCard('Village', data.village, 'village'));
+    }
+
+    // Parcelles
+    if (data.parcelles.length > 0) {
+        data.parcelles.forEach(parcelle => {
+            container.appendChild(createEntityCard(`Parcelle ${parcelle.numero}`, parcelle, 'parcelle'));
+        });
+    }
+
+    // Points d'eau
+    if (data.points_eau.length > 0) {
+        data.points_eau.forEach(pe => {
+            const displayName = pe.nom || (pe.idxls ? `IDXLS ${pe.idxls}` : 'Point d\'eau');
+            container.appendChild(createEntityCard(`Point d'eau: ${displayName}`, pe, 'point_eau'));
+        });
+    }
+
+    // Ouvrages
+    if (data.ouvrages.length > 0) {
+        data.ouvrages.forEach(ouvrage => {
+            container.appendChild(createEntityCard(`Ouvrage: ${ouvrage.nom}`, ouvrage, 'ouvrage'));
+        });
+    }
+
+    // Équipements
+    if (data.equipements.length > 0) {
+        data.equipements.forEach(equip => {
+            container.appendChild(createEntityCard(`Équipement: ${equip.nom}`, equip, 'equipement'));
+        });
+    }
+
+    // Points de contrôle
+    if (data.points_controle.length > 0) {
+        data.points_controle.forEach(pc => {
+            container.appendChild(createEntityCard(`Point contrôle: ${pc.nom}`, pc, 'point_controle'));
+        });
+    }
+
+    if (data.total_champs_vides === 0) {
+        container.innerHTML = '<div class="alert alert-success"><i class="fas fa-check-circle mr-2"></i>Toutes les données sont complètes pour ce village !</div>';
+    }
+}
+
+function createEntityCard(title, entity, entityType) {
+    const card = document.createElement('div');
+    card.className = 'card bg-base-200 shadow';
+
+    let headerMeta = '';
+    if (entityType === 'point_eau') {
+        const meta = [];
+        if (entity.ouvrage) {
+            meta.push(`Ouvrage: ${entity.ouvrage}`);
+        }
+        if (entity.idxls) {
+            meta.push(`IDxls: ${entity.idxls}`);
+        }
+        if (meta.length) {
+            headerMeta = `<p class="text-xs text-base-content/70 flex flex-wrap gap-2">${meta.join(' · ')}</p>`;
+        }
+    }
+
+    let fieldsHtml = '';
+    for (const [fieldName, fieldData] of Object.entries(entity.champs_vides)) {
+        fieldsHtml += createFieldInput(fieldName, fieldData, entity.id, entityType);
+    }
+
+    card.innerHTML = `
+        <div class="card-body">
+            <h3 class="card-title text-lg">${title}</h3>
+            ${headerMeta}
+            <div class="space-y-4">
+                ${fieldsHtml}
+            </div>
+        </div>
+    `;
+
+    return card;
+}
+
+function createFieldInput(fieldName, fieldData, entityId, entityType) {
+    if (fieldData.type === 'gps') {
+        return `
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">${fieldData.label}</span></label>
+                <button onclick="captureGPS('${fieldName}', '${entityId}', '${entityType}')" class="btn btn-info btn-sm">
+                    <i class="fas fa-crosshairs mr-2"></i>Capturer ma position actuelle
+                </button>
+            </div>
+        `;
+    } else if (fieldData.type === 'photo') {
+        return `
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">${fieldData.label}</span></label>
+                <button onclick="openCameraModal('${fieldName}', '${entityId}', '${entityType}')" class="btn btn-success btn-sm">
+                    <i class="fas fa-camera mr-2"></i>Prendre une photo
+                </button>
+            </div>
+        `;
+    } else if (fieldData.type === 'select') {
+        const options = fieldData.choices.map(c => `<option value="${c.value}">${c.label}</option>`).join('');
+        return `
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">${fieldData.label}</span></label>
+                <select class="select select-bordered select-sm" onchange="updateField('${fieldName}', '${entityId}', '${entityType}', 'select', this.value)">
+                    <option value="">Sélectionner...</option>
+                    ${options}
+                </select>
+            </div>
+        `;
+    } else if (fieldData.type === 'number') {
+        return `
+            <div class="form-control">
+                <label class="label"><span class="label-text font-semibold">${fieldData.label}</span></label>
+                <input type="number" class="input input-bordered input-sm" placeholder="${fieldData.unite || ''}"
+                    onchange="updateField('${fieldName}', '${entityId}', '${entityType}', 'number', this.value)" />
+            </div>
+        `;
+    }
+    return '';
+}
+
+async function captureGPS(fieldName, entityId, entityType) {
+    if (!userPosition) {
+        showError('Position GPS non disponible');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('entity_type', entityType);
+    formData.append('entity_id', entityId);
+    formData.append('field_name', fieldName);
+    formData.append('field_type', 'gps');
+    formData.append('latitude', userPosition.latitude);
+    formData.append('longitude', userPosition.longitude);
+    if (userPosition.altitude) {
+        formData.append('altitude', userPosition.altitude);
+    }
+
+    await submitUpdate(formData);
+}
+
+function openCameraModal(fieldName, entityId, entityType) {
+    currentFieldData = { fieldName, entityId, entityType };
+    resetCameraModal();
+    document.getElementById('modal-camera').showModal();
+}
+
+function resetCameraModal() {
+    capturedPhotoData = null;
+    cameraCompressedSize = null;
+    const preview = document.getElementById('camera-preview-img');
+    const placeholder = document.getElementById('camera-preview-placeholder');
+    const sizeLabel = document.getElementById('camera-preview-size');
+    preview.src = '';
+    preview.classList.add('hidden');
+    placeholder.classList.remove('hidden');
+    sizeLabel.classList.add('hidden');
+    document.getElementById('btn-save-camera').disabled = true;
+}
+
+function selectPhotoForField() {
+    const input = document.getElementById('camera-file-input');
+    input.removeAttribute('capture');
+    input.click();
+}
+
+function capturePhotoForField() {
+    const input = document.getElementById('camera-file-input');
+    input.setAttribute('capture', 'environment');
+    input.click();
+}
+
+function clearCameraSelection() {
+    const input = document.getElementById('camera-file-input');
+    input.value = '';
+    input.removeAttribute('capture');
+    resetCameraModal();
+}
+
+function handleCameraFileSelected(event) {
+    const input = event.target;
+    if (!input.files || input.files.length === 0) {
+        return;
+    }
+    const file = input.files[0];
+    if (!file.type.startsWith('image/')) {
+        alert('Seules les images sont acceptées');
+        input.value = '';
+        return;
+    }
+
+    compressImage(file, (dataUrl, originalSize, compressedSize) => {
+        capturedPhotoData = dataUrl;
+        cameraCompressedSize = compressedSize;
+        updateCameraPreview(dataUrl, compressedSize);
+    });
+
+    input.value = '';
+    input.removeAttribute('capture');
+}
+
+function updateCameraPreview(imageDataUrl, compressedSize) {
+    const preview = document.getElementById('camera-preview-img');
+    const placeholder = document.getElementById('camera-preview-placeholder');
+    const sizeLabel = document.getElementById('camera-preview-size');
+    preview.src = imageDataUrl;
+    preview.classList.remove('hidden');
+    placeholder.classList.add('hidden');
+    sizeLabel.textContent = `Compression: ${formatBytes(compressedSize)}`;
+    sizeLabel.classList.remove('hidden');
+    document.getElementById('btn-save-camera').disabled = false;
+}
+
+async function savePhoto() {
+    if (!capturedPhotoData || !currentFieldData) {
+        alert('Veuillez choisir une photo avant d’enregistrer.');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('entity_type', currentFieldData.entityType);
+    formData.append('entity_id', currentFieldData.entityId);
+    formData.append('field_name', currentFieldData.fieldName);
+    formData.append('field_type', 'photo');
+    formData.append('photo_data', capturedPhotoData);
+    if (cameraCompressedSize !== null) {
+        formData.append('photo_compressed_size', cameraCompressedSize);
+    }
+
+    await submitUpdate(formData);
+    closeCamera();
+}
+
+function closeCamera() {
+    resetCameraModal();
+    currentFieldData = null;
+    const modal = document.getElementById('modal-camera');
+    if (modal && modal.open) {
+        modal.close();
+    }
+}
+
+function compressImage(file, callback) {
+    const reader = new FileReader();
+
+    reader.onload = function(e) {
+        const img = new Image();
+
+        img.onload = function() {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            const MAX_WIDTH = 1200;
+            const MAX_HEIGHT = 1200;
+
+            let width = img.width;
+            let height = img.height;
+
+            if (width > height) {
+                if (width > MAX_WIDTH) {
+                    height = Math.round((height * MAX_WIDTH) / width);
+                    width = MAX_WIDTH;
+                }
+            } else {
+                if (height > MAX_HEIGHT) {
+                    width = Math.round((width * MAX_HEIGHT) / height);
+                    height = MAX_HEIGHT;
+                }
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+            ctx.drawImage(img, 0, 0, width, height);
+
+            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            const compressedSize = Math.round((compressedDataUrl.length - 'data:image/jpeg;base64,'.length) * 3 / 4);
+
+            callback(compressedDataUrl, file.size, compressedSize);
+        };
+
+        img.src = e.target.result;
+    };
+
+    reader.readAsDataURL(file);
+}
+
+function formatBytes(bytes) {
+    if (!bytes) {
+        return '0 KB';
+    }
+    const kb = bytes / 1024;
+    if (kb < 1024) {
+        return `${kb.toFixed(0)} KB`;
+    }
+    return `${(kb / 1024).toFixed(1)} MB`;
+}
+
+async function updateField(fieldName, entityId, entityType, fieldType, value) {
+    const formData = new FormData();
+    formData.append('entity_type', entityType);
+    formData.append('entity_id', entityId);
+    formData.append('field_name', fieldName);
+    formData.append('field_type', fieldType);
+    formData.append('value', value);
+
+    await submitUpdate(formData);
+}
+
+async function submitUpdate(formData) {
+    try {
+        const response = await fetch('{% url "geography:api_update_champ" %}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: formData
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            // Recharger les données du village
+            selectVillage(selectedVillage);
+
+            // Notification
+            const toast = document.createElement('div');
+            toast.className = 'toast toast-top toast-end';
+            toast.innerHTML = '<div class="alert alert-success"><i class="fas fa-check mr-2"></i>Champ mis à jour</div>';
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        } else {
+            showError(data.error);
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        showError('Erreur lors de la mise à jour');
+    }
+}
+
+function showError(message) {
+    document.getElementById('error-message').textContent = message;
+    document.getElementById('geolocation-error').classList.remove('hidden');
+}
+</script>
+{% endblock %}

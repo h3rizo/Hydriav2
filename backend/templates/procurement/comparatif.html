@@ -1,0 +1,328 @@
+{% extends logistics_shell_base_template %}
+
+{% block title %}Comparatif - {{ demande.numero_demande }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    @media print {
+        .no-print { display: none !important; }
+        #pv-comparaison { display: block !important; }
+        body { background: white !important; }
+    }
+    #pv-comparaison { display: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+    <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6 no-print">
+        <div>
+            <h1 class="text-3xl font-bold">Comparatif des offres</h1>
+            <p class="text-base-content/70 mt-1">Demande {{ demande.numero_demande }} &mdash; {{ demande.motif }}</p>
+        </div>
+        <div class="flex items-center gap-2">
+            {% if fournisseurs %}
+            <button type="button" onclick="window.print()" class="btn btn-ghost">
+                <i class="fas fa-print mr-2"></i>Imprimer le PV
+            </button>
+            {% endif %}
+            {% if demande.statut != 'termine' %}
+            <a href="{% url 'procurement:demande_achat_edit' demande.id %}" class="btn btn-ghost">
+                <i class="fas fa-edit mr-2"></i>Modifier les articles
+            </a>
+            {% endif %}
+            <a href="{% url 'procurement:demande_achat_detail' demande.id %}" class="btn btn-ghost">
+                <i class="fas fa-arrow-left mr-2"></i>Retour à la demande
+            </a>
+        </div>
+    </div>
+
+    <div id="alert-container" class="no-print"></div>
+
+    {% if not fournisseurs %}
+    <div class="alert alert-warning no-print">
+        <i class="fas fa-exclamation-triangle mr-2"></i>
+        <span>Aucun proforma n'a encore été reçu pour cette demande. Ajoutez des proformas avant de pouvoir comparer.</span>
+    </div>
+    {% else %}
+
+    <div class="alert alert-info mb-4 no-print">
+        <i class="fas fa-info-circle mr-2"></i>
+        <span>Le prix le moins cher pour chaque article est surligné en vert. Sélectionnez l'offre retenue via le bouton radio. Si vous choisissez une offre plus chère, une justification sera demandée.</span>
+    </div>
+
+    <!-- PV de comparaison des prix (imprimable) -->
+    <div id="pv-comparaison" class="mb-6">
+        <div class="text-center mb-6">
+            <h2 class="text-2xl font-bold uppercase">Procès-verbal de comparaison des prix</h2>
+            <p class="text-sm mt-1">Demande d'achat n&deg; {{ demande.numero_demande }}</p>
+        </div>
+        <div class="grid grid-cols-2 gap-4 mb-4 text-sm">
+            <div><span class="font-semibold">Base demandeuse :</span> {{ demande.base.nom_base }}</div>
+            <div><span class="font-semibold">Demandeur :</span> {{ demande.demandeur.surnom|default:demande.demandeur.nom }}</div>
+            <div><span class="font-semibold">Motif :</span> {{ demande.motif }}</div>
+            <div><span class="font-semibold">Date d'édition :</span> {% now "d/m/Y" %}</div>
+        </div>
+        <table class="table table-zebra table-sm border border-base-300 w-full">
+            <thead>
+                <tr>
+                    <th class="border border-base-300">Article</th>
+                    <th class="border border-base-300">Qté</th>
+                    {% for fournisseur in fournisseurs %}
+                    <th class="border border-base-300 text-center">{{ fournisseur.nom_fournisseur }}</th>
+                    {% endfor %}
+                    <th class="border border-base-300">Offre retenue</th>
+                    <th class="border border-base-300">Justification</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for ligne in lignes %}
+                <tr>
+                    <td class="border border-base-300">{{ ligne.item.designation.nom }}</td>
+                    <td class="border border-base-300">{{ ligne.item.quantite }} {{ ligne.item.designation.unite }}</td>
+                    {% for offre_data in ligne.offres %}
+                    <td class="border border-base-300 text-center {% if offre_data.est_min %}font-bold{% endif %}">
+                        {% if offre_data.prix is not None %}{{ offre_data.prix|floatformat:0 }} Ar{% if offre_data.est_min %} *{% endif %}{% else %}-{% endif %}
+                    </td>
+                    {% endfor %}
+                    <td class="border border-base-300">
+                        {% for offre in ligne.item.offres.all %}{% if offre.est_selectionne %}{{ offre.proforma.fournisseur.nom_fournisseur }} ({{ offre.prix_unitaire|floatformat:0 }} Ar){% endif %}{% endfor %}
+                    </td>
+                    <td class="border border-base-300 text-xs">
+                        {% for offre in ligne.item.offres.all %}{% if offre.est_selectionne %}{{ offre.justification_non_moins_cher|default:"-" }}{% endif %}{% endfor %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <p class="text-xs mt-2">* Prix le moins cher pour l'article.</p>
+        <div class="grid grid-cols-2 gap-8 mt-12 text-sm">
+            <div>
+                <p class="font-semibold">Établi par</p>
+                <div class="mt-10 border-t border-base-300 pt-1">{{ demande.demandeur.surnom|default:demande.demandeur.nom }}</div>
+            </div>
+            <div>
+                <p class="font-semibold">Validé par</p>
+                <div class="mt-10 border-t border-base-300 pt-1">&nbsp;</div>
+            </div>
+        </div>
+    </div>
+
+    <form id="form-comparatif" class="no-print">
+        <div class="card bg-base-100 shadow-xl mb-6">
+            <div class="card-body">
+                <div class="overflow-x-auto">
+                    <table class="table table-zebra">
+                        <thead>
+                            <tr>
+                                <th style="min-width: 200px;">Article</th>
+                                {% for fournisseur in fournisseurs %}
+                                <th class="text-center">{{ fournisseur.nom_fournisseur }}</th>
+                                {% endfor %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for ligne in lignes %}
+                            <tr>
+                                <td>
+                                    <div class="font-semibold">{{ ligne.item.designation.nom }}</div>
+                                    <div class="text-sm text-base-content/60">Qté: {{ ligne.item.quantite }} {{ ligne.item.designation.unite }}</div>
+                                </td>
+                                {% for offre_data in ligne.offres %}
+                                <td class="text-center {% if offre_data.est_min %}bg-success/20{% endif %}">
+                                    {% if offre_data.prix is not None %}
+                                    <label class="flex flex-col items-center gap-1 cursor-pointer p-2 rounded {% if offre_data.est_min %}font-bold text-success{% endif %}">
+                                        <input type="radio"
+                                               name="item_{{ ligne.item.id }}"
+                                               value="{{ offre_data.offre.id }}"
+                                               data-item-id="{{ ligne.item.id }}"
+                                               data-est-min="{{ offre_data.est_min|yesno:'true,false' }}"
+                                               data-fournisseur="{{ offre_data.fournisseur.nom_fournisseur }}"
+                                               class="radio radio-sm radio-primary"
+                                               {% if offre_data.offre.est_selectionne %}checked{% endif %}
+                                               onchange="onSelectionChange(this)">
+                                        <span>{{ offre_data.prix|floatformat:0 }} Ar</span>
+                                        {% if offre_data.est_min %}<span class="badge badge-success badge-xs">Moins cher</span>{% endif %}
+                                    </label>
+                                    {% else %}
+                                    <span class="text-base-content/30">-</span>
+                                    {% endif %}
+                                </td>
+                                {% endfor %}
+                            </tr>
+                            <tr class="justification-row hidden" id="justif-row-{{ ligne.item.id }}">
+                                <td colspan="{{ fournisseurs|length|add:1 }}" class="bg-warning/10">
+                                    <div class="form-control">
+                                        <label class="label py-1">
+                                            <span class="label-text text-warning">
+                                                <i class="fas fa-exclamation-triangle mr-1"></i>
+                                                Justification requise (l'offre choisie n'est pas la moins chère) *
+                                            </span>
+                                        </label>
+                                        <textarea class="textarea textarea-bordered textarea-sm justification-input"
+                                                  data-item-id="{{ ligne.item.id }}"
+                                                  rows="2"
+                                                  placeholder="Ex: Fournisseur habituel, délai de livraison plus court, qualité supérieure...">{% for offre in ligne.item.offres.all %}{% if offre.est_selectionne %}{{ offre.justification_non_moins_cher|default:'' }}{% endif %}{% endfor %}</textarea>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex justify-end gap-2">
+            <button type="button" onclick="enregistrerSelection()" class="btn btn-primary">
+                <i class="fas fa-save mr-2"></i>Enregistrer la sélection
+            </button>
+            <button type="button" onclick="enregistrerPuisGenerer()" class="btn btn-success" id="btn-generer-bc">
+                <i class="fas fa-file-invoice mr-2"></i>Passer à la génération des BC
+            </button>
+        </div>
+    </form>
+    {% endif %}
+</div>
+
+<script>
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+function onSelectionChange(radio) {
+    const itemId = radio.dataset.itemId;
+    const estMin = radio.dataset.estMin === 'true';
+    const justifRow = document.getElementById('justif-row-' + itemId);
+
+    if (estMin) {
+        justifRow.classList.add('hidden');
+    } else {
+        justifRow.classList.remove('hidden');
+    }
+}
+
+// Afficher les lignes de justification déjà nécessaires au chargement
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('input[type="radio"]:checked').forEach(function(radio) {
+        onSelectionChange(radio);
+    });
+});
+
+function afficherAlerte(type, message) {
+    const container = document.getElementById('alert-container');
+    container.innerHTML = `
+        <div class="alert alert-${type} mb-4">
+            <i class="fas fa-info-circle mr-2"></i>
+            <span>${message}</span>
+        </div>
+    `;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// Construit la liste des sélections depuis le formulaire.
+// Retourne { erreur: string|null, selections: [...] }
+function collecterSelections() {
+    const selections = [];
+    const itemIds = new Set();
+    document.querySelectorAll('input[type="radio"]').forEach(function(radio) {
+        itemIds.add(radio.dataset.itemId);
+    });
+
+    let erreur = null;
+
+    itemIds.forEach(function(itemId) {
+        const checked = document.querySelector(`input[name="item_${itemId}"]:checked`);
+        const justifInput = document.querySelector(`.justification-input[data-item-id="${itemId}"]`);
+        const justification = justifInput ? justifInput.value.trim() : '';
+
+        if (checked) {
+            const estMin = checked.dataset.estMin === 'true';
+            if (!estMin && !justification) {
+                erreur = "Veuillez justifier le choix d'une offre qui n'est pas la moins chère (fournisseur: " + checked.dataset.fournisseur + ").";
+            }
+            selections.push({
+                demande_item_id: itemId,
+                proforma_item_id: checked.value,
+                justification: justification,
+            });
+        }
+    });
+
+    return { erreur, selections };
+}
+
+// Envoie les sélections au serveur. Retourne une Promise résolue avec { success, message/error }.
+function envoyerSelections(selections) {
+    return fetch('{% url "procurement:comparatif_enregistrer_selection" demande.id %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken'),
+        },
+        body: JSON.stringify({ selections: selections }),
+    })
+        .then(response => response.json())
+        .catch(err => ({ success: false, error: 'Erreur réseau: ' + err.message }));
+}
+
+function enregistrerSelection() {
+    const { erreur, selections } = collecterSelections();
+
+    if (erreur) {
+        afficherAlerte('error', erreur);
+        return;
+    }
+    if (selections.length === 0) {
+        afficherAlerte('warning', "Veuillez sélectionner au moins une offre avant d'enregistrer.");
+        return;
+    }
+
+    envoyerSelections(selections).then(data => {
+        if (data.success) {
+            afficherAlerte('success', data.message);
+        } else {
+            afficherAlerte('error', data.error || 'Erreur inconnue');
+        }
+    });
+}
+
+function enregistrerPuisGenerer() {
+    const { erreur, selections } = collecterSelections();
+
+    if (erreur) {
+        afficherAlerte('error', erreur);
+        return;
+    }
+    if (selections.length === 0) {
+        afficherAlerte('warning', "Veuillez sélectionner au moins une offre avant de générer les bons de commande.");
+        return;
+    }
+
+    const btn = document.getElementById('btn-generer-bc');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Enregistrement...';
+
+    envoyerSelections(selections).then(data => {
+        if (data.success) {
+            window.location.href = '{% url "procurement:generation_bc" demande.id %}';
+        } else {
+            afficherAlerte('error', data.error || 'Erreur inconnue');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-file-invoice mr-2"></i>Passer à la génération des BC';
+        }
+    });
+}
+</script>
+{% endblock %}

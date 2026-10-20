@@ -1,0 +1,324 @@
+{% extends "accounting/base.html" %}
+{% load employee_grouping %}
+{% load static %}
+{% load humanize %}
+{% load pagination_tags %}
+
+{% block title %}Recoupement Salaires - Comptabilité{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <!-- Header -->
+    <div class="mb-6 flex justify-between items-start">
+        <div>
+            <h1 class="text-3xl font-bold mb-2">
+                <i class="fas fa-balance-scale mr-2 text-primary"></i>
+                Recoupement Salaires - Comptabilité
+            </h1>
+            <p class="text-base-content/70">
+                Vérification de la cohérence entre les charges salariales et la comptabilité DiameX (Salaire, IRSA, CNaPS, FMFP, Santé)
+            </p>
+        </div>
+        <a href="{% url 'accounting:reconstitution_diamex_salaires' %}" class="btn btn-warning btn-sm">
+            <i class="fas fa-magic mr-2"></i>
+            Reconstituer champs DiameX
+        </a>
+    </div>
+
+    <!-- Navigation entre toutes les pages de recoupement -->
+    {% include 'accounting/includes/recoupement_nav.html' with current_page='salaires' %}
+
+    <!-- Filtres -->
+    <div class="card bg-base-200 shadow-md mb-6">
+        <div class="card-body">
+            <h3 class="card-title text-sm mb-4"><i class="fas fa-filter mr-2"></i>Filtres</h3>
+            <form method="GET" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Status</span></label>
+                    <select name="status" class="select select-bordered select-sm">
+                        <option value="">Tous les status</option>
+                        <option value="ok" {% if request.GET.status == 'ok' %}selected{% endif %}>✓ OK</option>
+                        <option value="warning" {% if request.GET.status == 'warning' %}selected{% endif %}>⚠ Attention</option>
+                        <option value="error" {% if request.GET.status == 'error' %}selected{% endif %}>✗ Erreur</option>
+                        <option value="missing" {% if request.GET.status == 'missing' %}selected{% endif %}>? Manquant</option>
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Type de charge</span></label>
+                    <select name="type" class="select select-bordered select-sm">
+                        <option value="">Tous les types</option>
+                        <option value="salaire" {% if request.GET.type == 'salaire' %}selected{% endif %}>Salaire net</option>
+                        <option value="irsa" {% if request.GET.type == 'irsa' %}selected{% endif %}>IRSA</option>
+                        <option value="cnaps" {% if request.GET.type == 'cnaps' %}selected{% endif %}>CNaPS</option>
+                        <option value="fmfp" {% if request.GET.type == 'fmfp' %}selected{% endif %}>FMFP</option>
+                        <option value="sante" {% if request.GET.type == 'sante' %}selected{% endif %}>Mutuelle Santé</option>
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Employé</span></label>
+                    <select name="employe" class="select select-bordered select-sm">
+                        {% grouped_employee_options employes_list request.GET.employe "Tous les employés" %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Base DiameX</span></label>
+                    <select name="base" class="select select-bordered select-sm">
+                        <option value="">Toutes les bases</option>
+                        {% for base in bases_list %}
+                        <option value="{{ base }}" {% if request.GET.base == base %}selected{% endif %}>{{ base }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Mois</span></label>
+                    <input type="month" name="mois" value="{{ request.GET.mois }}" class="input input-bordered input-sm" />
+                </div>
+
+                <div class="form-control flex flex-row gap-2 items-end">
+                    <button type="submit" class="btn btn-primary btn-sm flex-1"><i class="fas fa-search mr-2"></i>Filtrer</button>
+                    <a href="{% url 'accounting:recoupement_salaires' %}" class="btn btn-ghost btn-sm"><i class="fas fa-times"></i></a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Statistics Dashboard (cliquables pour filtrer) -->
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
+        <!-- Total -->
+        <a href="{% query_string status='' %}" class="stat bg-base-200 rounded-lg p-4 shadow hover:shadow-lg transition-shadow cursor-pointer">
+            <div class="stat-figure text-primary">
+                <i class="fas fa-list text-3xl"></i>
+            </div>
+            <div class="stat-title">Total</div>
+            <div class="stat-value text-primary">{{ stats.total|intcomma }}</div>
+            <div class="stat-desc">Charges salariales</div>
+        </a>
+
+        <!-- OK -->
+        <a href="{% query_string status='ok' %}" class="stat bg-success/10 rounded-lg p-4 shadow hover:shadow-lg transition-shadow cursor-pointer">
+            <div class="stat-figure text-success">
+                <i class="fas fa-check-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">OK</div>
+            <div class="stat-value text-success">{{ stats.ok|intcomma }}</div>
+            <div class="stat-desc">Montants conformes</div>
+        </a>
+
+        <!-- Warning -->
+        <a href="{% query_string status='warning' %}" class="stat bg-warning/10 rounded-lg p-4 shadow hover:shadow-lg transition-shadow cursor-pointer">
+            <div class="stat-figure text-warning">
+                <i class="fas fa-exclamation-triangle text-3xl"></i>
+            </div>
+            <div class="stat-title">Attention</div>
+            <div class="stat-value text-warning">{{ stats.warning|intcomma }}</div>
+            <div class="stat-desc">Écarts mineurs (&lt;100 Ar)</div>
+        </a>
+
+        <!-- Error -->
+        <a href="{% query_string status='error' %}" class="stat bg-error/10 rounded-lg p-4 shadow hover:shadow-lg transition-shadow cursor-pointer">
+            <div class="stat-figure text-error">
+                <i class="fas fa-times-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Erreur</div>
+            <div class="stat-value text-error">{{ stats.error|intcomma }}</div>
+            <div class="stat-desc">Écarts importants</div>
+        </a>
+
+        <!-- Missing -->
+        <a href="{% query_string status='missing' %}" class="stat bg-base-300 rounded-lg p-4 shadow hover:shadow-lg transition-shadow cursor-pointer">
+            <div class="stat-figure text-base-content/50">
+                <i class="fas fa-question-circle text-3xl"></i>
+            </div>
+            <div class="stat-title">Manquant</div>
+            <div class="stat-value text-base-content/70">{{ stats.missing|intcomma }}</div>
+            <div class="stat-desc">Absents compta</div>
+        </a>
+    </div>
+
+    <!-- Results Table - Grouped by Employé puis par Type -->
+    {% if recoupements_par_employe %}
+        {% for employe_id, employe_groupe in recoupements_par_employe.items %}
+        <div class="card bg-base-100 shadow-xl mb-8">
+            <div class="card-body">
+                <h1 class="text-2xl font-bold mb-6 flex items-center gap-3">
+                    <i class="fas fa-user text-primary"></i>
+                    {{ employe_groupe.employe_nom }}
+                    {% if employe_groupe.employe.poste %}
+                        <span class="badge badge-lg badge-outline">{{ employe_groupe.employe.poste.nom_poste }}</span>
+                    {% endif %}
+                    {% if employe_groupe.employe.base %}
+                        <span class="badge badge-lg badge-info">{{ employe_groupe.employe.base.nom_base }}</span>
+                    {% endif %}
+                </h1>
+
+                {% for type_charge, recoupements in employe_groupe.types.items %}
+                <div class="mb-6 ml-4">
+                    {% with first_rec=recoupements.0 %}
+                    <h2 class="card-title mb-4">
+                        <i class="fas {{ first_rec.icon }} mr-2 text-{{ first_rec.color }}"></i>
+                        {{ first_rec.label_charge }}
+                        <span class="badge badge-{{ first_rec.color }} badge-lg">{{ recoupements|length }} paiement(s)</span>
+                    </h2>
+                    {% endwith %}
+
+                    <div class="overflow-x-auto">
+                        <table class="table table-zebra w-full">
+                            <thead>
+                                <tr>
+                                    <th class="bg-base-200">Numéro DiameX</th>
+                                    <th class="bg-base-200">Base DiameX</th>
+                                    <th class="bg-base-200">Date Paiement</th>
+                                    <th class="bg-base-200 text-right">Montant Attendu (Ar)</th>
+                                    <th class="bg-base-200 text-right">Compta OUT (Ar)</th>
+                                    <th class="bg-base-200 text-right">Écart (Ar)</th>
+                                    <th class="bg-base-200 text-center">Status</th>
+                                    <th class="bg-base-200 text-center">Détails</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for rec in recoupements %}
+                        <tr>
+                            <td class="font-mono">{{ rec.numero_diamex }}</td>
+                            <td class="font-semibold">{{ rec.base_diamex }}</td>
+                            <td>{{ rec.date_paiement|date:"d/m/Y"|default:"-" }}</td>
+                            <td class="text-right font-mono text-primary">{{ rec.montant_attendu|floatformat:2|intcomma }}</td>
+                            <td class="text-right font-mono text-sm">
+                                {% if rec.montant_compta_out is not None %}
+                                    {{ rec.montant_compta_out|floatformat:2|intcomma }}
+                                {% else %}
+                                    <span class="text-base-content/50">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-right font-mono font-bold
+                                {% if rec.status == 'ok' %}text-success
+                                {% elif rec.status == 'warning' %}text-warning
+                                {% elif rec.status == 'error' %}text-error
+                                {% else %}text-base-content/50{% endif %}">
+                                {{ rec.ecart|floatformat:2|intcomma }}
+                            </td>
+                            <td class="text-center">
+                                {% if rec.status == 'ok' %}
+                                    <span class="badge badge-success gap-2">
+                                        <i class="fas fa-check"></i> OK
+                                    </span>
+                                {% elif rec.status == 'warning' %}
+                                    <span class="badge badge-warning gap-2">
+                                        <i class="fas fa-exclamation-triangle"></i> Attention
+                                    </span>
+                                {% elif rec.status == 'error' %}
+                                    <span class="badge badge-error gap-2">
+                                        <i class="fas fa-times"></i> Erreur
+                                    </span>
+                                {% else %}
+                                    <span class="badge badge-ghost gap-2">
+                                        <i class="fas fa-question"></i> Manquant
+                                    </span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                <button class="btn btn-sm btn-outline btn-info"
+                                        onclick="toggleDetails('details-{{ employe_id }}-{{ type_charge }}-{{ forloop.counter }}')">
+                                    <i class="fas fa-eye"></i>
+                                    Voir
+                                </button>
+                            </td>
+                        </tr>
+                        <!-- Details Row (hidden by default) -->
+                        <tr id="details-{{ employe_id }}-{{ type_charge }}-{{ forloop.counter }}" class="hidden">
+                            <td colspan="8" class="bg-base-200/50">
+                                <div class="p-4">
+                                    {% if rec.comptabilite_entry %}
+                                    <div class="p-3 bg-info/10 rounded-lg">
+                                        <h5 class="font-semibold mb-2">
+                                            <i class="fas fa-calculator mr-2"></i>
+                                            Entrée comptabilité correspondante
+                                        </h5>
+                                        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                                            <div>
+                                                <span class="text-base-content/70">ID:</span>
+                                                <span class="font-mono ml-2">{{ rec.comptabilite_entry.id_access }}</span>
+                                            </div>
+                                            <div>
+                                                <span class="text-base-content/70">Prog:</span>
+                                                <span class="font-mono ml-2">{{ rec.comptabilite_entry.prog }}</span>
+                                            </div>
+                                            <div>
+                                                <span class="text-base-content/70">IN:</span>
+                                                <span class="font-mono ml-2">{{ rec.comptabilite_entry.montant_in|floatformat:2|intcomma }}</span>
+                                            </div>
+                                            <div>
+                                                <span class="text-base-content/70">OUT:</span>
+                                                <span class="font-mono ml-2">{{ rec.comptabilite_entry.montant_out|floatformat:2|intcomma }}</span>
+                                            </div>
+                                            <div class="md:col-span-4">
+                                                <span class="text-base-content/70">Description:</span>
+                                                <span class="ml-2">{{ rec.comptabilite_entry.description|default:"-" }}</span>
+                                            </div>
+                                            {% if rec.comptabilite_entry.date_rec %}
+                                            <div class="md:col-span-2">
+                                                <span class="text-base-content/70">Date Rec:</span>
+                                                <span class="ml-2">{{ rec.comptabilite_entry.date_rec|date:"d/m/Y" }}</span>
+                                            </div>
+                                            {% endif %}
+                                            {% if rec.comptabilite_entry.pers %}
+                                            <div class="md:col-span-2">
+                                                <span class="text-base-content/70">PERS:</span>
+                                                <span class="ml-2">{{ rec.comptabilite_entry.pers }}</span>
+                                            </div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    {% else %}
+                                    <div class="p-3 bg-warning/10 rounded-lg">
+                                        <i class="fas fa-exclamation-triangle mr-2 text-warning"></i>
+                                        <span class="text-warning font-semibold">Aucune entrée comptabilité trouvée pour ce couple (ID={{ rec.numero_diamex }}, Prog={{ rec.base_diamex }})</span>
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endfor %}
+
+            </div>
+        </div>
+        {% endfor %}
+
+    {% else %}
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <div class="text-center py-12">
+                    <i class="fas fa-inbox text-6xl text-base-content/20 mb-4"></i>
+                    <p class="text-lg text-base-content/50">
+                        Aucun salaire avec numéros DiameX trouvé.
+                    </p>
+                    <p class="text-sm text-base-content/40 mt-2">
+                        Assurez-vous que les champs numeroDiameXXXX et BaseDiameXXXX sont renseignés dans les salaires.
+                    </p>
+                </div>
+            </div>
+        </div>
+    {% endif %}
+</div>
+
+<script>
+function toggleDetails(detailsId) {
+    const detailsRow = document.getElementById(detailsId);
+    if (detailsRow) {
+        if (detailsRow.classList.contains('hidden')) {
+            detailsRow.classList.remove('hidden');
+        } else {
+            detailsRow.classList.add('hidden');
+        }
+    }
+}
+</script>
+{% endblock %}

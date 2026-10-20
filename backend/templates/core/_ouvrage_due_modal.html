@@ -1,0 +1,236 @@
+<dialog id="ouvrageDueModal" class="modal">
+    <div class="modal-box w-11/12 max-w-5xl">
+        <form method="dialog"><button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" aria-label="Fermer">✕</button></form>
+        <h3 class="pr-10 text-xl font-bold"><i class="fas fa-file-invoice-dollar mr-2 text-warning"></i>Détail du montant non collecté échu</h3>
+        <p id="ouvrageDueModalTitle" class="mt-1 text-sm text-base-content/65"></p>
+
+        <div id="ouvrageDueModalLoading" class="flex justify-center py-12">
+            <span class="loading loading-spinner loading-lg text-warning"></span>
+        </div>
+        <div id="ouvrageDueModalError" class="alert alert-error mt-5 hidden"><i class="fas fa-circle-exclamation"></i><span></span></div>
+        <div id="ouvrageDueModalContent" class="mt-5 hidden">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div class="stat rounded-box bg-base-200 p-3">
+                    <div class="stat-title text-xs">Factures échues</div>
+                    <div id="ouvrageDueTotal" class="stat-value text-lg"></div>
+                </div>
+                <div class="stat rounded-box bg-success/10 p-3">
+                    <div class="stat-title text-xs">Collecté DiameX</div>
+                    <div id="ouvrageDueCollected" class="stat-value text-lg text-success"></div>
+                </div>
+                <div class="stat rounded-box bg-warning/10 p-3">
+                    <div class="stat-title text-xs">Reste non collecté</div>
+                    <div id="ouvrageDueOutstanding" class="stat-value text-lg text-warning"></div>
+                </div>
+            </div>
+
+            <p id="ouvrageDueAllocationNote" class="mt-4 rounded-lg bg-info/10 p-3 text-xs text-base-content/70"></p>
+
+            <div id="ouvrageDueAdvanced" class="mt-4 hidden rounded-box border border-base-300 bg-base-200/40 p-3">
+                <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                        <h4 class="font-semibold"><i class="fas fa-calendar-days mr-2 text-info"></i>Récapitulatif par échéance</h4>
+                        <p id="ouvrageDueLongListCount" class="text-xs text-base-content/60"></p>
+                    </div>
+                    <label class="form-control w-full sm:w-64">
+                        <span class="label py-1"><span class="label-text text-xs">Filtrer par date d'échéance</span></span>
+                        <select id="ouvrageDueDateFilter" class="select select-bordered select-sm" onchange="filterOuvrageDueByDate(this.value)"></select>
+                    </label>
+                </div>
+                <div id="ouvrageDueDateStats" class="mt-3 flex gap-3 overflow-x-auto pb-2"></div>
+            </div>
+
+            <div class="mt-4 overflow-x-auto rounded-box border border-base-300">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Échéance</th>
+                            <th>Point d'eau</th>
+                            <th>Facturation</th>
+                            <th class="text-right">Facturé</th>
+                            <th class="text-right">Imputé</th>
+                            <th class="text-right">Reste</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ouvrageDueRows"></tbody>
+                </table>
+            </div>
+            <p id="ouvrageDueEmpty" class="hidden py-8 text-center text-sm text-base-content/60">Aucune facture échue restante.</p>
+        </div>
+        <div class="modal-action"><form method="dialog"><button class="btn">Fermer</button></form></div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>Fermer</button></form>
+</dialog>
+
+<script>
+function escapeOuvrageDueHtml(value) {
+    const div = document.createElement('div');
+    div.textContent = value == null ? '' : String(value);
+    return div.innerHTML;
+}
+
+function formatOuvrageDueMoney(value) {
+    return `${Math.round(Number(value) || 0).toLocaleString('fr-FR')} Ar`;
+}
+
+function formatOuvrageDueDate(value) {
+    const parts = String(value || '').split('-');
+    return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : '-';
+}
+
+// Meme correspondance type/icone que dans la page Facturation > Releves.
+function ouvrageDuePointIcon(typeName) {
+    const label = String(typeName || 'Type non defini');
+    const normalizedType = label
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase();
+    const safeLabel = escapeOuvrageDueHtml(label)
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
+    if (normalizedType.includes('KIOSQUE')) {
+        return `<i class="fas fa-store text-info text-lg" title="${safeLabel}" aria-label="${safeLabel}"></i>`;
+    }
+    if (normalizedType.includes('BI') || normalizedType.includes('BORNE')) {
+        return `<i class="fas fa-faucet text-primary text-lg" title="${safeLabel}" aria-label="${safeLabel}"></i>`;
+    }
+    if (normalizedType.includes('BP') || normalizedType.includes('BRANCHEMENT') || normalizedType.includes('PRIVE')) {
+        return `<i class="fas fa-home text-success text-lg" title="${safeLabel}" aria-label="${safeLabel}"></i>`;
+    }
+    return `<i class="fas fa-tint text-base-content/50 text-lg" title="${safeLabel}" aria-label="${safeLabel}"></i>`;
+}
+
+let ouvrageDueRowsData = [];
+
+function ouvrageDueRowHtml(row, hideDate = false) {
+    return `
+        <tr>
+            <td class="whitespace-nowrap">${hideDate ? '' : formatOuvrageDueDate(row.date)}</td>
+            <td>
+                <span class="flex items-center gap-2 whitespace-nowrap">
+                    ${ouvrageDuePointIcon(row.point_type)}
+                    <span>${escapeOuvrageDueHtml(row.point)}</span>
+                </span>
+            </td>
+            <td><span class="badge badge-outline badge-sm">${escapeOuvrageDueHtml(row.source)}</span></td>
+            <td class="text-right font-mono">${formatOuvrageDueMoney(row.amount)}</td>
+            <td class="text-right font-mono text-success">${formatOuvrageDueMoney(row.collected)}</td>
+            <td class="text-right font-mono font-bold text-warning">${formatOuvrageDueMoney(row.remaining)}</td>
+        </tr>
+    `;
+}
+
+function groupOuvrageDueRows(rows) {
+    const groups = new Map();
+    rows.forEach(row => {
+        const dateKey = String(row.date || '');
+        if (!groups.has(dateKey)) {
+            groups.set(dateKey, {date: dateKey, rows: [], amount: 0, collected: 0, remaining: 0});
+        }
+        const group = groups.get(dateKey);
+        group.rows.push(row);
+        group.amount += Number(row.amount) || 0;
+        group.collected += Number(row.collected) || 0;
+        group.remaining += Number(row.remaining) || 0;
+    });
+    return Array.from(groups.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function filterOuvrageDueByDate(dateValue) {
+    renderOuvrageDueRows(dateValue || '');
+}
+
+function renderOuvrageDueRows(selectedDate = '') {
+    const isLongList = ouvrageDueRowsData.length > 10;
+    const advanced = document.getElementById('ouvrageDueAdvanced');
+    advanced.classList.toggle('hidden', !isLongList);
+
+    if (!isLongList) {
+        document.getElementById('ouvrageDueRows').innerHTML = ouvrageDueRowsData
+            .map(row => ouvrageDueRowHtml(row))
+            .join('');
+        return;
+    }
+
+    const groups = groupOuvrageDueRows(ouvrageDueRowsData);
+    const filter = document.getElementById('ouvrageDueDateFilter');
+    filter.innerHTML = [
+        `<option value="">Toutes les échéances (${ouvrageDueRowsData.length})</option>`,
+        ...groups.map(group => `<option value="${group.date}">${formatOuvrageDueDate(group.date)} (${group.rows.length})</option>`),
+    ].join('');
+    filter.value = selectedDate;
+
+    document.getElementById('ouvrageDueLongListCount').textContent =
+        `${ouvrageDueRowsData.length} lignes réparties sur ${groups.length} échéance${groups.length > 1 ? 's' : ''}.`;
+    document.getElementById('ouvrageDueDateStats').innerHTML = groups.map(group => `
+        <button type="button"
+                class="min-w-56 rounded-box border p-3 text-left transition hover:border-info ${selectedDate === group.date ? 'border-info bg-info/10' : 'border-base-300 bg-base-100'}"
+                onclick="filterOuvrageDueByDate('${group.date}')">
+            <div class="flex items-center justify-between gap-2">
+                <span class="font-bold">${formatOuvrageDueDate(group.date)}</span>
+                <span class="badge badge-sm">${group.rows.length} ligne${group.rows.length > 1 ? 's' : ''}</span>
+            </div>
+            <div class="mt-2 grid grid-cols-3 gap-2 text-xs">
+                <div><span class="block text-base-content/55">Facturé</span><strong>${formatOuvrageDueMoney(group.amount)}</strong></div>
+                <div><span class="block text-base-content/55">Imputé</span><strong class="text-success">${formatOuvrageDueMoney(group.collected)}</strong></div>
+                <div><span class="block text-base-content/55">Reste</span><strong class="text-warning">${formatOuvrageDueMoney(group.remaining)}</strong></div>
+            </div>
+        </button>
+    `).join('');
+
+    const visibleGroups = selectedDate
+        ? groups.filter(group => group.date === selectedDate)
+        : groups;
+    document.getElementById('ouvrageDueRows').innerHTML = visibleGroups.map(group => `
+        <tr class="bg-base-200/80">
+            <th colspan="3">
+                <i class="fas fa-calendar-day mr-2 text-info"></i>${formatOuvrageDueDate(group.date)}
+                <span class="badge badge-ghost badge-sm ml-2">${group.rows.length}</span>
+            </th>
+            <th class="text-right font-mono">${formatOuvrageDueMoney(group.amount)}</th>
+            <th class="text-right font-mono text-success">${formatOuvrageDueMoney(group.collected)}</th>
+            <th class="text-right font-mono text-warning">${formatOuvrageDueMoney(group.remaining)}</th>
+        </tr>
+        ${group.rows.map(row => ouvrageDueRowHtml(row, true)).join('')}
+    `).join('');
+}
+
+async function openOuvrageDueModal(button) {
+    const modal = document.getElementById('ouvrageDueModal');
+    const loading = document.getElementById('ouvrageDueModalLoading');
+    const error = document.getElementById('ouvrageDueModalError');
+    const content = document.getElementById('ouvrageDueModalContent');
+    document.getElementById('ouvrageDueModalTitle').textContent = button.dataset.dueOuvrageName || '';
+    loading.classList.remove('hidden');
+    error.classList.add('hidden');
+    content.classList.add('hidden');
+    modal.showModal();
+
+    try {
+        const response = await fetch(button.dataset.dueDetailsUrl, {
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Impossible de charger le détail.');
+
+        document.getElementById('ouvrageDueModalTitle').textContent = `${data.ouvrage} — ${data.year}`;
+        document.getElementById('ouvrageDueTotal').textContent = formatOuvrageDueMoney(data.summary.due);
+        document.getElementById('ouvrageDueCollected').textContent = formatOuvrageDueMoney(data.summary.collected);
+        document.getElementById('ouvrageDueOutstanding').textContent = formatOuvrageDueMoney(data.summary.outstanding);
+        document.getElementById('ouvrageDueAllocationNote').textContent = data.allocation_note || '';
+
+        const rows = Array.isArray(data.rows) ? data.rows : [];
+        ouvrageDueRowsData = rows;
+        renderOuvrageDueRows();
+        document.getElementById('ouvrageDueEmpty').classList.toggle('hidden', rows.length > 0);
+        document.querySelector('#ouvrageDueModal table').classList.toggle('hidden', rows.length === 0);
+        loading.classList.add('hidden');
+        content.classList.remove('hidden');
+    } catch (exception) {
+        loading.classList.add('hidden');
+        error.querySelector('span').textContent = exception.message || 'Impossible de charger le détail.';
+        error.classList.remove('hidden');
+    }
+}
+</script>

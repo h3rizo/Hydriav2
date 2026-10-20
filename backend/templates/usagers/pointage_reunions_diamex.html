@@ -1,0 +1,510 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Pointage DiameX - Reunions{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+        <div>
+            <h1 class="text-2xl font-bold">
+                <i class="fas fa-link text-primary mr-2"></i>Pointage DiameX &rarr; Reunions
+            </h1>
+            <p class="text-sm text-base-content/70 mt-1">
+                Rattachez les lignes comptables des comptes 608004, 625300 et 625302 aux reunions correspondantes
+                (sans verification de montant, uniquement pour tracer les depenses par reunion).
+            </p>
+        </div>
+        <a href="{% url 'usagers:reunions_list' %}" class="btn btn-outline btn-sm">
+            <i class="fas fa-arrow-left mr-2"></i>Retour aux reunions
+        </a>
+    </div>
+
+    <div class="card bg-base-100 shadow mb-4">
+        <div class="card-body p-4">
+            <form method="get" class="flex flex-wrap items-end gap-3">
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Annee</span></label>
+                    <select name="annee" title="Annee" class="select select-bordered select-sm" onchange="this.form.submit()">
+                        {% for a in annees_disponibles %}
+                        <option value="{{ a }}" {% if filter_annee == a %}selected{% endif %}>{{ a }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <label class="label cursor-pointer gap-2">
+                    <input type="checkbox" name="montre_pointees" value="1" class="checkbox checkbox-sm" {% if montre_pointees %}checked{% endif %}>
+                    <span class="label-text text-xs">Afficher aussi les lignes deja pointees</span>
+                </label>
+                <label class="label cursor-pointer gap-2">
+                    <input type="checkbox" name="montre_ignorees" value="1" class="checkbox checkbox-sm" {% if montre_ignorees %}checked{% endif %}>
+                    <span class="label-text text-xs">Afficher aussi les lignes ignorees</span>
+                </label>
+                <button type="submit" class="btn btn-primary btn-sm">
+                    <i class="fas fa-filter mr-2"></i>Filtrer
+                </button>
+                <div class="ml-auto flex items-center gap-2">
+                    <div class="badge badge-outline">Selection: <span id="sel-count">0</span></div>
+                    <select id="reunion-select-pointage" class="select select-bordered select-sm">
+                        <option value="">Choisir la reunion...</option>
+                    </select>
+                    <button type="button" id="btn-pointer" class="btn btn-sm btn-info" disabled onclick="pointerSelection()">
+                        <i class="fas fa-link mr-1"></i>Pointer la selection
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body p-0">
+            <div class="overflow-x-auto max-h-[70vh]">
+                <table class="table table-xs table-zebra">
+                    <thead class="sticky top-0 bg-base-200 z-10">
+                        <tr>
+                            <th class="text-center">
+                                <input type="checkbox" class="checkbox checkbox-xs" onchange="toggleAll(this.checked)" title="Tout selectionner">
+                            </th>
+                            <th title="Date recu de la piece (repli sur date mouvement si absente)">Date</th>
+                            <th>Compte</th>
+                            <th>Description</th>
+                            <th class="text-right">Montant</th>
+                            <th class="text-center">Scan</th>
+                            <th>Lieu suggere</th>
+                            <th>Reunion pointee</th>
+                            <th>Statut</th>
+                        </tr>
+                    </thead>
+                    <tbody id="lignes-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <p class="text-xs opacity-60 mt-2">{{ nb_lignes }} ligne(s) affichee(s) (limite a 500 lignes les plus recentes, annee {{ filter_annee }}).</p>
+</div>
+
+<!-- Modal creation reunion rapide (pre-remplie depuis une ligne DiameX sans reunion correspondante) -->
+<dialog id="modal-create-reunion-rapide" class="modal">
+    <div class="modal-box max-w-lg">
+        <h3 class="font-bold text-lg mb-2"><i class="fas fa-plus mr-2"></i>Creer la reunion correspondante</h3>
+        <p class="text-xs text-base-content/60 mb-3">
+            Aucune reunion existante ne correspond a cette ligne. Completez les informations ci-dessous
+            (pre-remplies a partir du lieu detecte et de la date de la transaction) pour creer la reunion,
+            puis la ligne sera pointee automatiquement dessus.
+        </p>
+        <form id="form-create-reunion-rapide" class="space-y-3">
+            <input type="hidden" id="rapide-entry-idx">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Commune</span></label>
+                    <select id="rapide-commune" title="Commune" class="select select-bordered select-sm w-full">
+                        <option value="">-</option>
+                        {% for c in communes %}
+                        <option value="{{ c.id }}">{{ c.nom_commune }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">District</span></label>
+                    <select id="rapide-district" title="District" class="select select-bordered select-sm w-full">
+                        <option value="">-</option>
+                        {% for d in districts %}
+                        <option value="{{ d.id }}">{{ d.nom_district }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Region</span></label>
+                    <select id="rapide-region" title="Region" class="select select-bordered select-sm w-full">
+                        <option value="">-</option>
+                        {% for r in regions %}
+                        <option value="{{ r.id }}">{{ r.nom_region }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="form-control">
+                <label class="label py-1"><span class="label-text text-xs">Date de la reunion *</span></label>
+                <input type="date" id="rapide-date" class="input input-bordered input-sm w-full" required>
+            </div>
+            <div class="form-control">
+                <label class="label py-1"><span class="label-text text-xs">Objet *</span></label>
+                <input type="text" id="rapide-objet" class="input input-bordered input-sm w-full" required>
+            </div>
+            <div id="rapide-error" class="alert alert-error hidden text-xs py-1"></div>
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('modal-create-reunion-rapide').close()">Annuler</button>
+                <button type="submit" class="btn btn-primary btn-sm">
+                    <i class="fas fa-check mr-2"></i>Creer et pointer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- Modal ignorer une ligne (ne correspond a aucune reunion) -->
+<dialog id="modal-ignorer-ligne" class="modal">
+    <div class="modal-box max-w-md">
+        <h3 class="font-bold text-lg mb-2"><i class="fas fa-ban mr-2 text-warning"></i>Ignorer cette ligne</h3>
+        <p class="text-xs text-base-content/60 mb-3">
+            Cette ligne sera retiree de la liste de pointage (elle ne sera rattachee a aucune reunion).
+            Vous pourrez la reafficher plus tard via "Afficher aussi les lignes ignorees".
+        </p>
+        <form id="form-ignorer-ligne" class="space-y-3">
+            <input type="hidden" id="ignorer-entry-idx">
+            <div class="form-control">
+                <label class="label py-1"><span class="label-text text-xs">Motif (optionnel)</span></label>
+                <input type="text" id="ignorer-motif" class="input input-bordered input-sm w-full" placeholder="Ex: depense hors reunion">
+            </div>
+            <div id="ignorer-error" class="alert alert-error hidden text-xs py-1"></div>
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('modal-ignorer-ligne').close()">Annuler</button>
+                <button type="submit" class="btn btn-warning btn-sm">
+                    <i class="fas fa-ban mr-2"></i>Ignorer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<dialog id="modal-reassigner-ligne" class="modal">
+    <div class="modal-box max-w-md">
+        <h3 class="font-bold text-lg mb-2"><i class="fas fa-right-left mr-2 text-info"></i>Changer la reunion de cette ligne</h3>
+        <p class="text-xs text-base-content/60 mb-3">
+            Actuellement pointee sur : <span id="reassigner-reunion-actuelle" class="font-semibold"></span>
+        </p>
+        <form id="form-reassigner-ligne" class="space-y-3">
+            <input type="hidden" id="reassigner-entry-idx">
+            <div class="form-control">
+                <label class="label py-1"><span class="label-text text-xs">Nouvelle reunion *</span></label>
+                <select id="reassigner-reunion-select" class="select select-bordered select-sm w-full" required>
+                    <option value="">Choisir la reunion...</option>
+                </select>
+            </div>
+            <div id="reassigner-error" class="alert alert-error hidden text-xs py-1"></div>
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('modal-reassigner-ligne').close()">Annuler</button>
+                <button type="submit" class="btn btn-info btn-sm">
+                    <i class="fas fa-right-left mr-2"></i>Changer
+                </button>
+            </div>
+        </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+const csrfToken = "{{ csrf_token }}";
+const lignes = {{ lignes_json|safe }};
+const toutesReunions = {{ toutes_reunions_json|safe }};
+
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return csrfToken;
+}
+
+const fmt = (v) => new Intl.NumberFormat('fr-FR').format(v || 0);
+
+function lieuLabel(lieu) {
+    if (lieu.commune_nom) return `<span class="badge badge-success badge-xs">Commune</span> ${lieu.commune_nom}`;
+    if (lieu.district_nom) return `<span class="badge badge-info badge-xs">District</span> ${lieu.district_nom}`;
+    if (lieu.region_nom) return `<span class="badge badge-warning badge-xs">Region</span> ${lieu.region_nom}`;
+    return '<span class="opacity-40 italic">Non detecte</span>';
+}
+
+function reunionLabel(l) {
+    if (!l.reunion_actuelle) return '';
+    return `${l.reunion_actuelle.date_reunion || ''} - ${l.reunion_actuelle.objet}`.trim().replace(/^-\s*/, '');
+}
+
+function reunionPointeeCell(l, idx) {
+    if (!l.est_pointe) return '<span class="opacity-30">-</span>';
+    const label = reunionLabel(l);
+    return `<a href="{% url 'usagers:reunions_list' %}?reunion=${l.reunion_actuelle.id}" target="_blank"
+        class="link link-hover text-xs inline-block max-w-[220px] truncate align-middle" title="${label} - Ouvrir la reunion">${label}</a>`;
+}
+
+function statutCell(l, idx) {
+    if (l.est_pointe) {
+        return `<span class="badge badge-success badge-xs mr-1">Pointe</span>` +
+            `<button type="button" class="btn btn-xs btn-outline mr-1" onclick="openReassignerLigne(${idx})" title="Changer la reunion de cette ligne"><i class="fas fa-right-left"></i></button>` +
+            `<button type="button" class="btn btn-xs btn-ghost text-error" onclick="depointerLigne(${idx})" title="Retirer le pointage"><i class="fas fa-unlink"></i></button>`;
+    }
+    if (l.est_ignoree) {
+        return `<span class="badge badge-ghost badge-xs mr-1">Ignoree</span><button type="button" class="btn btn-xs btn-outline" onclick="reactiverLigne(${idx})"><i class="fas fa-rotate-left mr-1"></i>Reactiver</button>`;
+    }
+    const candidateBadge = l.reunions_candidates.length
+        ? `<span class="badge badge-info badge-xs mr-1" title="${l.reunions_candidates.length} reunion(s) possible(s) au meme lieu">${l.reunions_candidates.length} candidate(s)</span>`
+        : `<span class="badge badge-warning badge-xs mr-1">Sans reunion</span><button type="button" class="btn btn-xs btn-outline btn-primary mr-1" onclick="openCreateReunionRapide(${idx})"><i class="fas fa-plus mr-1"></i>Creer</button>`;
+    return `${candidateBadge}<button type="button" class="btn btn-xs btn-ghost text-error" onclick="openIgnorerLigne(${idx})" title="Ignorer (ne correspond a aucune reunion)"><i class="fas fa-ban"></i></button>`;
+}
+
+function renderLignes() {
+    const tbody = document.getElementById('lignes-body');
+    tbody.innerHTML = lignes.map((l, idx) => `
+        <tr class="${l.est_ignoree ? 'opacity-50' : ''}">
+            <td class="text-center">
+                ${(l.est_pointe || l.est_ignoree) ? '' : `<input type="checkbox" class="checkbox checkbox-xs ligne-checkbox" data-idx="${idx}" onchange="updateSelCount()" title="Selectionner cette ligne">`}
+            </td>
+            <td class="text-xs" title="Date recu (reference) ; Date mouvement: ${l.date_m || '-'}">${l.date_reference || '-'}</td>
+            <td class="font-mono text-xs">${l.compte_code}</td>
+            <td class="text-xs max-w-md truncate" title="${l.description}">${l.description}</td>
+            <td class="text-right font-mono">${fmt(l.montant)}</td>
+            <td class="text-center">
+                ${l.entry_id ? `<a href="/comptabilite/scan/${l.entry_id}/" target="_blank" class="btn btn-ghost btn-xs" title="Voir le scan"><i class="fas fa-file-image"></i></a>` : '<span class="opacity-30">-</span>'}
+            </td>
+            <td class="text-xs">${lieuLabel(l.lieu_suggere)}</td>
+            <td class="text-xs">${reunionPointeeCell(l, idx)}</td>
+            <td class="text-xs whitespace-nowrap">${statutCell(l, idx)}</td>
+        </tr>
+    `).join('') || '<tr><td colspan="9" class="text-center py-8 opacity-50 italic">Aucune ligne</td></tr>';
+}
+
+function toggleAll(checked) {
+    document.querySelectorAll('.ligne-checkbox').forEach(cb => cb.checked = checked);
+    updateSelCount();
+}
+
+function updateSelCount() {
+    const count = document.querySelectorAll('.ligne-checkbox:checked').length;
+    document.getElementById('sel-count').textContent = count;
+    document.getElementById('btn-pointer').disabled = count === 0 || !document.getElementById('reunion-select-pointage').value;
+}
+
+document.getElementById('reunion-select-pointage').addEventListener('change', updateSelCount);
+
+// Peuple le select "reunion" avec TOUTES les reunions de l'annee filtree (pas seulement
+// les candidates detectees automatiquement) : une reunion deja entierement pointee ne doit
+// pas disparaitre du choix, car d'autres lignes non detectees peuvent encore lui etre rattachees.
+function populateReunionSelect() {
+    const select = document.getElementById('reunion-select-pointage');
+    const options = [...toutesReunions].sort((a, b) => b.date_reunion.localeCompare(a.date_reunion));
+    select.innerHTML = '<option value="">Choisir la reunion...</option>' + options.map(r =>
+        `<option value="${r.id}">${r.date_reunion} - ${r.objet}</option>`
+    ).join('');
+}
+
+async function pointerSelection() {
+    const reunionId = document.getElementById('reunion-select-pointage').value;
+    if (!reunionId) { alert('Choisissez une reunion.'); return; }
+
+    const entryIds = Array.from(document.querySelectorAll('.ligne-checkbox:checked')).map(cb => {
+        const idx = parseInt(cb.dataset.idx, 10);
+        return lignes[idx].entry_id;
+    });
+
+    if (!entryIds.length) return;
+
+    const response = await fetch("{% url 'usagers:pointage_diamex_create' %}", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify({ reunion_id: reunionId, entry_ids: entryIds })
+    });
+    const data = await response.json();
+    if (data.success) {
+        let msg = `${data.nb_pointes} ligne(s) pointee(s).`;
+        if (data.erreurs && data.erreurs.length) msg += '\n\n' + data.erreurs.join('\n');
+        alert(msg);
+        window.location.reload();
+    } else {
+        alert('Erreur : ' + data.error);
+    }
+}
+
+function openCreateReunionRapide(idx) {
+    const l = lignes[idx];
+    document.getElementById('rapide-entry-idx').value = idx;
+    document.getElementById('rapide-commune').value = l.lieu_suggere.commune_id || '';
+    document.getElementById('rapide-district').value = l.lieu_suggere.district_id || '';
+    document.getElementById('rapide-region').value = l.lieu_suggere.region_id || '';
+    document.getElementById('rapide-date').value = l.date_reference || '';
+    document.getElementById('rapide-objet').value = l.description ? l.description.slice(0, 200) : '';
+    document.getElementById('rapide-error').classList.add('hidden');
+    document.getElementById('modal-create-reunion-rapide').showModal();
+}
+
+document.getElementById('form-create-reunion-rapide').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errorBox = document.getElementById('rapide-error');
+    errorBox.classList.add('hidden');
+
+    const idx = parseInt(document.getElementById('rapide-entry-idx').value, 10);
+    const l = lignes[idx];
+
+    const communeId = document.getElementById('rapide-commune').value;
+    const districtId = document.getElementById('rapide-district').value;
+    const regionId = document.getElementById('rapide-region').value;
+    if (!communeId && !districtId && !regionId) {
+        errorBox.textContent = 'Renseignez au moins une Commune, un District ou une Region.';
+        errorBox.classList.remove('hidden');
+        return;
+    }
+
+    try {
+        // 1. Creer la reunion
+        const createResponse = await fetch("{% url 'usagers:reunion_create' %}", {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify({
+                commune_id: communeId,
+                district_id: districtId,
+                region_id: regionId,
+                date_reunion: document.getElementById('rapide-date').value,
+                objet: document.getElementById('rapide-objet').value,
+            })
+        });
+        const createData = await createResponse.json();
+        if (!createData.success) {
+            errorBox.textContent = createData.error || 'Erreur lors de la creation de la reunion.';
+            errorBox.classList.remove('hidden');
+            return;
+        }
+
+        // 2. Pointer directement cette ligne sur la reunion creee
+        const pointResponse = await fetch("{% url 'usagers:pointage_diamex_create' %}", {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify({ reunion_id: createData.reunion_id, entry_ids: [l.entry_id] })
+        });
+        const pointData = await pointResponse.json();
+        if (!pointData.success) {
+            errorBox.textContent = 'Reunion creee, mais erreur lors du pointage : ' + (pointData.error || '');
+            errorBox.classList.remove('hidden');
+            return;
+        }
+
+        window.location.reload();
+    } catch (err) {
+        errorBox.textContent = 'Erreur reseau : ' + err.message;
+        errorBox.classList.remove('hidden');
+    }
+});
+
+function openIgnorerLigne(idx) {
+    document.getElementById('ignorer-entry-idx').value = idx;
+    document.getElementById('ignorer-motif').value = '';
+    document.getElementById('ignorer-error').classList.add('hidden');
+    document.getElementById('modal-ignorer-ligne').showModal();
+}
+
+document.getElementById('form-ignorer-ligne').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errorBox = document.getElementById('ignorer-error');
+    errorBox.classList.add('hidden');
+
+    const idx = parseInt(document.getElementById('ignorer-entry-idx').value, 10);
+    const l = lignes[idx];
+
+    try {
+        const response = await fetch("{% url 'usagers:pointage_diamex_ignorer' %}", {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify({ entry_id: l.entry_id, motif: document.getElementById('ignorer-motif').value })
+        });
+        const data = await response.json();
+        if (!data.success) {
+            errorBox.textContent = data.error || 'Erreur lors de l\'ignorance de la ligne.';
+            errorBox.classList.remove('hidden');
+            return;
+        }
+        window.location.reload();
+    } catch (err) {
+        errorBox.textContent = 'Erreur reseau : ' + err.message;
+        errorBox.classList.remove('hidden');
+    }
+});
+
+async function reactiverLigne(idx) {
+    const l = lignes[idx];
+    if (!confirm('Reafficher cette ligne dans la liste de pointage ?')) return;
+
+    const response = await fetch("{% url 'usagers:pointage_diamex_reactiver' %}", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify({ entry_id: l.entry_id })
+    });
+    const data = await response.json();
+    if (data.success) {
+        window.location.reload();
+    } else {
+        alert('Erreur : ' + data.error);
+    }
+}
+
+function openReassignerLigne(idx) {
+    const l = lignes[idx];
+    document.getElementById('reassigner-entry-idx').value = idx;
+    document.getElementById('reassigner-reunion-actuelle').textContent = reunionLabel(l) || '(reunion inconnue)';
+
+    const select = document.getElementById('reassigner-reunion-select');
+    const options = [...toutesReunions].sort((a, b) => b.date_reunion.localeCompare(a.date_reunion));
+    // Exclut la reunion actuelle de la liste : la reassignation sert a CHANGER de reunion.
+    select.innerHTML = '<option value="">Choisir la reunion...</option>' + options
+        .filter(r => !l.reunion_actuelle || r.id !== l.reunion_actuelle.id)
+        .map(r => `<option value="${r.id}">${r.date_reunion} - ${r.objet}</option>`)
+        .join('');
+
+    document.getElementById('reassigner-error').classList.add('hidden');
+    document.getElementById('modal-reassigner-ligne').showModal();
+}
+
+document.getElementById('form-reassigner-ligne').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errorBox = document.getElementById('reassigner-error');
+    errorBox.classList.add('hidden');
+
+    const idx = parseInt(document.getElementById('reassigner-entry-idx').value, 10);
+    const l = lignes[idx];
+    const nouvelleReunionId = document.getElementById('reassigner-reunion-select').value;
+    if (!nouvelleReunionId) {
+        errorBox.textContent = 'Choisissez la nouvelle reunion.';
+        errorBox.classList.remove('hidden');
+        return;
+    }
+
+    try {
+        const url = "{% url 'usagers:pointage_diamex_reassigner' '00000000-0000-0000-0000-000000000000' %}".replace('00000000-0000-0000-0000-000000000000', l.pointage_id);
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+            body: JSON.stringify({ reunion_id: nouvelleReunionId })
+        });
+        const data = await response.json();
+        if (!data.success) {
+            errorBox.textContent = data.error || 'Erreur lors du changement de reunion.';
+            errorBox.classList.remove('hidden');
+            return;
+        }
+        window.location.reload();
+    } catch (err) {
+        errorBox.textContent = 'Erreur reseau : ' + err.message;
+        errorBox.classList.remove('hidden');
+    }
+});
+
+async function depointerLigne(idx) {
+    const l = lignes[idx];
+    if (!confirm('Retirer le pointage de cette ligne ? Elle redeviendra disponible pour un pointage manuel (aucune reunion associee).')) return;
+
+    const url = "{% url 'usagers:pointage_diamex_delete' '00000000-0000-0000-0000-000000000000' %}".replace('00000000-0000-0000-0000-000000000000', l.pointage_id);
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': getCookie('csrftoken') },
+    });
+    const data = await response.json();
+    if (data.success) {
+        window.location.reload();
+    } else {
+        alert('Erreur : ' + data.error);
+    }
+}
+
+renderLignes();
+populateReunionSelect();
+</script>
+
+{% endblock %}

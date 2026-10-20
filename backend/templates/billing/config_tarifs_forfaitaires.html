@@ -1,0 +1,204 @@
+{% extends "planning/base.html" %}
+{% load humanize %}
+
+{% block title %}Configuration des tarifs forfaitaires{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-wrap justify-between items-center gap-3">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">Configuration des tarifs forfaitaires</h1>
+            <p class="text-sm text-base-content/70 mt-1">
+                <i class="fas fa-info-circle mr-1"></i>
+                Tarif plein par type de point d'eau. Le tarif d'un point = tarif plein du type × pourcentage du point.
+                Un changement de tarif crée une nouvelle ligne avec sa date de début ; l'ancienne est clôturée la veille.
+            </p>
+        </div>
+        {% if peut_modifier %}
+        <button class="btn btn-primary" onclick="ouvrirCreation('')"><i class="fas fa-plus mr-2"></i>Nouveau tarif</button>
+        {% endif %}
+    </div>
+
+    {% if not peut_modifier %}
+    <div class="alert alert-warning"><i class="fas fa-lock"></i><span>Consultation seule : la modification est réservée au directeur ou à l'administrateur.</span></div>
+    {% endif %}
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {% for ligne in lignes %}
+        <div class="card bg-base-100 shadow">
+            <div class="card-body p-4">
+                <div class="flex justify-between items-start gap-2">
+                    <div>
+                        <h2 class="card-title text-lg">{{ ligne.type.nom_type }}</h2>
+                        <p class="text-xs text-base-content/60">{{ ligne.nb_points|intcomma }} point{{ ligne.nb_points|pluralize }} d'eau avec tarif forfaitaire</p>
+                    </div>
+                    <div class="text-right">
+                        {% if ligne.courant %}
+                        <p class="text-2xl font-bold text-primary">{{ ligne.courant.tarif|floatformat:0|intcomma }} Ar</p>
+                        <p class="text-xs text-base-content/60">depuis le {{ ligne.courant.date_debut|date:"d/m/Y" }}</p>
+                        {% else %}
+                        <p class="text-lg font-semibold text-warning">Aucun tarif en vigueur</p>
+                        {% endif %}
+                    </div>
+                </div>
+
+                {% if ligne.a_venir %}
+                <div class="alert alert-info py-2 text-sm">
+                    <i class="fas fa-calendar-plus"></i>
+                    <span>À venir :
+                        {% for c in ligne.a_venir %}{{ c.tarif|floatformat:0|intcomma }} Ar dès le {{ c.date_debut|date:"d/m/Y" }}{% if not forloop.last %}, {% endif %}{% endfor %}
+                    </span>
+                </div>
+                {% endif %}
+
+                <div class="overflow-x-auto">
+                    <table class="table table-sm">
+                        <thead><tr><th>Tarif plein</th><th>Début</th><th>Fin</th>{% if peut_modifier %}<th></th>{% endif %}</tr></thead>
+                        <tbody>
+                        {% for c in ligne.historique %}
+                            <tr>
+                                <td class="font-mono">{{ c.tarif|floatformat:0|intcomma }} Ar</td>
+                                <td>{{ c.date_debut|date:"d/m/Y" }}</td>
+                                <td>{% if c.date_fin %}{{ c.date_fin|date:"d/m/Y" }}{% else %}<span class="badge badge-success badge-sm">en cours</span>{% endif %}</td>
+                                {% if peut_modifier %}
+                                <td class="text-right whitespace-nowrap">
+                                    <button class="btn btn-ghost btn-xs" title="Modifier"
+                                        onclick="ouvrirEdition('{{ c.id }}', '{{ ligne.type.nom_type|escapejs }}', '{{ c.tarif|stringformat:'.2f' }}', '{{ c.date_debut|date:'Y-m-d' }}', '{{ c.date_fin|date:'Y-m-d' }}')"><i class="fas fa-pen"></i></button>
+                                    <button class="btn btn-ghost btn-xs text-error" title="Supprimer"
+                                        onclick="supprimer('{{ c.id }}', '{{ ligne.type.nom_type|escapejs }}')"><i class="fas fa-trash"></i></button>
+                                </td>
+                                {% endif %}
+                            </tr>
+                        {% empty %}
+                            <tr><td colspan="4" class="text-base-content/60">Aucun tarif configuré.</td></tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% if peut_modifier %}
+                <div class="card-actions justify-end">
+                    <button class="btn btn-outline btn-sm" onclick="ouvrirCreation('{{ ligne.type.id }}')"><i class="fas fa-plus mr-1"></i>Nouveau tarif {{ ligne.type.nom_type }}</button>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% empty %}
+        <div class="alert alert-info lg:col-span-2"><i class="fas fa-info-circle"></i><span>Aucun tarif forfaitaire configuré. Cliquez sur « Nouveau tarif » pour commencer.</span></div>
+        {% endfor %}
+    </div>
+</div>
+
+{% if peut_modifier %}
+<dialog id="modalCreation" class="modal">
+    <div class="modal-box w-full sm:max-w-md">
+        <h3 class="font-bold text-lg mb-4">Nouveau tarif plein</h3>
+        <div class="space-y-3">
+            <div class="form-control">
+                <label class="label"><span class="label-text">Type de point d'eau</span></label>
+                <select id="c_type" class="select select-bordered">
+                    <option value="">Choisir…</option>
+                    {% for t in types_point_eau %}<option value="{{ t.id }}">{{ t.nom_type }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="form-control">
+                <label class="label"><span class="label-text">Tarif plein (Ar)</span></label>
+                <input type="number" id="c_tarif" min="1" step="1" class="input input-bordered" placeholder="Ex : 5000">
+            </div>
+            <div class="form-control">
+                <label class="label"><span class="label-text">Date de début</span></label>
+                <input type="date" id="c_debut" class="input input-bordered" value="{{ aujourdhui }}">
+            </div>
+            <div class="alert alert-info text-sm"><i class="fas fa-info-circle"></i>
+                <span>Le tarif en vigueur de ce type sera clôturé la veille de cette date, et les montants des points d'eau seront recalculés.</span></div>
+        </div>
+        <div class="modal-action">
+            <button class="btn" onclick="document.getElementById('modalCreation').close()">Annuler</button>
+            <button class="btn btn-primary" onclick="creer()">Enregistrer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<dialog id="modalEdition" class="modal">
+    <div class="modal-box w-full sm:max-w-md">
+        <h3 class="font-bold text-lg mb-4" id="e_titre">Modifier le tarif</h3>
+        <input type="hidden" id="e_id">
+        <div class="space-y-3">
+            <div class="form-control">
+                <label class="label"><span class="label-text">Tarif plein (Ar)</span></label>
+                <input type="number" id="e_tarif" min="1" step="1" class="input input-bordered">
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Début</span></label>
+                    <input type="date" id="e_debut" class="input input-bordered">
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Fin (vide = en cours)</span></label>
+                    <input type="date" id="e_fin" class="input input-bordered">
+                </div>
+            </div>
+        </div>
+        <div class="modal-action">
+            <button class="btn" onclick="document.getElementById('modalEdition').close()">Annuler</button>
+            <button class="btn btn-primary" onclick="enregistrerEdition()">Enregistrer</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+const CSRF = '{{ csrf_token }}';
+
+async function envoyer(url, corps) {
+    const reponse = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF},
+        body: JSON.stringify(corps || {})
+    });
+    let donnees = {};
+    try { donnees = await reponse.json(); } catch (e) { donnees = {error: 'Réponse inattendue du serveur.'}; }
+    if (!donnees.success) { alert('Erreur : ' + (donnees.error || reponse.status)); return false; }
+    location.reload();
+    return true;
+}
+
+function ouvrirCreation(typeId) {
+    document.getElementById('c_type').value = typeId || '';
+    document.getElementById('c_tarif').value = '';
+    document.getElementById('modalCreation').showModal();
+}
+
+function creer() {
+    envoyer('{% url "billing:api_config_tarif_creer" %}', {
+        type_point_eau_id: document.getElementById('c_type').value,
+        tarif: document.getElementById('c_tarif').value,
+        date_debut: document.getElementById('c_debut').value
+    });
+}
+
+function ouvrirEdition(id, typeNom, tarif, debut, fin) {
+    document.getElementById('e_titre').textContent = 'Modifier le tarif ' + typeNom;
+    document.getElementById('e_id').value = id;
+    document.getElementById('e_tarif').value = Math.round(parseFloat(tarif));
+    document.getElementById('e_debut').value = debut;
+    document.getElementById('e_fin').value = fin || '';
+    document.getElementById('modalEdition').showModal();
+}
+
+function enregistrerEdition() {
+    const id = document.getElementById('e_id').value;
+    envoyer('{% url "billing:api_config_tarif_modifier" "00000000-0000-0000-0000-000000000000" %}'.replace('00000000-0000-0000-0000-000000000000', id), {
+        tarif: document.getElementById('e_tarif').value,
+        date_debut: document.getElementById('e_debut').value,
+        date_fin: document.getElementById('e_fin').value
+    });
+}
+
+function supprimer(id, typeNom) {
+    if (!confirm('Supprimer ce tarif ' + typeNom + ' ? Les montants des points d\'eau seront recalculés.')) return;
+    envoyer('{% url "billing:api_config_tarif_supprimer" "00000000-0000-0000-0000-000000000000" %}'.replace('00000000-0000-0000-0000-000000000000', id), {});
+}
+</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,482 @@
+{% extends "core/dashboard_base.html" %}
+
+{% block extra_head %}
+{{ block.super }}
+<!-- Leaflet pour la cartographie -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<!-- Plugins Leaflet -->
+<script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
+
+<style>
+    .map-container {
+        height: 600px;
+        border-radius: 0.5rem;
+        overflow: hidden;
+        border: 1px solid hsl(var(--bc) / 0.2);
+    }
+
+    .legend {
+        background: hsl(var(--b1));
+        color: hsl(var(--bc));
+        padding: 12px;
+        border-radius: 0.5rem;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        border: 1px solid hsl(var(--bc) / 0.2);
+    }
+
+    .legend-item {
+        display: flex;
+        align-items: center;
+        margin: 6px 0;
+        color: hsl(var(--bc));
+    }
+
+    .legend-color {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        margin-right: 8px;
+        border: 2px solid hsl(var(--bc) / 0.3);
+    }
+
+    .info-panel {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background: hsl(var(--b1));
+        color: hsl(var(--bc));
+        padding: 15px;
+        border-radius: 0.5rem;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.15);
+        border: 1px solid hsl(var(--bc) / 0.2);
+        min-width: 200px;
+        z-index: 1000;
+    }
+
+    /* Styles pour les popups Leaflet avec support thème */
+    .leaflet-popup-content-wrapper {
+        background: hsl(var(--b1)) !important;
+        color: hsl(var(--bc)) !important;
+        border-radius: 0.5rem !important;
+    }
+
+    .leaflet-popup-tip {
+        background: hsl(var(--b1)) !important;
+    }
+
+    .leaflet-popup-content {
+        color: hsl(var(--bc)) !important;
+    }
+
+    /* Styles pour les stat-cards avec meilleur contraste */
+    .stat-card .stat-title {
+        opacity: 0.8 !important;
+    }
+
+    .stat-card .stat-value {
+        font-weight: 700 !important;
+    }
+
+    /* Responsive pour mobile */
+    @media (max-width: 768px) {
+        .map-container {
+            height: 400px;
+        }
+
+        .info-panel {
+            position: relative;
+            top: auto;
+            right: auto;
+            margin-bottom: 1rem;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block filters %}
+<div class="filter-panel">
+    <form method="GET" class="flex flex-wrap gap-4 items-end">
+        <div class="form-control">
+            <label class="label">
+                <span class="label-text">Région</span>
+            </label>
+            <select name="region" class="select select-bordered select-sm w-full max-w-xs" onchange="filterByRegion(this.value)">
+                <option value="">Toutes les régions</option>
+                {% for region in regions %}
+                <option value="{{ region.id }}">{{ region.region_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="form-control">
+            <label class="label">
+                <span class="label-text">Commune</span>
+            </label>
+            <select name="commune" class="select select-bordered select-sm w-full max-w-xs" onchange="filterByCommune(this.value)">
+                <option value="">Toutes les communes</option>
+                {% for commune in communes %}
+                <option value="{{ commune.id }}">{{ commune.commune_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="form-control">
+            <label class="label">
+                <span class="label-text">Type d'ouvrage</span>
+            </label>
+            <select id="typeFilter" class="select select-bordered select-sm w-full max-w-xs" onchange="filterByType(this.value)">
+                <option value="">Tous les types</option>
+                <option value="actif">Ouvrages actifs</option>
+                <option value="maintenance">En maintenance</option>
+                <option value="hors-service">Hors service</option>
+            </select>
+        </div>
+
+        <button type="button" onclick="resetFilters()" class="btn btn-ghost btn-sm">
+            <i class="fas fa-times mr-2"></i>Réinitialiser
+        </button>
+    </form>
+</div>
+{% endblock %}
+
+{% block dashboard_content %}
+<!-- Statistiques rapides -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+    <div class="dashboard-card bg-primary text-primary-content">
+        <div class="flex items-center justify-between">
+            <div>
+                <div class="text-primary-content opacity-80 text-sm">Ouvrages Visibles</div>
+                <div class="text-2xl font-bold text-primary-content" id="visibleCount">{{ ouvrages_data|length }}</div>
+            </div>
+            <div class="text-2xl opacity-75">
+                <i class="fas fa-map-marker-alt"></i>
+            </div>
+        </div>
+    </div>
+
+    <div class="dashboard-card bg-success text-success-content">
+        <div class="flex items-center justify-between">
+            <div>
+                <div class="text-success-content opacity-80 text-sm">Actifs</div>
+                <div class="text-2xl font-bold text-success-content" id="activeCount">{{ ouvrages_data|length }}</div>
+            </div>
+            <div class="text-2xl opacity-75">
+                <i class="fas fa-check-circle"></i>
+            </div>
+        </div>
+    </div>
+
+    <div class="dashboard-card bg-warning text-warning-content">
+        <div class="flex items-center justify-between">
+            <div>
+                <div class="text-warning-content opacity-80 text-sm">Maintenance</div>
+                <div class="text-2xl font-bold text-warning-content" id="maintenanceCount">0</div>
+            </div>
+            <div class="text-2xl opacity-75">
+                <i class="fas fa-tools"></i>
+            </div>
+        </div>
+    </div>
+
+    <div class="dashboard-card bg-error text-error-content">
+        <div class="flex items-center justify-between">
+            <div>
+                <div class="text-error-content opacity-80 text-sm">Hors Service</div>
+                <div class="text-2xl font-bold text-error-content" id="outOfServiceCount">0</div>
+            </div>
+            <div class="text-2xl opacity-75">
+                <i class="fas fa-times-circle"></i>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Carte interactive -->
+<div class="dashboard-card relative">
+    <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold">
+            <i class="fas fa-map mr-2 text-primary"></i>Carte Interactive des Ouvrages
+        </h3>
+        <div class="flex gap-2">
+            <button onclick="centerMap()" class="btn btn-outline btn-sm">
+                <i class="fas fa-crosshairs mr-2"></i>Centrer
+            </button>
+            <button onclick="toggleClusters()" class="btn btn-outline btn-sm">
+                <i class="fas fa-layer-group mr-2"></i>Clusters
+            </button>
+        </div>
+    </div>
+
+    <!-- Panneau d'information -->
+    <div class="info-panel" id="infoPanel">
+        <h4 class="font-semibold mb-2">Informations</h4>
+        <div id="infoContent">
+            <p class="text-sm text-base-content opacity-70">Cliquez sur un ouvrage pour voir les détails</p>
+        </div>
+    </div>
+
+    <!-- Carte Leaflet -->
+    <div id="map" class="map-container"></div>
+
+    <!-- Légende -->
+    <div class="legend absolute bottom-4 left-4 z-[1000]">
+        <h4 class="font-semibold mb-2 text-sm">Légende</h4>
+        <div class="legend-item">
+            <div class="legend-color" style="background-color: #10b981;"></div>
+            <span class="text-sm">Actif</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background-color: #f59e0b;"></div>
+            <span class="text-sm">Maintenance</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background-color: #ef4444;"></div>
+            <span class="text-sm">Hors service</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background-color: #3b82f6;"></div>
+            <span class="text-sm">Nouveau</span>
+        </div>
+    </div>
+</div>
+
+<!-- Actions et outils -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+    <!-- Actions rapides -->
+    <div class="dashboard-card">
+        <h3 class="text-lg font-semibold mb-4">
+            <i class="fas fa-bolt mr-2 text-primary"></i>Actions Rapides
+        </h3>
+
+        <div class="flex flex-wrap gap-3">
+            <button onclick="addNewOuvrage()" class="btn btn-primary btn-sm">
+                <i class="fas fa-plus mr-2"></i>Nouvel ouvrage
+            </button>
+            <button onclick="exportMap()" class="btn btn-outline btn-sm">
+                <i class="fas fa-download mr-2"></i>Exporter carte
+            </button>
+            <button onclick="printMap()" class="btn btn-outline btn-sm">
+                <i class="fas fa-print mr-2"></i>Imprimer
+            </button>
+            <button onclick="shareLocation()" class="btn btn-outline btn-sm">
+                <i class="fas fa-share mr-2"></i>Partager
+            </button>
+        </div>
+    </div>
+
+    <!-- Statistiques géographiques -->
+    <div class="dashboard-card">
+        <h3 class="text-lg font-semibold mb-4">
+            <i class="fas fa-chart-bar mr-2 text-primary"></i>Répartition Géographique
+        </h3>
+
+        <div class="space-y-3">
+            {% for region in regions %}
+            <div class="flex items-center justify-between">
+                <span class="text-sm">{{ region.region_name }}</span>
+                <div class="flex items-center">
+                    {% widthratio forloop.counter0 1 17 as progress_value %}
+                    <progress class="progress progress-primary w-20 mr-2" value="{{ progress_value }}" max="100"></progress>
+                    {% widthratio forloop.counter 1 3 as count_value %}
+                    <span class="text-sm font-medium">{{ count_value }}</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<script>
+// Données des ouvrages depuis Django
+const ouvragesData = {{ ouvrages_data|safe }};
+
+// Variables globales
+let map;
+let markersLayer;
+let clustersLayer;
+let useClusters = true;
+
+// Initialisation de la carte
+document.addEventListener('DOMContentLoaded', function() {
+    initMap();
+    loadOuvrages();
+});
+
+function initMap() {
+    // Coordonnées centrales de Madagascar
+    map = L.map('map').setView([-18.8792, 47.5079], 6);
+
+    // Couche de base
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    // Groupes de marqueurs
+    markersLayer = L.layerGroup();
+    clustersLayer = L.markerClusterGroup({
+        chunkedLoading: true,
+        maxClusterRadius: 50
+    });
+}
+
+function loadOuvrages() {
+    // Vider les couches existantes
+    markersLayer.clearLayers();
+    clustersLayer.clearLayers();
+
+    ouvragesData.forEach(function(ouvrage) {
+        const color = getStatusColor(ouvrage.statut);
+
+        const marker = L.circleMarker([ouvrage.latitude, ouvrage.longitude], {
+            radius: 8,
+            fillColor: color,
+            color: '#ffffff',
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.8
+        });
+
+        // Popup d'information
+        marker.bindPopup(`
+            <div class="p-2">
+                <h4 class="font-semibold text-base mb-2">${ouvrage.nom}</h4>
+                <p class="text-sm mb-1"><strong>Type:</strong> ${ouvrage.type}</p>
+                <p class="text-sm mb-1"><strong>Statut:</strong> <span class="badge badge-sm" style="background-color: ${color}; color: white;">${ouvrage.statut}</span></p>
+                <p class="text-sm mb-2"><strong>Coordonnées:</strong> ${ouvrage.latitude.toFixed(4)}, ${ouvrage.longitude.toFixed(4)}</p>
+                <div class="flex gap-2">
+                    <button class="btn btn-xs btn-primary" onclick="viewDetails('${ouvrage.id}')">Détails</button>
+                    <button class="btn btn-xs btn-outline" onclick="editOuvrage('${ouvrage.id}')">Modifier</button>
+                </div>
+            </div>
+        `);
+
+        // Événement de clic
+        marker.on('click', function() {
+            showOuvrageInfo(ouvrage);
+        });
+
+        // Ajouter aux deux couches
+        markersLayer.addLayer(marker);
+        clustersLayer.addLayer(marker);
+    });
+
+    // Afficher la couche appropriée
+    updateMapLayer();
+    updateStats();
+}
+
+function getStatusColor(status) {
+    switch(status) {
+        case 'actif': return '#10b981';
+        case 'maintenance': return '#f59e0b';
+        case 'hors-service': return '#ef4444';
+        case 'nouveau': return '#3b82f6';
+        default: return '#6b7280';
+    }
+}
+
+function updateMapLayer() {
+    map.eachLayer(function(layer) {
+        if (layer === markersLayer || layer === clustersLayer) {
+            map.removeLayer(layer);
+        }
+    });
+
+    if (useClusters) {
+        map.addLayer(clustersLayer);
+    } else {
+        map.addLayer(markersLayer);
+    }
+}
+
+function updateStats() {
+    const total = ouvragesData.length;
+    const active = ouvragesData.filter(o => o.statut === 'actif').length;
+    const maintenance = ouvragesData.filter(o => o.statut === 'maintenance').length;
+    const outOfService = ouvragesData.filter(o => o.statut === 'hors-service').length;
+
+    document.getElementById('visibleCount').textContent = total;
+    document.getElementById('activeCount').textContent = active;
+    document.getElementById('maintenanceCount').textContent = maintenance;
+    document.getElementById('outOfServiceCount').textContent = outOfService;
+}
+
+function showOuvrageInfo(ouvrage) {
+    const content = `
+        <h5 class="font-semibold">${ouvrage.nom}</h5>
+        <p class="text-sm mt-2"><strong>Type:</strong> ${ouvrage.type}</p>
+        <p class="text-sm"><strong>Statut:</strong> ${ouvrage.statut}</p>
+        <p class="text-sm"><strong>Position:</strong> ${ouvrage.latitude.toFixed(4)}, ${ouvrage.longitude.toFixed(4)}</p>
+        <div class="mt-3">
+            <button class="btn btn-xs btn-primary w-full" onclick="viewDetails('${ouvrage.id}')">
+                <i class="fas fa-eye mr-1"></i>Voir détails
+            </button>
+        </div>
+    `;
+    document.getElementById('infoContent').innerHTML = content;
+}
+
+// Fonctions de contrôle
+function centerMap() {
+    map.setView([-18.8792, 47.5079], 6);
+}
+
+function toggleClusters() {
+    useClusters = !useClusters;
+    updateMapLayer();
+}
+
+function filterByRegion(regionId) {
+    // Filtrage par région - À implémenter avec les données réelles
+    console.log('Filtre région:', regionId);
+}
+
+function filterByCommune(communeId) {
+    // Filtrage par commune - À implémenter avec les données réelles
+    console.log('Filtre commune:', communeId);
+}
+
+function filterByType(type) {
+    // Filtrage par type - À implémenter avec les données réelles
+    console.log('Filtre type:', type);
+}
+
+function resetFilters() {
+    document.querySelectorAll('select').forEach(select => select.selectedIndex = 0);
+    loadOuvrages();
+}
+
+// Actions
+function addNewOuvrage() {
+    alert('Fonction à implémenter: Ajouter nouvel ouvrage');
+}
+
+function exportMap() {
+    alert('Fonction à implémenter: Export de la carte');
+}
+
+function printMap() {
+    window.print();
+}
+
+function shareLocation() {
+    const center = map.getCenter();
+    const url = `${window.location.origin}${window.location.pathname}?lat=${center.lat}&lng=${center.lng}&zoom=${map.getZoom()}`;
+    navigator.clipboard.writeText(url).then(() => {
+        alert('Lien de la carte copié dans le presse-papier');
+    });
+}
+
+function viewDetails(ouvrageId) {
+    alert(`Fonction à implémenter: Voir détails ouvrage ${ouvrageId}`);
+}
+
+function editOuvrage(ouvrageId) {
+    alert(`Fonction à implémenter: Modifier ouvrage ${ouvrageId}`);
+}
+</script>
+{% endblock %}
