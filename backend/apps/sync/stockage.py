@@ -61,10 +61,19 @@ class StockageIndisponible(ErreurStockage):
 
 # --------------------------------------------------------------------------- configuration
 
+try:  # le projet charge .env avec python-decouple, qui NE l'exporte PAS dans os.environ
+    from decouple import config as _config
+except ImportError:  # pragma: no cover
+    _config = None
+
+
 def _lire_reglage(nom, defaut):
+    """Réglage Django, sinon variable d'environnement, sinon fichier .env, sinon valeur par défaut."""
     valeur = getattr(settings, nom, None)
     if valeur in (None, ''):
         valeur = os.environ.get(nom)
+    if valeur in (None, '') and _config is not None:
+        valeur = _config(nom, default=None)
     return defaut if valeur in (None, '') else valeur
 
 

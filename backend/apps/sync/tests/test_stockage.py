@@ -1,9 +1,11 @@
 """Tests du service de stockage (sans base de données)."""
 import hashlib
+import os
 import shutil
 import tempfile
 import uuid
 from pathlib import Path
+from unittest import mock
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
@@ -106,6 +108,22 @@ class StockageTests(SimpleTestCase):
     def test_lecture_fichier_absent(self):
         with self.assertRaises(FileNotFoundError):
             stockage.ouvrir('entite/village/' + str(self.entite) + '/photos_village/absent.jpg')
+
+    def test_reglages_lus_dans_le_fichier_env(self):
+        """Régression du 2026-10-25 : python-decouple lit .env sans l'exporter dans os.environ ;
+        en production les variables HYDRIA_* étaient ignorées (dépôts en 503)."""
+        valeurs = {'HYDRIA_STORAGE_DIR': self.dossier, 'HYDRIA_TAILLE_MAX_MO': '25',
+                   'HYDRIA_QUOTA_ORGA_GO': '5', 'HYDRIA_VERSIONS_MAX': '7'}
+        faux_env = mock.Mock(side_effect=lambda nom, default=None: valeurs.get(nom, default))
+        with override_settings(HYDRIA_STORAGE_DIR=''), \
+                mock.patch.dict(os.environ, {}, clear=False), \
+                mock.patch.object(stockage, '_config', faux_env):
+            for nom in valeurs:
+                os.environ.pop(nom, None)
+            self.assertEqual(stockage.racine(), Path(self.dossier).resolve())
+            self.assertEqual(stockage.taille_max_octets(), 25 * 1024 * 1024)
+            self.assertEqual(stockage.quota_organisation_octets(), 5 * 1024 ** 3)
+            self.assertEqual(stockage.versions_max(), 7)
 
     def test_limites_configurables(self):
         with override_settings(HYDRIA_TAILLE_MAX_MO=2, HYDRIA_QUOTA_ORGA_GO=3):
