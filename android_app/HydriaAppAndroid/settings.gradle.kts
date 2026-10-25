@@ -20,3 +20,5 @@ if (providers.gradleProperty("hydria.desktopOnly").orNull != "true") {
 }
 include(":shared")
 include(":desktopApp")
+
+include(":syncclient")
