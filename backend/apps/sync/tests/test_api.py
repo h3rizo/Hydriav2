@@ -274,7 +274,7 @@ class ConflitEtSuppressionTests(BaseSync):
         self.assertEqual(conflit.json()['version_actuelle'], 2)
         self.assertEqual(Fichier.objects.get(pk=fiche['id']).nom, 'renomme.pdf')
 
-    def test_remplacement_du_contenu(self):
+    def test_remplacement_du_contenu_cree_une_version_et_garde_l_ancienne(self):
         fiche = self.deposer_organisation(contenu=b'ancien contenu').json()
         ancien_chemin = Fichier.objects.get(pk=fiche['id']).storage_path
         r = self.client_pour(self.user_a).patch(
@@ -285,10 +285,10 @@ class ConflitEtSuppressionTests(BaseSync):
         fichier = Fichier.objects.get(pk=fiche['id'])
         self.assertEqual(fichier.version, 2)
         self.assertNotEqual(fichier.storage_path, ancien_chemin)
-        self.assertFalse((Path(self.dossier) / ancien_chemin).exists())
+        self.assertTrue((Path(self.dossier) / ancien_chemin).exists(), "L'ancienne version reste consultable.")
         self.assertEqual(fichier.taille, len(b'nouveau contenu'))
-        corbeille = [p for p in (Path(self.dossier) / '_corbeille').rglob('*') if p.is_file()]
-        self.assertEqual(len(corbeille), 1, "L'ancienne version est conservée dans la corbeille.")
+        self.assertEqual(fichier.versions.count(), 2)
+        self.assertFalse((Path(self.dossier) / '_corbeille').exists())
 
     def test_suppression_logique(self):
         fiche = self.deposer_organisation().json()

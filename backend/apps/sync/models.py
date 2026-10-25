@@ -159,6 +159,53 @@ class Fichier(models.Model):
         return self.nom
 
 
+ORIGINE_DEPOT = 'depot'
+ORIGINE_REMPLACEMENT = 'remplacement'
+ORIGINE_RESTAURATION = 'restauration'
+ORIGINE_CHOICES = [
+    (ORIGINE_DEPOT, 'Dépôt initial'),
+    (ORIGINE_REMPLACEMENT, 'Remplacement du contenu'),
+    (ORIGINE_RESTAURATION, "Restauration d'une version"),
+]
+
+
+class FichierVersion(models.Model):
+    """Historique du CONTENU d'un fichier (décision Q12 : historique consultable).
+
+    ``numero`` ne compte que les changements de contenu ; ``Fichier.version`` (l'ETag de If-Match)
+    compte aussi les renommages. La version courante est celle de plus grand ``numero`` ; elle est
+    recopiée dans ``Fichier`` (nom, sha256, taille, storage_path).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    fichier = models.ForeignKey(Fichier, on_delete=models.CASCADE, related_name='versions')
+    numero = models.PositiveIntegerField()
+    nom = models.CharField(max_length=255, help_text="Nom du fichier à cette version.")
+    storage_path = models.CharField(max_length=500, unique=True)
+    sha256 = models.CharField(max_length=64)
+    taille = models.BigIntegerField()
+    origine = models.CharField(max_length=20, choices=ORIGINE_CHOICES, default=ORIGINE_DEPOT)
+    restaure_de = models.PositiveIntegerField(
+        null=True, blank=True, help_text="Numéro de la version recopiée (origine = restauration).")
+    depose_par = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='versions_fichiers_sync',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'fichiers_versions'
+        ordering = ['-numero']
+        constraints = [
+            models.UniqueConstraint(fields=['fichier', 'numero'], name='fichiers_versions_numero_uniq'),
+            models.CheckConstraint(name='fichiers_versions_numero_positif', check=Q(numero__gte=1)),
+            models.CheckConstraint(name='fichiers_versions_taille_positive', check=Q(taille__gte=0)),
+        ]
+
+    def __str__(self):
+        return f'{self.nom} v{self.numero}'
+
+
 class SyncChange(models.Model):
     seq = models.BigAutoField(primary_key=True)
     # NULL = référentiel diffusé à tous les utilisateurs authentifiés (décision Q1).

@@ -221,3 +221,14 @@ Appliquées par défaut (recommandations de ce document), **à confirmer** :
 - **Q13** dépendances de `sync 0002` = feuilles actuelles des migrations (organization 0039, geography 0019, infrastructure 0029, billing 0093, planning 0067).
 - Rattachement d'un ouvrage au village : village de son premier point d'eau localisé ; sinon `ouvrages_sans_village`.
 - Un point d'eau sans ouvrage est diffusé à tous (comme le référentiel).
+
+## 11. Décisions du 2026-10-25 (suite)
+
+- **Q6** : un seul endroit. `OuvrageDossierTechnique` est copié dans la synchro par `manage.py migrer_dossiers_techniques`
+  (simulation par défaut, non destructif, idempotent). La bascule des pages et le retrait de l'ancien modèle restent à faire.
+- **Q7** : par défaut, les photos existantes ne sont pas migrées. **Q8** : par défaut, financier et administratif fermés (superutilisateur).
+- **Q9** : vérifié en production, les tables `core_*` de géographie sont vides et inutilisées : non suivies.
+- **Q10** : sans objet (les triggers sont créés sans problème). **Q11/Q13** : réglées par le déploiement du 2026-10-25.
+- **Q12** : historique consultable. Table `fichiers_versions` ; `Fichier.version` (If-Match) compte tous les changements,
+  `FichierVersion.numero` seulement ceux du contenu ; rétention `HYDRIA_VERSIONS_MAX` (20) vers `_corbeille/` ; routes
+  `versions/`, `versions/<n>/telechargement`, `versions/<n>/restaurer`.

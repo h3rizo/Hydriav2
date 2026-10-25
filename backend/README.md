@@ -54,8 +54,11 @@ ou session Django (pages Hydria, CSRF exigé).
 | GET | `/api/sync/arborescence?organisation=<id>` | Branche territoire + branche organisation (domaines et catégories) |
 | POST | `/api/sync/upload` | multipart : `fichier`, `categorie`, et (`entity_type` + `entity_id`) **ou** `domaine` |
 | GET | `/api/fichiers/?entity_type=&entity_id=` ou `?domaine=[&categorie=]` | Liste des fichiers (pages Hydria) |
-| PATCH | `/api/fichiers/<id>/` | Renommer (`nom`) et/ou remplacer le contenu (`fichier`) ; **`If-Match: <version>`** obligatoire, `409` si conflit |
-| DELETE | `/api/fichiers/<id>/` | Suppression logique (contenu déplacé dans `_corbeille/`) |
+| PATCH | `/api/fichiers/<id>/` | Renommer (`nom`) et/ou remplacer le contenu (`fichier`, crée une version) ; **`If-Match: <version>`** obligatoire, `409` si conflit |
+| DELETE | `/api/fichiers/<id>/` | Suppression logique (toutes les versions déplacées dans `_corbeille/`) |
+| GET | `/api/fichiers/<id>/versions/` | Historique du contenu (numéro, nom, sha256, taille, origine, courante) |
+| GET | `/api/fichiers/<id>/versions/<n>/telechargement` | Contenu d'une ancienne version |
+| POST | `/api/fichiers/<id>/versions/<n>/restaurer` | Recopie la version n comme nouvelle version courante (`If-Match` obligatoire) |
 | GET | `/api/fichiers/<id>/telechargement` | Contenu, après contrôle des droits (aucun lien public) |
 
 Types d'entités : `region`, `district`, `commune`, `fokontany`, `village`, `ouvrage`, `equipement`, `point_eau`, `activite`.
@@ -67,7 +70,8 @@ Domaines : `operationnel`, `administratif`, `financier`, `logistique`.
 |---|---|---|
 | `HYDRIA_STORAGE_DIR` | `/srv/hydria/storage` | Répertoire des fichiers (jamais servi par nginx/Django, hors `media/`) |
 | `HYDRIA_TAILLE_MAX_MO` | `100` | Taille maximale par fichier |
-| `HYDRIA_QUOTA_ORGA_GO` | `50` | Quota par organisation |
+| `HYDRIA_QUOTA_ORGA_GO` | `50` | Quota par organisation (compte toutes les versions) |
+| `HYDRIA_VERSIONS_MAX` | `20` | Versions de contenu conservées par fichier (les plus anciennes vont dans `_corbeille/`) |
 
 Droits par domaine : `apps/sync/acces.py` (réglage `HYDRIA_SYNC_REGLES_DOMAINES`). Les domaines financier et
 administratif n'ont volontairement aucune règle : seuls les superutilisateurs y accèdent.

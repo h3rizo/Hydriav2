@@ -203,6 +203,15 @@ def blocs(fichier_televerse):
     return fichier_televerse.chunks(TAILLE_BLOC)
 
 
+def copier(source_relative, destination_relative, *, taille_max=None, quota_restant=None):
+    """Copie atomique d'un fichier stocké vers un nouveau chemin (restauration d'une version).
+
+    Retourne ``(sha256, taille)`` recalculés sur la copie."""
+    with ouvrir(source_relative) as source:
+        return ecrire(iter(lambda: source.read(TAILLE_BLOC), b''), destination_relative,
+                      taille_max=taille_max, quota_restant=quota_restant)
+
+
 def ouvrir(chemin_relatif):
     """Ouvre un fichier stocké en lecture binaire (FileNotFoundError s'il n'existe pas)."""
     return open(resoudre(chemin_relatif), 'rb')
@@ -245,3 +254,11 @@ def espace_disque():
     cible = base if base.exists() else base.parent
     usage = shutil.disk_usage(cible)
     return usage.total, usage.used, usage.free
+
+
+DEFAUT_VERSIONS_MAX = 20
+
+
+def versions_max():
+    """Nombre maximal de versions de contenu conservées par fichier (HYDRIA_VERSIONS_MAX, défaut 20)."""
+    return max(1, int(float(_lire_reglage('HYDRIA_VERSIONS_MAX', DEFAUT_VERSIONS_MAX))))

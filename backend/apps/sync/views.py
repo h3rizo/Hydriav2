@@ -9,7 +9,7 @@ import re
 import uuid
 
 from django.db import IntegrityError, transaction
-from django.db.models import Q, Sum
+from django.db.models import Max, Q, Sum
 from django.http import FileResponse
 from django.urls import reverse
 from django.utils import timezone
@@ -22,8 +22,9 @@ from rest_framework.views import APIView
 
 from . import acces, entites, stockage
 from .auth import (PREFIXE_APPAREIL, JetonSynchronisation, PeutSynchroniser, creer_paire_jetons)
-from .models import (DOMAINES, ENTITY_TYPES, PORTEE_ENTITE, PORTEE_ORGANISATION, STATUT_COMPLET,
-                     CategorieFichier, Fichier, SyncChange, SyncDevice)
+from .models import (DOMAINES, ENTITY_TYPES, ORIGINE_DEPOT, ORIGINE_REMPLACEMENT, ORIGINE_RESTAURATION,
+                     PORTEE_ENTITE, PORTEE_ORGANISATION, STATUT_COMPLET, CategorieFichier, Fichier,
+                     FichierVersion, SyncChange, SyncDevice)
 
 LIMITE_DEFAUT = 200
 LIMITE_MAX = 1000
@@ -58,6 +59,22 @@ def payload_fichier(fichier):
         'updated_at': fichier.updated_at.isoformat(),
         'deleted_at': fichier.deleted_at.isoformat() if fichier.deleted_at else None,
         'telechargement': reverse('sync_fichiers:telechargement', args=[fichier.id]),
+        'versions': reverse('sync_fichiers:versions', args=[fichier.id]),
+    }
+
+
+def payload_version(version, courante_numero=None):
+    return {
+        'numero': version.numero,
+        'nom': version.nom,
+        'sha256': version.sha256,
+        'taille': version.taille,
+        'origine': version.origine,
+        'restaure_de': version.restaure_de,
+        'courante': courante_numero == version.numero if courante_numero is not None else None,
+        'depose_par': version.depose_par_id,
+        'created_at': version.created_at.isoformat(),
+        'telechargement': reverse('sync_fichiers:version_telechargement', args=[version.fichier_id, version.numero]),
     }
 
 
@@ -351,12 +368,13 @@ def _verifier_extension(categorie, nom):
 
 
 def _octets_utilises(organisation_id):
-    return (Fichier.objects.filter(organisation_id=organisation_id, deleted_at__isnull=True)
+    """Espace disque réellement occupé : TOUTES les versions des fichiers non supprimés (décision Q12)."""
+    return (FichierVersion.objects.filter(fichier__organisation_id=organisation_id, fichier__deleted_at__isnull=True)
             .aggregate(total=Sum('taille'))['total'] or 0)
 
 
-def _quota_restant(organisation_id, rendu=0):
-    restant = stockage.quota_organisation_octets() - _octets_utilises(organisation_id) + rendu
+def _quota_restant(organisation_id):
+    restant = stockage.quota_organisation_octets() - _octets_utilises(organisation_id)
     if restant <= 0:
         raise stockage.QuotaDepasse("Quota de stockage de l'organisation atteint.")
     return restant
@@ -460,6 +478,10 @@ class DepotView(VueSync):
                     categorie=categorie, nom=nom, storage_path=chemin, sha256=sha256, taille=taille,
                     version=1, statut=STATUT_COMPLET, depose_par=request.user,
                 )
+                FichierVersion.objects.create(
+                    fichier=fichier, numero=1, nom=nom, storage_path=chemin, sha256=sha256, taille=taille,
+                    origine=ORIGINE_DEPOT, depose_par=request.user,
+                )
         except IntegrityError as exc:
             stockage.supprimer_definitivement_temporaire(chemin)
             return erreur('FICHIER_REFUSE', f"Fichier refusé par la base : {exc}")
@@ -498,31 +520,80 @@ class FichiersView(VueSync):
         return Response({'fichiers': [payload_fichier(f) for f in visibles]})
 
 
-class FichierView(VueSync):
-    """PATCH / DELETE /api/fichiers/<id>/ ."""
+def _chemin_stockage(fichier, ident, extension):
+    if fichier.portee == PORTEE_ENTITE:
+        return stockage.chemin_relatif_entite(
+            fichier.entity_type, fichier.entity_id, fichier.categorie_id, ident, extension)
+    return stockage.chemin_relatif_organisation(
+        fichier.organisation_id, fichier.domaine, fichier.categorie_id, ident, extension)
 
-    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
-    def _charger(self, request, pk, verrou=False):
+def _ajouter_version(fichier, *, nom, chemin, sha256, taille, origine, utilisateur, restaure_de=None):
+    """Enregistre une nouvelle version de CONTENU et la recopie dans le fichier (version courante)."""
+    dernier = fichier.versions.aggregate(m=Max('numero'))['m'] or 0
+    version = FichierVersion.objects.create(
+        fichier=fichier, numero=dernier + 1, nom=nom, storage_path=chemin, sha256=sha256, taille=taille,
+        origine=origine, restaure_de=restaure_de, depose_par=utilisateur,
+    )
+    fichier.nom, fichier.storage_path, fichier.sha256, fichier.taille = nom, chemin, sha256, taille
+    return version
+
+
+def _elaguer_versions(fichier):
+    """Supprime les plus anciennes versions au-delà de HYDRIA_VERSIONS_MAX.
+
+    Retourne les chemins à déplacer dans ``_corbeille`` (à faire une fois la transaction validée)."""
+    a_deplacer = []
+    for ancienne in list(fichier.versions.order_by('-numero')[stockage.versions_max():]):
+        a_deplacer.append(ancienne.storage_path)
+        ancienne.delete()
+    return a_deplacer
+
+
+def _servir(nom, chemin, etag, sha256):
+    try:
+        flux = stockage.ouvrir(chemin)
+    except FileNotFoundError:
+        return erreur('CONTENU_ABSENT', "Le contenu du fichier est introuvable sur le serveur.",
+                      status.HTTP_404_NOT_FOUND)
+    type_mime = mimetypes.guess_type(nom)[0] or 'application/octet-stream'
+    reponse = FileResponse(flux, as_attachment=True, filename=nom, content_type=type_mime)
+    reponse['X-Content-Type-Options'] = 'nosniff'
+    reponse['Cache-Control'] = 'private, no-store'
+    reponse['ETag'] = f'"{etag}"'
+    reponse['X-Fichier-Sha256'] = sha256
+    return reponse
+
+
+class ChargeFichier:
+    """Chargement d'un fichier avec contrôle des droits (404 si invisible, 403 si lecture seule)."""
+
+    def _charger(self, request, pk, verrou=False, ecriture=True):
         requete = Fichier.objects.select_related('categorie')
         if verrou:
             requete = requete.select_for_update()
         fichier = requete.filter(pk=pk, deleted_at__isnull=True).first()
         if fichier is None or not acces.peut_lire_fichier(request.user, fichier):
             raise acces.AccesRefuse("Fichier introuvable.", 'FICHIER_INTROUVABLE', 404)
-        if not acces.peut_ecrire_fichier(request.user, fichier):
+        if ecriture and not acces.peut_ecrire_fichier(request.user, fichier):
             raise acces.AccesRefuse("Vous n'avez pas le droit de modifier ce fichier.", 'ECRITURE_INTERDITE')
         return fichier
 
+
+class FichierView(ChargeFichier, VueSync):
+    """PATCH / DELETE /api/fichiers/<id>/ ."""
+
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
     def patch(self, request, pk):
-        """Modifie le nom et/ou remplace le contenu ; ``If-Match: <version>`` obligatoire."""
+        """Renomme (``nom``) et/ou remplace le contenu (``fichier``, nouvelle version) ; ``If-Match`` obligatoire."""
         attendue = _version_attendue(request, obligatoire=True)
         nouveau_contenu = request.FILES.get('fichier')
         nouveau_nom = request.data.get('nom')
         if nouveau_contenu is None and nouveau_nom in (None, ''):
             return erreur('RIEN_A_MODIFIER', "Fournissez « nom » et/ou « fichier ».")
 
-        ancien_chemin = None
+        a_deplacer = []
         nouveau_chemin = None
         try:
             with transaction.atomic():
@@ -533,39 +604,44 @@ class FichierView(VueSync):
                     fichier.nom = _nom_nettoye(nouveau_nom) or fichier.nom
                 if nouveau_contenu is not None:
                     extension = _verifier_extension(fichier.categorie, fichier.nom)
-                    restant = _quota_restant(fichier.organisation_id, rendu=fichier.taille)
-                    ident = uuid.uuid4()
-                    if fichier.portee == PORTEE_ENTITE:
-                        nouveau_chemin = stockage.chemin_relatif_entite(
-                            fichier.entity_type, fichier.entity_id, fichier.categorie_id, ident, extension)
-                    else:
-                        nouveau_chemin = stockage.chemin_relatif_organisation(
-                            fichier.organisation_id, fichier.domaine, fichier.categorie_id, ident, extension)
-                    fichier.sha256, fichier.taille = stockage.ecrire(
+                    restant = _quota_restant(fichier.organisation_id)
+                    nouveau_chemin = _chemin_stockage(fichier, uuid.uuid4(), extension)
+                    sha256, taille = stockage.ecrire(
                         stockage.blocs(nouveau_contenu), nouveau_chemin, quota_restant=restant)
-                    ancien_chemin, fichier.storage_path = fichier.storage_path, nouveau_chemin
+                    _ajouter_version(fichier, nom=fichier.nom, chemin=nouveau_chemin, sha256=sha256, taille=taille,
+                                     origine=ORIGINE_REMPLACEMENT, utilisateur=request.user)
+                    a_deplacer = _elaguer_versions(fichier)
+                else:  # renommage seul : la version courante garde son contenu, on aligne son nom
+                    fichier.versions.filter(
+                        numero=fichier.versions.aggregate(m=Max('numero'))['m']).update(nom=fichier.nom)
                 fichier.version += 1
                 fichier.save()
         except Exception:
             if nouveau_chemin:
                 stockage.supprimer_definitivement_temporaire(nouveau_chemin)
             raise
-        if ancien_chemin:
-            stockage.mettre_a_la_corbeille(ancien_chemin)
+        for chemin in a_deplacer:
+            stockage.mettre_a_la_corbeille(chemin)
         reponse = Response(payload_fichier(fichier))
         reponse['ETag'] = f'"{fichier.version}"'
         return reponse
 
     def delete(self, request, pk):
-        """Suppression logique (le contenu part dans ``_corbeille``). If-Match facultatif."""
+        """Suppression logique : tout le contenu (toutes les versions) part dans ``_corbeille``."""
         attendue = _version_attendue(request, obligatoire=False)
         with transaction.atomic():
             fichier = self._charger(request, pk, verrou=True)
             if attendue is not None and fichier.version != attendue:
                 return _conflit(fichier)
-            en_corbeille = stockage.mettre_a_la_corbeille(fichier.storage_path)
-            if en_corbeille:
-                fichier.storage_path = en_corbeille
+            courante = None
+            for version in fichier.versions.order_by('-numero'):
+                en_corbeille = stockage.mettre_a_la_corbeille(version.storage_path)
+                if en_corbeille:
+                    version.storage_path = en_corbeille
+                    version.save(update_fields=['storage_path'])
+                courante = courante or version.storage_path
+            if courante:
+                fichier.storage_path = courante
             fichier.deleted_at = timezone.now()
             fichier.version += 1
             fichier.save()
@@ -573,21 +649,75 @@ class FichierView(VueSync):
 
 
 class TelechargementView(VueSync):
-    """GET /api/fichiers/<id>/telechargement : droits vérifiés, jamais de lien public."""
+    """GET /api/fichiers/<id>/telechargement : version courante, droits vérifiés, jamais de lien public."""
 
     def get(self, request, pk):
         fichier = Fichier.objects.filter(pk=pk, deleted_at__isnull=True, statut=STATUT_COMPLET).first()
         if fichier is None or not acces.peut_lire_fichier(request.user, fichier):
             return erreur('FICHIER_INTROUVABLE', "Fichier introuvable.", status.HTTP_404_NOT_FOUND)
+        return _servir(fichier.nom, fichier.storage_path, fichier.version, fichier.sha256)
+
+
+class VersionsView(ChargeFichier, VueSync):
+    """GET /api/fichiers/<id>/versions/ : historique du contenu, de la plus récente à la plus ancienne."""
+
+    def get(self, request, pk):
+        fichier = self._charger(request, pk, ecriture=False)
+        versions = list(fichier.versions.order_by('-numero'))
+        courante = versions[0].numero if versions else None
+        return Response({
+            'fichier': payload_fichier(fichier),
+            'versions': [payload_version(v, courante) for v in versions],
+        })
+
+
+class VersionTelechargementView(ChargeFichier, VueSync):
+    """GET /api/fichiers/<id>/versions/<n>/telechargement : contenu d'une ancienne version."""
+
+    def get(self, request, pk, numero):
+        fichier = self._charger(request, pk, ecriture=False)
+        version = fichier.versions.filter(numero=numero).first()
+        if version is None:
+            return erreur('VERSION_INTROUVABLE', "Version introuvable.", status.HTTP_404_NOT_FOUND)
+        return _servir(version.nom, version.storage_path, f'{fichier.version}-v{version.numero}', version.sha256)
+
+
+class RestaurerVersionView(ChargeFichier, VueSync):
+    """POST /api/fichiers/<id>/versions/<n>/restaurer : recopie une ancienne version comme nouvelle version
+    courante (l'historique n'est jamais réécrit). ``If-Match`` obligatoire."""
+
+    def post(self, request, pk, numero):
+        attendue = _version_attendue(request, obligatoire=True)
+        nouveau_chemin = None
+        a_deplacer = []
         try:
-            flux = stockage.ouvrir(fichier.storage_path)
-        except FileNotFoundError:
-            return erreur('CONTENU_ABSENT', "Le contenu du fichier est introuvable sur le serveur.",
-                          status.HTTP_404_NOT_FOUND)
-        type_mime = mimetypes.guess_type(fichier.nom)[0] or 'application/octet-stream'
-        reponse = FileResponse(flux, as_attachment=True, filename=fichier.nom, content_type=type_mime)
-        reponse['X-Content-Type-Options'] = 'nosniff'
-        reponse['Cache-Control'] = 'private, no-store'
+            with transaction.atomic():
+                fichier = self._charger(request, pk, verrou=True)
+                if fichier.version != attendue:
+                    return _conflit(fichier)
+                source = fichier.versions.filter(numero=numero).first()
+                if source is None:
+                    return erreur('VERSION_INTROUVABLE', "Version introuvable.", status.HTTP_404_NOT_FOUND)
+                if source.storage_path == fichier.storage_path:
+                    return erreur('DEJA_COURANTE', "Cette version est déjà la version courante.")
+                restant = _quota_restant(fichier.organisation_id)
+                nouveau_chemin = _chemin_stockage(fichier, uuid.uuid4(), stockage.extension_de(source.nom))
+                try:
+                    sha256, taille = stockage.copier(source.storage_path, nouveau_chemin, quota_restant=restant)
+                except FileNotFoundError:
+                    return erreur('CONTENU_ABSENT', "Le contenu de cette version est introuvable sur le serveur.",
+                                  status.HTTP_404_NOT_FOUND)
+                _ajouter_version(fichier, nom=source.nom, chemin=nouveau_chemin, sha256=sha256, taille=taille,
+                                 origine=ORIGINE_RESTAURATION, utilisateur=request.user, restaure_de=source.numero)
+                a_deplacer = _elaguer_versions(fichier)
+                fichier.version += 1
+                fichier.save()
+        except Exception:
+            if nouveau_chemin:
+                stockage.supprimer_definitivement_temporaire(nouveau_chemin)
+            raise
+        for chemin in a_deplacer:
+            stockage.mettre_a_la_corbeille(chemin)
+        reponse = Response(payload_fichier(fichier))
         reponse['ETag'] = f'"{fichier.version}"'
-        reponse['X-Fichier-Sha256'] = fichier.sha256
         return reponse
