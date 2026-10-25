@@ -35,6 +35,7 @@ PUBLIC_PREFIXES = (
     '/widget/api/ping/',
     '/facturation/api/paiement/mvola/callback/',  # webhook MVola (appelé par MVola, sans session)
     '/api/mobile/v1/auth/',  # connexion / rafraîchissement du jeton des applications mobiles
+    '/api/sync/auth/',       # connexion / rafraîchissement du jeton du client de synchronisation de fichiers
     '/mobile/api/login/',    # ancienne connexion mobile (échange identifiant -> jeton)
     '/recrutement/inscription/',  # inscription des candidats (pas encore de compte)
     '/usagers/reseau/magic/',     # lien de connexion magique (le jeton est vérifié par la vue)
