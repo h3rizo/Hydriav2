@@ -204,6 +204,7 @@ INSTALLED_APPS = [
     'apps.recrutement',  # Système de recrutement et tests de candidats
     'apps.serious_game',  # Mini-jeu de formation Hydria Academy
     'apps.navigation_terrain',  # Repères GPS terrain + API mobile
+    'apps.sync',  # Synchronisation de fichiers type Dropbox (desktop <-> Hydria)
     'chatbot',
     'authentication',
     # 'django_celery_beat',  # Celery Beat pour tâches planifiées - Temporairement désactivé

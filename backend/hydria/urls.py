@@ -102,6 +102,9 @@ urlpatterns = [
         name='representants_avis_evolution_dashboard'
     ),
     path('usagers/', include('apps.usagers.urls')),
+    # Synchronisation de fichiers type Dropbox (client desktop + pages Hydria)
+    path('api/sync/', include('apps.sync.urls')),
+    path('api/fichiers/', include('apps.sync.urls_fichiers')),
     path('recrutement/', include(('apps.recrutement.urls', 'recrutement'), namespace='recrutement')),
 
     # Apps géographiques et organisations
