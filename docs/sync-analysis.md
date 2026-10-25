@@ -29,8 +29,8 @@ Fichiers signalés (non ouverts) : `backend/hydria` et `backend/cookies.txt` son
 - Pas de client supabase-js ni de `pg` direct. Fichiers concernés pour le stockage : 
   `apps/filemanager/services.py` (SDK Python Supabase, bucket `HydriaStock`, repli « stockage local »).
 - Versions : `requirements.txt` épingle Django 5.1.4 / DRF 3.16.1, l'environnement local a Django 5.2.6 /
-  DRF 3.15.2, et le VPS tourne en **Django 4.2** (notes de déploiement du projet). Le code de l'app `sync`
-  devra rester compatible 4.2 → 5.2 (pas de `db_default`, `GeneratedField`, etc.).
+  DRF 3.15.2. **Le VPS tourne en Django 5.1.4** (relevé le 2026-10-25 ; d'anciennes notes disaient 4.2).
+  L'app `sync` reste volontairement compatible 4.2 → 5.2 (`CheckConstraint(check=...)`, pas de `db_default`).
 - Authentification DRF globale : `SessionAuthentication` + `IsAuthenticated`, pagination page/25.
   Une session impose le jeton CSRF pour les écritures : peu adaptée à un client desktop.
   **Précédent à réutiliser** : `/api/mobile/v1/` (`apps/core/mobile_api_v1.py`) propose
