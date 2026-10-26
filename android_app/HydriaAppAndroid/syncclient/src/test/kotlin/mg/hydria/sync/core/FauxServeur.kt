@@ -49,6 +49,8 @@ class FauxServeur {
     var jetonValide = "T1"
     var arborescence = ARBORESCENCE
     var refuserDepots = false
+    var refuserConnexion = false
+    var refuserRenouvellement = false
     private var seq = 0L
 
     val client: HttpClient = HttpClient(MockEngine { requete ->
@@ -58,9 +60,11 @@ class FauxServeur {
             respond(texte, statut, headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
 
         if (chemin == "/api/sync/auth/login") {
+            if (refuserConnexion) return@MockEngine json("""{"code":"IDENTIFIANTS_INVALIDES","message":"Identifiants invalides."}""", HttpStatusCode.Unauthorized)
             return@MockEngine json("""{"access_token":"T1","refresh_token":"R1","expires_in":3600}""")
         }
         if (chemin == "/api/sync/auth/refresh") {
+            if (refuserRenouvellement) return@MockEngine json("""{"code":"JETON_INVALIDE","message":"Jeton expiré ou révoqué."}""", HttpStatusCode.Unauthorized)
             jetonValide = "T2"
             return@MockEngine json("""{"access_token":"T2","refresh_token":"R2","expires_in":3600}""")
         }

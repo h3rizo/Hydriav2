@@ -41,6 +41,10 @@ class SyncApi(
 ) {
     private val base = baseUrl.trimEnd('/')
 
+    /** Derniere erreur d'enregistrement du jeton renouvele (null si tout va bien) : a journaliser par l'appelant. */
+    var persistanceEchouee: Exception? = null
+        private set
+
     // ------------------------------------------------------------------ authentification
 
     suspend fun connecter(utilisateur: String, motDePasse: String, deviceId: String, libelle: String): TokenPair {
@@ -71,7 +75,12 @@ class SyncApi(
     private fun appliquer(paire: TokenPair): TokenPair {
         jetons.acces = paire.accessToken
         jetons.renouvellement = paire.refreshToken
-        surNouveauxJetons(paire)
+        // Echec d'enregistrement (disque, droits...) : on garde le jeton en memoire pour poursuivre la session en cours.
+        try {
+            surNouveauxJetons(paire)
+        } catch (e: Exception) {
+            persistanceEchouee = e
+        }
         return paire
     }
 

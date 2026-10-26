@@ -26,7 +26,9 @@ data class Config(
     val propagerSuppressions: Boolean = false,
 ) {
     companion object {
+        /** Dossier de configuration : variable HYDRIA_SYNC_DIR (installation portable, essais), sinon %APPDATA%\HydriaSync. */
         fun dossierParDefaut(): Path {
+            System.getenv("HYDRIA_SYNC_DIR")?.takeIf { it.isNotBlank() }?.let { return Path.of(it) }
             val appData = System.getenv("APPDATA")
             return if (appData != null) Path.of(appData, "HydriaSync")
             else Path.of(System.getProperty("user.home"), ".hydria-sync")
