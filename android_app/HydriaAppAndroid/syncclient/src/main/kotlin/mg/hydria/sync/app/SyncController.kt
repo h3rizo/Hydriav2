@@ -105,6 +105,10 @@ class SyncController(
         } catch (e: ErreurReseau) {
             nouveauClient.close()
             _etat.update { it.copy(message = e.message) }
+        } catch (e: java.io.IOException) {
+            nouveauClient.close()
+            FichierJournal.erreur("enregistrement de la configuration", e)
+            _etat.update { it.copy(message = "Connexion réussie mais la configuration n'a pas pu être enregistrée. ${mg.hydria.sync.core.decrire(e)}") }
         }
     }
 
@@ -115,8 +119,23 @@ class SyncController(
     fun deconnecter() {
         basculerAuto(false)
         fermerClient()
+        val erreur = oublierJeton()
+        _etat.update {
+            EtatUi(
+                config = null, intervalleMinutes = it.intervalleMinutes,
+                message = erreur?.let { e -> "Déconnecté, mais le jeton enregistré n'a pas pu être effacé. ${mg.hydria.sync.core.decrire(e)}" },
+            )
+        }
+    }
+
+    /** Efface le jeton de renouvellement du disque. Retourne l'erreur eventuelle au lieu de la lever. */
+    private fun oublierJeton(): Exception? = try {
         Config.charger(dossierConfig)?.copy(refreshToken = null)?.enregistrer(dossierConfig)
-        _etat.update { EtatUi(config = null, intervalleMinutes = it.intervalleMinutes) }
+        null
+    } catch (e: Exception) {
+        FichierJournal.erreur("effacement du jeton", e)
+        ajouterJournal("Effacement du jeton impossible : ${mg.hydria.sync.core.decrire(e)}")
+        e
     }
 
     private fun nomPoste(): String = System.getenv("COMPUTERNAME") ?: "PC"
@@ -169,7 +188,7 @@ class SyncController(
         } catch (e: ErreurAuthentification) {
             FichierJournal.ecrire("Authentification refusée : ${e.message}")
             ajouterJournal("Session expirée : ${e.message}")
-            _etat.update { it.copy(enCours = false, message = "Session expirée : reconnectez-vous. (${e.message})") }
+            _etat.update { it.copy(enCours = false, message = e.message ?: "Session expirée : reconnectez-vous.") }
             deconnecterSession()
         } catch (e: ErreurReseau) {
             FichierJournal.erreur("réseau", e)
@@ -178,7 +197,7 @@ class SyncController(
         } catch (e: Exception) {
             FichierJournal.erreur("synchronisation", e)
             ajouterJournal("Erreur : ${e.message ?: e::class.simpleName}")
-            _etat.update { it.copy(enCours = false, message = "Erreur inattendue : ${e.message ?: e::class.simpleName}") }
+            _etat.update { it.copy(enCours = false, message = "Erreur inattendue. ${mg.hydria.sync.core.decrire(e)}") }
         }
     }
 
@@ -197,8 +216,7 @@ class SyncController(
     private fun deconnecterSession() {
         basculerAuto(false)
         fermerClient()
-        val config = Config.charger(dossierConfig)?.copy(refreshToken = null)
-        config?.enregistrer(dossierConfig)
+        oublierJeton()
         _etat.update { it.copy(config = null, auto = false) }
     }
 

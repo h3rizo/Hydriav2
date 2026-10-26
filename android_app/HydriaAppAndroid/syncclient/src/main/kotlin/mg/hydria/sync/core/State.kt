@@ -95,8 +95,36 @@ data class Etat(
     }
 }
 
-internal fun ecrireAtomique(cible: Path, contenu: String) {
+/**
+ * Ecriture d'un petit fichier de configuration/etat : fichier temporaire puis renommage (atomique).
+ *
+ * Sous Windows, un antivirus (Defender en temps reel) peut verrouiller quelques instants un fichier qu'on vient
+ * de creer : le renommage echoue alors (« acces refuse »). On reessaie donc plusieurs fois, puis en dernier recours
+ * on ecrit directement dans le fichier final (ces fichiers font quelques Ko : le risque d'ecriture partielle est
+ * negligeable). L'exception finale, si tout echoue, nomme le fichier concerne.
+ */
+/** « TypeDException : message » : le type seul distingue « acces refuse » de « fichier introuvable ». */
+fun decrire(e: Throwable): String = "${e::class.simpleName}: ${e.message ?: "(sans message)"}"
+
+internal fun ecrireAtomique(cible: Path, contenu: String, tentatives: Int = 5, pauseMs: Long = 100) {
     val temporaire = cible.resolveSibling(cible.fileName.toString() + ".tmp")
-    Files.writeString(temporaire, contenu, Charsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)
-    Files.move(temporaire, cible, StandardCopyOption.REPLACE_EXISTING)
+    var derniere: java.io.IOException? = null
+    for (essai in 1..tentatives) {
+        try {
+            Files.writeString(temporaire, contenu, Charsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)
+            Files.move(temporaire, cible, StandardCopyOption.REPLACE_EXISTING)
+            return
+        } catch (e: java.io.IOException) {
+            derniere = e
+            if (essai < tentatives) Thread.sleep(pauseMs * essai)
+        }
+    }
+    try {
+        Files.writeString(cible, contenu, Charsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)
+        runCatching { Files.deleteIfExists(temporaire) }
+    } catch (e: java.io.IOException) {
+        throw java.io.IOException(
+            "Impossible d'enregistrer ${cible.fileName} : ${decrire(e)} (essai par fichier temporaire : ${derniere?.let { decrire(it) }})", e,
+        )
+    }
 }

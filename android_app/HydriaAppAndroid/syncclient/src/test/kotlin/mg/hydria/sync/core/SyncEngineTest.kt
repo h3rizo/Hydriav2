@@ -312,4 +312,23 @@ class SyncEngineTest {
         assertTrue(serveur.requetes.contains("POST /api/sync/auth/refresh"))
         assertEquals("R2", api.jetons.renouvellement)
     }
+
+    @Test
+    fun `l'ecriture de configuration se replie sur l'ecriture directe si le renommage echoue`() {
+        val cible = racine.resolve("config.json")
+        Files.createDirectories(racine.resolve("config.json.tmp")) // le nom du fichier temporaire est deja pris
+        ecrireAtomique(cible, "{\"v\":1}", tentatives = 2, pauseMs = 1)
+        assertEquals("{\"v\":1}", Files.readString(cible))
+        ecrireAtomique(cible, "{\"v\":2}", tentatives = 2, pauseMs = 1)
+        assertEquals("{\"v\":2}", Files.readString(cible), "meme sur un fichier existant")
+    }
+
+    @Test
+    fun `une ecriture impossible leve une erreur qui nomme le fichier et le type d'exception`() {
+        val cible = racine.resolve("dossier-absent").resolve("sous").resolve("config.json")
+        val erreur = kotlin.runCatching { ecrireAtomique(cible, "x", tentatives = 1, pauseMs = 1) }.exceptionOrNull()
+        assertNotNull(erreur)
+        assertTrue("config.json" in erreur.message.orEmpty(), erreur.message)
+        assertTrue("Exception" in erreur.message.orEmpty(), erreur.message)
+    }
 }
