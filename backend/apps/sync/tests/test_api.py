@@ -140,6 +140,23 @@ class DepotEtTelechargementTests(BaseSync):
         self.assertEqual(b''.join(telechargement.streaming_content), contenu)
         self.assertEqual(telechargement['X-Fichier-Sha256'], fichier.sha256)
 
+    def test_affichage_en_ligne_reserve_aux_images_et_pdf(self):
+        fiche = self.deposer_equipement(contenu=b'\xff\xd8\xff photo').json()
+        client = self.client_pour(self.user_a)
+        # par défaut : téléchargement (pièce jointe)
+        defaut = client.get(fiche['telechargement'])
+        self.assertTrue(defaut['Content-Disposition'].startswith('attachment'))
+        self.assertEqual(defaut['X-Frame-Options'], 'DENY')
+        # ?inline=1 : affichage dans le navigateur, iframe autorisée uniquement depuis Hydria
+        en_ligne = client.get(fiche['telechargement'] + '?inline=1')
+        self.assertTrue(en_ligne['Content-Disposition'].startswith('inline'))
+        self.assertEqual(en_ligne['X-Frame-Options'], 'SAMEORIGIN')
+        self.assertEqual(en_ligne['X-Content-Type-Options'], 'nosniff')
+        # un type non affichable reste en pièce jointe même avec ?inline=1
+        autre = self.deposer_equipement(nom='fiche.xlsx', categorie='dossier_technique',
+                                        contenu=b'PK\x03\x04 xlsx').json()
+        self.assertTrue(client.get(autre['telechargement'] + '?inline=1')['Content-Disposition'].startswith('attachment'))
+
     def test_depot_organisation(self):
         reponse = self.deposer_organisation()
         self.assertEqual(reponse.status_code, 201, reponse.content)

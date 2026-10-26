@@ -20,6 +20,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Sync
@@ -41,6 +43,9 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -70,21 +75,80 @@ val ThemeHydria = lightColorScheme(
     background = Color(0xFFF6F9FB),
     surface = Color.White,
     surfaceVariant = Color(0xFFE6EEF3),
+    onSurfaceVariant = Color(0xFF5F6B73),
     error = ROUGE,
+    errorContainer = Color(0xFFFDECEA),
+    onErrorContainer = ROUGE,
+    tertiaryContainer = Color(0xFFFFF4E5),
+    onTertiaryContainer = Color(0xFF3E2A00),
 )
 
+val ThemeHydriaSombre = darkColorScheme(
+    primary = Color(0xFF63B3E4),
+    onPrimary = Color(0xFF00334D),
+    secondary = Color(0xFF8FBBD6),
+    background = Color(0xFF10181E),
+    surface = Color(0xFF18222A),
+    surfaceVariant = Color(0xFF24323C),
+    onSurfaceVariant = Color(0xFFA9B7C0),
+    error = Color(0xFFEF9A9A),
+    errorContainer = Color(0xFF3B1F1F),
+    onErrorContainer = Color(0xFFFFB4AB),
+    tertiaryContainer = Color(0xFF3A2A12),
+    onTertiaryContainer = Color(0xFFFFE0B2),
+)
+
+/** Reglages de la fenetre que le controleur de synchronisation ne connait pas (theme, demarrage avec Windows). */
+data class OptionsUi(
+    val sombre: Boolean = false,
+    val onBasculerTheme: () -> Unit = {},
+    /** `null` : indisponible (lancement hors de l'application installee). */
+    val demarrageWindows: Boolean? = null,
+    val onDemarrageWindows: (Boolean) -> Unit = {},
+)
+
+/** Vrai quand le theme sombre est actif : sert a eclaircir les couleurs d'etat (vert, orange, rouge). */
+internal val LocalSombre = compositionLocalOf { false }
+
 @Composable
-fun HydriaSyncApp(controller: SyncController) {
+private fun couleurEtat(couleur: Color): Color {
+    if (!LocalSombre.current) return if (couleur == Color.Gray) MaterialTheme.colorScheme.onSurfaceVariant else couleur
+    return when (couleur) {
+        VERT -> Color(0xFF66BB6A)
+        ORANGE -> Color(0xFFFFB74D)
+        ROUGE -> Color(0xFFEF9A9A)
+        MaterialTheme_primaire -> Color(0xFF63B3E4)
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+}
+
+@Composable
+fun HydriaSyncApp(controller: SyncController, options: OptionsUi = OptionsUi()) {
     val etat by controller.etat.collectAsState()
     // Des qu'on est connecte, la synchronisation automatique demarre (une premiere passe immediate).
     LaunchedEffect(etat.connecte) {
         if (etat.connecte && !etat.auto) controller.basculerAuto(true)
     }
-    MaterialTheme(colorScheme = ThemeHydria) {
-        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            if (etat.connecte) EcranPrincipal(etat, controller)
-            else EcranConnexion(etat, controller)
+    CompositionLocalProvider(LocalSombre provides options.sombre) {
+        MaterialTheme(colorScheme = if (options.sombre) ThemeHydriaSombre else ThemeHydria) {
+            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                if (etat.connecte) EcranPrincipal(etat, controller, options)
+                else Box(Modifier.fillMaxSize()) {
+                    EcranConnexion(etat, controller)
+                    BoutonTheme(options, Modifier.align(Alignment.TopEnd).padding(12.dp))
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun BoutonTheme(options: OptionsUi, modifier: Modifier = Modifier) {
+    IconButton(onClick = options.onBasculerTheme, modifier = modifier) {
+        Icon(
+            if (options.sombre) Icons.Default.LightMode else Icons.Default.DarkMode,
+            contentDescription = if (options.sombre) "Passer en mode clair" else "Passer en mode sombre",
+        )
     }
 }
 
@@ -100,7 +164,7 @@ fun EcranConnexion(etat: EtatUi, controller: SyncController, memorisee: mg.hydri
     var avance by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Card(Modifier.width(520.dp), elevation = CardDefaults.cardElevation(4.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+        Card(Modifier.width(520.dp), elevation = CardDefaults.cardElevation(4.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Hydria Sync", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
                 Text("Retrouvez les fichiers d'Hydria sur votre PC, et envoyez-y les vôtres.", style = MaterialTheme.typography.bodyMedium)
@@ -128,7 +192,7 @@ fun EcranConnexion(etat: EtatUi, controller: SyncController, memorisee: mg.hydri
                 etat.message?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
                 Text(
                     "La première synchronisation télécharge dans ce dossier les fichiers auxquels votre compte a accès.",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Button(
                     onClick = { controller.seConnecter(url, dossier, utilisateur, motDePasse, organisation) },
@@ -149,7 +213,7 @@ private fun choisirDossier(actuel: String): String? {
 // ====================================================================== ecran principal
 
 @Composable
-fun EcranPrincipal(etat: EtatUi, controller: SyncController) {
+fun EcranPrincipal(etat: EtatUi, controller: SyncController, options: OptionsUi = OptionsUi()) {
     var onglet by remember { mutableStateOf(0) }
     val config = etat.config ?: return
     val aVerifier = etat.erreurs.size + etat.ignores.size
@@ -158,9 +222,10 @@ fun EcranPrincipal(etat: EtatUi, controller: SyncController) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Hydria Sync", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
-                Text("${config.username} · ${config.baseUrl}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                Text(config.root, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("${config.username} · ${config.baseUrl}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(config.root, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            BoutonTheme(options)
             OutlinedButton(onClick = { controller.ouvrirDossier() }) {
                 Icon(Icons.Default.FolderOpen, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Ouvrir le dossier")
             }
@@ -184,6 +249,12 @@ fun EcranPrincipal(etat: EtatUi, controller: SyncController) {
                 )
             }
         }
+        options.demarrageWindows?.let { actif ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Switch(checked = actif, onCheckedChange = options.onDemarrageWindows)
+                Text("Démarrer Hydria Sync avec Windows (réduit dans la zone de notification)")
+            }
+        }
 
         TabRow(selectedTabIndex = onglet) {
             Tab(selected = onglet == 0, onClick = { onglet = 0 }, text = { Text("Conflits (${etat.conflits.size})") })
@@ -202,11 +273,11 @@ fun EcranPrincipal(etat: EtatUi, controller: SyncController) {
 
 @Composable
 private fun Bandeau(texte: String, onFermer: () -> Unit) {
-    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFDECEA)), modifier = Modifier.fillMaxWidth()) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(start = 14.dp, top = 4.dp, bottom = 4.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Error, null, tint = ROUGE)
+            Icon(Icons.Default.Error, null, tint = MaterialTheme.colorScheme.onErrorContainer)
             Spacer(Modifier.width(10.dp))
-            Text(texte, Modifier.weight(1f), color = ROUGE)
+            Text(texte, Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer)
             IconButton(onClick = onFermer) { Icon(Icons.Default.Close, "Fermer") }
         }
     }
@@ -226,20 +297,21 @@ private val HEURE = DateTimeFormatter.ofPattern("HH:mm:ss")
 
 @Composable
 private fun CarteEtat(etat: EtatUi, onSynchroniser: () -> Unit) {
-    val (titre, couleur) = titreEtat(etat)
-    Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(2.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+    val (titre, couleurBrute) = titreEtat(etat)
+    val couleur = couleurEtat(couleurBrute)
+    Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(2.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             when {
                 etat.enCours -> CircularProgressIndicator(Modifier.size(32.dp), strokeWidth = 3.dp)
-                couleur == VERT -> Icon(Icons.Default.CheckCircle, null, tint = couleur, modifier = Modifier.size(32.dp))
-                else -> Icon(if (couleur == ROUGE) Icons.Default.Error else Icons.Default.Warning, null, tint = couleur, modifier = Modifier.size(32.dp))
+                couleurBrute == VERT -> Icon(Icons.Default.CheckCircle, null, tint = couleur, modifier = Modifier.size(32.dp))
+                else -> Icon(if (couleurBrute == ROUGE) Icons.Default.Error else Icons.Default.Warning, null, tint = couleur, modifier = Modifier.size(32.dp))
             }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(titre, style = MaterialTheme.typography.titleMedium, color = couleur)
                 Text(
                     etat.derniereSynchro?.let { "Dernière synchronisation : ${it.format(HEURE)}" } ?: "Aucune synchronisation terminée",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 etat.resume?.let {
                     Text(
@@ -259,7 +331,7 @@ private fun CarteEtat(etat: EtatUi, onSynchroniser: () -> Unit) {
 
 @Composable
 private fun Vide(texte: String) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(texte, color = Color.Gray) }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(texte, color = MaterialTheme.colorScheme.onSurfaceVariant) }
 }
 
 @Composable
@@ -270,10 +342,12 @@ fun ListeConflits(conflits: List<ConflitUi>, controller: SyncController) {
     }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         items(conflits, key = { it.id }) { conflit ->
-            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF4E5))) {
+            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer, contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+            )) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(conflit.relPath.substringAfterLast('/'), style = MaterialTheme.typography.titleSmall)
-                    Text(conflit.relPath.substringBeforeLast('/', ""), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(conflit.relPath.substringBeforeLast('/', ""), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
                         "Ce fichier a été modifié ici ET sur le serveur. Votre version est conservée ; celle du serveur est enregistrée à côté" +
                             (conflit.copie?.let { " (« ${it.substringAfterLast('/')} »)" } ?: "") + ".",
@@ -297,8 +371,8 @@ fun ListeAVerifier(etat: EtatUi) {
         return
     }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        items(etat.erreurs) { Text("✖ $it", color = ROUGE, style = MaterialTheme.typography.bodyMedium) }
-        items(etat.ignores) { Text("• $it", color = Color.DarkGray, style = MaterialTheme.typography.bodyMedium) }
+        items(etat.erreurs) { Text("✖ $it", color = couleurEtat(ROUGE), style = MaterialTheme.typography.bodyMedium) }
+        items(etat.ignores) { Text("• $it", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium) }
     }
 }
 
@@ -309,7 +383,7 @@ fun Journal(lignes: List<String>) {
         return
     }
     SelectionContainer {
-        LazyColumn(Modifier.fillMaxSize().background(Color.White)) {
+        LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
             items(lignes.asReversed()) { Text(it, fontFamily = FontFamily.Monospace, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)) }
         }
     }

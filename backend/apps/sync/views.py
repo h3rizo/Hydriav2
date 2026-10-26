@@ -550,16 +550,24 @@ def _elaguer_versions(fichier):
     return a_deplacer
 
 
-def _servir(nom, chemin, etag, sha256):
+def _affichable(type_mime):
+    """Types que le navigateur peut afficher sans risque (aperçu des pages Hydria) : images raster et PDF."""
+    return type_mime in ('application/pdf', 'image/jpeg', 'image/png', 'image/gif', 'image/webp')
+
+
+def _servir(nom, chemin, etag, sha256, en_ligne=False):
     try:
         flux = stockage.ouvrir(chemin)
     except FileNotFoundError:
         return erreur('CONTENU_ABSENT', "Le contenu du fichier est introuvable sur le serveur.",
                       status.HTTP_404_NOT_FOUND)
     type_mime = mimetypes.guess_type(nom)[0] or 'application/octet-stream'
-    reponse = FileResponse(flux, as_attachment=True, filename=nom, content_type=type_mime)
+    reponse = FileResponse(flux, as_attachment=not (en_ligne and _affichable(type_mime)), filename=nom,
+                           content_type=type_mime)
     reponse['X-Content-Type-Options'] = 'nosniff'
     reponse['Cache-Control'] = 'private, no-store'
+    if en_ligne and _affichable(type_mime):
+        reponse['X-Frame-Options'] = 'SAMEORIGIN'  # aperçu dans une iframe des pages Hydria (le réglage global est DENY)
     reponse['ETag'] = f'"{etag}"'
     reponse['X-Fichier-Sha256'] = sha256
     return reponse
@@ -655,7 +663,8 @@ class TelechargementView(VueSync):
         fichier = Fichier.objects.filter(pk=pk, deleted_at__isnull=True, statut=STATUT_COMPLET).first()
         if fichier is None or not acces.peut_lire_fichier(request.user, fichier):
             return erreur('FICHIER_INTROUVABLE', "Fichier introuvable.", status.HTTP_404_NOT_FOUND)
-        return _servir(fichier.nom, fichier.storage_path, fichier.version, fichier.sha256)
+        return _servir(fichier.nom, fichier.storage_path, fichier.version, fichier.sha256,
+                       en_ligne=request.query_params.get('inline') == '1')
 
 
 class VersionsView(ChargeFichier, VueSync):

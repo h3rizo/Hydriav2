@@ -48,7 +48,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "HydriaSync"
-            packageVersion = "1.0.0"
+            packageVersion = "1.1.0"
             vendor = "Hydria"
             description = "Hydria Sync - synchronisation de fichiers"
             includeAllModules = true
@@ -56,11 +56,24 @@ compose.desktop {
                 menuGroup = "Hydria"
                 shortcut = true
                 dirChooser = true
+                // Installation pour l'utilisateur courant (%LOCALAPPDATA%\Programs) : aucun droit administrateur requis.
+                perUserInstall = true
+                // Icone du raccourci et de l'executable : `gradlew :syncclient:genererIcone` la (re)cree.
+                project.file("packaging/hydria-sync.ico").takeIf { it.exists() }?.let { iconFile.set(it) }
                 // UUID fige : NE PAS changer entre versions (mise a jour MSI sur place).
                 upgradeUuid = "a3f1c7e2-6b84-4d0e-9c15-2e7f5b8d4a61"
             }
         }
     }
+}
+
+// Icone de l'installateur et de l'executable (dessinee par IconeHydria) : gradlew :syncclient:genererIcone
+tasks.register<JavaExec>("genererIcone") {
+    group = "application"
+    description = "Cree packaging/hydria-sync.ico."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass = "mg.hydria.sync.app.GenererIcone"
+    args(layout.projectDirectory.file("packaging/hydria-sync.ico").asFile.absolutePath)
 }
 
 // Ligne de commande (sans fenetre) : gradlew :syncclient:cli --args="login --root C:\Hydria --user moi"

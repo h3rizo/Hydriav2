@@ -1,0 +1,84 @@
+{# Fichiers du dossier technique venant de la synchronisation (PC des agents). Inclus une fois par page ; chaque modal contient #}
+{# <div data-dossier-synchro data-ouvrage-id="..." data-apercu="nomDeLaFonction"></div> et appelle chargerDossierSynchro(modal). #}
+<script>
+(function () {
+    const URL_LISTE = '/api/fichiers/';
+    const EXT_IMAGE = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+
+    function extension(nom) {
+        const i = (nom || '').lastIndexOf('.');
+        return i < 0 ? '' : nom.slice(i + 1).toLowerCase();
+    }
+
+    function taille(octets) {
+        if (octets >= 1048576) return (octets / 1048576).toFixed(1).replace('.', ',') + ' Mo';
+        return Math.max(1, Math.round(octets / 1024)) + ' Ko';
+    }
+
+    function ligne(fichier, fonctionApercu) {
+        const ext = extension(fichier.nom);
+        const url = fichier.telechargement;
+        const bloc = document.createElement('div');
+        bloc.className = 'flex flex-col gap-3 rounded-xl border border-info/40 bg-base-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between';
+
+        const gauche = document.createElement('div');
+        gauche.className = 'min-w-0';
+        const titre = document.createElement('div');
+        titre.className = 'break-all font-medium';
+        const icone = document.createElement('i');
+        icone.className = 'fas fa-cloud-arrow-down mr-2 text-info';
+        titre.append(icone, fichier.nom);
+        const detail = document.createElement('div');
+        detail.className = 'mt-1 text-xs opacity-60';
+        const date = new Date(fichier.updated_at);
+        detail.textContent = 'Synchronisé · ' + date.toLocaleDateString('fr-FR') + ' ' +
+            date.toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'}) + ' · ' + taille(fichier.taille);
+        gauche.append(titre, detail);
+
+        const droite = document.createElement('div');
+        droite.className = 'flex flex-wrap items-center gap-2';
+        const peutApercu = EXT_IMAGE.includes(ext) || ext === 'pdf';
+        if (peutApercu && typeof window[fonctionApercu] === 'function') {
+            const bouton = document.createElement('button');
+            bouton.type = 'button';
+            bouton.className = 'btn btn-info btn-xs';
+            bouton.innerHTML = '<i class="fas fa-eye mr-1"></i>Aperçu';
+            bouton.addEventListener('click', () =>
+                window[fonctionApercu](url + '?inline=1', fichier.nom, EXT_IMAGE.includes(ext) ? 'image' : 'pdf'));
+            droite.append(bouton);
+        }
+        const lien = document.createElement('a');
+        lien.href = url;
+        lien.className = 'btn btn-ghost btn-xs';
+        lien.innerHTML = '<i class="fas fa-download mr-1"></i>Télécharger';
+        droite.append(lien);
+
+        bloc.append(gauche, droite);
+        return bloc;
+    }
+
+    window.chargerDossierSynchro = async function (modal) {
+        const conteneur = modal && modal.querySelector('[data-dossier-synchro]');
+        if (!conteneur) return;
+        const requete = `${URL_LISTE}?entity_type=ouvrage&entity_id=${encodeURIComponent(conteneur.dataset.ouvrageId)}&categorie=dossier_technique`;
+        try {
+            const reponse = await fetch(requete, {credentials: 'same-origin', headers: {Accept: 'application/json'}});
+            if (!reponse.ok) return;
+            const donnees = await reponse.json();
+            // Les dossiers migrés existent aussi dans l'ancienne liste : on ne les affiche qu'une fois.
+            const connus = new Set(Array.from(modal.querySelectorAll('[data-nom-dossier]')).map(e => e.dataset.nomDossier));
+            const nouveaux = (donnees.fichiers || []).filter(f => !connus.has(f.nom));
+            conteneur.replaceChildren();
+            const vide = modal.querySelector('[data-dossier-vide]');
+            if (vide) vide.classList.toggle('hidden', nouveaux.length > 0);
+            if (!nouveaux.length) return;
+            const titre = document.createElement('div');
+            titre.className = 'text-xs font-semibold uppercase tracking-wide opacity-60';
+            titre.textContent = 'Fichiers synchronisés depuis les PC (' + nouveaux.length + ')';
+            conteneur.append(titre, ...nouveaux.map(f => ligne(f, conteneur.dataset.apercu)));
+        } catch (e) {
+            // Liste facultative : en cas d'erreur réseau, le reste du modal reste utilisable.
+        }
+    };
+})();
+</script>
