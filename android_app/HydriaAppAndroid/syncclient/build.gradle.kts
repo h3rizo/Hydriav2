@@ -48,7 +48,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "HydriaSync"
-            packageVersion = "1.1.0"
+            packageVersion = "1.1.1"
             vendor = "Hydria"
             description = "Hydria Sync - synchronisation de fichiers"
             includeAllModules = true

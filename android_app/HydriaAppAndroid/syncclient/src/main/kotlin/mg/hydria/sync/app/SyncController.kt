@@ -48,6 +48,8 @@ data class EtatUi(
     val message: String? = null,
     val auto: Boolean = false,
     val intervalleMinutes: Int = 1,
+    /** Avancement de la synchronisation en cours (`null` quand rien ne tourne). */
+    val progression: mg.hydria.sync.core.Progression? = null,
 ) {
     val connecte: Boolean get() = config != null
 }
@@ -175,7 +177,10 @@ class SyncController(
         val config = _etat.value.config ?: return
         _etat.update { it.copy(enCours = true, message = null) }
         try {
-            val moteur = SyncEngine(apiCourante(config), Path.of(config.root), config) { ajouterJournal(it) }
+            val moteur = SyncEngine(
+                apiCourante(config), Path.of(config.root), config,
+                progression = { p -> _etat.update { it.copy(progression = p) } },
+            ) { ajouterJournal(it) }
             val rapport = try {
                 moteur.synchroniser()
             } finally {
@@ -198,6 +203,8 @@ class SyncController(
             FichierJournal.erreur("synchronisation", e)
             ajouterJournal("Erreur : ${e.message ?: e::class.simpleName}")
             _etat.update { it.copy(enCours = false, message = "Erreur inattendue. ${mg.hydria.sync.core.decrire(e)}") }
+        } finally {
+            _etat.update { it.copy(progression = null) }
         }
     }
 

@@ -18,6 +18,7 @@ import androidx.compose.ui.window.rememberTrayState
 import androidx.compose.ui.window.rememberWindowState
 import kotlinx.coroutines.delay
 import mg.hydria.sync.core.Config
+import mg.hydria.sync.core.libelle
 
 /** Point d'entree : `gradlew :syncclient:run`, ou l'executable cree par `createDistributable` / l'installateur. */
 fun main(args: Array<String>) {
@@ -116,7 +117,7 @@ private fun demarrer(dossier: java.nio.file.Path, reduit: Boolean) = application
         Tray(
             icon = painter,
             state = trayState,
-            tooltip = "Hydria Sync — $titre",
+            tooltip = "Hydria Sync — " + (etat.progression?.takeIf { etat.enCours }?.libelle() ?: titre),
             onAction = { visible = true },
             menu = {
                 Item("Ouvrir Hydria Sync", onClick = { visible = true })

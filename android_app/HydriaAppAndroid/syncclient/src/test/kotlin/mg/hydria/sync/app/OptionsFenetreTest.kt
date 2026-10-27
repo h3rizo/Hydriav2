@@ -195,6 +195,31 @@ class CapturesModeSombreTest {
         capturer("7-sombre-principal", sombre { EcranPrincipal(etat, c, OptionsUi(sombre = true, demarrageWindows = true)) })
     }
 
+    private fun etatEnCours() = EtatUi(
+        config = config, enCours = true, auto = true,
+        progression = mg.hydria.sync.core.Progression(
+            mg.hydria.sync.core.Phase.RECEPTION, fait = 340, total = 1052,
+            octetsFaits = 187L * 1024 * 1024, octetsTotal = 657L * 1024 * 1024,
+            courant = "IMG_20250618_135742_210-770dac.jpg", debutMs = 0, maintenantMs = 300_000,
+        ),
+    )
+
+    @Test
+    fun `progression de la reception en mode sombre`() {
+        capturer("10-sombre-progression", sombre { EcranPrincipal(etatEnCours(), controleur(), OptionsUi(sombre = true)) })
+    }
+
+    @Test
+    fun `progression de la reception en mode clair`() {
+        capturer("11-clair-progression", {
+            androidx.compose.material3.MaterialTheme(colorScheme = ThemeHydria) {
+                androidx.compose.material3.Surface(color = androidx.compose.material3.MaterialTheme.colorScheme.background) {
+                    EcranPrincipal(etatEnCours(), controleur())
+                }
+            }
+        })
+    }
+
     @Test
     fun `connexion sombre`() {
         val c = controleur()

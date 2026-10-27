@@ -55,6 +55,8 @@ class SyncEngine(
     private val api: SyncApi,
     private val racine: Path,
     private val config: Config,
+    /** Avancement publie a chaque fichier (barre de progression de la fenetre). */
+    private val progression: (Progression) -> Unit = {},
     private val journal: (String) -> Unit = {},
 ) {
     private lateinit var etat: Etat
@@ -62,6 +64,13 @@ class SyncEngine(
     private lateinit var rapport: Rapport
     private val raisons = mutableMapOf<String, String>()
     private val conflitsSignales = mutableSetOf<String>()
+
+    // avancement de la reception (total connu des le debut)
+    private var aRecevoir = 0
+    private var recus = 0
+    private var octetsARecevoir = 0L
+    private var octetsRecus = 0L
+    private var debutReception = 0L
 
     companion object {
         /** Les `seq` sont attribues avant le commit cote serveur : on relit les derniers pour ne rien rater. */
@@ -74,14 +83,18 @@ class SyncEngine(
         rapport = Rapport()
         raisons.clear()
         conflitsSignales.clear()
+        aRecevoir = 0; recus = 0; octetsARecevoir = 0; octetsRecus = 0; debutReception = System.currentTimeMillis()
+        signaler(Phase.PREPARATION, null)
         Files.createDirectories(racine)
         etat = Etat.charger(racine)
         arbre = Arbre(etat)
         arbre.charger(api.arborescence(config.organisation))
         creerDossiers()
         try {
+            val pages = lirePages()
+            annoncer(pages)
             reprendre()
-            tirer()
+            tirer(pages)
             pousser()
         } finally {
             etat.enregistrer(racine)
@@ -135,10 +148,48 @@ class SyncEngine(
         }
     }
 
-    private suspend fun tirer() {
+    private fun signaler(phase: Phase, courant: String?) {
+        progression(
+            Progression(
+                phase = phase, fait = recus, total = aRecevoir, octetsFaits = octetsRecus, octetsTotal = octetsARecevoir,
+                courant = courant, debutMs = debutReception, maintenantMs = System.currentTimeMillis(),
+                envoyes = rapport.envoyes,
+            ),
+        )
+    }
+
+    /** Lit toute la liste des changements (du JSON leger) avant de traiter : c'est ce qui donne le total de la progression. */
+    private suspend fun lirePages(): List<ChangesPage> {
+        val pages = mutableListOf<ChangesPage>()
         var depuis = maxOf(0L, etat.curseur - RECOUVREMENT)
         while (true) {
             val page = api.changements(depuis, TAILLE_PAGE, config.organisation, config.deviceLabel)
+            pages += page
+            if (!page.hasMore) break
+            depuis = page.nextSeq
+        }
+        return pages
+    }
+
+    /** Nombre et poids des fichiers a telecharger : a reprendre + nouveaux ou modifies sur le serveur. */
+    private fun annoncer(pages: List<ChangesPage>) {
+        val aTelecharger = linkedMapOf<String, FichierDto>()
+        for (f in etat.enAttente.values) aTelecharger[f.id] = f
+        for (page in pages) for (c in page.changes) {
+            val f = c.fichier ?: continue
+            if (c.action == "delete" || f.deletedAt != null || f.statut != "complet") continue
+            val suivi = etat.fichiers[f.id]
+            if (suivi != null && suivi.version >= f.version) continue
+            aTelecharger[f.id] = f
+        }
+        aRecevoir = aTelecharger.size
+        octetsARecevoir = aTelecharger.values.sumOf { it.taille }
+        debutReception = System.currentTimeMillis()
+        signaler(Phase.RECEPTION, null)
+    }
+
+    private suspend fun tirer(pages: List<ChangesPage>) {
+        for (page in pages) {
             for (changement in page.changes) {
                 try {
                     traiter(changement)
@@ -158,8 +209,6 @@ class SyncEngine(
             }
             etat.curseur = maxOf(etat.curseur, page.nextSeq)
             etat.enregistrer(racine)
-            if (!page.hasMore) break
-            depuis = page.nextSeq
         }
     }
 
@@ -238,6 +287,7 @@ class SyncEngine(
             return
         }
 
+        signaler(Phase.RECEPTION, f.nom)
         val octets = api.telecharger(f)
         val sha = sha256Hex(octets)
         check(sha == f.sha256) { "intégrité : SHA-256 reçu différent de celui annoncé" }
@@ -247,7 +297,10 @@ class SyncEngine(
         etat.fichiers[f.id] = FichierSuivi(f.id, rel, f.version, sha, octets.size.toLong(), mtime(rel))
         etat.enAttente.remove(f.id)
         rapport.telecharges++
+        recus++
+        octetsRecus += octets.size
         journal("↓ $rel")
+        signaler(Phase.RECEPTION, rel.substringAfterLast('/'))
     }
 
     private fun renommerSiBesoin(suivi: FichierSuivi, f: FichierDto) {
@@ -380,6 +433,7 @@ class SyncEngine(
                 etat.refuses.remove(rel)
                 rapport.envoyes++
                 journal("↑ $rel")
+                signaler(Phase.ENVOI, rel.substringAfterLast('/'))
             }
             is Resultat.Refus -> {
                 etat.refuses[rel] = sha
@@ -416,6 +470,7 @@ class SyncEngine(
                 etat.refuses.remove(suivi.relPath)
                 rapport.misAJour++
                 journal("↑ (nouvelle version) ${suivi.relPath}")
+                signaler(Phase.ENVOI, suivi.relPath.substringAfterLast('/'))
             }
             is Resultat.Conflit -> r.fichierServeur?.let { declarerConflit(suivi, it) }
                 ?: signalerConflit(suivi.id, "${suivi.relPath} : le serveur a une version plus récente.")

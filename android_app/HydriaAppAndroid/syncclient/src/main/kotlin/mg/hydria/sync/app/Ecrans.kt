@@ -34,6 +34,13 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.ui.text.style.TextOverflow
+import mg.hydria.sync.core.Phase
+import mg.hydria.sync.core.Progression
+import mg.hydria.sync.core.formaterDuree
+import mg.hydria.sync.core.formaterOctets
+import mg.hydria.sync.core.libelle
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -319,10 +326,37 @@ private fun CarteEtat(etat: EtatUi, onSynchroniser: () -> Unit) {
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
+                etat.progression?.takeIf { etat.enCours }?.let { LigneProgression(it) }
             }
             Button(onClick = onSynchroniser, enabled = !etat.enCours) {
                 Icon(Icons.Default.Sync, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Synchroniser maintenant")
             }
+        }
+    }
+}
+
+/** Barre et texte d'avancement : « 340 sur 1 052 fichiers · 187 Mo sur 657 Mo · environ 12 min restantes ». */
+@Composable
+internal fun LigneProgression(p: Progression) {
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        val fraction = p.fraction
+        if (fraction != null) LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
+        else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        val detail = when (p.phase) {
+            Phase.PREPARATION -> "Recherche des changements sur le serveur…"
+            Phase.RECEPTION -> buildString {
+                append("${p.libelle()}  ·  ${formaterOctets(p.octetsFaits)} sur ${formaterOctets(p.octetsTotal)}")
+                p.restantSecondes?.let { append("  ·  environ ${formaterDuree(it)} restantes") }
+            }
+            Phase.ENVOI -> p.libelle()
+        }
+        Text(detail, style = MaterialTheme.typography.bodySmall)
+        p.courant?.let {
+            Text(
+                (if (p.phase == Phase.ENVOI) "↑ " else "↓ ") + it,
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
