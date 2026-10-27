@@ -15,7 +15,8 @@ import kotlin.test.assertTrue
 class SyncEngineTest {
     private lateinit var racine: Path
     private lateinit var serveur: FauxServeur
-    private val config = Config(baseUrl = "https://hydria.test", root = "", username = "agent", deviceLabel = "PC test")
+    // sans protection de l'arborescence : ces tests decrivent le comportement de base (voir ProtectionMoteurTest pour l'autre)
+    private val config = Config(baseUrl = "https://hydria.test", root = "", username = "agent", deviceLabel = "PC test", protegerArborescence = false)
 
     @BeforeTest
     fun preparer() {

@@ -13,6 +13,8 @@ class Rapport {
     var envoyes = 0
     var misAJour = 0
     var corbeille = 0
+    /** Fichiers remis en place parce que deplaces, renommes ou supprimes sur le PC (protection de l'arborescence). */
+    var retablis = 0
     val conflits = mutableListOf<String>()
     val erreurs = mutableListOf<String>()
     val ignores = mutableListOf<String>()
@@ -21,6 +23,7 @@ class Rapport {
 
     fun resume(): String = buildString {
         append("Téléchargés : $telecharges | Envoyés : $envoyes | Mis à jour sur le serveur : $misAJour | Mis en corbeille : $corbeille")
+        if (retablis > 0) append(" | Rétablis : $retablis")
         append(" | Conflits : ${conflits.size} | Erreurs : ${erreurs.size}")
     }
 }
@@ -72,6 +75,10 @@ class SyncEngine(
     private var octetsRecus = 0L
     private var debutReception = 0L
 
+    // protection de l'arborescence : verrou NTFS des dossiers (si disponible) + retablissement des fichiers
+    private var protege = false
+    private val dossiersGeres = HashSet<Path>()
+
     companion object {
         /** Les `seq` sont attribues avant le commit cote serveur : on relit les derniers pour ne rien rater. */
         const val RECOUVREMENT = 100L
@@ -89,6 +96,12 @@ class SyncEngine(
         etat = Etat.charger(racine)
         arbre = Arbre(etat)
         arbre.charger(api.arborescence(config.organisation))
+        dossiersGeres.clear()
+        protege = config.protegerArborescence && Protection.disponible(racine)
+        if (!config.protegerArborescence && etat.protection) {
+            Protection.leverTout(racine) // protection desactivee : on rend les dossiers a l'utilisateur
+            etat.protection = false
+        }
         creerDossiers()
         try {
             val pages = lirePages()
@@ -96,6 +109,7 @@ class SyncEngine(
             reprendre()
             tirer(pages)
             pousser()
+            if (protege && !etat.protection) sceller()
         } finally {
             etat.enregistrer(racine)
         }
@@ -111,7 +125,45 @@ class SyncEngine(
     private fun absolu(rel: String): Path = racine.resolve(rel)
 
     private fun creerDossier(segments: List<String>) {
-        Files.createDirectories(segments.fold(racine) { chemin, segment -> chemin.resolve(segment) })
+        creerEtGerer(segments.fold(racine) { chemin, segment -> chemin.resolve(segment) })
+    }
+
+    /** Cree `dossier` (et ses parents manquants) et l'enregistre dans l'arborescence geree. */
+    private fun creerEtGerer(dossier: Path) {
+        val nouveaux = HashSet<Path>()
+        var p: Path? = dossier
+        while (p != null && p.startsWith(racine) && !Files.exists(p)) { nouveaux.add(p); p = p.parent } // add : Path est un Iterable, += serait ambigu
+        Files.createDirectories(dossier)
+        marquerGere(dossier, nouveaux)
+    }
+
+    /**
+     * Enregistre `dossier` et ses parents (jusqu'a la racine) comme dossiers de l'arborescence Hydria. Quand la
+     * protection est active, verrouille ceux qui viennent d'etre crees (tous, tant que l'arbre n'est pas scelle) : les
+     * autres le sont deja, inutile de relire leurs permissions a chaque synchronisation. S'arrete au premier dossier deja
+     * vu : chaque dossier n'est traite qu'une fois par synchronisation.
+     */
+    private fun marquerGere(dossier: Path, nouveaux: Set<Path> = emptySet()) {
+        var p: Path? = dossier
+        while (p != null && p.startsWith(racine)) {
+            if (!dossiersGeres.add(p)) break
+            if (protege && (!etat.protection || p in nouveaux)) Protection.verrouiller(p)
+            if (p == racine) break
+            p = p.parent
+        }
+    }
+
+    /**
+     * Premiere activation, ou verrous perdus (un retablissement vient d'avoir lieu) : (re)verrouille tous les dossiers
+     * geres, y compris ceux des fichiers suivis. Idempotent.
+     */
+    private fun sceller() {
+        for (suivi in etat.fichiers.values) {
+            val dossier = absolu(suivi.relPath).parent ?: continue
+            if (Files.isDirectory(dossier)) marquerGere(dossier)
+        }
+        for (d in dossiersGeres) if (Files.isDirectory(d)) Protection.verrouiller(d)
+        etat.protection = true
     }
 
     /** Dossiers prets a recevoir des fichiers : un par domaine lisible et par ouvrage visible (avec ses categories). */
@@ -306,7 +358,7 @@ class SyncEngine(
     private fun renommerSiBesoin(suivi: FichierSuivi, f: FichierDto) {
         val rel = cheminPour(f, suivi.relPath)
         if (!rel.equals(suivi.relPath, ignoreCase = true)) {
-            Files.createDirectories(absolu(rel).parent)
+            creerEtGerer(absolu(rel).parent)
             Files.move(absolu(suivi.relPath), absolu(rel), StandardCopyOption.REPLACE_EXISTING)
             journal("↻ ${suivi.relPath} → $rel")
         }
@@ -315,7 +367,7 @@ class SyncEngine(
 
     private fun placer(rel: String, octets: ByteArray) {
         val cible = absolu(rel)
-        Files.createDirectories(cible.parent)
+        creerEtGerer(cible.parent)
         val temporaires = racine.resolve(Etat.DOSSIER).resolve("tmp")
         Files.createDirectories(temporaires)
         val temporaire = temporaires.resolve(UUID.randomUUID().toString())
@@ -374,11 +426,121 @@ class SyncEngine(
             minuscule.endsWith(".hydria-tmp") || minuscule in noms_ignores
     }
 
+    /**
+     * Protection de l'arborescence (reglage `protegerArborescence`) : un fichier suivi qui n'est plus a sa place
+     * (deplace, renomme, supprime, ou dossier renomme ou supprime) est remis en place AVANT toute analyse du disque,
+     * pour que rien d'inattendu ne soit envoye au serveur :
+     *  1. un fichier retrouve ailleurs dans le dossier (meme taille, meme SHA-256) est ramene a sa place ;
+     *  2. sinon la version courante est retelechargee ;
+     *  3. un dossier renomme par l'utilisateur et devenu vide est supprime.
+     * Rien n'est jamais envoye au serveur par ce chemin : seul le PC est remis en ordre.
+     */
+    private suspend fun retablir() {
+        val manquants = etat.fichiers.values.filter { !it.conflit && !it.supprimeLocalement && !Files.exists(absolu(it.relPath)) }
+        if (manquants.isEmpty()) return
+        val restants = manquants.toMutableList()
+        val sources = mutableSetOf<Path>() // dossiers d'ou l'on a ramene des fichiers
+
+        // 1) fichiers deplaces ou renommes, retrouves par taille puis par empreinte
+        val connus = etat.fichiers.values.map { it.relPath.lowercase() }.toSet()
+        val copies = etat.fichiers.values.mapNotNull { it.conflitCopie?.lowercase() }.toSet()
+        val candidats = Files.walk(racine).use { flux ->
+            flux.filter { Files.isRegularFile(it) }
+                .filter { !racine.relativize(it).startsWith(Etat.DOSSIER) }
+                .filter { !ignore(it) }
+                .filter { racine.relativize(it).toString().replace('\\', '/').lowercase().let { rel -> rel !in connus && rel !in copies } }
+                .toList()
+        }
+        val parTaille = candidats.groupBy { Files.size(it) }.mapValues { it.value.toMutableList() }
+        val ordre = restants.iterator()
+        while (ordre.hasNext()) {
+            val suivi = ordre.next()
+            val liste = parTaille[suivi.taille] ?: continue
+            val trouve = liste.firstOrNull { sha256Hex(it) == suivi.sha256 } ?: continue
+            val cible = absolu(suivi.relPath)
+            try {
+                creerEtGerer(cible.parent)
+                Files.move(trouve, cible)
+            } catch (e: Exception) {
+                rapport.erreurs += "${suivi.relPath} : impossible de le remettre en place (${e.message})"
+                continue
+            }
+            liste.remove(trouve)
+            trouve.parent?.let { sources.add(it) }
+            etat.fichiers[suivi.id] = suivi.copy(mtime = mtime(suivi.relPath))
+            rapport.retablis++
+            journal("↩ remis à sa place : ${suivi.relPath}")
+            ordre.remove()
+        }
+
+        // 2) fichiers supprimes (ou sortis du dossier) : version courante retelechargee
+        if (restants.isNotEmpty()) {
+            aRecevoir += restants.size
+            octetsARecevoir += restants.sumOf { it.taille }
+        }
+        for (suivi in restants) {
+            try {
+                signaler(Phase.RECEPTION, suivi.relPath.substringAfterLast('/'))
+                val octets = api.telechargerParId(suivi.id)
+                check(sha256Hex(octets) == suivi.sha256) { "le fichier du serveur a changé depuis la dernière synchronisation" }
+                placer(suivi.relPath, octets)
+                etat.fichiers[suivi.id] = suivi.copy(mtime = mtime(suivi.relPath))
+                recus++
+                octetsRecus += octets.size
+                rapport.retablis++
+                journal("↩ rétabli depuis le serveur : ${suivi.relPath}")
+                signaler(Phase.RECEPTION, suivi.relPath.substringAfterLast('/'))
+            } catch (e: ErreurAuthentification) {
+                throw e
+            } catch (e: ErreurReseau) {
+                // on n'insiste pas aupres du serveur : le reste de la synchronisation poursuit (et signalera une vraie panne reseau)
+                rapport.erreurs += "${suivi.relPath} : impossible de le rétablir (${e.message}) ; nouvel essai à la prochaine synchronisation."
+                break
+            } catch (e: Exception) {
+                rapport.erreurs += "${suivi.relPath} : impossible de le rétablir (${e.message}) ; nouvel essai à la prochaine synchronisation."
+            }
+        }
+
+        // 3) dossiers renommes par l'utilisateur : l'arbre fantome est supprime s'il ne contient plus aucun fichier
+        for (racineFantome in sources.mapNotNull { fantomeDe(it) }.toSet()) supprimerSiSansFichier(racineFantome)
+
+        if (rapport.retablis > 0) etat.protection = false // quelqu'un a contourne le verrou : on le repose a la fin
+    }
+
+    /** Dossier le plus haut, en remontant depuis `dossier`, qui ne fait pas partie de l'arborescence Hydria (le dossier renomme). */
+    private fun fantomeDe(dossier: Path): Path? {
+        var p: Path = dossier
+        var haut: Path? = null
+        while (p != racine && p.startsWith(racine) && p !in dossiersGeres) {
+            haut = p
+            p = p.parent ?: break
+        }
+        return haut
+    }
+
+    /** Supprime l'arbre `dossier` seulement s'il n'y reste que des dossiers vides ; un fichier restant (a l'utilisateur) le preserve. */
+    private fun supprimerSiSansFichier(dossier: Path) {
+        if (!Files.isDirectory(dossier)) return
+        val tout = Files.walk(dossier).use { it.toList() }
+        if (tout.any { !Files.isDirectory(it, java.nio.file.LinkOption.NOFOLLOW_LINKS) }) return // contient un fichier : on n'y touche pas
+        for (d in tout.sortedByDescending { it.nameCount }) {
+            try {
+                Protection.sansVerrou(d) { Files.delete(d) }
+            } catch (e: java.io.IOException) {
+                rapport.ignores += "${racine.relativize(d).toString().replace('\\', '/')} : ancien nom de dossier, à supprimer à la main (${e.message})."
+                return
+            }
+        }
+    }
+
     private suspend fun pousser() {
+        if (config.protegerArborescence) retablir()
         // 1) fichiers suivis qui ont disparu du disque
         for (suivi in etat.fichiers.values.toList()) {
             if (suivi.conflit || suivi.supprimeLocalement) continue
             if (Files.exists(absolu(suivi.relPath))) continue
+            // protection active : un fichier encore absent n'a pas pu etre retabli, on retentera (jamais « supprime ici »)
+            if (config.protegerArborescence) continue
             if (config.propagerSuppressions) {
                 when (val r = api.supprimer(suivi.id, suivi.version)) {
                     is Resultat.Ok -> { etat.fichiers.remove(suivi.id); journal("✖ supprimé sur le serveur : ${suivi.relPath}") }

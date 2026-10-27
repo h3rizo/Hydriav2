@@ -116,6 +116,13 @@ class SyncApi(
         return reponse.body()
     }
 
+    /** Version courante d'un fichier deja connu (retablissement d'un fichier supprime sur le PC). */
+    suspend fun telechargerParId(id: String): ByteArray {
+        val reponse = authentifie { jeton -> client.get("$base/api/fichiers/$id/telechargement") { bearer(jeton) } }
+        exiger(reponse)
+        return reponse.body()
+    }
+
     // ------------------------------------------------------------------ ecriture
 
     suspend fun deposer(nom: String, contenu: ByteArray, cible: Cible, organisation: String?): Resultat {

@@ -45,6 +45,7 @@ class SyncControllerTest {
     @AfterTest
     fun nettoyer() {
         controleur.arreter()
+        mg.hydria.sync.core.Protection.leverTout(racine) // la protection est active par defaut : sinon le dossier de test resterait
         dossierConfig.toFile().deleteRecursively()
         racine.toFile().deleteRecursively()
     }

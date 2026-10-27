@@ -263,6 +263,17 @@ fun EcranPrincipal(etat: EtatUi, controller: SyncController, options: OptionsUi 
             }
         }
 
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Switch(checked = config.protegerArborescence, onCheckedChange = controller::basculerProtection)
+            Column {
+                Text("Protéger l'arborescence")
+                Text(
+                    "Les dossiers ne peuvent plus être supprimés, renommés ni déplacés ; un fichier déplacé ou supprimé est remis à sa place à la synchronisation suivante. Désactivez avant de désinstaller.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
         TabRow(selectedTabIndex = onglet) {
             Tab(selected = onglet == 0, onClick = { onglet = 0 }, text = { Text("Conflits (${etat.conflits.size})") })
             Tab(selected = onglet == 1, onClick = { onglet = 1 }, text = { Text("À vérifier ($aVerifier)") })
@@ -322,7 +333,8 @@ private fun CarteEtat(etat: EtatUi, onSynchroniser: () -> Unit) {
                 )
                 etat.resume?.let {
                     Text(
-                        "↓ ${it.telecharges} téléchargé(s)   ↑ ${it.envoyes} envoyé(s)   ⟳ ${it.misAJour} mis à jour   🗑 ${it.corbeille} en corbeille",
+                        "↓ ${it.telecharges} téléchargé(s)   ↑ ${it.envoyes} envoyé(s)   ⟳ ${it.misAJour} mis à jour   🗑 ${it.corbeille} en corbeille" +
+                            (if (it.retablis > 0) "   ↩ ${it.retablis} rétabli(s)" else ""),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }

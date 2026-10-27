@@ -24,6 +24,11 @@ data class Config(
     val organisation: String? = null,
     /** Propager au serveur les fichiers supprimes localement. Desactive par defaut (securite). */
     val propagerSuppressions: Boolean = false,
+    /**
+     * Protege l'arborescence : dossiers verrouilles (ni suppression, ni renommage, ni deplacement sous Windows) et
+     * retablissement automatique des fichiers deplaces, renommes ou supprimes. Active par defaut.
+     */
+    val protegerArborescence: Boolean = true,
 ) {
     companion object {
         /** Dossier de configuration : variable HYDRIA_SYNC_DIR (installation portable, essais), sinon %APPDATA%\HydriaSync. */
@@ -77,6 +82,8 @@ data class Etat(
     val refuses: MutableMap<String, String> = mutableMapOf(),
     /** Telechargements echoues (integrite, disque...) a reprendre a la prochaine synchronisation. */
     val enAttente: MutableMap<String, FichierDto> = mutableMapOf(),
+    /** Tous les dossiers de l'arborescence sont verrouilles (evite de relire les permissions a chaque synchronisation). */
+    var protection: Boolean = false,
 ) {
     companion object {
         const val DOSSIER = ".hydria-sync"

@@ -49,6 +49,7 @@ class FauxServeur {
     var jetonValide = "T1"
     var arborescence = ARBORESCENCE
     var refuserDepots = false
+    var refuserTelechargements = false
     var refuserConnexion = false
     var refuserRenouvellement = false
     private var seq = 0L
@@ -83,6 +84,7 @@ class FauxServeur {
                 json(jsonFormat.encodeToString(ChangesPage(depuis, page.lastOrNull()?.seq ?: depuis, restants.size > limite, page)))
             }
             chemin.endsWith("/telechargement") -> {
+                if (refuserTelechargements) return@MockEngine json("""{"code":"ERREUR","message":"refus de test"}""", HttpStatusCode.InternalServerError)
                 val id = chemin.removePrefix("/api/fichiers/").substringBefore('/')
                 respond(contenus.getValue(id), HttpStatusCode.OK)
             }

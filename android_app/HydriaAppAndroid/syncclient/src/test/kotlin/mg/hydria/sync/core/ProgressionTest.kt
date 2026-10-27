@@ -58,7 +58,7 @@ class ProgressionTest {
 class ProgressionMoteurTest {
     private lateinit var racine: Path
     private lateinit var serveur: FauxServeur
-    private val config = Config(baseUrl = "https://hydria.test", root = "", username = "agent", deviceLabel = "PC test")
+    private val config = Config(baseUrl = "https://hydria.test", root = "", username = "agent", deviceLabel = "PC test", protegerArborescence = false)
 
     @BeforeTest
     fun preparer() {

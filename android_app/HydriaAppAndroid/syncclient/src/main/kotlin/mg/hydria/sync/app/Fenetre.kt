@@ -27,12 +27,32 @@ fun main(args: Array<String>) {
     FichierJournal.initialiser(dossier)
     FichierJournal.installerGestionnaireGlobal()
     FichierJournal.ecrire("Démarrage de Hydria Sync (configuration : $dossier)")
+    if ("--lever-protection" in args) {
+        leverProtectionHorsFenetre(dossier)
+        return
+    }
     if (!InstanceUnique.obtenir(dossier)) {
         FichierJournal.ecrire("Hydria Sync est déjà ouverte : demande d'affichage de la fenêtre existante.")
         InstanceUnique.demanderOuverture(dossier)
         return
     }
     demarrer(dossier, reduit = DemarrageWindows.ARGUMENT_REDUIT in args)
+}
+
+/**
+ * `HydriaSync.exe --lever-protection` : rend le dossier de synchronisation libre (deverrouille tous ses dossiers) sans
+ * ouvrir la fenetre. A lancer avant de desinstaller, ou si le dossier ne peut plus etre supprime.
+ */
+private fun leverProtectionHorsFenetre(dossierConfig: java.nio.file.Path) {
+    val racine = Config.charger(dossierConfig)?.root?.let { java.nio.file.Path.of(it) }
+        ?: java.nio.file.Path.of(System.getProperty("user.home"), "Hydria")
+    val leves = mg.hydria.sync.core.Protection.leverTout(racine)
+    runCatching {
+        mg.hydria.sync.core.Etat.charger(racine).takeIf { it.protection }?.also { it.protection = false; it.enregistrer(racine) }
+    }
+    val message = "Protection levée : $leves dossier(s) déverrouillé(s) dans $racine."
+    FichierJournal.ecrire(message)
+    runCatching { javax.swing.JOptionPane.showMessageDialog(null, message, "Hydria Sync", javax.swing.JOptionPane.INFORMATION_MESSAGE) }
 }
 
 private fun icone(etat: IconeHydria.Etat, angle: Double = 0.0, taille: Int = 64) =

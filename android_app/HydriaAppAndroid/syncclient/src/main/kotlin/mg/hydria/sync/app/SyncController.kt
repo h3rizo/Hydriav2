@@ -32,7 +32,7 @@ import java.time.format.DateTimeFormatter
 
 data class ConflitUi(val id: String, val relPath: String, val copie: String?)
 
-data class ResumeUi(val telecharges: Int, val envoyes: Int, val misAJour: Int, val corbeille: Int)
+data class ResumeUi(val telecharges: Int, val envoyes: Int, val misAJour: Int, val corbeille: Int, val retablis: Int = 0)
 
 /** Tout ce que la fenetre affiche. Immuable : l'interface ne lit que ceci. */
 data class EtatUi(
@@ -118,7 +118,44 @@ class SyncController(
         scope.launch { seConnecterEtAttendre(url, dossier, utilisateur, motDePasse, organisation) }
     }
 
+    /**
+     * Active ou desactive la protection de l'arborescence. Desactivee : les dossiers sont deverrouilles tout de suite et
+     * les fichiers deplaces ou supprimes ne sont plus retablis. Activee : la prochaine synchronisation pose les verrous.
+     */
+    fun basculerProtection(actif: Boolean) {
+        val config = _etat.value.config ?: return
+        val nouvelle = config.copy(protegerArborescence = actif)
+        try {
+            nouvelle.enregistrer(dossierConfig)
+        } catch (e: Exception) {
+            FichierJournal.erreur("enregistrement du reglage de protection", e)
+            _etat.update { it.copy(message = "Réglage non enregistré. ${mg.hydria.sync.core.decrire(e)}") }
+            return
+        }
+        _etat.update { it.copy(config = nouvelle) }
+        if (actif) {
+            ajouterJournal("Protection de l'arborescence activée.")
+            synchroniser()
+        } else {
+            leverProtectionEnFond(Path.of(config.root), "Protection de l'arborescence désactivée")
+        }
+    }
+
+    /** Deverrouille tous les dossiers sous `dossier` sans gener une synchronisation en cours. */
+    private fun leverProtectionEnFond(dossier: Path, motif: String) {
+        scope.launch {
+            verrou.withLock {
+                val leves = mg.hydria.sync.core.Protection.leverTout(dossier)
+                // l'etat doit savoir que l'arbre n'est plus scelle : une reactivation reposera les verrous
+                runCatching { Etat.charger(dossier).takeIf { it.protection }?.also { it.protection = false; it.enregistrer(dossier) } }
+                ajouterJournal("$motif : $leves dossier(s) déverrouillé(s).")
+            }
+        }
+    }
+
     fun deconnecter() {
+        // se deconnecter rend le dossier a l'utilisateur : il pourra le deplacer ou le supprimer librement
+        racine?.let { leverProtectionEnFond(it, "Déconnexion") }
         basculerAuto(false)
         fermerClient()
         val erreur = oublierJeton()
@@ -212,7 +249,7 @@ class SyncController(
         _etat.update {
             it.copy(
                 enCours = false, derniereSynchro = LocalDateTime.now(), message = null,
-                resume = ResumeUi(rapport.telecharges, rapport.envoyes, rapport.misAJour, rapport.corbeille),
+                resume = ResumeUi(rapport.telecharges, rapport.envoyes, rapport.misAJour, rapport.corbeille, rapport.retablis),
                 erreurs = rapport.erreurs.toList(), ignores = rapport.ignores.toList(),
             )
         }
